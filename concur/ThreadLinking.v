@@ -998,10 +998,20 @@ Qed.
        split. split; eauto. inv MEM_CREATE. simpl. generalize (Mem.tid_valid (Mem.support m)). intro. unfold Mem.next_tid. lia.
        inv MEM_CREATE. constructor; eauto. simpl. red. intros. eauto with mem.
        intros. reflexivity.
-       split. split; eauto. simpl. erewrite Mem.support_alloc; eauto. simpl. inv MEM_CREATE'. simpl.
+       split. split; eauto.
+       simpl. erewrite Mem.support_alloc; eauto. simpl. inv MEM_CREATE'. simpl.
        generalize (Mem.tid_valid (Mem.support tm)). intro. unfold Mem.next_tid. lia.
        constructor; eauto. simpl. red. intros. eauto with mem. intros. reflexivity.
-       admit.
+       {
+         unfold tm'4, ttm'4.
+         econstructor; simpl.
+         erewrite Mem.support_alloc; eauto. simpl. inv MEM_CREATE'.
+         generalize (Mem.tid_valid (Mem.support tm)). intro. unfold Mem.next_tid. lia.
+         erewrite Mem.support_alloc; eauto. simpl. inv MEM_CREATE'2.
+         generalize (Mem.tid_valid (Mem.support ttm)). intro. unfold Mem.next_tid. lia.
+         red. intros. eauto with mem. red. intros. eauto with mem.
+         red. intros. eauto with mem. red. intros. eauto with mem.
+       }
      - intros. inv H. inv MEM_CREATE. inv MEM_CREATE'. constructor.
        unfold injp_gw_compcert.
        simpl. inv H17.
@@ -1022,7 +1032,12 @@ Qed.
          transitivity (Mem.perm tm'3 b ofs k p). 2: reflexivity. inv UNC23. apply unchanged_on_perm0; eauto.
          red. simpl. rewrite <- Mem.sup_yield_in, <- Mem.sup_create_in. eauto.
          intros. inv UNC23. rewrite unchanged_on_contents0; eauto. apply unchanged_on_perm in H0; eauto with mem.
-       + admit.
+       + inv H21. inv ROACCR2. inv ROACCR3.
+         constructor; simpl. eauto. eauto.
+         eapply Mem.sup_include_trans; eauto.
+         eapply Mem.sup_include_trans; eauto.
+         eapply max_perm_decrease_trans. apply MPD1. eauto. eauto.
+         eapply max_perm_decrease_trans. apply MPD2. eauto. eauto.
      - auto.
      - auto.
      - simpl. inv MEM_CREATE. inv MEM_CREATE'.
@@ -1090,7 +1105,7 @@ Qed.
      - congruence.
      - congruence.
      - congruence.
-   Admitted.
+   Qed.
 
    Lemma match_q_nid: forall qc qa w,
        GS.match_query cc_compcert w qc qa ->
@@ -2134,15 +2149,16 @@ Qed.
          set (rs := cajw_rs wAca).
          set (rs' := Pregmap.set RAX (Vint Int.one)(Pregmap.set PC (rs RA) rs)).
          set (trs' := Pregmap.set RAX (Vint Int.one)(Pregmap.set PC (trs RA) trs)).
-         exploit Mem.storev_mapped_inject; eauto.
-         eapply val_inject_incr. 2: eauto. unfold injp_w_compcert. simpl.
-         unfold get_injp in ACCEJ. inv ACCEJ. eauto.
-         eapply val_inject_incr. 2: eauto. inv ACCt'. simpl.
-         setoid_rewrite <- H0 in ACCEJ. inv ACCEJ.
-         eapply inject_incr_trans. eauto. eauto.
+         unfold injp_w_compcert in VPTR. simpl in VPTR.
+         setoid_rewrite <- H in VPTR. simpl in VPTR.
+         exploit Mem.storev_mapped_inject.
+         2: eauto. eauto.
+         eauto. simpl in ACCt'. unfold get_injp in ACCt'.
+         unfold get_injp in H. rewrite <- H in ACCt'.
+         eapply val_inject_incr. 2: eauto. inv ACCt'.
+         inv H7. simpl. eauto.
          intros [tm''[MEM_RES' Hmj'']].
          set (r_a := (rs', tm'')).
-
          exploit Mem.storev_extends; eauto.
          intros [ttm'' [MEM_RES'' Hme'']].
          set (tr_a := (trs', ttm'')).
@@ -2152,7 +2168,7 @@ Qed.
          {
            simpl in VPTR. destruct wAca. simpl in *.
            destruct cajw_injp. unfold wp'. simpl in *.
-           eapply injp_acce_storev; eauto.  inv ACCEJ. eauto.
+           eapply injp_acce_storev; eauto.  
          }
          assert (ACCEE2: ext_acce (extw m2 m3 Hme0) (extw tm'' ttm'' Hme'')).
          { etransitivity. eauto.
@@ -2218,14 +2234,19 @@ Qed.
                exists wn, owan, wnp, lscn,lsan,lin. repeat apply conj; try rewrite NatMap.gso; eauto.
                rewrite <- OTHERi; eauto. lia.
                intros n1. specialize (J n1). simpl in n1. subst wp'. simpl in *.
-               eapply injp_accg_acci_accg. eauto. 
+               eapply gw_accg_acci_accg. eauto.
+               rewrite <- H in HwaTid.
+               repeat apply conj; simpl; eauto. rewrite <- H.
                eapply injp_acci_storev; eauto. instantiate (1:= Hmj'1).
-               eapply injp_acc_yield_acci; eauto. destruct wAca. simpl in *.
-               unfold injp_gw_compcert. simpl. rewrite <- H.
-               inv H3. econstructor; eauto.
-               inv ACCEJ. simpl in VPTR. eauto.
-               fold rs. unfold injp_w_compcert in VPTR. simpl in VPTR. setoid_rewrite <- H in VPTR.
-               eauto.
+               eapply injp_acc_yield_acci; eauto.
+               inv H3. econstructor; simpl; eauto.
+               etransitivity. eapply ext_acc_yield_acci; simpl; eauto.
+               simpl. erewrite <- Mem.mext_sup. 2: eauto.
+               inversion Hme'. rewrite <- mext_sup. eauto.
+               erewrite <- inject_tid. 2: eauto.
+               inversion Hmj'. inv mi_thread. inv Hms. rewrite <- H5. eauto.
+               eapply ext_acci_storev; eauto.
+               constructor.
        + (*initial, impossible*)
          simpl in *. exfalso. eapply NOTINIT. eauto.
      -  (*switch to others*)
