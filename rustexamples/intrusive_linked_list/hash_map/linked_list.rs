@@ -14,7 +14,7 @@ enum List {
 
 extern fn process(v: i32) -> i32
 
-fn hash(k: i32, range: i32) -> i32{
+fn hash(k: i32, range: u32) -> u32{
     return k % range;
 }
 

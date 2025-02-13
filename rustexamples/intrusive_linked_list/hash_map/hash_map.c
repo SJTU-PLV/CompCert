@@ -13,7 +13,7 @@ extern int delete_list(List* l);
 
 // The hash function can be implemented in assembly. It must guarantee
 // that the return index must less than DEFAULT_HASH_MAP_LENGTH.
-extern int hash(int k, int range);
+extern int hash(int k, uint32_t range);
 
 // We can also introduce handles to use multiple hash maps
 static List* hmap[DEFAULT_HASH_MAP_LENGTH] = {NULL};

@@ -59,6 +59,8 @@ Definition wildcard : ident := 106%positive.
 Definition List_ty : type := Tvariant nil List.
 Definition Node_ty : type := Tstruct nil Node.
 
+Definition type_int32u := Tint I32 Unsigned.
+
 (* function types declaration *)
 Definition process_ty : type := Tfunction nil nil (Tcons type_int32s Tnil) type_int32s cc_default.
 
@@ -67,8 +69,8 @@ Local Open Scope rustlight_scope.
 (* hash function *)
 
 Definition hash_body : statement :=
-  <{ _retv#type_int32s := copy k#type_int32s % copy range#type_int32s;
-     return (_retv#type_int32s) }>.
+  <{ _retv#type_int32u := copy k#type_int32s % copy range#type_int32u;
+     return (_retv#type_int32u) }>.
 
 Definition hash_func : function :=
   {| fn_generic_origins := nil;
@@ -76,8 +78,8 @@ Definition hash_func : function :=
     fn_drop_glue := None;
     fn_return := type_int32s;
     fn_callconv := cc_default;
-    fn_vars := [(_retv, type_int32s)];
-    fn_params := [(k, type_int32s); (range, type_int32s)];
+    fn_vars := [(_retv, type_int32u)];
+    fn_params := [(k, type_int32s); (range, type_int32u)];
     fn_body := hash_body |}.
 
 (* find_function *)

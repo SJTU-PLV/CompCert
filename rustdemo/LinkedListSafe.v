@@ -12,6 +12,7 @@ Require Import Values Globalenvs Memory.
 Require Import InitDomain.
 Require Import Events.
 Require Import Smallstep Rustlightown SmallstepLinkingSafe.
+Require Import Separation.
 
 Local Open Scope error_monad_scope.
 Import ListNotations.
@@ -74,12 +75,16 @@ Admitted.
 
 End CLOSURES.
 
-
 Definition linked_list_sem := semantics linked_list_mod.
+
+(* The kripke world used in proving partial safety *)
+Record linked_list_world :=
+  { hash_range : int }.
 
 Section SOUNDNESS.
 
 Context (se : Genv.symtbl).
+Context (w: linked_list_world).
 
 Let ge := globalenv se linked_list_mod.
 
@@ -87,6 +92,8 @@ Hypothesis wf_senv: forall id,
     if in_dec ident_eq id (prog_defs_names linked_list_mod) then
       exists b, Genv.find_symbol se id = Some b
     else True.
+
+(** Local state of find function *)
 
 Definition own_env_find t E1 E2 :=
   mkown
@@ -188,15 +195,42 @@ Inductive find_cont_ret_process : cont -> Prop :=
     find_cont_ret_process (return_process_cont (find_env b0 b1 b2 b3 b4) t E1 E2 k)
 .
 
+(** Local state of hash function *)
+
+Inductive hash_cont: cont -> Prop :=
+| hash_cont_intro: hash_cont Kstop.
+
+(* pre-post conditions of hash function *)
+
+Inductive hash_pre_cond_args : list val -> Prop :=
+| hash_pre_cond_args_intro: forall k
+    (GTZ: Int.ltu Int.zero w.(hash_range) = true)
+    (CASTED1: val_casted (Vint k) type_int32s)
+    (CASTED1: val_casted (Vint w.(hash_range)) type_int32u),
+    hash_pre_cond_args [Vint k; Vint w.(hash_range)].
+
+Inductive hash_post_cond_retv : val -> Prop :=
+| hash_post_cond_retv_intro: forall r    
+    (INRAN: Int.ltu r w.(hash_range) = true),
+    hash_post_cond_retv (Vint r).
+    
+(** Continuation parameterized by the function name *)
+
 Definition sound_cont (f: ident) : cont -> Prop :=
   if ident_eq f find then
     sound_find_cont
   else
-    fun _ => False.
+    if ident_eq f hash then
+      hash_cont
+    else
+      fun _ => False.
 
 Definition length_of_args (f: ident) : nat :=
   if ident_eq f find then
     2
+  else
+    if ident_eq f hash then
+      2     
   else O.
 
 Inductive call_func (f: ident) : state -> Prop :=
@@ -228,7 +262,25 @@ Definition not_call_return_state s :=
   | _ => True
   end.
 
+
 Inductive sound_state : state -> Prop :=
+(** callstate of hash function *)
+| hash_callstate: forall v al k m
+    (CALL: call_func hash (Callstate v al k m))
+    (PRE: hash_pre_cond_args al),
+    sound_state (Callstate v al k m)
+| hash_state_internal: forall v al k m t s1 n
+    (CALL: call_func hash (Callstate v al k m))
+    (STAR: starNf step num_frames ge n (Callstate v al k m) t s1)
+    (PRECOND: hash_pre_cond_args al)
+    (NOTCALL: not_call_return_state s1)
+    (RAN: (1 <= n <= 11)%nat),
+    sound_state s1
+| hash_returnstate: forall v k m
+    (CONT: sound_cont hash k)
+    (PRE: hash_post_cond_retv v),
+    sound_state (Returnstate v k m)
+
 | callstate_find: forall v al k m
     (CALL: call_func find (Callstate v al k m)),
     sound_state (Callstate v al k m)
@@ -269,7 +321,8 @@ Inductive sound_state : state -> Prop :=
 from the last find function *)
 | find_returnstate: forall v k m,
     sound_find_cont k ->
-    sound_state (Returnstate v k m).
+    sound_state (Returnstate v k m)
+.
 
 Lemma find_args_params_norepet:
   list_norepet
@@ -312,11 +365,22 @@ Lemma init_own_env_find_progress:
   unfold collect_func in A. congruence.
 Qed.
 
-        
+
+Lemma init_own_env_hash_progress:
+  exists own, init_own_env (Smallstep.globalenv (linked_list_sem se)) hash_func = OK own.        
+Admitted.
+
+
 Lemma function_entry_find_progress: forall vl m1,
     length_of_args find = length vl ->
   exists e m2, function_entry ge find_func vl m1 e m2.
 Admitted.
+
+Lemma function_entry_hash_progress: forall vl m1,
+    length_of_args hash = length vl ->
+  exists e m2, function_entry ge hash_func vl m1 e m2.
+Admitted.
+
 
 (* Compute (variant_field_offset (proj1_sig build_ce_ok) Nil [Member_plain Nil Tunit; Member_plain Cons Node_ty]). *)
 
@@ -338,7 +402,10 @@ Lemma sound_cont_no_vars: forall f k,
     sound_cont f k ->
     cont_vars k = nil.
 Proof.
-  intros. unfold sound_cont in H. destruct ident_eq in H; try contradiction.
+  intros. unfold sound_cont in H.
+  destruct ident_eq in H; try contradiction.
+  inv H; reflexivity.
+  destruct ident_eq in H; try contradiction.
   inv H; reflexivity.
 Qed.
 
@@ -394,11 +461,11 @@ Proof using se.
 Qed.
 
 
-Lemma sound_call_cont_find: forall k,
-    sound_cont find k ->
+Lemma sound_call_cont: forall f k,
+    sound_cont f k ->
     (* Actually ck is the same as k *)
     exists ck, call_cont k = Some ck
-          /\ sound_cont find ck.
+          /\ sound_cont f ck.
 Admitted.
 
 Lemma call_cont_num_frames_eq: forall k1 k2,
@@ -408,7 +475,7 @@ Proof.
   induction k1; intros k2 CK; simpl in *; inv CK; auto.
 Qed.
 
-
+Local Open Scope sep_scope.
 
 Lemma step_preservation_progress: forall s,
     sound_state s ->
@@ -417,6 +484,277 @@ Lemma step_preservation_progress: forall s,
                sound_state s').
 Proof.
   intros s INV. inv INV.
+  (* callstate in hash *)
+  - generalize CALL as CALL1. intros.
+    (* build s0 *)
+    inv CALL.
+    assert (FIND: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some (Internal hash_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYM.
+      auto. }
+    split.
+    + left. red. right. right.
+      edestruct (function_entry_hash_progress al m) as (e & m1 & ENT); eauto.
+      destruct init_own_env_hash_progress as (own & INITOWN).
+      do 2 eexists.
+      econstructor; eauto.
+    + intros. eapply hash_state_internal with (n:= 1%nat); eauto.
+      econstructor; eauto. econstructor. 
+      inv H; simpl; auto.
+      inv H; simpl; auto. rewrite FIND in FIND0. inv FIND0.
+      lia.
+  (* internal state in hash function *)
+  - generalize CALL as CALL1. intros.
+    generalize STAR as STAR1. intros.
+    (* build s0 *)
+    inv CALL.
+    assert (FIND: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some (Internal hash_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYM.
+      auto. }
+    inv STAR. lia.
+    (** take one step *)
+    inv STEP; try congruence.
+    rewrite FIND in FIND0. inv FIND0.    
+    unfold init_own_env in INITOWN.
+    (* construct own_env *)
+    destruct collect_func eqn: A; cbn [bind] in INITOWN; try congruence.
+    set (empty_map := (PTree.map
+                         (fun (_ : positive) (_ : InitDomain.LPaths.t) =>
+                            InitDomain.Paths.empty) t)) in *.
+    set (initParams:= (InitDomain.add_place_list t
+                         (places_of_locals (fn_params hash_func ++ fn_vars hash_func))
+                       empty_map)) in *.
+    set (flag := check_own_env_consistency empty_map empty_map initParams t) in *.
+    generalize INITOWN. clear INITOWN.
+    generalize (eq_refl flag).
+    generalize flag at 1 3.
+    intros flag0 E. destruct flag0; try congruence. intros. inv INITOWN.
+    (* construct e *)
+    inv ENTRY. inv ALLOC. inv H7. inv H9. inv H10.
+    (* construct m' *)
+    inv BIND. inv H10. inv H13.
+    vm_compute in H3. inv H3.
+    vm_compute in H4. inv H4.
+    inv H9; simpl in H; try congruence. inv H.
+    inv H12; simpl in H; try congruence. inv H.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* stop here: evaluate Ssequence *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply hash_state_internal with (n:=2%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        inv H; simpl; auto.
+        inv H; simpl; auto. lia.  } 
+    inv STEP.
+    inv STAR; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Sassign to Dassign *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply hash_state_internal with (n:=3%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        inv H; simpl; auto.
+        inv H; simpl; auto. lia.  } 
+    inv STEP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_skip_reassign *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropinsert_skip_reassign.
+        reflexivity.
+      - intros. eapply hash_state_internal with (n:=4%nat); eauto.
+        eapply starNf_step_right; eauto.        
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    vm_compute in OWNTY. congruence.
+    2: { unfold hash_body in H12; destruct H12; congruence. }
+    (* construct the value computed by remainder *)
+    generalize PRECOND as PRECOND1. intros.
+    inv PRECOND.    
+    exploit alloc_rule. eapply H6. lia. vm_compute. congruence.
+    instantiate (1 := Separation.pure True). simpl. auto.
+    intros PM1.
+    exploit alloc_rule. eapply H8. lia. vm_compute. congruence.
+    eapply PM1. intros PM2.
+    exploit alloc_rule. eapply H7. lia. vm_compute. congruence.
+    eapply PM2. intros PM3.
+    rewrite <- !sep_assoc, sep_comm in PM3.
+    eapply sep_drop in PM3.
+    rewrite sep_comm in PM3.
+    exploit storev_rule. eapply range_contains with  (ofs:=0) (chunk:= Mint32) .    
+    eapply PM3. eapply Z.divide_0_r. 
+    instantiate (1 := Vint k0). instantiate (1 := fun v => v = Vint k0). simpl. auto.
+    intros (m1' & STORE1 & PM4).
+    setoid_rewrite H0 in STORE1. inv STORE1.
+    rewrite <- sep_assoc, sep_comm in PM4.
+    exploit storev_rule. eapply range_contains with  (ofs:=0) (chunk:= Mint32).
+    eapply PM4. eapply Z.divide_0_r. 
+    instantiate (1 := Vint (hash_range w)). instantiate (1 := fun v => v = Vint (hash_range w)). simpl. auto.
+    intros (m1'' & STORE2 & PM5).
+    setoid_rewrite H1 in STORE2. inv STORE2.
+    (* load k and range *)
+    exploit load_rule. eapply PM5.
+    intros (?v & LOAD1 & PV1). subst.
+    exploit load_rule. eapply sep_pick1. eapply PM5.
+    intros (?v & LOAD2 & PV2). subst.
+    (* show that the remainder operation can succeed *)
+    assert (MOD: exists r, sem_mod (Vint k0) (Ctypes.Tint I32 Signed noattr)
+                   (Vint (hash_range w)) (Ctypes.Tint I32 Unsigned noattr) m1'' = Some (Vint r)
+    /\ Int.ltu r (hash_range w) = true).
+    {  simpl. unfold sem_mod, sem_binarith. simpl.
+       replace ((Ctypes.Tint I32 Signed noattr)) with (to_ctype type_int32s) by reflexivity.
+       replace ((Ctypes.Tint I32 Unsigned noattr)) with (to_ctype type_int32u) by reflexivity.       
+       rewrite !cast_val_casted.
+       2: { eapply val_casted_to_ctype. eauto. }
+       unfold Cop.sem_cast. simpl.
+       cbn [Archi.ptr64]. 
+       exploit Int.ltu_inv. eauto.
+       intros R1.
+       unfold Int.eq. destruct zeq. lia.
+       eexists. split. eauto.
+       unfold Int.ltu. destruct zlt. auto.
+       unfold Int.modu in g.
+       rewrite Int.unsigned_repr in g.
+       exploit (Z.mod_bound_or (Int.unsigned (cast_int_int I32 Unsigned k0)) (Int.unsigned (hash_range w))). lia.
+       intros [E1|E2]; lia. 
+       exploit (Z.mod_bound_or (Int.unsigned (cast_int_int I32 Unsigned k0)) (Int.unsigned (hash_range w))). lia.
+       generalize (Int.unsigned_range_2 (hash_range w)). intros R2.
+       intros [E1|E2]; lia.  }
+    destruct MOD as (r & SEMOD & RSPEC).
+    (* store the vaule to retv *)
+    exploit storev_rule. eapply range_contains with  (ofs:=0) (chunk:= Mint32).
+    eapply sep_comm.
+    eapply PM5. eapply Z.divide_0_r. 
+    instantiate (1 := Vint r). instantiate (1 := fun v => v = Vint r /\ Int.ltu r (hash_range w) = true). simpl. auto.
+    intros (m1''' & STORE3 & PM6).
+    
+    inv STAR; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - left. red. do 2 right.                
+        do 2 eexists. econstructor. econstructor.
+        reflexivity. reflexivity.
+        intros. simpl. unfold type_int32u. congruence.
+        econstructor. reflexivity.
+        econstructor. econstructor. econstructor.
+        econstructor. reflexivity.
+        econstructor. reflexivity. eauto.
+        econstructor. econstructor. reflexivity.
+        econstructor. reflexivity. eauto.
+        reflexivity. reflexivity.
+        (* sem_mod *)
+        simpl. eauto. simpl.
+        reflexivity.
+        econstructor. reflexivity. eauto.
+      - intros. eapply hash_state_internal with (n:=5%nat); eauto.
+        eapply starNf_step_right; eauto.        
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    inv H13. inv H5.
+    inv H14. inv H2. inv H9. inv H3. inv H11.
+    inv H10. inv H3. inv H11.
+    inv H5; simpl in H; inv H. setoid_rewrite LOAD1 in H2. inv H2.
+    inv H9; simpl in H; inv H. setoid_rewrite LOAD2 in H2. inv H2. 
+    simpl in H14. rewrite SEMOD in H14. inv H14.
+    inv H15.
+    inv H16; simpl in H; inv H. setoid_rewrite STORE3 in H2. inv H2. 
+    (* load return value from _retv *)
+    exploit load_rule. eapply sep_pick1.
+    eapply PM6. intros (rv & LOAD3 & (SPEC1 & SPEC2)). subst.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate skip_sequence *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply hash_state_internal with (n:=6%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia.  }
+    inv STEP.
+    inv STAR; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Sreturn to Dreturn *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply hash_state_internal with (n:=7%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia.  }
+    inv STEP.
+    2: { destruct H12; congruence. }
+    erewrite sound_cont_no_vars in *; eauto.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropinsert_return_before.
+      - intros. eapply hash_state_internal with (n:=8%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia.  }
+    inv STEP.   
+    inv SDROP. destruct NOTRETURN; congruence.
+    inv STAR; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_skip_return *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropinsert_skip_return. reflexivity.
+      - intros. eapply hash_state_internal with (n:=9%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    vm_compute in OWNTY0. congruence. clear OWNTY0.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropinsert_skip_return. reflexivity.
+      - intros. eapply hash_state_internal with (n:=10%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    vm_compute in OWNTY0. congruence. clear OWNTY0.
+    inv STAR; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_return_after *)
+    { exploit sound_call_cont; eauto.
+      intros (ck & CK & SCONT1).
+      split.
+      - destruct (Mem.free_list m4 [(b0, 0, 4); (b1, 0, 4); (b2, 0, 4)]) eqn: FREE.
+        + left. red. do 2 right.
+          do 2 eexists. econstructor.
+          eapply step_dropinsert_return_after.
+          econstructor. econstructor. econstructor.
+          reflexivity. econstructor. reflexivity.
+          eauto. simpl. reflexivity. eauto.
+          reflexivity. eauto.
+        + right. econstructor.
+          eapply step_dropinsert_return_error2. eauto.
+      - intros. inv H. inv SDROP.
+        rewrite CK in CONT. inv CONT.
+        eapply hash_returnstate; eauto.
+        inv EXPR. inv H2. inv H4. inv H10.
+        inv H9; simpl in H; inv H.
+        setoid_rewrite LOAD3 in H2. inv H2.
+        inv CAST. econstructor.
+        eauto. }
+    inv STEP. inv SDROP.  
+    inv SCONT. simpl in CONT. inv CONT.
+    inv STAR0.
+    { split.
+      + left. left.
+        eexists. econstructor.
+      + intros. inv H. }
+    inv STEP.
+
+  (* returnstate in hash *)
+  - inv CONT. inv PRE.
+    split.
+    + left. left. eexists. econstructor.
+    + intros. inv H.
+    
+  (* callstate in find *)
   - generalize CALL as CALL1. intros.
     (* build s0 *)
     inv CALL.
@@ -732,7 +1070,7 @@ Proof.
             destruct (sem_cast v2 List_box List_box) eqn: ?CAST.
             * destruct (Mem.free_list m6 [(b3, 0, 16); (b4, 0, 8); (b1, 0, 8); (b2, 0, 8); (b0, 0, 4)]) eqn: ?FREELIST.
               -- left. red. do 2 right.
-                 exploit sound_call_cont_find; eauto.
+                 exploit sound_call_cont; eauto.
                  intros (ck & CK & SCK).
                  do 2 eexists. econstructor.
                  eapply step_dropinsert_return_after.
@@ -750,7 +1088,7 @@ Proof.
             econstructor. reflexivity.
             econstructor. reflexivity. eauto.
         - intros. inv H. inv SDROP.
-          exploit sound_call_cont_find; eauto.
+          exploit sound_call_cont; eauto.
           intros (ck1 & CK & SCK). rewrite CONT in CK. inv CK.          
           eapply find_returnstate. eauto. }
       (* show that it cannot take more step using num_frames unchanged
@@ -758,7 +1096,7 @@ Proof.
       inv STEP. inv SDROP.
       inv STAR0; cbn [num_frames num_frames_cont] in *.
       (** show that the returnstate can take a step *)
-      { exploit sound_call_cont_find; eauto.
+      { exploit sound_call_cont; eauto.
         intros (ck1 & CK & SCK). rewrite CONT in CK. inv CK.
         vm_compute in SCK. inv SCK.
         (* ck1 is Kstop *)
@@ -1722,7 +2060,8 @@ Proof.
             destruct (sem_cast v5 List_box List_box) eqn: ?CAST.
             * destruct (Mem.free_list m4 [(b3, 0, 16); (b4, 0, 8); (b1, 0, 8); (b2, 0, 8); (b0, 0, 4)]) eqn: ?FREELIST.
               -- left. red. do 2 right.
-                 exploit sound_call_cont_find; eauto.
+                 exploit sound_call_cont; eauto.
+                 instantiate (2 := find). eauto.
                  intros (ck & CK & SCK).
                  do 2 eexists. econstructor.
                  eapply step_dropinsert_return_after.
@@ -1740,7 +2079,7 @@ Proof.
             econstructor. reflexivity.
             econstructor. reflexivity. eauto.
         - intros. inv H. inv SDROP.
-          exploit sound_call_cont_find; eauto.
+          exploit (sound_call_cont find); eauto.
           intros (ck1 & CK & SCK). simpl in CONT. rewrite CONT in CK.
           inv CK.          
           eapply find_returnstate. eauto. }
@@ -1749,7 +2088,7 @@ Proof.
       property *)
       inv STAR0; cbn [num_frames num_frames_cont] in *.
       (** show that the returnstate can take a step *)
-      { exploit sound_call_cont_find; eauto.
+      { exploit (sound_call_cont find); eauto.
         intros (ck1 & CK & SCK). simpl in CONT. rewrite CONT in CK. inv CK.
         vm_compute in SCK. inv SCK.
         (* ck1 is Kstop *)
