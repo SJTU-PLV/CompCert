@@ -1545,7 +1545,7 @@ Proof.
             reflexivity.
           - intros. eapply find_state_internal1 with (n:=16%nat); eauto.
             eapply starNf_step_right; eauto. 
-            1-2: inv H; inv SDROP; simpl; auto. lia.}
+            1-2: inv H; inv SDROP; simpl; auto. lia. }
         inv STEP. inv SDROP.
         vm_compute in OWNTY0. congruence. clear OWNTY0.
         inv STAR; cbn [num_frames num_frames_cont] in *.
@@ -1647,7 +1647,7 @@ Proof.
             eapply split_drop_place_find_tmp. eauto.
           - intros. eapply find_state_internal1 with (n:=18%nat); eauto.
             eapply starNf_step_right; eauto. 
-            1-2: inv H; inv SDROP; simpl; auto. lia.}
+            1-2: inv H; inv SDROP; simpl; auto. lia. }
         inv STEP. inv SDROP.
         2: { vm_compute in OWNTY0. congruence. }
         clear OWNTY0.
@@ -1663,7 +1663,7 @@ Proof.
             reflexivity.
           - intros. eapply find_state_internal1 with (n:=19%nat); eauto.
             eapply starNf_step_right; eauto. 
-            1-2: inv H; inv SDROP; simpl; auto. lia.}
+            1-2: inv H; inv SDROP; simpl; auto. lia. }
         inv STEP. inv SDROP.
         2: { unfold collect_func in A. vm_compute in A. inv A.
              vm_compute in OWN. congruence. }
@@ -1677,7 +1677,7 @@ Proof.
             eapply step_dropplace_return.
           - intros. eapply find_state_internal1 with (n:=20%nat); eauto.
             eapply starNf_step_right; eauto. 
-            1-2: inv H; inv SDROP; simpl; auto. lia.}
+            1-2: inv H; inv SDROP; simpl; auto. lia. }
         inv STEP. inv SDROP.
         inv STAR; cbn [num_frames num_frames_cont] in *.        
         (* evaluate Dcall *)

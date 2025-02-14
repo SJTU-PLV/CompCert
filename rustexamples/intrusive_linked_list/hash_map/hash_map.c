@@ -13,7 +13,7 @@ extern int delete_list(List* l);
 
 // The hash function can be implemented in assembly. It must guarantee
 // that the return index must less than DEFAULT_HASH_MAP_LENGTH.
-extern int hash(int k, uint32_t range);
+extern int hash(int k, unsigned int range);
 
 // We can also introduce handles to use multiple hash maps
 // static List* hmap[DEFAULT_HASH_MAP_LENGTH] = {NULL};
@@ -69,7 +69,7 @@ int process_with_key(int key, int val){
 void hmap_operate_on(Hashmap hmap, int key){
     List** buk = find_bucket(hmap, key);
     if(*buk == NULL){
-        return hmap;
+        return;
     }
     else{
         *buk = find(*buk, key);
@@ -106,15 +106,15 @@ void delete_hmap(Hashmap hmap){
     for(int i = 0; i < DEFAULT_HASH_MAP_LENGTH; ++i){
         if (hmap[i] != NULL) delete_list(hmap[i]);
     }
-    delete(hmap);
+    free(hmap);
     printf("Deleted the hash map\n");
 }
 
 int main(){
     Hashmap hmap = init_map();
     hmap_set(hmap, 19, 10);
-    hmap_get(hmap, 19);
-    hmap_get(hmap, 19);
-    hmap_get(hmap, 19);
+    hmap_operate_on(hmap, 19);
+    hmap_operate_on(hmap, 19);
+    hmap_operate_on(hmap, 19);
     delete_hmap(hmap);
 }

@@ -882,8 +882,8 @@ module To_syntax = struct
     | Omod ->
       (match (ta, tb) with
        | (T.Tint (size1, si1), T.Tint (size2, si2))
-         when size1 = size2 && si1 = si2 ->
-         return (T.Tint (size1, si1))
+         when size1 = size2 ->
+         return (T.Tint (size1, si2))
        | _ -> throw (Ebinop_type_error (op, ta, tb)))
 
    module Trans_match = struct
