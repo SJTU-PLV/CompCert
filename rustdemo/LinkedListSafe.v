@@ -79,15 +79,19 @@ End CLOSURES.
 Definition linked_list_sem := semantics linked_list_mod.
 
 (* The kripke world used in proving partial safety *)
-Record linked_list_world :=
-  { llw_sg: signature;
-    llw_senv: Genv.symtbl;
-    llw_hash_range : int }.
+Record hmap_world :=
+  { 
+    hmap_callee: ident + ident;         (* remember the called
+    function (inl is in linked_list and inr is in the C module) to
+    specify the post condition when returning the current module. How
+    to generalize it? *)
+    hmap_senv: Genv.symtbl;
+    hmap_hash_range : int }.
 
 Section SOUNDNESS.
 
 Context (se : Genv.symtbl).
-Context (w: linked_list_world).
+Context (w: hmap_world).
 
 Let ge := globalenv se linked_list_mod.
 
@@ -97,7 +101,7 @@ Hypothesis wf_senv: forall id,
       exists b, Genv.find_symbol se id = Some b
     else True.
 
-Hypothesis llw_senv_eq: w.(llw_senv) = se.
+Hypothesis hmap_senv_eq: w.(hmap_senv) = se.
 
 (** Local state of find function *)
 
@@ -210,14 +214,14 @@ Inductive hash_cont: cont -> Prop :=
 
 Inductive hash_pre_cond_args : list val -> Prop :=
 | hash_pre_cond_args_intro: forall k
-    (GTZ: Int.ltu Int.zero w.(llw_hash_range) = true)
+    (GTZ: Int.ltu Int.zero w.(hmap_hash_range) = true)
     (CASTED1: val_casted (Vint k) type_int32s)
-    (CASTED1: val_casted (Vint w.(llw_hash_range)) type_int32u),
-    hash_pre_cond_args [Vint k; Vint w.(llw_hash_range)].
+    (CASTED1: val_casted (Vint w.(hmap_hash_range)) type_int32u),
+    hash_pre_cond_args [Vint k; Vint w.(hmap_hash_range)].
 
 Inductive hash_post_cond_retv : val -> Prop :=
 | hash_post_cond_retv_intro: forall r    
-    (INRAN: Int.ltu r w.(llw_hash_range) = true),
+    (INRAN: Int.ltu r w.(hmap_hash_range) = true),
     hash_post_cond_retv (Vint r).
 
 (** Pre/Post-conditions parameterized by the function name *)
@@ -284,10 +288,18 @@ Inductive sound_state : state -> Prop :=
 (** callstate of hash function *)
 | hash_callstate: forall v al k m
     (CALL: call_func hash (Callstate v al k m))
+    (** Note: we need to record the called function of the current
+    module in the invariant, so that we can choose the post condition
+    when returning from the current module. But the recording would be
+    difficult if there are lots of mutual call in the current module,
+    where we should record the called function ident in the
+    continuation predicate *)
+    (FIDEQ: w.(hmap_callee) = inl hash)
     (PRE: hash_pre_cond_args al),
     sound_state (Callstate v al k m)
 | hash_state_internal: forall v al k m t s1 n
     (CALL: call_func hash (Callstate v al k m))
+    (FIDEQ: w.(hmap_callee) = inl hash)
     (STAR: starNf step num_frames ge n (Callstate v al k m) t s1)
     (PRECOND: hash_pre_cond_args al)
     (NOTCALL: not_call_return_state s1)
@@ -295,14 +307,17 @@ Inductive sound_state : state -> Prop :=
     sound_state s1
 | hash_returnstate: forall v k m
     (CONT: sound_cont hash k)
+    (FIDEQ: w.(hmap_callee) = inl hash)
     (PRE: hash_post_cond_retv v),
     sound_state (Returnstate v k m)
 
 | callstate_find: forall v al k m
-    (CALL: call_func find (Callstate v al k m)),
+    (CALL: call_func find (Callstate v al k m))
+    (FIDEQ: w.(hmap_callee) = inl find),
     sound_state (Callstate v al k m)
 | find_state_internal1: forall s0 s1 t n
     (CALL: call_func find s0)
+    (FIDEQ: w.(hmap_callee) = inl find)
     (STAR: starNf step num_frames ge n s0 t s1)
     (* used to prevent complicated reasoning in proving query/reply
     invariant in at_external state or final state *)
@@ -311,10 +326,12 @@ Inductive sound_state : state -> Prop :=
     sound_state s1
 | find_state_call_process: forall vf al k m
     (PROC: Genv.find_funct ge vf = Some process_ext)
+    (FIDEQ: w.(hmap_callee) = inl find)
     (CONT: find_cont_ret_process k),
     sound_state (Callstate vf al k m)
 | find_state_return_process: forall v k m
-    (CONT: find_cont_ret_process k),
+    (CONT: find_cont_ret_process k)
+    (FIDEQ: w.(hmap_callee) = inl find),
     sound_state (Returnstate v k m)
 (* state comes from return process *)
 | find_state_internal2: forall s0 s1 s2 t1 t2 n
@@ -323,6 +340,7 @@ Inductive sound_state : state -> Prop :=
     (STEP: step ge s0 t1 s1)
     (STAR: starNf step num_frames ge n s1 t2 s2)
     (NOTCALL: not_call_return_state s2)
+    (FIDEQ: w.(hmap_callee) = inl find)
     (RAN: (0 <= n <= 28)%nat),
     sound_state s2          
 (* state comes from return find *)
@@ -332,12 +350,14 @@ Inductive sound_state : state -> Prop :=
     (STEP: step ge s0 t1 s1)
     (STAR: starNf step num_frames ge n s1 t2 s2)
     (NOTCALL: not_call_return_state s2)
+    (FIDEQ: w.(hmap_callee) = inl find)
     (RAN: (0 <= n <= 28)%nat),
     sound_state s2
 (* This state can be return from the current find function or return
 from the last find function *)
-| find_returnstate: forall v k m,
-    sound_find_cont k ->
+| find_returnstate: forall v k m
+    (CONT: sound_find_cont k)
+      (FIDEQ: w.(hmap_callee) = inl find),
     sound_state (Returnstate v k m)
 .
 
@@ -493,31 +513,39 @@ Proof.
 Qed.
 
 (* Initial preservation and progress *)
-Inductive vq_linked_list (w: linked_list_world) : rust_query -> Prop :=
-(* incoming call  *)
-| vq_linked_list_intro1: forall b f targs tres tcc vargs m orgs rels fid
-    (FINDF: Genv.find_funct_ptr (globalenv w.(llw_senv) linked_list_mod) b = Some (Internal f))
+Inductive vq_hash_map (w: hmap_world) : rust_query -> Prop :=
+(* incoming call of linked_list (i.e., the outgoing call of hmap) *)
+| vq_hash_map_intro1: forall b f targs tres tcc vargs m orgs rels fid
+    (FINDF: Genv.find_funct_ptr (globalenv w.(hmap_senv) linked_list_mod) b = Some (Internal f))
     (TYF: type_of_function f = Tfunction orgs rels targs tres tcc)
     (NOTDROP: fn_drop_glue f = None)
     (CASTED: val_casted_list vargs targs)
     (SUP: Mem.sup_include (Genv.genv_sup ge) (Mem.support m))
     (SYM: Genv.invert_symbol se b = Some fid)
     (PRECOND: linked_list_args_pre_conds fid vargs)
+    (FIDEQ: w.(hmap_callee) = inl fid)
     (LEN: length_of_args fid = length vargs),
-    vq_linked_list w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (globalenv w.(llw_senv) linked_list_mod)) vargs m).
+    vq_hash_map w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (globalenv w.(hmap_senv) linked_list_mod)) vargs m).
 (** TODO: outgoing call (which is specific to the definition of the C module..) *)
     (* | vq_linked_list_intro2: forall vf f targs tres tcc vargs m orgs rels fid, *)
+
+Inductive vr_hash_map (w: hmap_world) : rust_reply -> Prop :=
+(* return from linked_list module *)
+| vr_hash_map_intro1: forall v m fid
+    (FIDEQ: w.(hmap_callee) = inl fid)
+    (POSTCOND: linked_list_retv_post_conds fid v),
+    vr_hash_map w (rsr v m).
 
 
 Lemma initial_preservation_progress: forall q,
     valid_query (linked_list_sem se) q = true ->
-    vq_linked_list w q ->
+    vq_hash_map w q ->
     exists s, initial_state ge q s
          /\ (forall s, initial_state ge q s -> sound_state s).
 Proof.
   intros q VQ QINV.
   (* query_inv *)
-  destruct QINV. rewrite llw_senv_eq in *.
+  destruct QINV. rewrite hmap_senv_eq in *.
   (* unfold Genv.is_internal in VQ. *)
   (* destruct Genv.find_funct eqn: FIND in VQ; try congruence. *)
   generalize FINDF as FINDF1. intros.
@@ -528,7 +556,7 @@ Proof.
   rewrite SYM in FINDF.
   (* destruct Genv.invert_symbol eqn: SYM in FIND; try congruence. *)
   eapply PTree.elements_correct in FINDF.
-
+ 
   eexists (Callstate (Vptr b Ptrofs.zero) vargs Kstop m). split.
   - econstructor; eauto.
   - intros. inv H.
@@ -538,8 +566,8 @@ Proof.
     (* we should know what function is being called *)
     repeat destruct FINDF as [|FINDF]. 
     (* call hash function *)
-    + inv H. eapply hash_callstate. econstructor; eauto.
-      econstructor. eauto.
+    + inv H. eapply hash_callstate; eauto. econstructor; eauto.
+      econstructor. 
     (* call drop_in_place_List (contradiction) *)
     + inv H. simpl in H11. congruence.
     (* call remove function (not supported for now) *)
@@ -553,7 +581,7 @@ Proof.
     (*  call drop_in_place_Node (contradiction) *)
     + inv H. simpl in H11. congruence.
     (* call find *)
-    + inv H. eapply callstate_find.
+    + inv H. eapply callstate_find; eauto.
       econstructor; eauto. econstructor.
     (* call malloc (contradiction) *)
     + inv H.
@@ -561,7 +589,35 @@ Proof.
     + admit.
     + inv FINDF.
 Admitted.
-  
+
+Lemma linked_list_final: forall s r,
+    sound_state s ->
+    final_state s r ->
+    vr_hash_map w r.
+Proof.
+  intros s r SINV FINAL.
+  inv FINAL. inv SINV; try simpl in NOTCALL; try contradiction.
+  (* return from hash *)
+  - econstructor; eauto.
+  (* call process (contradiction) *)
+  - inv CONT.
+  (* return from find *)
+  - econstructor; eauto.
+    red. simpl. auto.
+Qed.
+
+Lemma linked_list_external: forall s q,
+    sound_state s ->
+    at_external ge s q ->
+    exists w', vq_hash_map w' q
+          /\ forall r, vr_hash_map w' r ->
+                 (exists s', after_external s r s'
+                        /\ (forall s', after_external s r s' -> sound_state s')).
+Proof.
+  intros s q SINV EXT.
+Admitted.
+
+
 Local Open Scope sep_scope.
 
 Lemma step_preservation_progress: forall s,
@@ -681,7 +737,7 @@ Proof.
     rewrite <- sep_assoc, sep_comm in PM4.
     exploit storev_rule. eapply range_contains with  (ofs:=0) (chunk:= Mint32).
     eapply PM4. eapply Z.divide_0_r. 
-    instantiate (1 := Vint (hash_range w)). instantiate (1 := fun v => v = Vint (hash_range w)). simpl. auto.
+    instantiate (1 := Vint (hmap_hash_range w)). instantiate (1 := fun v => v = Vint (hmap_hash_range w)). simpl. auto.
     intros (m1'' & STORE2 & PM5).
     setoid_rewrite H1 in STORE2. inv STORE2.
     (* load k and range *)
@@ -691,8 +747,8 @@ Proof.
     intros (?v & LOAD2 & PV2). subst.
     (* show that the remainder operation can succeed *)
     assert (MOD: exists r, sem_mod (Vint k0) (Ctypes.Tint I32 Signed noattr)
-                   (Vint (hash_range w)) (Ctypes.Tint I32 Unsigned noattr) m1'' = Some (Vint r)
-    /\ Int.ltu r (hash_range w) = true).
+                   (Vint (hmap_hash_range w)) (Ctypes.Tint I32 Unsigned noattr) m1'' = Some (Vint r)
+    /\ Int.ltu r (hmap_hash_range w) = true).
     {  simpl. unfold sem_mod, sem_binarith. simpl.
        replace ((Ctypes.Tint I32 Signed noattr)) with (to_ctype type_int32s) by reflexivity.
        replace ((Ctypes.Tint I32 Unsigned noattr)) with (to_ctype type_int32u) by reflexivity.       
@@ -707,17 +763,17 @@ Proof.
        unfold Int.ltu. destruct zlt. auto.
        unfold Int.modu in g.
        rewrite Int.unsigned_repr in g.
-       exploit (Z.mod_bound_or (Int.unsigned (cast_int_int I32 Unsigned k0)) (Int.unsigned (hash_range w))). lia.
+       exploit (Z.mod_bound_or (Int.unsigned (cast_int_int I32 Unsigned k0)) (Int.unsigned (hmap_hash_range w))). lia.
        intros [E1|E2]; lia. 
-       exploit (Z.mod_bound_or (Int.unsigned (cast_int_int I32 Unsigned k0)) (Int.unsigned (hash_range w))). lia.
-       generalize (Int.unsigned_range_2 (hash_range w)). intros R2.
+       exploit (Z.mod_bound_or (Int.unsigned (cast_int_int I32 Unsigned k0)) (Int.unsigned (hmap_hash_range w))). lia.
+       generalize (Int.unsigned_range_2 (hmap_hash_range w)). intros R2.
        intros [E1|E2]; lia.  }
     destruct MOD as (r & SEMOD & RSPEC).
     (* store the vaule to retv *)
     exploit storev_rule. eapply range_contains with  (ofs:=0) (chunk:= Mint32).
     eapply sep_comm.
     eapply PM5. eapply Z.divide_0_r. 
-    instantiate (1 := Vint r). instantiate (1 := fun v => v = Vint r /\ Int.ltu r (hash_range w) = true). simpl. auto.
+    instantiate (1 := Vint r). instantiate (1 := fun v => v = Vint r /\ Int.ltu r (hmap_hash_range w) = true). simpl. auto.
     intros (m1''' & STORE3 & PM6).
     
     inv STAR; cbn [num_frames num_frames_cont] in *.
@@ -1177,7 +1233,7 @@ Proof.
         - intros. inv H. inv SDROP.
           exploit sound_call_cont; eauto.
           intros (ck1 & CK & SCK). rewrite CONT in CK. inv CK.          
-          eapply find_returnstate. eauto. }
+          eapply find_returnstate. eauto. eauto. }
       (* show that it cannot take more step using num_frames unchanged
       property *)
       inv STEP. inv SDROP.
@@ -1215,7 +1271,7 @@ Proof.
             2: eauto.
             econstructor. econstructor. eauto. eauto.
             econstructor. 
-            inv H; simpl; eauto. lia. }
+            inv H; simpl; eauto. eauto. lia. }
       (* num frames contradiction *)
       inv STEP.
       simpl in FEQ16.
@@ -1547,6 +1603,7 @@ Proof.
             rewrite Genv.find_def_spec.
             erewrite Genv.find_invert_symbol; eauto.
             reflexivity.
+            eauto.
             (* sound_find_cont *)
             simpl. econstructor. eauto. eauto. }
         inv STEP. inv SDROP. simpl in FEQ15.
@@ -1690,7 +1747,7 @@ Proof.
             eapply callstate_find. econstructor.
             eapply Genv.find_invert_symbol. eauto.
             econstructor. eauto. eauto.
-            inv H22. inv H11. inv H21. reflexivity. }
+            inv H22. inv H11. inv H21. reflexivity. eauto. }
         inv STEP. inv SDROP. simpl in FEQ19.
         exfalso. eapply Nat.neq_succ_diag_l; eauto. }
     }
@@ -1728,7 +1785,7 @@ Proof.
     + intros. eapply find_state_internal2 with (n:=0%nat).
       2: eauto.
       econstructor. auto.
-      econstructor. inv H; simpl; auto. lia.
+      econstructor. inv H; simpl; auto. eauto. lia.
   (* execution after returning from process *)
   - generalize RET. intros RET1.
     generalize STEP. intros STEP1.
@@ -2169,7 +2226,7 @@ Proof.
           exploit (sound_call_cont find); eauto.
           intros (ck1 & CK & SCK). simpl in CONT. rewrite CONT in CK.
           inv CK.          
-          eapply find_returnstate. eauto. }
+          eapply find_returnstate; eauto. }
       inv STEP. inv SDROP.
       (* show that it cannot take more step using num_frames unchanged
       property *)
@@ -2203,8 +2260,7 @@ Proof.
             a kind of memory error *)
             * admit.
           + intros.
-            eapply find_state_internal3 with (n:=0%nat).
-            2: eauto.
+            eapply find_state_internal3 with (n:=0%nat); eauto.
             econstructor. econstructor. eauto. eauto.
             econstructor. 
             inv H; simpl; eauto. lia. }
@@ -2218,7 +2274,7 @@ Proof.
   - admit.
 
   (* state in find_returnstate (returing from find function) *)
-  - inv H.
+  - inv CONT.
     (* ck1 is Kstop *)
     + split.
       (* final state *)
@@ -2244,7 +2300,7 @@ Proof.
             a kind of memory error *)
         -- admit.
       * intros.
-        eapply find_state_internal3 with (n:=0%nat).
+        eapply find_state_internal3 with (n:=0%nat); eauto.
         2: eauto.
         econstructor. econstructor. eauto. eauto.
         econstructor. 

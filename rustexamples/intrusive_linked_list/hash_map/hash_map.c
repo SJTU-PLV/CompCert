@@ -4,7 +4,7 @@
 
 // maybe just use void* instead of List*
 typedef struct List List;
-
+typedef List** Hashmap;
 extern List* empty_list();
 extern List* find(List* l, int k);
 extern List* insert(List* l, int k, int v);
@@ -16,22 +16,25 @@ extern int delete_list(List* l);
 extern int hash(int k, uint32_t range);
 
 // We can also introduce handles to use multiple hash maps
-static List* hmap[DEFAULT_HASH_MAP_LENGTH] = {NULL};
+// static List* hmap[DEFAULT_HASH_MAP_LENGTH] = {NULL};
 
 // Less efficient
-void init_map(){
+Hashmap init_map(){
+    Hashmap hmap = malloc(sizeof(void*) * DEFAULT_HASH_MAP_LENGTH);
     for(int i = 0; i < DEFAULT_HASH_MAP_LENGTH; ++i){
-        hmap[i] = empty_list();
+        // hmap[i] = empty_list();
+        hmap[i] = NULL;
     }
+    return hmap;
 }
 
-List** find_bucket(int key){
+List** find_bucket(Hashmap hmap, int key){
     int index = hash(key, DEFAULT_HASH_MAP_LENGTH);
     return &(hmap[index]);
 }
 
-void hmap_set(int key, int val){
-    List** buk = find_bucket(key);
+Hashmap hmap_set(Hashmap hmap, int key, int val){
+    List** buk = find_bucket(hmap, key);
     if(*buk == NULL){
         List* list = empty_list(); // do we need to check the malloc result?
         list = insert(list, key, val);
@@ -40,7 +43,7 @@ void hmap_set(int key, int val){
     else{
         *buk = insert(*buk, key, val);
     }
-
+    return hmap;
     // int index = hash(key);
     // if(hmap[index] == NULL){
     //     List* list = empty_list(); // do we need to check the malloc result?
@@ -63,13 +66,13 @@ int process_with_key(int key, int val){
     return val;
 }
 
-void hmap_get(int key){
-    List** buk = find_bucket(key);
+void hmap_operate_on(Hashmap hmap, int key){
+    List** buk = find_bucket(hmap, key);
     if(*buk == NULL){
-        return;
+        return hmap;
     }
     else{
-        find(*buk, key);
+        *buk = find(*buk, key);
     }
 
     // int index = hash(key);
@@ -81,13 +84,13 @@ void hmap_get(int key){
     // }
 }
 
-void hmap_remove(int key){
-    List** buk = find_bucket(key);
+void hmap_remove(Hashmap hmap, int key){
+    List** buk = find_bucket(hmap, key);
     if(*buk == NULL){
         return;
     }
     else{
-        remove(*buk, key);
+        *buk = remove(*buk, key);
     }
 
     // int index = hash(key);
@@ -99,15 +102,19 @@ void hmap_remove(int key){
     // }
 }
 
-void delete_hmap(){
+void delete_hmap(Hashmap hmap){
     for(int i = 0; i < DEFAULT_HASH_MAP_LENGTH; ++i){
         if (hmap[i] != NULL) delete_list(hmap[i]);
     }
-    printf("Delete the hash map\n");
+    delete(hmap);
+    printf("Deleted the hash map\n");
 }
 
 int main(){
-    hmap_set(19, 10);
-    hmap_get(19);
-    delete_hmap();
+    Hashmap hmap = init_map();
+    hmap_set(hmap, 19, 10);
+    hmap_get(hmap, 19);
+    hmap_get(hmap, 19);
+    hmap_get(hmap, 19);
+    delete_hmap(hmap);
 }
