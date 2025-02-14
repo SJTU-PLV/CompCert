@@ -11,7 +11,8 @@ Require Import LinkedList.
 Require Import Values Globalenvs Memory.
 Require Import InitDomain.
 Require Import Events.
-Require Import Smallstep Rustlightown SmallstepLinkingSafe.
+Require Import Invariant Smallstep SmallstepLinkingSafe.
+Require Import Rustlightown.
 Require Import Separation.
 
 Local Open Scope error_monad_scope.
@@ -79,7 +80,9 @@ Definition linked_list_sem := semantics linked_list_mod.
 
 (* The kripke world used in proving partial safety *)
 Record linked_list_world :=
-  { hash_range : int }.
+  { llw_sg: signature;
+    llw_senv: Genv.symtbl;
+    llw_hash_range : int }.
 
 Section SOUNDNESS.
 
@@ -88,10 +91,13 @@ Context (w: linked_list_world).
 
 Let ge := globalenv se linked_list_mod.
 
+(* The following hypothese are derived from symtbl_inv *)
 Hypothesis wf_senv: forall id,
     if in_dec ident_eq id (prog_defs_names linked_list_mod) then
       exists b, Genv.find_symbol se id = Some b
     else True.
+
+Hypothesis llw_senv_eq: w.(llw_senv) = se.
 
 (** Local state of find function *)
 
@@ -204,16 +210,27 @@ Inductive hash_cont: cont -> Prop :=
 
 Inductive hash_pre_cond_args : list val -> Prop :=
 | hash_pre_cond_args_intro: forall k
-    (GTZ: Int.ltu Int.zero w.(hash_range) = true)
+    (GTZ: Int.ltu Int.zero w.(llw_hash_range) = true)
     (CASTED1: val_casted (Vint k) type_int32s)
-    (CASTED1: val_casted (Vint w.(hash_range)) type_int32u),
-    hash_pre_cond_args [Vint k; Vint w.(hash_range)].
+    (CASTED1: val_casted (Vint w.(llw_hash_range)) type_int32u),
+    hash_pre_cond_args [Vint k; Vint w.(llw_hash_range)].
 
 Inductive hash_post_cond_retv : val -> Prop :=
 | hash_post_cond_retv_intro: forall r    
-    (INRAN: Int.ltu r w.(hash_range) = true),
+    (INRAN: Int.ltu r w.(llw_hash_range) = true),
     hash_post_cond_retv (Vint r).
-    
+
+(** Pre/Post-conditions parameterized by the function name *)
+Definition linked_list_args_pre_conds (f: ident) : list val -> Prop :=
+  if ident_eq f hash then
+    hash_pre_cond_args
+  else fun _ => True.
+
+Definition linked_list_retv_post_conds (f: ident) : val -> Prop :=
+  if ident_eq f hash then
+    hash_post_cond_retv
+  else fun _ => True.
+
 (** Continuation parameterized by the function name *)
 
 Definition sound_cont (f: ident) : cont -> Prop :=
@@ -412,7 +429,7 @@ Qed.
 Lemma split_drop_place_find_retv: forall w,
     collect_func ge find_func = OK w ->
     split_drop_place ge (PathsMap.get _retv w) (Plocal _retv List_box) List_box = OK [(Plocal _retv List_box, true)].
-Proof using se.
+Proof.
   intros. unfold collect_func in H.
   vm_compute in H. inv H. reflexivity.
 Qed.
@@ -420,7 +437,7 @@ Qed.
 Lemma split_drop_place_find_l: forall w,
     collect_func ge find_func = OK w ->
     split_drop_place ge (PathsMap.get l w) (Plocal l List_box) List_box = OK [(Pderef (Plocal l List_box) List_ty, true); (Plocal l List_box, false)].
-Proof using se.
+Proof.
   intros. unfold collect_func in H.
   vm_compute in H. inv H. reflexivity.
 Qed.
@@ -428,7 +445,7 @@ Qed.
 Lemma split_drop_place_find_deref_l: forall w,
     collect_func ge find_func = OK w ->
     split_drop_place ge (PathsMap.get l w) (Pderef (Plocal l List_box) List_ty) List_ty = OK [(Pderef (Plocal l List_box) List_ty, true)].
-Proof using se.
+Proof.
   intros. unfold collect_func in H.
   vm_compute in H. inv H. reflexivity.
 Qed.
@@ -439,7 +456,7 @@ Lemma split_drop_place_find_node: forall w,
     split_drop_place ge (PathsMap.get node w) (Plocal node Node_ty) Node_ty = OK [(Pfield (Plocal node Node_ty) key type_int32s, true);
     (Pfield (Plocal node Node_ty) LinkedList.val type_int32s, true);
     (Pfield (Plocal node Node_ty) next List_box, true)].
-Proof using se.
+Proof.
   intros. unfold collect_func in H.
   vm_compute in H. inv H. reflexivity.  
 Qed.
@@ -447,7 +464,7 @@ Qed.
 Lemma split_drop_place_find_node_next: forall w,
     collect_func ge find_func = OK w ->
     split_drop_place ge (PathsMap.get node w) (Pfield (Plocal node Node_ty) next List_box) List_box = OK [(Pfield (Plocal node Node_ty) next List_box, true)].
-Proof using se.
+Proof.
   intros. unfold collect_func in H.
   vm_compute in H. inv H. reflexivity.  
 Qed.
@@ -455,7 +472,7 @@ Qed.
 Lemma split_drop_place_find_tmp: forall w,
     collect_func ge find_func = OK w ->
     split_drop_place ge (PathsMap.get tmp w) (Plocal tmp List_box) List_box = OK [(Plocal tmp List_box, true)].
-Proof using se.
+Proof.
   intros. unfold collect_func in H.
   vm_compute in H. inv H. reflexivity.  
 Qed.
@@ -472,9 +489,79 @@ Lemma call_cont_num_frames_eq: forall k1 k2,
     call_cont k1 = Some k2 ->
     num_frames_cont k1 = num_frames_cont k2.
 Proof.
-  induction k1; intros k2 CK; simpl in *; inv CK; auto.
+  induction k1; intros k2 CK; simpl in CK; inv CK; auto.
 Qed.
 
+(* Initial preservation and progress *)
+Inductive vq_linked_list (w: linked_list_world) : rust_query -> Prop :=
+(* incoming call  *)
+| vq_linked_list_intro1: forall b f targs tres tcc vargs m orgs rels fid
+    (FINDF: Genv.find_funct_ptr (globalenv w.(llw_senv) linked_list_mod) b = Some (Internal f))
+    (TYF: type_of_function f = Tfunction orgs rels targs tres tcc)
+    (NOTDROP: fn_drop_glue f = None)
+    (CASTED: val_casted_list vargs targs)
+    (SUP: Mem.sup_include (Genv.genv_sup ge) (Mem.support m))
+    (SYM: Genv.invert_symbol se b = Some fid)
+    (PRECOND: linked_list_args_pre_conds fid vargs)
+    (LEN: length_of_args fid = length vargs),
+    vq_linked_list w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (globalenv w.(llw_senv) linked_list_mod)) vargs m).
+(** TODO: outgoing call (which is specific to the definition of the C module..) *)
+    (* | vq_linked_list_intro2: forall vf f targs tres tcc vargs m orgs rels fid, *)
+
+
+Lemma initial_preservation_progress: forall q,
+    valid_query (linked_list_sem se) q = true ->
+    vq_linked_list w q ->
+    exists s, initial_state ge q s
+         /\ (forall s, initial_state ge q s -> sound_state s).
+Proof.
+  intros q VQ QINV.
+  (* query_inv *)
+  destruct QINV. rewrite llw_senv_eq in *.
+  (* unfold Genv.is_internal in VQ. *)
+  (* destruct Genv.find_funct eqn: FIND in VQ; try congruence. *)
+  generalize FINDF as FINDF1. intros.
+  (* unfold Genv.find_funct in FIND. destruct rsq_vf; try congruence. *)
+  (* destruct Ptrofs.eq_dec in FIND; try congruence; subst. *)
+  erewrite Genv.find_funct_ptr_iff in FINDF.
+  setoid_rewrite Genv.find_def_spec in FINDF.
+  rewrite SYM in FINDF.
+  (* destruct Genv.invert_symbol eqn: SYM in FIND; try congruence. *)
+  eapply PTree.elements_correct in FINDF.
+
+  eexists (Callstate (Vptr b Ptrofs.zero) vargs Kstop m). split.
+  - econstructor; eauto.
+  - intros. inv H.
+    simpl in H9. rewrite dec_eq_true in H9.
+    setoid_rewrite FINDF1 in H9. inv H9.
+    rewrite TYF in H10. inv H10. inv H3.    
+    (* we should know what function is being called *)
+    repeat destruct FINDF as [|FINDF]. 
+    (* call hash function *)
+    + inv H. eapply hash_callstate. econstructor; eauto.
+      econstructor. eauto.
+    (* call drop_in_place_List (contradiction) *)
+    + inv H. simpl in H11. congruence.
+    (* call remove function (not supported for now) *)
+    + admit.
+    (* call process_ext (contradiction) *)    
+    + inv H.
+    (* call empty_list function (not supported for now) *)
+    + admit.
+    (* call free (contradiction) *)
+    + inv H.
+    (*  call drop_in_place_Node (contradiction) *)
+    + inv H. simpl in H11. congruence.
+    (* call find *)
+    + inv H. eapply callstate_find.
+      econstructor; eauto. econstructor.
+    (* call malloc (contradiction) *)
+    + inv H.
+    (* call insert (not suppored) *)
+    + admit.
+    + inv FINDF.
+Admitted.
+  
 Local Open Scope sep_scope.
 
 Lemma step_preservation_progress: forall s,
@@ -2170,3 +2257,4 @@ End SOUNDNESS.
 
         
                 
+  
