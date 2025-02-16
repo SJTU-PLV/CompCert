@@ -176,7 +176,7 @@ RUSTFRONTEND=Rusttypes.v Rustsyntax.v Rustlight.v RustIR.v\
   # BorrowCheckDomain.v ReplaceOrigins.v BorrowCheckPolonius.v
   # BorrowCheckSafe.v
 
-RUSTDEMO=LinkedList.v LinkedListSafe.v
+RUSTDEMO=LinkedList.v LinkedListSafe.v HashMap.v HashMapSafe.v
 
 # Parser
 

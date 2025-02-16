@@ -525,10 +525,20 @@ Inductive vq_hash_map (w: hmap_world) : rust_query -> Prop :=
     (PRECOND: linked_list_args_pre_conds fid vargs)
     (FIDEQ: w.(hmap_callee) = inl fid)
     (LEN: length_of_args fid = length vargs),
-    vq_hash_map w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (globalenv w.(hmap_senv) linked_list_mod)) vargs m).
+    vq_hash_map w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (globalenv w.(hmap_senv) linked_list_mod)) vargs m)
 (** TODO: outgoing call (which is specific to the definition of the C module..) *)
-    (* | vq_linked_list_intro2: forall vf f targs tres tcc vargs m orgs rels fid, *)
-
+| vq_hash_map_intro2: forall b f targs tres tcc vargs m orgs rels fid
+    (FINDF: Genv.find_funct_ptr (globalenv w.(hmap_senv) linked_list_mod) b = Some process_ext)
+    (TYF: type_of_function f = Tfunction orgs rels targs tres tcc)
+    (NOTDROP: fn_drop_glue f = None)
+    (CASTED: val_casted_list vargs targs)
+    (SUP: Mem.sup_include (Genv.genv_sup ge) (Mem.support m))
+    (SYM: Genv.invert_symbol se b = Some fid)
+    (PRECOND: linked_list_args_pre_conds fid vargs)
+    (FIDEQ: w.(hmap_callee) = inr fid)
+    (LEN: length_of_args fid = length vargs),
+    vq_hash_map w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (globalenv w.(hmap_senv) linked_list_mod)) vargs m).
+    
 Inductive vr_hash_map (w: hmap_world) : rust_reply -> Prop :=
 (* return from linked_list module *)
 | vr_hash_map_intro1: forall v m fid
@@ -610,14 +620,25 @@ Lemma linked_list_external: forall s q,
     sound_state s ->
     at_external ge s q ->
     exists w', vq_hash_map w' q
+          (* TODO: prove symtbl_inv *)
           /\ forall r, vr_hash_map w' r ->
                  (exists s', after_external s r s'
                         /\ (forall s', after_external s r s' -> sound_state s')).
 Proof.
-  intros s q SINV EXT.
-Admitted.
-
-
+  intros s q SINV EXT. inv EXT.
+  inv SINV; try simpl in NOTCALL; try contradiction.
+  (* call hash (contradiction) *)
+  - inv CALL.
+    admit.
+  (* call find (contradiction) *)
+  - inv CALL.
+    admit.
+  (* call process *)
+  - rewrite H in PROC. inv PROC.
+    exists (Build_hmap_world (inr process) se w.(hmap_hash_range)).
+    repeat apply conj.
+    
+    
 Local Open Scope sep_scope.
 
 Lemma step_preservation_progress: forall s,

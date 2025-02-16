@@ -13,13 +13,13 @@ extern int delete_list(List* l);
 
 // The hash function can be implemented in assembly. It must guarantee
 // that the return index must less than DEFAULT_HASH_MAP_LENGTH.
-extern int hash(int k, unsigned int range);
+extern unsigned int hash(int k, unsigned int range);
 
 // We can also introduce handles to use multiple hash maps
 // static List* hmap[DEFAULT_HASH_MAP_LENGTH] = {NULL};
 
 // Less efficient
-Hashmap init_map(){
+Hashmap init_hmap(){
     Hashmap hmap = malloc(sizeof(void*) * DEFAULT_HASH_MAP_LENGTH);
     for(int i = 0; i < DEFAULT_HASH_MAP_LENGTH; ++i){
         // hmap[i] = empty_list();
@@ -36,9 +36,9 @@ List** find_bucket(Hashmap hmap, int key){
 Hashmap hmap_set(Hashmap hmap, int key, int val){
     List** buk = find_bucket(hmap, key);
     if(*buk == NULL){
-        List* list = empty_list(); // do we need to check the malloc result?
-        list = insert(list, key, val);
-        *buk = list;
+        List* l = empty_list(); // do we need to check the malloc result?
+        l = insert(l, key, val);
+        *buk = l;
     }
     else{
         *buk = insert(*buk, key, val);
@@ -111,7 +111,7 @@ void delete_hmap(Hashmap hmap){
 }
 
 int main(){
-    Hashmap hmap = init_map();
+    Hashmap hmap = init_hmap();
     hmap_set(hmap, 19, 10);
     hmap_operate_on(hmap, 19);
     hmap_operate_on(hmap, 19);
