@@ -12,6 +12,7 @@ Require Import Values Globalenvs Memory.
 Require Import InitDomain.
 Require Import Events.
 Require Import Invariant Smallstep SmallstepLinkingSafe.
+Require Import HashMapCommon.
 Require Import Rustlightown.
 Require Import Separation.
 
@@ -43,50 +44,7 @@ Definition num_frames (s: state) : nat :=
   end.
               
 
-
-Section CLOSURES.
-
-Context {genv: Type}.
-Context {state: Type}.
-
-Variable step: genv -> state -> trace -> state -> Prop.
-Variable numf: state -> nat.
-
-Inductive starNf (ge: genv): nat -> state -> trace -> state -> Prop :=
-  | starNf_refl: forall s,
-      starNf ge O s E0 s
-  | starNf_step: forall n s t t1 s' t2 s''
-      (STEP: step ge s t1 s')
-      (STAR: starNf ge n s' t2 s'')
-      (TRACE: t = t1 ** t2)
-      (FEQ: numf s = numf s'),
-      starNf ge (S n) s t s''.
-
-Remark starNf_star:
-  forall ge n s t s', starNf ge n s t s' -> star step ge s t s'.
-Proof.
-  induction 1; econstructor; eauto.
-Qed.
-
-Remark starNf_step_right ge: forall n s t t1 s' t2 s'',
-    starNf ge n s t1 s' -> step ge s' t2 s'' -> t = t1 ** t2 ->
-    numf s' = numf s'' ->
-    starNf ge (S n) s t s''.
-Admitted.
-
-End CLOSURES.
-
 Definition linked_list_sem := semantics linked_list_mod.
-
-(* The kripke world used in proving partial safety *)
-Record hmap_world :=
-  { 
-    hmap_callee: ident + ident;         (* remember the called
-    function (inl is in linked_list and inr is in the C module) to
-    specify the post condition when returning the current module. How
-    to generalize it? *)
-    hmap_senv: Genv.symtbl;
-    hmap_hash_range : int }.
 
 Section SOUNDNESS.
 
@@ -210,31 +168,6 @@ Inductive find_cont_ret_process : cont -> Prop :=
 Inductive hash_cont: cont -> Prop :=
 | hash_cont_intro: hash_cont Kstop.
 
-(* pre-post conditions of hash function *)
-
-Inductive hash_pre_cond_args : list val -> Prop :=
-| hash_pre_cond_args_intro: forall k
-    (GTZ: Int.ltu Int.zero w.(hmap_hash_range) = true)
-    (CASTED1: val_casted (Vint k) type_int32s)
-    (CASTED1: val_casted (Vint w.(hmap_hash_range)) type_int32u),
-    hash_pre_cond_args [Vint k; Vint w.(hmap_hash_range)].
-
-Inductive hash_post_cond_retv : val -> Prop :=
-| hash_post_cond_retv_intro: forall r    
-    (INRAN: Int.ltu r w.(hmap_hash_range) = true),
-    hash_post_cond_retv (Vint r).
-
-(** Pre/Post-conditions parameterized by the function name *)
-Definition linked_list_args_pre_conds (f: ident) : list val -> Prop :=
-  if ident_eq f hash then
-    hash_pre_cond_args
-  else fun _ => True.
-
-Definition linked_list_retv_post_conds (f: ident) : val -> Prop :=
-  if ident_eq f hash then
-    hash_post_cond_retv
-  else fun _ => True.
-
 (** Continuation parameterized by the function name *)
 
 Definition sound_cont (f: ident) : cont -> Prop :=
@@ -246,13 +179,6 @@ Definition sound_cont (f: ident) : cont -> Prop :=
     else
       fun _ => False.
 
-Definition length_of_args (f: ident) : nat :=
-  if ident_eq f find then
-    2
-  else
-    if ident_eq f hash then
-      2     
-  else O.
 
 Inductive call_func (f: ident) : state -> Prop :=
 | call_func_intro: forall b vl k m
@@ -295,20 +221,20 @@ Inductive sound_state : state -> Prop :=
     where we should record the called function ident in the
     continuation predicate *)
     (FIDEQ: w.(hmap_callee) = inl hash)
-    (PRE: hash_pre_cond_args al),
+    (PRE: hash_pre_cond_args w.(hmap_hash_range) al),
     sound_state (Callstate v al k m)
 | hash_state_internal: forall v al k m t s1 n
     (CALL: call_func hash (Callstate v al k m))
     (FIDEQ: w.(hmap_callee) = inl hash)
     (STAR: starNf step num_frames ge n (Callstate v al k m) t s1)
-    (PRECOND: hash_pre_cond_args al)
+    (PRECOND: hash_pre_cond_args w.(hmap_hash_range) al)
     (NOTCALL: not_call_return_state s1)
     (RAN: (1 <= n <= 11)%nat),
     sound_state s1
 | hash_returnstate: forall v k m
     (CONT: sound_cont hash k)
     (FIDEQ: w.(hmap_callee) = inl hash)
-    (PRE: hash_post_cond_retv v),
+    (PRE: hash_post_cond_retv w.(hmap_hash_range) v),
     sound_state (Returnstate v k m)
 
 | callstate_find: forall v al k m
@@ -512,40 +438,6 @@ Proof.
   induction k1; intros k2 CK; simpl in CK; inv CK; auto.
 Qed.
 
-(* Initial preservation and progress *)
-Inductive vq_hash_map (w: hmap_world) : rust_query -> Prop :=
-(* incoming call of linked_list (i.e., the outgoing call of hmap) *)
-| vq_hash_map_intro1: forall b f targs tres tcc vargs m orgs rels fid
-    (FINDF: Genv.find_funct_ptr (globalenv w.(hmap_senv) linked_list_mod) b = Some (Internal f))
-    (TYF: type_of_function f = Tfunction orgs rels targs tres tcc)
-    (NOTDROP: fn_drop_glue f = None)
-    (CASTED: val_casted_list vargs targs)
-    (SUP: Mem.sup_include (Genv.genv_sup ge) (Mem.support m))
-    (SYM: Genv.invert_symbol se b = Some fid)
-    (PRECOND: linked_list_args_pre_conds fid vargs)
-    (FIDEQ: w.(hmap_callee) = inl fid)
-    (LEN: length_of_args fid = length vargs),
-    vq_hash_map w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (globalenv w.(hmap_senv) linked_list_mod)) vargs m)
-(** TODO: outgoing call (which is specific to the definition of the C module..) *)
-| vq_hash_map_intro2: forall b f targs tres tcc vargs m orgs rels fid
-    (FINDF: Genv.find_funct_ptr (globalenv w.(hmap_senv) linked_list_mod) b = Some process_ext)
-    (TYF: type_of_function f = Tfunction orgs rels targs tres tcc)
-    (NOTDROP: fn_drop_glue f = None)
-    (CASTED: val_casted_list vargs targs)
-    (SUP: Mem.sup_include (Genv.genv_sup ge) (Mem.support m))
-    (SYM: Genv.invert_symbol se b = Some fid)
-    (PRECOND: linked_list_args_pre_conds fid vargs)
-    (FIDEQ: w.(hmap_callee) = inr fid)
-    (LEN: length_of_args fid = length vargs),
-    vq_hash_map w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (globalenv w.(hmap_senv) linked_list_mod)) vargs m).
-    
-Inductive vr_hash_map (w: hmap_world) : rust_reply -> Prop :=
-(* return from linked_list module *)
-| vr_hash_map_intro1: forall v m fid
-    (FIDEQ: w.(hmap_callee) = inl fid)
-    (POSTCOND: linked_list_retv_post_conds fid v),
-    vr_hash_map w (rsr v m).
-
 
 Lemma initial_preservation_progress: forall q,
     valid_query (linked_list_sem se) q = true ->
@@ -637,7 +529,7 @@ Proof.
   - rewrite H in PROC. inv PROC.
     exists (Build_hmap_world (inr process) se w.(hmap_hash_range)).
     repeat apply conj.
-    
+    Admitted.
     
 Local Open Scope sep_scope.
 

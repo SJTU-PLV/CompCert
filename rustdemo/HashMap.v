@@ -101,15 +101,16 @@ Definition process_func := {|
 
 Definition composites : list composite_definition := nil.
 
+Definition hash_ext : fundef := (External (EF_external "hash"
+                                    (AST.mksignature (AST.Tint :: AST.Tint :: nil) AST.Tint
+                                       cc_default)) (Tcons tint (Tcons tuint Tnil)) tuint
+                          cc_default).
+
 Definition global_definitions : list (ident * globdef fundef type) :=
   (find_bucket, Gfun(Internal find_bucket_func)) ::
   (process, Gfun(Internal process_func)) ::
   (hmap_operate_on, Gfun(Internal hmap_operate_on_func)) ::
-  (hash,
-   Gfun(External (EF_external "hash"
-                   (AST.mksignature (AST.Tint :: AST.Tint :: nil) AST.Tint
-                     cc_default)) (Tcons tint (Tcons tuint Tnil)) tint
-     cc_default)) :: nil.
+  (hash, Gfun hash_ext) :: nil.
 
 Definition public_idents : list ident :=
   (hmap_operate_on :: process :: find_bucket :: nil).
