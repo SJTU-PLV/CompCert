@@ -29,7 +29,7 @@ Hashmap init_hmap(){
 }
 
 List** find_bucket(Hashmap hmap, int key){
-    int index = hash(key, DEFAULT_HASH_MAP_LENGTH);
+    unsigned int index = hash(key, DEFAULT_HASH_MAP_LENGTH);
     return &(hmap[index]);
 }
 

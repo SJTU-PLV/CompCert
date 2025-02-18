@@ -41,7 +41,7 @@ Definition find_bucket_func : function := {|
   fn_params := ((hmap, hmap_ty) ::
                 (key, tint) :: nil);
   fn_vars := nil;
-  fn_temps := (index, tint) :: nil;
+  fn_temps := (index, tuint) :: nil;
   fn_body :=
 (Ssequence  
    (Scall (Some index)
@@ -49,7 +49,7 @@ Definition find_bucket_func : function := {|
       ((Evar key tint) :: (Econst_int (Int.repr 10) tuint) :: nil))
    (Sreturn (Some (Ebinop Oadd
                    (Evar hmap List_box_ptr)
-                   (Evar index tint)
+                   (Etempvar index tuint)
                    List_box_ptr))))
 |}.
 
