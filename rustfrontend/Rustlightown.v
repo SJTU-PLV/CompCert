@@ -2414,7 +2414,7 @@ Inductive initial_state: rust_query -> state -> Prop :=
     f.(fn_drop_glue) = None ->
     (* how to use it? *)
     val_casted_list vargs targs ->
-    Mem.sup_include (Genv.genv_sup ge) (Mem.support m) ->
+    (* Mem.sup_include (Genv.genv_sup ge) (Mem.support m) -> *)
     initial_state (rsq vf (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs m)
       (Callstate vf vargs Kstop m).
     

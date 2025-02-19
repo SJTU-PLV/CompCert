@@ -4415,7 +4415,7 @@ Proof.
       monadInv EQ. destruct x2 as [[i1 i2] i3].
       monadInv EQ2. destruct list_disjoint_dec in EQ3; try congruence.
       monadInv EQ3.
-      unfold type_of_function in H4. inv H4.
+      unfold type_of_function in H5. inv H5.
       f_equal. }
     (* fn_drop_glue *)
     { unfold type_of_function.
@@ -4426,7 +4426,7 @@ Proof.
       simpl. auto. }
     eapply val_casted_inject_list;eauto.
     (* sup_include *)
-    simpl. inv Hm. inv GE. simpl in *. auto.
+    (* simpl. inv Hm. inv GE. simpl in *. auto. *)
   - inv Hm; cbn in *.
     econstructor.
     2: { instantiate (1:= Hm0). rewrite <- H. reflexivity. }

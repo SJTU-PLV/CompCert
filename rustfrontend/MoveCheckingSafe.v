@@ -7075,7 +7075,7 @@ Proof.
          rs_sig_cc := tcc;
                rs_sig_comp_env := prog_comp_env prog |}) in *.
   assert (RACC: exists Hm1, rsw_acc w (rsw sg1 (flat_map footprint_flat fpl) m Hm1)).
-  { rewrite <- H4. eapply rsw_acc_shrink.
+  { rewrite <- H3. eapply rsw_acc_shrink.
     red. intros. eapply EQ; eauto.
     eapply Mem.unchanged_on_refl. }
   destruct RACC as (Hm1 & RACC).

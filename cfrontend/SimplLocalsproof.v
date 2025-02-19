@@ -2852,7 +2852,7 @@ Proof.
   econstructor; eauto. congruence.
   { revert vargs2 Hvargs. clear - H6.
     induction H6; inversion 1; econstructor; eauto using val_casted_inject. }
-  eapply (match_stbls_support injp); eauto.
+  (* eapply (match_stbls_support injp); eauto. *)
   inv Hm; cbn in *.
   econstructor. 3: { instantiate (1:= Hm0). rewrite <- H. reflexivity. }
   all: eauto. econstructor; eauto. unfold injp_inj_world. rewrite <- H. reflexivity.

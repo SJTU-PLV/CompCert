@@ -3877,16 +3877,16 @@ Proof.
     (* type of function *)
     { unfold Clight.type_of_function. 
       inv H0; try congruence.
-      unfold type_of_function in H4. inv H4.
+      unfold type_of_function in H5. inv H5.
       f_equal.
-      rewrite H9.
+      rewrite H8.
       eapply type_of_params_to_ctype.
       auto. auto. }
     (* val_casted_list *)
     eapply val_casted_list_to_ctype.
     eapply val_casted_inject_list;eauto.
     (* sup include *)
-    simpl. inv Hm. inv Hse. simpl in *. auto.
+    (* simpl. inv Hm. inv Hse. simpl in *. auto. *)
   - destruct w eqn: Hw. inv Hm. simpl in *.
     eapply match_call_state with (MINJ:= Hm0). econstructor.
     eauto. rewrite Hw.

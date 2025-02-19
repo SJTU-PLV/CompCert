@@ -689,7 +689,8 @@ Inductive initial_state: c_query -> state -> Prop :=
       Genv.find_funct ge vf = Some (Internal f) ->
       type_of_function f = Tfunction targs tres tcc ->
       val_casted_list vargs targs ->
-      Mem.sup_include (Genv.genv_sup ge) (Mem.support m) ->
+      (* Not used condition *)
+      (* Mem.sup_include (Genv.genv_sup ge) (Mem.support m) -> *)
       initial_state
         (cq vf (signature_of_type targs tres tcc) vargs m)
         (Callstate vf vargs Kstop m).
