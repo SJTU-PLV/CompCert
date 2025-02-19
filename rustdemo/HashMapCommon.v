@@ -107,7 +107,7 @@ Inductive vq_hash_map (w: hmap_world) : rust_query -> Prop :=
     (PRECOND: linked_list_args_pre_conds w.(hmap_hash_range) fid vargs)
     (FIDEQ: w.(hmap_callee) = inl fid)
     (LEN: length_of_args fid = length vargs),
-    vq_hash_map w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (globalenv w.(hmap_senv) linked_list_mod)) vargs m)
+    vq_hash_map w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (prog_comp_env linked_list_mod)) vargs m)
 (* outgoing call (which is specific to the definition of the C
 module..). For now, we only support calling the process function from
 Rust side. Other functions in the C module are static. *)
@@ -123,7 +123,7 @@ Rust side. Other functions in the C module are static. *)
     (PRECOND: linked_list_args_pre_conds w.(hmap_hash_range) fid vargs)
     (FIDEQ: w.(hmap_callee) = inr fid)
     (LEN: length_of_args fid = length vargs),
-    vq_hash_map w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (globalenv w.(hmap_senv) linked_list_mod)) vargs m).
+    vq_hash_map w (rsq (Vptr b Ptrofs.zero) (mksignature orgs rels (type_list_of_typelist targs) tres tcc (prog_comp_env linked_list_mod)) vargs m).
     
 Inductive vr_hash_map (w: hmap_world) : rust_reply -> Prop :=
 (* return from linked_list module *)

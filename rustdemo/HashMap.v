@@ -72,7 +72,7 @@ Definition hmap_operate_on_func := {|
                          List_box_ptr cc_default))
     ((Evar hmap hmap_ty) :: (Evar key tint) :: nil))   
   (Sifthenelse (Ebinop Oeq
-                 (Ederef (Evar buk List_box_ptr)
+                 (Ederef (Etempvar buk List_box_ptr)
                    List_ptr)
                  (Ecast (Econst_long (Int64.repr 0) tlong) (tptr tvoid)) tint)
     (Sreturn None)
@@ -81,8 +81,8 @@ Definition hmap_operate_on_func := {|
         (Evar find (Tfunction
                       (Tcons List_ptr (Tcons tint Tnil))
                       List_ptr cc_default))
-        ((Ederef (Evar buk List_box_ptr) List_ptr) :: (Evar key tint) :: nil))
-      (Sassign (Ederef (Evar buk List_box_ptr) List_ptr) (Evar tmp List_ptr)))))
+        ((Ederef (Etempvar buk List_box_ptr) List_ptr) :: (Evar key tint) :: nil))
+      (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr)))))
 |}.
 
 
@@ -106,14 +106,21 @@ Definition hash_ext : fundef := (External (EF_external "hash"
                                        cc_default)) (Tcons tint (Tcons tuint Tnil)) tuint
                           cc_default).
 
+Definition find_ext: fundef := (External (EF_external "find"
+                                    (AST.mksignature (AST.Tlong :: AST.Tint :: nil) AST.Tlong
+                                       cc_default)) (Tcons List_ptr (Tcons tint Tnil)) List_ptr
+                          cc_default).
+
 Definition global_definitions : list (ident * globdef fundef type) :=
   (find_bucket, Gfun(Internal find_bucket_func)) ::
   (process, Gfun(Internal process_func)) ::
   (hmap_operate_on, Gfun(Internal hmap_operate_on_func)) ::
-  (hash, Gfun hash_ext) :: nil.
+  (hash, Gfun hash_ext) ::
+  (find, Gfun find_ext) :: nil.
+
 
 Definition public_idents : list ident :=
-  (hmap_operate_on :: process :: find_bucket :: nil).
+  (hmap_operate_on :: process :: find_bucket :: hash :: find :: nil).
 
 Definition hash_map_prog : Clight.program :=
   mkprogram composites global_definitions public_idents main Logic.I.

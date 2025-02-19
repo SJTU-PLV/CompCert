@@ -5,6 +5,7 @@ Require Import Integers.
 Require Import Floats.
 Require Import Values.
 Require Import AST.
+Require Import Rusttypes.
 Require Import Cop Ctypes Ctypesdefs.
 Require Import Values Globalenvs Memory.
 Require Import Events.
@@ -36,6 +37,14 @@ Definition num_frames (s: state) : nat :=
   end.
 
 
+Definition not_call_return_state s :=
+  match s with
+  | Callstate _ _ _ _
+  | Returnstate _ _ _ => False
+  | _ => True
+  end.
+
+
 Definition hash_map_sem := semantics1 hash_map_prog.
 
 Definition int_to_nat (i: int) : nat :=
@@ -58,6 +67,20 @@ Proof.
   eapply MP; eauto.
   simpl. auto.
 Qed.
+
+(* Clight evaluation of expression is deterministic *)
+Lemma eval_expr_det: forall ge e le m a v1 v2,
+    eval_expr ge e le m a v1 ->
+    eval_expr ge e le m a v2 ->
+    v1 = v2.
+Admitted.
+
+Lemma eval_exprlist_det: forall ge e le m al tyl vl1 vl2,
+    eval_exprlist ge e le m al tyl vl1 ->
+    eval_exprlist ge e le m al tyl vl2 ->
+    vl1 = vl2.
+Admitted.
+
 
 
 Section SOUNDNESS.
@@ -90,11 +113,19 @@ Remark hmap_ce: genv_cenv ge = PTree.empty composite.
 
 Definition ll_ce := Rusttypes.prog_comp_env LinkedList.linked_list_mod.
 
+Inductive bucket_val_spec m fp : Values.val -> Prop :=
+| bucket_val_spec_intro: forall v
+    (WTVAL: sem_wt_val ll_ce m fp v)
+    (WTFP: wt_footprint ll_ce List_box fp)
+    (NOREP: list_norepet (footprint_flat fp))
+    (CASTED: RustOp.val_casted v List_box),
+    bucket_val_spec m fp v.
+      
 Definition bucket_val_pred m fp v :=
   if Val.eq v Vnullptr then
     fp = fp_emp
   else
-    sem_wt_val ll_ce m fp v /\ wt_footprint ll_ce List_box fp.
+    bucket_val_spec m fp v.
     
 Program Definition bucket_pred (b: block) (pos: Z) (fp: footprint) : massert :=
   {| m_pred m := m |= contains Mptr b pos (bucket_val_pred m fp);
@@ -120,12 +151,20 @@ Definition hmap_pred (b: block) (fpl: list footprint) : massert :=
   contains Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
     ** hmap_pred_rec N fpl b 0.
 
+Lemma massert_eqv_pure_l: forall P,
+    massert_eqv P (pure True ** P).
+Proof.
+  intros. split.
+  red; split; [intros; eapply sep_pure; auto|simpl; intros; destruct H; try contradiction; auto].
+  red. split. intros. eapply sep_pure in H. destruct H; auto.
+  intros. simpl. auto.
+Qed.
 
 Lemma hmap_pred_rec_split: forall k n,
     (k < n)%nat ->
     forall fpl b pos,
       length fpl = n ->
-      massert_imp (hmap_pred_rec n fpl b pos)
+      massert_eqv (hmap_pred_rec n fpl b pos)
         (hmap_pred_rec k (firstn k fpl) b pos
            ** bucket_pred b (pos + (size_chunk Mptr * (Z.of_nat k))) (nth k fpl fp_emp)
            ** hmap_pred_rec (n - 1 - k) (skipn (S k) fpl) b (pos + size_chunk Mptr * (Z.of_nat k) + size_chunk Mptr)).
@@ -133,10 +172,9 @@ Proof.
   induction k.
   - intros. destruct n; try lia.
     simpl. destruct fpl; inv H0. simpl.
-    etransitivity. eapply sepconj_morph_1.
+    etransitivity. eapply sepconj_morph_2.
     instantiate (1 := pure True ** bucket_pred b pos f).
-    red. split. intros. eapply sep_pure. auto.
-    intros. simpl in H0. destruct H0; try contradiction. auto.
+    eapply massert_eqv_pure_l.
     reflexivity.
     replace (pos + size_chunk Mptr * 0) with pos by lia.
     rewrite !Nat.sub_0_r. 
@@ -147,13 +185,13 @@ Proof.
     destruct n; try lia. inv LEN.
     cbn [hmap_pred_rec firstn].
     etransitivity.
-    eapply sepconj_morph_1. reflexivity.
+    eapply sepconj_morph_2. reflexivity.
     eapply IHk. lia. auto.
     rewrite !skipn_cons.
     replace (S (Datatypes.length fpl) - 1 - S k)%nat with (length fpl - 1 - k)%nat.
     replace ((pos + size_chunk Mptr * Z.of_nat (S k))) with ((pos + size_chunk Mptr + size_chunk Mptr * Z.of_nat k)).
     replace (nth (S k) (f :: fpl) fp_emp) with (nth k fpl fp_emp) by auto.
-    eapply sep_assoc.
+    symmetry. eapply sep_assoc.
     lia. lia.
 Qed.    
   
@@ -184,15 +222,15 @@ hmap_operate_on or process and then use different conditions. *)
 Definition return_find_bucket_cont k :=
   (Kseq
      (Sifthenelse
-        (Ebinop Oeq (Ederef (Evar buk List_box_ptr) List_ptr)
+        (Ebinop Oeq (Ederef (Etempvar buk List_box_ptr) List_ptr)
            (Ecast (Econst_long (Int64.repr 0) tlong) (tptr tvoid)) tint) 
         (Sreturn None)
         (Ssequence
            (Scall (Some tmp)
               (Evar find
                  (Tfunction (Tcons List_ptr (Tcons tint Tnil)) List_ptr cc_default))
-              [Ederef (Evar buk List_box_ptr) List_ptr; Evar key tint])
-           (Sassign (Ederef (Evar buk List_box_ptr) List_ptr) (Evar tmp List_ptr)))) k).
+              [Ederef (Etempvar buk List_box_ptr) List_ptr; Evar key tint])
+           (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr)))) k).
 
 (* The continuation (that inside Kcall) of calling find_bucket. The
 caller can be hmap_operate_on, hmap_set, hmap_remove. It outputs a
@@ -239,6 +277,21 @@ Inductive call_hash_cont : cont -> massert -> Prop :=
          ** MP)
 .
 
+Inductive call_find_cont : cont -> massert -> Prop :=
+| call_find_cont_intro: forall k idx fpl1 fpl2 b b_hmap b_key ki, 
+    call_find_cont (Kcall (Some tmp) hmap_operate_on_func
+       (PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
+       (PTree.set buk (Vptr b (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx)))
+          (PTree.set buk Vundef (PTree.set tmp Vundef (PTree.empty Values.val))))
+       (Kseq (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr))
+          k))
+      (contains Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
+         ** hmap_pred_rec (int_to_nat idx) fpl1 b 0
+         ** hmap_pred_rec (N - 1 - (int_to_nat idx))%nat fpl2 b (((size_chunk Mptr) * (Int.unsigned idx)) + size_chunk Mptr)
+         (* stack frame *)
+         ** contains Mptr b_hmap 0 (eq (Vptr b Ptrofs.zero))
+         ** contains Mint32 b_key 0 (eq (Vint ki))).
+
 Inductive call_hmap_operate_on: state -> Prop :=
 | call_hmap_operate_on_intro: forall b1 b2 kv k m fpl
     (SYM: Genv.invert_symbol se b1 = Some hmap_operate_on)
@@ -266,25 +319,37 @@ Inductive sound_state : state -> Prop :=
     (ENV: e = PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
     (LENV: le = create_undef_temps (fn_temps hmap_operate_on_func))
     (STAR: starNf step1 num_frames ge n (State hmap_operate_on_func (fn_body hmap_operate_on_func) k e le m) t s)
+    (NOTCALLRET: not_call_return_state s)
     (RAN: (0<= n <=1)%nat),
     sound_state s
 (* return from find_bucket *)
-| hmap_operate_on_internal2: forall t s1 s2 n idx fpl1 fpl2 b fp m ofs k b_hmap b_key ki
+| hmap_operate_on_internal2: forall t s1 s2 n idx fpl1 fpl2 b fp m k b_hmap b_key ki
     (SEQ: s1 = (State hmap_operate_on_func Sskip (return_find_bucket_cont k)
                   (PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
                   (set_opttemp (Some buk)
-                     (Vptr b (Ptrofs.mul (Ptrofs.repr (size_chunk Mptr)) (Ptrofs.of_int idx)))
+                     (Vptr b (Ptrofs.repr ((size_chunk Mptr) * (Int.unsigned idx))))
                      (PTree.set buk Vundef (PTree.set tmp Vundef (PTree.empty Values.val)))) m))
     (STAR: starNf step1 num_frames ge n s1 t s2)
     (MPRED: m |= contains Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
               ** hmap_pred_rec (int_to_nat idx) fpl1 b 0
-              ** bucket_pred b (Ptrofs.unsigned ofs) fp
-              ** hmap_pred_rec (N - 1 - (int_to_nat idx))%nat fpl2 b (Ptrofs.unsigned ofs + size_chunk Mptr)
+              ** bucket_pred b ((size_chunk Mptr) * (Int.unsigned idx)) fp
+              ** hmap_pred_rec (N - 1 - (int_to_nat idx))%nat fpl2 b (((size_chunk Mptr) * (Int.unsigned idx)) + size_chunk Mptr)
               (* stack frame *)
               ** contains Mptr b_hmap 0 (eq (Vptr b Ptrofs.zero))
               ** contains Mint32 b_key 0 (eq (Vint ki)))
+    (MAXRAN: Int.unsigned idx < (Z.of_nat N))
+    (NOTCALLRET: not_call_return_state s2)
     (RAN: (0 <= n <= 10)%nat),
     sound_state s2
+| hmap_operate_on_call_find: forall m k MP fp ki bf v
+    (MPRED: m |= MP)
+    (DISJOINT: forall b ofs, m_footprint MP b ofs -> In b (footprint_flat fp) -> False)
+    (VSPEC: bucket_val_spec m fp v)
+    (FINDF: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some find_ext)
+    (CONT: call_find_cont k MP)
+    (SUP: Mem.sup_include (footprint_flat fp) (Mem.support m)),
+    (** TODO: specify the query_inv of (I @@ rs_own) *)
+    sound_state (Callstate (Vptr bf Ptrofs.zero) [v; Vint ki] k m)
 | hmap_operate_on_returnstate: forall k m,
     (** TODO: specify the cont *)
     sound_state (Returnstate Vundef k m)
@@ -301,6 +366,7 @@ Inductive sound_state : state -> Prop :=
               ** MP)
     (CONT: call_find_bucket_cont b k MP)
     (STAR: starNf step1 num_frames ge n s0 t s)
+    (NOTCALLRET: not_call_return_state s)
     (RAN: (0 <= n <= 1)%nat),
     sound_state s
 (* at_external state calling hash function in the Rust side *)
@@ -325,17 +391,18 @@ Inductive sound_state : state -> Prop :=
               ** MP)
     (CONT: call_find_bucket_cont b k MP)
     (STAR: starNf step1 num_frames ge n s0 t s)
+    (NOTCALLRET: not_call_return_state s)
     (RAN: (0 <= n <= 1)%nat),
     sound_state s
-| find_bucket_returnstate: forall idx fpl1 fpl2 b fp m ofs k MP
-    (OFSEQ: ofs = (Ptrofs.mul (Ptrofs.repr (size_chunk Mptr)) (Ptrofs.of_int idx)))
+| find_bucket_returnstate: forall idx fpl1 fpl2 b fp m k MP
     (MPRED: m |= contains Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
               ** hmap_pred_rec (int_to_nat idx) fpl1 b 0
-              ** bucket_pred b (Ptrofs.unsigned ofs) fp
-              ** hmap_pred_rec (N - 1 - (int_to_nat idx))%nat fpl2 b (Ptrofs.unsigned ofs + size_chunk Mptr)
+              ** bucket_pred b (size_chunk Mptr * Int.unsigned idx) fp
+              ** hmap_pred_rec (N - 1 - (int_to_nat idx))%nat fpl2 b ((size_chunk Mptr * Int.unsigned idx) + size_chunk Mptr)
               ** MP)
+    (MAXRAN: Int.unsigned idx < Z.of_nat N)
     (CONT: call_find_bucket_cont b k MP),
-    sound_state (Returnstate (Vptr b ofs) k m)
+    sound_state (Returnstate (Vptr b (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx))) k m)
 .
 
 
@@ -426,7 +493,77 @@ Proof.
 Qed.  
 
 
-  
+(* Soundness of at_external, using (I @@ rs_own @! cc_rust_c) as the interface *)
+
+Definition find_rs_sig :=
+  mksignature nil nil [List_box; Rusttypes.type_int32s] List_box cc_default ll_ce.
+
+Lemma hash_map_external: forall s q,
+    sound_state s ->
+    at_external ge s q ->
+    exists wI w_rs q_rs,
+      cc_rust_c_mq q_rs q
+      /\ vq_hash_map wI q_rs
+      /\ rs_own_query w_rs q_rs
+      (* TODO: prove symtbl_inv *)
+      /\ forall r_rs r_c,
+        vr_hash_map wI r_rs ->
+        rs_own_reply w_rs r_rs ->
+        cc_rust_c_mr r_rs r_c ->
+        (exists s', after_external s r_c s'
+               /\ (forall s', after_external s r_c s' -> sound_state s')).
+Proof.
+  intros s q_c SINV ATEXT. inv ATEXT. unfold f in *.
+  inv SINV; try simpl in NOTCALLRET; try contradiction.
+  - inv CALL. 
+    assert (FIND: Genv.find_funct ge (Vptr b1 Ptrofs.zero) = Some (Internal hmap_operate_on_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYM.
+      auto. }
+    rewrite H in FIND. inv FIND.
+  (* call find *)
+  - exists (Build_hmap_world (inl find) se (nat_to_int N)),
+      (rsw find_rs_sig (footprint_flat fp) m SUP),
+      (rsq (Vptr bf Ptrofs.zero) find_rs_sig [v; Vint ki] m).
+    rewrite H in FINDF. inv FINDF.
+    replace {| sig_args := [AST.Tlong; AST.Tint];
+              sig_res := AST.Tlong;
+              sig_cc := cc_default |} with (signature_of_rust_signature find_rs_sig) by reflexivity.
+    repeat apply conj.
+    + econstructor.
+    + unfold find_rs_sig.
+      replace [List_box; Rusttypes.type_int32s] with (type_list_of_typelist (Rusttypes.Tcons List_box (Rusttypes.Tcons Rusttypes.type_int32s Rusttypes.Tnil))).
+      eapply vq_hash_map_intro1 with (f:= find_func).
+      simpl.
+
+      simpl in H. rewrite dec_eq_true in H.
+      eapply Genv.find_funct_ptr_iff in H.
+      erewrite Genv.find_def_spec in H. 
+      destruct Genv.invert_symbol eqn: SYM in H; try congruence.
+      rewrite Genv.find_funct_ptr_iff. rewrite Genv.find_def_spec.
+      rewrite SYM. admit.
+
+      simpl. unfold Genv.is_internal. simpl. simpl in H. setoid_rewrite H.
+      auto.
+      reflexivity. reflexivity.
+      (* casted *)
+      admit.
+      simpl. 
+      
+    
+    
+  - inv CALL.
+    assert (FIND: Genv.find_funct ge (Vptr b1 Ptrofs.zero) = Some (Internal find_bucket_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYM.
+      auto. }
+    rewrite H in FIND. inv FIND.
+  (* call hash *)
+  - admit.
+
+    
 Lemma step_preservation_progress: forall s,
     sound_state s ->
     not_stuck (hash_map_sem se) s
@@ -450,7 +587,8 @@ Proof.
       exploit function_entry1_det. eauto. eapply ENTRY.
       intros (A1 & A2 & A3). subst.
       eapply hmap_operate_on_internal1. eauto.
-      reflexivity. reflexivity. econstructor. lia.
+      reflexivity. reflexivity. econstructor.
+      simpl. auto. lia.
   (* hmap_operate_on_internal1 *)
   - generalize MPRED as MPRED1. intros.
     generalize STAR as STAR1. intros.
@@ -460,7 +598,7 @@ Proof.
         do 2 eexists. econstructor.
       - intros. eapply hmap_operate_on_internal1 with (n:=1%nat); eauto.
         eapply starNf_step_right; eauto. 
-        inv H; simpl; auto. }
+        1-2: inv H; simpl; auto. }
     inv STEP.
     2: { destruct H7; try congruence. }
     2: { destruct H7; try congruence. }
@@ -518,10 +656,207 @@ Proof.
         eapply sep_comm. rewrite sep_assoc.
         eapply MPRED1. } 
     lia.
+    
   (** TODO: hmap_operate_on after returning from find_bucket *)
+  - generalize MPRED as MPRED1. intros.
+    generalize STAR as STAR1. intros.
+    assert (OFSEQ: Ptrofs.unsigned (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx)) =
+                     (size_chunk Mptr * Int.unsigned idx)).
+    admit.
+    inv STAR.
+    { split.
+      - red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply hmap_operate_on_internal2 with (n:=1%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    2: { inv H6. }
+    (* load *buk from memory *)
+    exploit (load_rule (bucket_val_pred m fp)). eapply MPRED.
+    intros (v1 & LOAD1 & SPEC1).  unfold bucket_val_pred in SPEC1.
+    (* load key from memory *)
+    exploit (load_rule (eq (Vint ki))). eapply MPRED.
+    intros (v2 & LOAD2 & SPEC2). subst. 
+    (* evaluate the conditional expression *)
+    assert (EVALB: eval_expr (Smallstep.globalenv (hash_map_sem se))
+                     (PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
+                     (PTree.set buk (Vptr b (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx)))
+                        (PTree.set buk Vundef (PTree.set tmp Vundef (PTree.empty Values.val)))) m
+                     (Ebinop Oeq (Ederef (Etempvar buk List_box_ptr) List_ptr)
+                        (Ecast (Econst_long (Int64.repr 0) tlong) (tptr tvoid)) tint)
+                     (Val.of_bool (if Val.eq v1 Vnullptr then true else false))).
+    { econstructor.
+      econstructor. econstructor. econstructor. econstructor.
+      econstructor. reflexivity. simpl. rewrite OFSEQ. eauto.
+      econstructor. econstructor. reflexivity.
+      simpl. unfold sem_cmp, cmp_ptr. simpl.
+      (* we should show that the pointer (if not NULL) is a valid pointer *)
+      destruct Val.eq in SPEC1. subst.
+      reflexivity.
+      inv SPEC1. inv WTFP. inv WTVAL. simpl in WF. congruence.
+      replace (Rusttypes.sizeof ll_ce List_ty) with 24 in WTVAL by reflexivity.
+      inv WTVAL.
+      simpl. rewrite Int64.eq_true. simpl.
+      setoid_rewrite (proj2 (Mem.valid_pointer_nonempty_perm m b0 0)).
+      reflexivity.
+      eapply Mem.perm_implies. eapply VALID. rewrite size_chunk_Mptr.
+      destruct Archi.ptr64; lia. econstructor. }
+    assert (BVAL: bool_val (Val.of_bool (if Val.eq v1 Vnullptr then true else false)) tint m = Some (if Val.eq v1 Vnullptr then true else false)).
+    { destruct Val.eq; reflexivity. }    
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - red. do 2 right.
+        do 2 eexists. econstructor.
+        (* evaluate (buk == NULL) *)
+        eauto. eauto.
+      - intros. eapply hmap_operate_on_internal2 with (n:=2%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    2: { destruct H7; congruence. }
+    2: { destruct H7; congruence. }
+    exploit eval_expr_det. eapply H9. eapply EVALB.
+    intros. subst. setoid_rewrite BVAL in H10. inv H10. clear H9.
+    destruct Val.eq.
+    (* evaluate the true branch (i.e., buk == NULL) *)
+    { 
+    assert (MPRED2: m |= hmap_pred b (fpl1 ++ fp :: fpl2)
+                      ** contains Mptr b_hmap 0 (eq (Vptr b Ptrofs.zero))
+                      ** contains Mint32 b_key 0 (eq (Vint ki))).
+    { eapply sep_imp.
+      3: { reflexivity. }
+      2: { unfold hmap_pred.
+           eapply sepconj_morph_1. reflexivity.
+           eapply hmap_pred_rec_split with (k := length fpl1). admit.
+           admit. }
+      rewrite app_nth2. rewrite Nat.sub_diag. cbn [nth].
+      rewrite firstn_app, firstn_all. rewrite Nat.sub_diag. cbn [firstn].
+      rewrite skipn_app. rewrite skipn_all2.
+      rewrite Nat.sub_succ_l. rewrite Nat.sub_diag.
+      rewrite !app_nil_r, app_nil_l. rewrite Z.add_0_l.
+      cbn [skipn].
+      replace (Datatypes.length fpl1) with (int_to_nat idx).
+      replace (Z.of_nat (int_to_nat idx)) with (Int.unsigned idx).
+      rewrite !sep_assoc. eapply MPRED.
+      unfold int_to_nat. rewrite Z2Nat.id. reflexivity.
+      eapply Int.unsigned_range.
+      (* add int_to_nat idx = Datatypes.length fpl1 to the invariant *)
+      admit. 1-3: lia. }      
+    (* free blocks *)
+    rewrite sep_comm in MPRED2. rewrite sep_assoc in MPRED2.
+    exploit (free_rule Mptr m b_hmap 0). eapply MPRED2.
+    intros (m1 & FREE1 & MP1).
+    exploit free_rule. eapply MP1.
+    intros (m2 & FREE2 & MP2).
+    simpl in FREE1, FREE2.      
+    inv STAR; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - red. do 2 right.
+        do 2 eexists. econstructor.
+        simpl. setoid_rewrite FREE1. setoid_rewrite FREE2. eauto.
+      - intros. inv H.
+        1,3: destruct H8; congruence.
+        eapply hmap_operate_on_returnstate. }
+    inv STEP.
+    1,3: destruct H7; congruence.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    simpl in NOTCALLRET. contradiction.
+    (* contradiction for the frames numbers *)
+    admit. }
+
+    (* evaluate the false branch *)
+    { inv STAR; cbn [num_frames num_frames_cont] in *.
+      { split.
+        - red. do 2 right.
+          do 2 eexists. econstructor.
+        - intros. eapply hmap_operate_on_internal2 with (n:=3%nat); eauto.
+          eapply starNf_step_right; eauto. 
+          1-2: inv H; simpl; auto. lia. }
+      inv STEP; try (destruct H7; congruence).
+      (* evaluate the call step *)
+      generalize (wf_senv find). intros FINDF.
+      simpl in FINDF. destruct FINDF as (?b & FINDF).
+      assert (FINDFUN: Genv.find_funct (Smallstep.globalenv (hash_map_sem se)) (Vptr b0 Ptrofs.zero) = Some find_ext).
+      { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
+        rewrite Genv.find_def_spec.
+        erewrite Genv.find_invert_symbol; eauto.
+        reflexivity. }
+      (* evaluate function pointer *)
+      assert (EVALFUN: eval_expr ge
+          (PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
+          (PTree.set buk (Vptr b (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx)))
+             (PTree.set buk Vundef (PTree.set tmp Vundef (PTree.empty Values.val)))) m
+          (Evar find (Tfunction (Tcons List_ptr (Tcons tint Tnil)) List_ptr cc_default))
+          (Vptr b0 Ptrofs.zero)).
+      { econstructor. eapply eval_Evar_global.
+        reflexivity. eauto.
+        eapply deref_loc_reference. reflexivity. }
+      (* evaluate arguments *)
+      assert (EVALARGS: eval_exprlist (Smallstep.globalenv (hash_map_sem se))
+       (PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
+       (PTree.set buk (Vptr b (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx)))
+          (PTree.set buk Vundef (PTree.set tmp Vundef (PTree.empty Values.val)))) m
+       [Ederef (Etempvar buk List_box_ptr) List_ptr; Evar key tint]
+       (Tcons List_ptr (Tcons tint Tnil)) [v1; Vint ki]).
+      { econstructor.
+        econstructor. econstructor. econstructor.
+        reflexivity. econstructor. reflexivity.
+        simpl. rewrite OFSEQ. eauto.
+        eapply cast_val_casted. inv SPEC1.
+        eapply RustOp.val_casted_to_ctype in CASTED. eauto.
+        econstructor. econstructor. eapply eval_Evar_local.
+        reflexivity. econstructor. reflexivity. eauto. reflexivity.
+        econstructor. }
+      inv STAR0; cbn [num_frames num_frames_cont] in *.
+      { split.
+        - red. do 2 right.          
+          do 2 eexists. econstructor.
+          reflexivity. eauto. eauto.
+          eauto. reflexivity.          
+        - intros. inv H. inv H10.
+          exploit eval_expr_det. eapply EVALFUN. eauto.
+          intros. subst.
+          exploit eval_exprlist_det. eapply EVALARGS. eauto.
+          intros. subst.
+          simpl in H13.
+          setoid_rewrite FINDFUN in H13. inv H13. inv H14.
+          rewrite <- sep_swap23, <- sep_swap12 in MPRED1.
+          eapply hmap_operate_on_call_find with (fp:= fp).
+          eapply sep_proj2. eapply MPRED1.
+          (* prove disjointness of footprint *)
+          intros. 
+          eapply MPRED1; eauto.
+          simpl. auto.
+          inv SPEC1. split; auto.
+          eauto.
+          (* cont *)
+          econstructor.
+          (* sup_include *)
+          red. intros.
+          eapply m_valid. eapply MPRED1.
+          simpl. left. eauto. }
+      inv STEP.
+      exploit eval_expr_det. eapply EVALFUN. eauto.
+      intros. subst.      
+      inv STAR; cbn [num_frames num_frames_cont] in *.
+      simpl in NOTCALLRET. contradiction.
+      inv STEP; simpl in FEQ3.
+      simpl in FIND. setoid_rewrite FINDFUN in FIND. inv FIND.
+      simpl in FIND. setoid_rewrite FINDFUN in FIND. inv FIND. inv H5. }
+
+  (* call find state *)
+  - split.
+    + right. left.
+      eexists. econstructor. eauto.
+    + intros. inv H.
+      rewrite FINDF in FIND. inv FIND.
+      rewrite FINDF in FIND. inv FIND. inv H6.
+    
+  (*  TODO: show returnstate in hmap_operate_on is not stuck. We
+    need to specify the continuation. *)
   - admit.
-  (* return from hmap_operate_on *)
-  - admit.
+      
   (* call find_bucket *)
   - inv CALL. 
     assert (FIND: Genv.find_funct ge (Vptr b1 Ptrofs.zero) = Some (Internal find_bucket_func)).
@@ -538,7 +873,7 @@ Proof.
       exploit function_entry1_det. eauto. eapply ENTRY.
       intros (A1 & A2 & A3). subst.
       eapply find_bucket_internal1 with (n:=0%nat). reflexivity. eauto. eauto.
-      econstructor. lia.
+      econstructor. simpl. auto. lia.
   (* find_bucket_internal1  *)
   - generalize MPRED as MPRED1. intros.
     generalize STAR as STAR1. intros.
@@ -548,7 +883,7 @@ Proof.
         do 2 eexists. econstructor.
       - intros. eapply find_bucket_internal1 with (n:=1%nat); eauto.
         eapply starNf_step_right; eauto. 
-        inv H; simpl; auto. }
+        1-2: inv H; simpl; auto. }
     inv STEP.
     2: { destruct H7; try congruence. }
     2: { destruct H7; try congruence. }
@@ -618,7 +953,7 @@ Proof.
       econstructor.
     + intros. inv H.
       eapply find_bucket_internal2; eauto.
-      econstructor.
+      econstructor. simpl. auto.
   (* execution after returning from hash *)
   - generalize MPRED as MPRED1. intros.
     generalize STAR as STAR1. intros.
@@ -628,7 +963,7 @@ Proof.
         do 2 eexists. econstructor.
       - intros. eapply find_bucket_internal2 with (n:=1%nat); eauto.
         eapply starNf_step_right; eauto. 
-        inv H; simpl; auto. }
+        1-2: inv H; simpl; auto. }
     inv STEP.
     2: { simpl in H6. contradiction. }
     inv STAR0; cbn [num_frames num_frames_cont] in *.
@@ -669,19 +1004,21 @@ Proof.
         set (fpl1 := firstn (int_to_nat r) fpl).
         set (fp := nth (int_to_nat r) fpl fp_emp).
         set (fpl2 := skipn (S (int_to_nat r)) fpl).
-        eapply find_bucket_returnstate with (fpl1:=fpl1) (fp:= fp) (fpl2:= fpl2). reflexivity.
-        assert (OFSEQ: (Ptrofs.unsigned
-                          (Ptrofs.mul (Ptrofs.repr (size_chunk Mptr)) (Ptrofs.of_intu r)))
-                       = (size_chunk Mptr) * (Int.unsigned r)).
-        { admit. }
+        assert (OFSEQ: ((Ptrofs.mul (Ptrofs.repr (size_chunk Mptr)) (Ptrofs.of_intu r)))
+                       = Ptrofs.repr ((size_chunk Mptr) * (Int.unsigned r))).
+        { unfold Ptrofs.mul. 
+          unfold Ptrofs.of_intu, Ptrofs.of_int.
+          rewrite !Ptrofs.unsigned_repr. reflexivity.
+          admit. admit. }
         setoid_rewrite OFSEQ.
+        eapply find_bucket_returnstate with (fpl1:=fpl1) (fp:= fp) (fpl2:= fpl2). 
         instantiate (1 := MP). eapply sep_assoc5.
         eapply sep_imp with (Q' := MP). eapply MP2.        
         eapply sepconj_morph_1. reflexivity.
         replace (Int.unsigned r) with (Z.of_nat (int_to_nat r)) by admit.
         eapply hmap_pred_rec_split. admit.
         eapply hmap_pred_fpl_length. eapply MP2.        
-        reflexivity.
+        reflexivity. admit.
         erewrite <- call_find_bucket_cont_eq_call_cont; eauto. }
     lia.
   (* return from find_bucket *)
@@ -691,8 +1028,9 @@ Proof.
       econstructor.
     + intros. inv H.
       (* return to hmap_operate_on *)
-      eapply hmap_operate_on_internal2 with (n:= 0%nat). reflexivity.
-      econstructor. eauto. lia.
+      eapply hmap_operate_on_internal2 with (n:= 0%nat).
+      2: econstructor. reflexivity.
+      eauto. lia. simpl. auto. lia.
     
   Admitted.
       
