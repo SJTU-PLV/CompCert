@@ -8222,7 +8222,7 @@ Proof.
                invariant is hard-code in the initial state *)
                /\ rs_sig_comp_env (mod_sg w2) = p.(prog_comp_env)).
   red. constructor.
-  eapply (Module_ksafe_components li_rs li_rs (semantics p) (inv_compose I rs_own) (inv_compose I rs_own) SIF IS).
+  eapply (Module_type_safe_components li_rs li_rs (semantics p) (inv_compose I rs_own) (inv_compose I rs_own) SIF IS).
   intros se (w1 & (se' & w2)) (SYMINV1 & SYMINV2) VSE. simpl in SYMINV2. subst.
   simpl in VSE.
   generalize (PRE se w1 SYMINV1 VSE). intros PRE1.

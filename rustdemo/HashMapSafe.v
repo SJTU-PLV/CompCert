@@ -13,7 +13,7 @@ Require Import Invariant Smallstep SmallstepLinkingSafe.
 Require Import Clight HashMap LinkedList HashMapCommon.
 Require Import Separation.
 Require Import MoveCheckingFootprint MoveCheckingDomain.
-Require Import MoveCheckingSafe.
+Require Import MoveCheckingSafe LanguageInterface.
 
 Local Open Scope error_monad_scope.
 Local Open Scope sep_scope.
@@ -217,7 +217,7 @@ Section SOUNDNESS.
 Variable N : nat.
 
 Context (se : Genv.symtbl).
-Context (w: hmap_world).
+(* Context (w: hmap_world). *)
 
 Let ge := globalenv se hash_map_prog.
 
@@ -232,10 +232,7 @@ Proof.
 Qed.
 
 (** Combine it with the wf_senv in LinkedListSafe *)
-Hypothesis wf_senv: forall id,
-    if in_dec ident_eq id (prog_defs_names hash_map_prog) then
-      exists b, Genv.find_symbol se id = Some b
-    else True.
+Hypothesis wf_senv: wf_senv se.
 
 Remark hmap_ce: genv_cenv ge = PTree.empty composite.
   reflexivity. Qed.
@@ -614,6 +611,9 @@ Qed.
 Definition find_rs_sig :=
   mksignature nil nil [List_box; Rusttypes.type_int32s] List_box cc_default ll_ce.
 
+Definition hash_rs_sig :=
+  mksignature nil nil [Rusttypes.type_int32s; type_int32u] type_int32u cc_default ll_ce.
+
 Lemma hash_map_external: forall s q,
     sound_state s ->
     at_external ge s q ->
@@ -621,7 +621,7 @@ Lemma hash_map_external: forall s q,
       cc_rust_c_mq q_rs q
       /\ vq_hash_map wI q_rs
       /\ rs_own_query w_rs q_rs
-      (* TODO: prove symtbl_inv *)
+      /\ wI.(hmap_senv) = se
       /\ forall r_rs r_c,
         vr_hash_map wI r_rs ->
         (* kripke relation *)
@@ -683,8 +683,10 @@ Proof.
         econstructor; econstructor. auto.
       * simpl. rewrite app_nil_r.
         red; split; auto.
+    + reflexivity.
     (* reply *)
     + intros ? ? A1 A2 A3. inv A1.
+      2: { inv FIDEQ. }
       destruct A2 as (w_rs' & ACC & A2). inv A2.
       inv A3.
       eexists. split.
@@ -716,10 +718,75 @@ Proof.
       auto. }
     rewrite H in FIND. inv FIND.
   (* call hash *)
-  - admit.
-Admitted.
+  - assert (SUP: Mem.sup_include nil (Mem.support m)).
+    { eapply incl_nil_l. }
+    exists (Build_hmap_world (inl hash) se (nat_to_int N)),
+      (rsw hash_rs_sig nil m SUP),
+      (rsq (Vptr b Ptrofs.zero) hash_rs_sig [Vint ki; Vint Ni] m).
+    assert (FINDFUN1: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some hash_ext).
+    { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
+      rewrite Genv.find_def_spec.
+      rewrite FINDSYM. reflexivity. }
+    assert (FINDFUN2: Genv.find_funct (Genv.globalenv se linked_list_mod) (Vptr b Ptrofs.zero) = Some (Rusttypes.Internal hash_func)).
+    { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
+      rewrite Genv.find_def_spec.
+      rewrite FINDSYM. reflexivity. }
+    rewrite FINDFUN1 in H. inv H.
+    replace {| sig_args := [AST.Tint; AST.Tint];
+              sig_res := AST.Tint;
+              sig_cc := cc_default |} with (signature_of_rust_signature hash_rs_sig) by reflexivity.
+    repeat apply conj.
+    + econstructor.
+    + unfold hash_rs_sig.
+      replace [Rusttypes.type_int32s; type_int32u] with (type_list_of_typelist (Rusttypes.Tcons Rusttypes.type_int32s (Rusttypes.Tcons type_int32u Rusttypes.Tnil))).
+      eapply vq_hash_map_intro1 with (f:= hash_func).
+      eapply FINDFUN2.
+      simpl. unfold Genv.is_internal.
+      simpl in FINDFUN1. setoid_rewrite FINDFUN1. auto.
+      vm_compute.
+      reflexivity. reflexivity.
+      (* casted *)
+      econstructor.
+      econstructor. auto.
+      econstructor. econstructor. auto.
+      econstructor.
+      eauto.
+      (* pre-cond *)
+      econstructor. unfold Ni. rewrite Neq10. reflexivity.
+      econstructor. auto.
+      econstructor. auto.
+      reflexivity. reflexivity. reflexivity.
+    + eapply rs_own_query_intro with (fpl := [fp_scalar Rusttypes.type_int32s; fp_scalar type_int32u]).
+      * simpl. econstructor.
+      * econstructor.
+        econstructor. econstructor.
+        econstructor. econstructor.
+      * econstructor. econstructor. auto.
+        econstructor. econstructor. auto. econstructor.
+      * simpl. 
+        red; split; auto.
+    + reflexivity.
+    (* reply *)
+    + intros ? ? A1 A2 A3. inv A1.
+      2: { inv FIDEQ. }
+      destruct A2 as (w_rs' & ACC & A2). inv A2.
+      inv A3.
+      eexists. split.
+      econstructor.
+      intros s' AFEXT. inv AFEXT.
+      inv CONT.
+      inv ACC.
+      eapply find_bucket_return_hash.
+      (* post conditions *)
+      inv FIDEQ. eauto.
+      (* cont *)
+      econstructor. eauto.
+      eapply m_invar. eauto.
+      eapply Mem.unchanged_on_implies. eauto.
+      intros. simpl. auto.
+Qed.
 
-    
+
 Lemma step_preservation_progress: forall s,
     sound_state s ->
     not_stuck (hash_map_sem se) s
@@ -1197,4 +1264,45 @@ Proof.
   Admitted.
       
 End SOUNDNESS.
+
+Local Open Scope inv_scope.
+(* Module total safety of hash_map_prog *)
+
+Lemma hash_map_module_safe:
+  module_type_safe ((hmap_inv @@ rs_own) @! cc_rust_c) ((hmap_inv @@ rs_own) @! cc_rust_c) hash_map_sem SIF.
+Proof.
+  red. econstructor.
+  (* cannot specify msafek_invariant for unknown reason *)
+  eapply (Module_ksafe_components li_c li_c hash_map_sem ((hmap_inv @@ rs_own) @! cc_rust_c) ((hmap_inv @@ rs_own) @! cc_rust_c) SIF (fun se w => sound_state 10%nat se)).
+  intros se ((w_hm, (?, w_rs)) & ?) SYMB VSE.
+  inv SYMB. destruct H. inv H0. inv H.
+  inv H0. inv H1. rename H2 into SYM1.
+  econstructor.
+  (* preservation *)
+  - intros. eapply step_preservation_progress; eauto.
+  (* progress *)
+  - intros. left. eapply step_preservation_progress; eauto.
+  (* initial safe *)
+  - admit.
+  (* external safe *)
+  - intros.
+    exploit hash_map_external. reflexivity.
+    eauto. eauto.
+    intros (wI & w_rs1 & q_rs & A1 & A2 & A3 & A4 & A5).
+    rewrite <- A4 in *.
+    exists ((wI, ((hmap_senv w_hm), w_rs1)), tt).
+    repeat apply conj.
+    + econstructor. split.
+      econstructor; eauto.
+      econstructor. reflexivity. eauto.
+      rewrite A4. econstructor.
+      econstructor.
+    + econstructor. split; eauto.
+      econstructor. eauto.
+      eauto.
+    + intros. inv H1. inv H2. inv H1. inv H4. inv H1.
+      eapply A5; eauto.
+  (* final state *)
+  - admit.
+Admitted.
 

@@ -128,5 +128,24 @@ Inductive vr_hash_map (w: hmap_world) : rust_reply -> Prop :=
 | vr_hash_map_intro1: forall v m fid
     (FIDEQ: w.(hmap_callee) = inl fid)
     (POSTCOND: linked_list_retv_post_conds w.(hmap_hash_range) fid v),
-    vr_hash_map w (rsr v m).
+    vr_hash_map w (rsr v m)
+(* return from hash_map module *)
+| vr_hash_map_intro2: forall v m fid
+    (FIDEQ: w.(hmap_callee) = inr fid),
+    vr_hash_map w (rsr v m)
+.
+
+Definition wf_senv se :=
+  forall id,
+    if in_dec ident_eq id ((prog_defs_names linked_list_mod) ++ (prog_defs_names hash_map_prog))
+    then
+      exists b, Genv.find_symbol se id = Some b
+    else True.
+
+Definition hmap_inv : invariant li_rs :=
+  {| inv_world := hmap_world;
+    symtbl_inv w se := w.(hmap_senv) = se
+                       /\ wf_senv se;
+    query_inv w q := vq_hash_map w q;
+    reply_inv w r := vr_hash_map w r |}.
 

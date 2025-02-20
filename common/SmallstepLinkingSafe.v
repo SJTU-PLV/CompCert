@@ -704,19 +704,19 @@ Record lts_preserves_progress {liA liB S} se (L: lts liA liB S) (IA: invariant l
   }.
 
 
-Record module_safek_components {liA liB} (L: semantics liA liB) (IA: invariant liA) (IB: invariant liB) (PS: Genv.symtbl -> (state L) -> Prop) :=
-  Module_ksafe_components
+Record module_type_safe_components {liA liB} (L: semantics liA liB) (IA: invariant liA) (IB: invariant liB) (PS: Genv.symtbl -> (state L) -> Prop) :=
+  Module_type_safe_components
   {
-    msafek_invariant: Genv.symtbl -> inv_world IB -> state L -> Prop;
+    type_safe_invariant: Genv.symtbl -> inv_world IB -> state L -> Prop;
 
-    msafek_preservation_progress: forall se wB,
+    type_safe_preservation_progress: forall se wB,
       symtbl_inv IB wB se ->
       Genv.valid_for (skel L) se ->
-      lts_preserves_progress se (L se) IA IB (msafek_invariant se) wB (PS se);
+      lts_preserves_progress se (L se) IA IB (type_safe_invariant se) wB (PS se);
   }.
 
 Definition module_type_safe {liA liB} (IA: invariant liA) (IB: invariant liB) (L: semantics liA liB) (PS: Genv.symtbl -> (state L) -> Prop) :=
-  inhabited (@module_safek_components liA liB L IA IB PS).
+  inhabited (@module_type_safe_components liA liB L IA IB PS).
 
 (* property of safety invariant *)
 Section SAFE_INV.
@@ -789,7 +789,7 @@ Lemma module_type_safe_sound {liA liB} (L: semantics liA liB) (IA: invariant liA
 Proof.
   intros [SAFE]. inv SAFE.
   red. intros se VSE w WTSE.
-  exploit msafek_preservation_progress0; eauto. intros PRE.
+  exploit type_safe_preservation_progress0; eauto. intros PRE.
   red. intros q VQ QINV.
   exploit (@initial_preserves_progress liA); eauto.
   intros (inits & INIT & SINV1). exists inits. split; auto.
@@ -823,6 +823,121 @@ Record lts_open_determinate {liA liB st} (L: lts liA liB st) : Prop :=
 Definition open_determinate {liA liB} (L: semantics liA liB) :=
   forall se, lts_open_determinate (L se).
 
+(** Compositionality of module type safety *)
+
+Section WITH_INV.
+
+Context {li} (I: invariant li) (L: bool -> semantics li li).
+Context (sk: AST.program unit unit) (se: Genv.symtbl).
+Context (SAFE : forall i, module_type_safe_components (L i) I I SIF).
+
+Inductive type_safe_frames w : list (frame L) -> inv_world I -> Prop :=
+| type_safe_frames_nil: type_safe_frames w nil w
+| type_safe_frames_cons: forall i s q w1 w2 fms
+    (WF: type_safe_frames w fms w1)
+    (VSE: symtbl_inv I w1 se)
+    (EXT: at_external (L i se) s q)
+    (WTQ: query_inv I w2 q)
+    (* desrible progress property here *)
+    (PGS: forall r, reply_inv I w2 r ->
+               exists s', after_external (L i se) s r s'
+                     /\ (forall s', after_external (L i se) s r s' ->
+                              type_safe_invariant (L i) I I SIF (SAFE i) se w1 s')),
+    type_safe_frames w ((st L i s) :: fms) w2.
+
+Inductive type_safe_state w: list (frame L) -> Prop :=
+| type_safe_state_cons: forall i s frs w1
+    (WFS: type_safe_frames w frs w1)
+    (VSE: symtbl_inv I w1 se)
+    (TYSAFE: type_safe_invariant (L i) I I SIF (SAFE i) se w1 s),
+    type_safe_state w (st L i s :: frs).
+
+End WITH_INV.
+
+Section COMPOSE_TYPE_SAFE.
+
+Context {li} (I: invariant li) (L1 L2 L: semantics li li).
+
+
+Lemma compose_total_type_safety:
+  module_type_safe I I L1 SIF ->
+  module_type_safe I I L2 SIF ->
+  compose L1 L2 = Some L ->
+  module_type_safe I I L SIF.
+Proof.
+  intros [SAFE1] [SAFE2] COMP.
+  unfold compose in *. unfold option_map in *.
+  destruct (link (skel L1) (skel L2)) as [sk|] eqn:Hsk; try discriminate. inv COMP.
+  set (L := fun i:bool => if i then L1 else L2).
+  assert (SAFE: forall i, module_type_safe_components (L i) I I SIF).
+  { intros i. destruct i.
+    eapply SAFE1; eauto.
+    eapply SAFE2; eauto. }
+  red. econstructor.
+  eapply Module_type_safe_components with (type_safe_invariant := fun se w => type_safe_state I L se SAFE w).
+  intros se wB SYM VSE.
+  assert (VALIDSE: forall i, Genv.valid_for (skel (L i)) se).
+  { destruct i.
+    eapply Genv.valid_for_linkorder.
+    eapply (link_linkorder _ _ _ Hsk). eauto.
+    eapply Genv.valid_for_linkorder.
+    eapply (link_linkorder _ _ _ Hsk). eauto. }
+  econstructor.
+  - intros. inv H. inv H0; subst_dep.
+    + econstructor; eauto.
+      eapply internal_step_preserves; eauto.
+      eapply SAFE; eauto. 
+    + exploit @external_preserves_progress.
+      eapply SAFE. eapply VSE0. eapply VALIDSE. eauto.
+      eauto.
+      intros (wA & A1 & A2 & A3).
+      econstructor. 2: eapply A1.
+      econstructor; eauto.
+      exploit @initial_preserves_progress.
+      eapply SAFE. eapply A1. eapply VALIDSE. eauto. eauto.
+      intros (s & B1 & B2).
+      eapply B2. eauto.
+    + inv WFS. subst_dep.
+      econstructor; eauto.
+      exploit PGS. eapply final_state_preserves. eapply SAFE.
+      eauto. eapply VALIDSE. eauto. eauto.
+      intros (s & B1 & B2).
+      eapply B2. eauto.
+  - intros. inv H.
+    exploit @internal_state_progress. eapply SAFE; eauto.
+    eauto. intros A. destruct A.
+    2: { contradiction. }
+    left.
+    destruct H as [(r & FINAL)|[(q & EXT)|(t1 & s1 & STEP1)]].
+    + inv WFS.
+      * left. exists r.
+        econstructor. eauto.
+      * do 2 right.
+        exploit @final_state_preserves. eapply SAFE. eapply VSE0.
+        all: eauto. intros VR.
+        exploit PGS; eauto.
+        intros (s' & B1 & B2).
+        do 2 eexists.
+        eapply step_pop; eauto.
+    + exploit @external_preserves_progress. eapply SAFE. 1-4: eauto.
+      intros (wA & A1 & A2 & A3).
+      destruct (valid_query (L i se) q || valid_query (L (negb i) se) q) eqn: VQ.
+      * assert (VQ1: exists j, valid_query (L j se) q = true).
+        { eapply orb_true_iff in VQ. destruct VQ.
+          1-2: eexists; eauto. }
+        destruct VQ1. do 2 right.
+        exploit @initial_preserves_progress. eapply SAFE. 1-4: eauto. 
+        intros (s' & B1 & B2).        
+        do 2 eexists.        
+        eapply step_push; eauto.
+      * right. left.
+        exists q. econstructor. eauto.
+        intros.
+        eapply orb_false_iff in VQ as (B1 & B2).
+        destruct i; destruct j; simpl in B2; auto.
+    + admit.
+      Admitted.
+
 
 (** *Experiment code: safety preservation using type preserving method *)
 
@@ -850,7 +965,7 @@ Proof.
                                                 /\ match_senv ccB ccwB se1 se2
                                                 /\ symtbl_inv IB1 wB se1
                                                 /\ SINV se1 wB s1). 
-  eapply Module_ksafe_components with (msafek_invariant := MINV).  
+  eapply Module_type_safe_components with (type_safe_invariant := MINV).  
   intros se2 (wB1 & ccwB) (se1 & SYM1 & MENV) VSE2.
   econstructor.
   (* step preservation *)
@@ -967,7 +1082,7 @@ Proof.
                                                 /\ match_senv ccB ccwB se1 se2
                                                 /\ symtbl_inv IB2 wB se2
                                                 /\ SINV se2 wB s2). 
-  eapply Module_ksafe_components with (msafek_invariant := MINV).  
+  eapply Module_type_safe_components with (type_safe_invariant := MINV).  
   intros se1 (ccwB & wB2) (se2 & SYM2 & MENV) VSE1.
   econstructor.
   (* step preservation *)
@@ -1075,7 +1190,7 @@ Proof.
                                                 /\ match_senv ccB ccwB se1 se2
                                                 /\ symtbl_inv IB1 wB se1
                                                 /\ SINV se1 wB s1). 
-  eapply Module_ksafe_components with (msafek_invariant := MINV).  
+  eapply Module_type_safe_components with (type_safe_invariant := MINV).  
   intros se2 (wB1 & ccwB) (se1 & SYM1 & MENV) VSE2.
   econstructor.
   (* step preservation *)
@@ -1238,21 +1353,21 @@ Context (MENV: match_senv ccB ccwB se1 se2).
 
 Let fsimk n k i s1 s2 := fsimk ccA ccB se1 se2 ccwB (L1 se1) (L2 se2) index order n k i s1 s2. 
 
-Lemma safak_preserved_under_fsimk: forall n k i s1 s2,
-    fsimk n k i s1 s2 ->
-    safek se1 (L1 se1) IA1 IB1 (SIF se1) wB1 (S n) s1 ->
-    safek se2 (L2 se2) (invcc IA1 ccA) (invcc IB1 ccB) (SIF se1) (wB1, ccwB) k s2.
-Proof.
-  induction n; intros until s2; intros FSIM SAFE.
-  - inv FSIM.
-    admit.
-    admit.
-  - inv FSIM.
-    + 
-    (* use receptive to prove that t1**t2 must have length less than
-    1. So we can use SAFE to prove that any step s1 take is also
-    safek *)
-Admitted.    
+(* Lemma safak_preserved_under_fsimk: forall n k i s1 s2, *)
+(*     fsimk n k i s1 s2 -> *)
+(*     safek se1 (L1 se1) IA1 IB1 (SIF se1) wB1 (S n) s1 -> *)
+(*     safek se2 (L2 se2) (invcc IA1 ccA) (invcc IB1 ccB) (SIF se1) (wB1, ccwB) k s2. *)
+(* Proof. *)
+(*   induction n; intros until s2; intros FSIM SAFE. *)
+(*   - inv FSIM. *)
+(*     admit. *)
+(*     admit. *)
+(*   - inv FSIM. *)
+(*     +  *)
+(*     (* use receptive to prove that t1**t2 must have length less than *)
+(*     1. So we can use SAFE to prove that any step s1 take is also *)
+(*     safek *) *)
+(* Admitted.     *)
 
 End FSIMK.
 
@@ -1636,7 +1751,7 @@ returns the emitted world from the top of the frames.
 2. Lemma wf_state_safek. This lemma is the key of the composition
 proof. It says that if the frames are well-formed (i.e., each frame is
 safe in k steps) and the k step safety of the composed semantics is
-larger than any k' step in the frames, then the state of the composed
+larger than any k' step in the frames, then the state of the compose d
 semantics is safe in k step.
 
 2.1. To prove this lemma, we extract the top frame and use safety in
