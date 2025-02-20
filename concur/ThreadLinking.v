@@ -2828,6 +2828,7 @@ Qed.
           exploit substep_switch_in; eauto.
           intros (s2'' & i' & X & Y).
           exists i', s2''. split. left. eapply plus_one. eapply step_switch; eauto. eauto.
+      - intros. f_equal. simpl. unfold initial_se, CMulti.initial_se. congruence.
 Qed.
 
   End FSIM.
@@ -2846,3 +2847,4 @@ Theorem Opensim_to_Globalsim : forall OpenC OpenA,
 Proof.
   intros. eapply SIM; eauto.
 Qed.
+
