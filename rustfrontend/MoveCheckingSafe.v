@@ -1394,7 +1394,7 @@ Qed.
 
 
 (** IMPORTANT TODO: what if b is changed? *)
-Lemma sem_wt_loc_unchanged_blocks: forall fp m1 m2 b ofs
+Lemma sem_wt_loc_unchanged_blocks: forall fp m1 m2 b ofs ce
     (WT: sem_wt_loc ce m1 fp b ofs)
     (UNC: Mem.unchanged_on (fun b1 _ => In b1 (footprint_flat fp) \/ b1 = b) m1 m2),
       sem_wt_loc ce m2 fp b ofs.
@@ -1437,7 +1437,7 @@ Definition footprint_of_val (v: val) : list block :=
   | _ => nil
   end.
 
-Lemma sem_wt_val_unchanged_blocks: forall fp m1 m2 v
+Lemma sem_wt_val_unchanged_blocks: forall fp m1 m2 v ce
     (WT: sem_wt_val ce m1 fp v)
     (UNC: Mem.unchanged_on (fun b1 _ => In b1 (footprint_flat fp)
                                      \/ In b1 (footprint_of_val v)) m1 m2),
@@ -1492,7 +1492,7 @@ Proof.
   intros. rewrite !in_app. destruct H0; auto.
 Qed.
 
-Lemma sem_wt_val_valid_block: forall m v fp b
+Lemma sem_wt_val_valid_block: forall m v fp b ce
     (WTVAL: sem_wt_val ce m fp v)
     (IN: In b (footprint_of_val v)),
     Mem.valid_block m b.

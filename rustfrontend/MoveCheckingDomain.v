@@ -144,6 +144,95 @@ End COMP_ENV.
 
 Global Hint Constructors sem_wt_val sem_wt_loc: sem_ty.
 
+Lemma in_norepet_footprint_list_unique: forall fpl id fofs1 fofs2 ffp1 ffp2,
+    list_norepet (name_footprints fpl) ->
+    In (id, fofs1, ffp1) fpl ->
+    In (id, fofs2, ffp2) fpl ->
+    fofs1 = fofs2 /\ ffp1 = ffp2.
+Proof.
+  induction fpl; intros.
+  - inv H0.
+  - inv H0. inv H1.
+    + inv H0. eauto.
+    + inv H. exfalso.
+      eapply H3. eapply in_map_iff.
+      exists (id, fofs2, ffp2). eauto.
+    + inv H1.
+      * inv H. exfalso.
+      eapply H3. eapply in_map_iff.
+      exists (id, fofs1, ffp1). eauto.
+      * inv H. eauto.
+Qed.
+
+Lemma sem_wt_loc_footprint_valid_block: forall fp m b0 b ofs ty ce
+    (COMP_NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co))),
+    sem_wt_loc ce m fp b0 ofs ->
+    wt_footprint ce ty fp ->
+    In b (footprint_flat fp) ->
+    Mem.valid_block m b.
+Proof.
+  induction fp using strong_footprint_ind; intros until ce; intros ? WTLOC WTFP IN.
+  - inv IN.
+  - inv IN.
+  - simpl in IN. destruct IN.
+    + subst. inv WTLOC. inv WT.
+      eapply Mem.valid_access_valid_block.
+      eapply Mem.valid_access_implies.
+      eapply Mem.load_valid_access. eauto. constructor.
+    + inv WTLOC. inv WT. inv WTFP.
+      eauto.
+  - inv WTLOC. simpl in IN.
+    inv WTFP.
+    eapply in_flat_map in IN as (((fid & fofs) & ffp) & A1 & A2).
+    destruct (find_fields fid fpl) eqn: FIND.
+    2: { exploit find_none. eapply FIND. eapply A1. simpl.
+         rewrite dec_eq_true. congruence. }
+    repeat destruct p.
+    exploit find_fields_some; eauto. intros (B1 & B2). subst.
+    exploit in_norepet_footprint_list_unique. rewrite FLAT.
+    eapply COMP_NOREP. eauto. eapply A1. eapply B2. intros (C1 & C2). subst.
+    exploit WT2. eauto. intros (fty & F1 & F2 & F3).
+    eapply H. eauto. eauto.
+    eapply FWT. eauto. eapply F3. auto.
+  - inv WTLOC. inv WTFP. 
+    simpl in IN. eauto.
+Qed.
+
+Lemma sem_wt_val_footprint_valid_block: forall fp m b v ty ce
+     (* used to guarantee that all the footprints in struct are not redundant *)
+    (COMP_NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co))),
+    sem_wt_val ce m fp v ->
+    wt_footprint ce ty fp ->
+    In b (footprint_flat fp) ->
+    Mem.valid_block m b.
+Proof.
+  induction fp using strong_footprint_ind; intros until ce; intros ? WTVAL WTFP IN.
+  - inv IN.
+  - inv IN.
+  - simpl in IN. destruct IN.
+    + subst. inv WTVAL.
+      eapply Mem.valid_access_valid_block.
+      eapply Mem.valid_access_implies.
+      eapply Mem.load_valid_access. eauto. constructor.
+    + inv WTVAL. inv WTFP.
+      eapply sem_wt_loc_footprint_valid_block. eauto.
+      eapply WTLOC. eauto. auto.      
+  - inv WTVAL. simpl in IN.
+    inv WTLOC. inv WTFP.
+    eapply in_flat_map in IN as (((fid & fofs) & ffp) & A1 & A2).
+    destruct (find_fields fid fpl) eqn: FIND.
+    2: { exploit find_none. eapply FIND. eapply A1. simpl.
+         rewrite dec_eq_true. congruence. }
+    repeat destruct p.
+    exploit find_fields_some; eauto. intros (B1 & B2). subst.
+    exploit in_norepet_footprint_list_unique. rewrite FLAT.
+    eapply COMP_NOREP. eauto. eapply A1. eapply B2. intros (C1 & C2). subst.
+    exploit WT2. eauto. intros (fty & F1 & F2 & F3).
+    eapply sem_wt_loc_footprint_valid_block. eauto.
+    eapply FWT. eauto. eapply F3. auto.
+  - inv WTVAL. inv WTFP. inv WTLOC.
+    simpl in IN. eapply sem_wt_loc_footprint_valid_block; eauto.
+Qed.
 
 (** * Semantics Interface *)
 
