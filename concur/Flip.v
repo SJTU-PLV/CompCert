@@ -119,11 +119,8 @@ Proof.
       -- split. constructor. intro. inv H0.
          assert (s' = s'0 /\ gmem'0 = gmem').
          {
-           inv H; inv H1; rewrite GET_C in GET_C0; inv GET_C0.
-           - admit.
-           - 
+           admit.
          }
-         admit.
          destruct H0. subst.
          {
            inv H2; inv H3; rewrite GET_T in GET_T0; inv GET_T0.
@@ -157,8 +154,17 @@ Proof.
   - intros. inv H. inv H0.
     rewrite H2 in H6. inv H6.
     exploit sd_final_determ. apply H5. apply H9. congruence.
-Admitted.
-                                      
+Abort.
+
+Theorem Flip_Globalsim' : forall p tp,
+    let OpenC := Clight.semantics1 p in let OpenA := Asm.semantics tp in
+    Closed.forward_simulation (Concur_sem_c OpenC) (Concur_sem_asm OpenA) ->
+    Closed.backward_simulation (Concur_sem_c OpenC) (Concur_sem_asm OpenA).
+Proof.
+  
+
+
+  
 Theorem Flip_Globalsim : forall p tp,
     let OpenC := Clight.semantics1 p in let OpenA := Asm.semantics tp in
     GS.forward_simulation cc_compcert OpenC OpenA ->
