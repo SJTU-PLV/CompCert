@@ -717,6 +717,444 @@ End FSIM.
   Definition forward_simulation {li1 li2} cc L1 L2 :=
     inhabited (@fsim_components li1 li2 cc L1 L2).
 
+  
+(** * Backward simulations between two transition semantics. *)
+
+Section BSIM.
+
+Context {li1 li2} (cc: callconv li1 li2).
+Context (se1 se2: Genv.symtbl) (wb: ccworld cc).
+Context {state1 state2: Type}.
+
+Let gw_type := gworld cc.
+
+(** The general form of a backward simulation. *)
+
+Record bsim_properties (L1 : lts li1 li1 state1) (L2: lts li2 li2 state2) (index: Type)
+                       (order: index -> index -> Prop)
+                       (match_states: gw_type -> index -> state1 -> state2 -> Prop) : Prop := {
+    bsim_match_valid_query:
+      forall q1 q2, match_query cc wb q1 q2 ->
+      valid_query L2 q2 = valid_query L1 q1;
+    bsim_match_initial_states:
+      forall q1 q2, match_query cc wb q1 q2 ->
+      bsim_match_cont (rex (match_states (get wb))) (initial_state L1 q1) (initial_state L2 q2);
+    bsim_match_final_states:
+      forall gw i s1 s2 r2,
+      match_states gw i s1 s2 -> safe L1 s1 -> final_state L2 s2 r2 ->
+      exists s1' r1 gw', Star L1 s1 E0 s1' /\ final_state L1 s1' r1 /\ (get wb) o-> gw' /\ gw *-> gw' /\
+                      match_reply cc (set wb gw') r1 r2;
+    bsim_match_external:
+      forall gw i s1 s2 q2, match_states gw i s1 s2 -> safe L1 s1 -> at_external L2 s2 q2 ->
+      exists wA s1' q1, Star L1 s1 E0 s1' /\ at_external L1 s1' q1 /\ gw *-> (get wA) /\
+      match_query cc wA q1 q2 /\ match_senv cc wA se1 se2 /\
+      forall r1 r2 gw'', (get wA o-> gw'') -> match_reply cc (set wA gw'') r1 r2 ->
+      bsim_match_cont (rex (match_states gw'')) (after_external L1 s1' r1) (after_external L2 s2 r2); 
+    bsim_progress:
+      forall gw i s1 s2,
+      match_states gw i s1 s2 -> safe L1 s1 ->
+      (exists r, final_state L2 s2 r) \/
+      (exists q, at_external L2 s2 q) \/
+      (exists t, exists s2', Step L2 s2 t s2');
+    bsim_simulation:
+      forall s2 t s2', Step L2 s2 t s2' ->
+      forall gw i s1, match_states gw i s1 s2 -> safe L1 s1 ->
+      exists i', exists s1',
+         (Plus L1 s1 t s1' \/ (Star L1 s1 t s1' /\ order i' i))
+      /\ match_states gw i' s1' s2';
+  }.
+
+Arguments bsim_properties: clear implicits.
+
+(** An alternate form of the simulation diagram *)
+
+Lemma bsim_simulation':
+  forall L1 L2 index order match_states, bsim_properties L1 L2 index order match_states ->
+  forall i s2 t s2', Step L2 s2 t s2' ->
+  forall gw s1, match_states gw i s1 s2 -> safe L1 s1 ->
+  (exists i', exists s1', Plus L1 s1 t s1' /\ match_states gw i' s1' s2')
+  \/ (exists i', order i' i /\ t = E0 /\ match_states gw i' s1 s2').
+Proof.
+  intros. exploit bsim_simulation; eauto.
+  intros [i' [s1' [A B]]]. intuition.
+  left; exists i'; exists s1'; auto.
+  inv H4.
+  right; exists i'; auto.
+  left; exists i'; exists s1'; split; auto. econstructor; eauto.
+Qed.
+End BSIM.
+
+Arguments bsim_properties {_ _} _ _ _ _  {_ _} L1 L2 index order match_states. 
+
+
+Record bsim_components {li1 li2} (cc: callconv li1 li2) L1 L2 :=
+  Backward_simulation {
+    bsim_index: Type;
+    bsim_order: bsim_index -> bsim_index -> Prop;
+    bsim_match_states: _;
+
+    bsim_skel:
+      skel L1 = skel L2;
+    bsim_lts:
+      forall se1 se2 w,
+        GS.match_senv cc w se1 se2 ->
+        Genv.valid_for (skel L1) se1 ->
+        bsim_properties cc se1 se2 w (activate L1 se1) (activate L2 se2)
+                        bsim_index bsim_order (bsim_match_states se1 se2 w);
+    bsim_order_wf:
+      well_founded bsim_order;
+    }.
+
+Arguments Backward_simulation {_ _ cc L1 L2 bsim_index}.
+
+Definition backward_simulation {li1 li2} cc L1 L2 :=
+  inhabited (@bsim_components li1 li2 cc L1 L2).
+
+
+Section FORWARD_TO_BACKWARD.
+
+Context {li1 li2} (cc: callconv li1 li2).
+Context (se1 se2: Genv.symtbl) (wB: ccworld cc).
+Context {state1 state2} (L1: lts li1 li1 state1) (L2: lts li2 li2 state2).
+Context {index order match_states} (FS: fsim_properties cc se1 se2 wB L1 L2 index order match_states).
+Hypothesis order_wf: well_founded order.
+Hypothesis Hse: match_senv cc wB se1 se2.
+Hypothesis L1_receptive: lts_receptive L1 se1.
+Hypothesis L2_determinate: lts_determinate L2 se2.
+
+(** Exploiting forward simulation *)
+
+Inductive f2b_transitions: gworld cc -> state1 -> state2 -> Prop :=
+  | f2b_trans_final: forall s1 s2 s1' r1 r2 gw i (gw': gworld cc),
+      Star L1 s1 E0 s1' ->
+      match_states gw i s1' s2 ->
+      (get wB) o-> gw' -> gw *-> gw' ->
+      match_reply cc (set wB gw') r1 r2 ->
+      final_state L1 s1' r1 ->
+      final_state L2 s2 r2 ->
+      f2b_transitions gw s1 s2
+  | f2b_trans_ext: forall s1 s2 s1' gw i wA q1 q2,
+      Star L1 s1 E0 s1' ->
+      match_states gw i s1' s2 ->
+      gw *-> get wA ->
+      match_query cc wA q1 q2 ->
+      match_senv cc wA se1 se2 ->
+      at_external L1 s1' q1 ->
+      at_external L2 s2 q2 ->
+      (forall r1 r2 s1'' gw'',
+          get wA o-> gw'' ->
+          match_reply cc (set wA gw'') r1 r2 ->
+          after_external L1 s1' r1 s1'' ->
+          exists j s2',
+            after_external L2 s2 r2 s2' /\
+            match_states gw'' j s1'' s2') ->
+      f2b_transitions gw s1 s2
+  | f2b_trans_step: forall s1 s2 s1' t s1'' s2' i' i'' gw,
+      Star L1 s1 E0 s1' ->
+      Step L1 s1' t s1'' ->
+      Plus L2 s2 t s2' ->
+      match_states gw i' s1' s2 ->
+      match_states gw i'' s1'' s2' ->
+      f2b_transitions gw s1 s2.
+
+Lemma f2b_progress:
+  forall i gw s1 s2, match_states gw i s1 s2 -> safe L1 s1 -> f2b_transitions gw s1 s2.
+Proof.
+  intros i0; pattern i0. apply well_founded_ind with (R := order); auto.
+  intros i REC gw s1 s2 MATCH SAFE.
+  destruct (SAFE s1) as [[r FINAL] | [[q EXTERN] | [t [s1' STEP1]]]]. apply star_refl.
+- (* final state reached *)
+  edestruct @fsim_match_final_states as (r2 & gw' & Hr & ACO & ACI & Hfinal); eauto.
+  eapply f2b_trans_final; eauto.
+  apply star_refl. 
+- (* external call reached *)
+  edestruct @fsim_match_external as (w & q2 & Hat & ACI & Hq & Hse' & Hafter); eauto.
+  eapply f2b_trans_ext; eauto.
+  apply star_refl.
+- (* L1 can make one step *)
+  exploit (fsim_simulation FS); eauto. intros [i' [s2' [A MATCH']]].
+  assert (B: Plus L2 s2 t s2' \/ (s2' = s2 /\ t = E0 /\ order i' i)).
+    intuition auto.
+    destruct (star_inv H0); intuition auto.
+  clear A. destruct B as [PLUS2 | [EQ1 [EQ2 ORDER]]].
++ eapply f2b_trans_step; eauto. apply star_refl.
++ subst. exploit REC; eauto. eapply star_safe; eauto. apply star_one; auto.
+  intros TRANS; inv TRANS.
+* eapply f2b_trans_final; eauto. eapply star_left; eauto.
+* eapply f2b_trans_ext; eauto. eapply star_left; eauto.
+* eapply f2b_trans_step; eauto. eapply star_left; eauto.
+Qed.
+
+Lemma fsim_simulation_not_E0:
+  forall s1 t s1', Step L1 s1 t s1' -> t <> E0 ->
+  forall gw i s2, match_states gw i s1 s2 ->
+  exists i', exists s2', Plus L2 s2 t s2' /\ match_states gw i' s1' s2'.
+Proof.
+  intros. exploit (fsim_simulation FS); eauto. intros [i' [s2' [A B]]].
+  exists i'; exists s2'; split; auto.
+  destruct A. auto. destruct H2. exploit star_inv; eauto. intros [[EQ1 EQ2] | P]; auto.
+  congruence.
+Qed.
+
+(** Exploiting determinacy *)
+
+Remark silent_or_not_silent:
+  forall t, t = E0 \/ t <> E0.
+Proof.
+  intros; unfold E0; destruct t; auto; right; congruence.
+Qed.
+
+Remark not_silent_length:
+  forall t1 t2, (length (t1 ** t2) <= 1)%nat -> t1 = E0 \/ t2 = E0.
+Proof.
+  unfold Eapp, E0; intros. rewrite app_length in H.
+  destruct t1; destruct t2; auto. simpl in H. extlia.
+Qed.
+
+Lemma f2b_determinacy_inv:
+  forall s2 t' s2' t'' s2'',
+  Step L2 s2 t' s2' -> Step L2 s2 t'' s2'' ->
+  (t' = E0 /\ t'' = E0 /\ s2' = s2'')
+  \/ (t' <> E0 /\ t'' <> E0 /\ match_traces se1 t' t'').
+Proof.
+  intros.
+  assert (match_traces se2 t' t'').
+    eapply sd_determ_1; eauto.
+  destruct (silent_or_not_silent t').
+  subst. inv H1.
+  left; intuition. eapply sd_determ_2; eauto.
+  destruct (silent_or_not_silent t'').
+  subst. inv H1. elim H2; auto.
+  right; intuition.
+  eapply match_traces_preserved with (ge1 := se2); auto.
+  intro. symmetry. eapply match_senv_public_preserved; eauto.
+Qed.
+
+Lemma f2b_determinacy_star:
+  forall s s1, Star L2 s E0 s1 ->
+  forall t s2 s3,
+  Step L2 s1 t s2 -> t <> E0 ->
+  Star L2 s t s3 ->
+  Star L2 s1 t s3.
+Proof.
+  intros s0 s01 ST0. pattern s0, s01. eapply star_E0_ind; eauto.
+  intros. inv H3. congruence.
+  exploit f2b_determinacy_inv. eexact H. eexact H4.
+  intros [[EQ1 [EQ2 EQ3]] | [NEQ1 [NEQ2 MT]]].
+  subst. simpl in *. eauto.
+  congruence.
+Qed.
+
+(** Orders *)
+
+Inductive f2b_index : Type :=
+  | F2BI_before (n: nat)
+  | F2BI_after (n: nat).
+
+Inductive f2b_order: f2b_index -> f2b_index -> Prop :=
+  | f2b_order_before: forall n n',
+      (n' < n)%nat ->
+      f2b_order (F2BI_before n') (F2BI_before n)
+  | f2b_order_after: forall n n',
+      (n' < n)%nat ->
+      f2b_order (F2BI_after n') (F2BI_after n)
+  | f2b_order_switch: forall n n',
+      f2b_order (F2BI_before n') (F2BI_after n).
+
+Lemma wf_f2b_order:
+  well_founded f2b_order.
+Proof.
+  assert (ACC1: forall n, Acc f2b_order (F2BI_before n)).
+    intros n0; pattern n0; apply lt_wf_ind; intros.
+    constructor; intros. inv H0. auto.
+  assert (ACC2: forall n, Acc f2b_order (F2BI_after n)).
+    intros n0; pattern n0; apply lt_wf_ind; intros.
+    constructor; intros. inv H0. auto. auto.
+  red; intros. destruct a; auto.
+Qed.
+
+(** Constructing the backward simulation *)
+
+Inductive f2b_match_states: gworld cc -> f2b_index -> state1 -> state2 -> Prop :=
+  | f2b_match_at: forall gw i s1 s2,
+      match_states gw i s1 s2 ->
+      f2b_match_states gw (F2BI_after O) s1 s2
+  | f2b_match_before: forall gw s1 t s1' s2b s2 n s2a i,
+      Step L1 s1 t s1' ->  t <> E0 ->
+      Star L2 s2b E0 s2 ->
+      starN (step L2) (globalenv L2) n s2 t s2a ->
+      match_states gw i s1 s2b ->
+      f2b_match_states gw (F2BI_before n) s1 s2
+  | f2b_match_after: forall gw n s2 s2a s1 i,
+      starN (step L2) (globalenv L2) (S n) s2 E0 s2a ->
+      match_states gw i s1 s2a ->
+      f2b_match_states gw (F2BI_after (S n)) s1 s2.
+
+Remark f2b_match_after':
+  forall n s2 s2a s1 gw i,
+  starN (step L2) (globalenv L2) n s2 E0 s2a ->
+  match_states gw i s1 s2a ->
+  f2b_match_states gw (F2BI_after n) s1 s2.
+Proof.
+  intros. inv H.
+  econstructor; eauto.
+  econstructor; eauto. econstructor; eauto.
+Qed.
+
+(** Backward simulation of L2 steps *)
+
+Lemma f2b_simulation_step:
+  forall s2 t s2', Step L2 s2 t s2' ->
+  forall gw i s1, f2b_match_states gw i s1 s2 -> safe L1 s1 ->
+  exists i', exists s1',
+    (Plus L1 s1 t s1' \/ (Star L1 s1 t s1' /\ f2b_order i' i))
+     /\ f2b_match_states gw i' s1' s2'.
+Proof.
+  intros s2 t s2' STEP2 gw i s1 MATCH SAFE.
+  inv MATCH.
+- (* 1. At matching states *)
+  exploit f2b_progress; eauto. intros TRANS. inv TRANS.
++ (* 1.1  L1 can reach final state and L2 is at final state: impossible! *)
+  exploit (sd_final_nostep L2_determinate); eauto. contradiction.
++ (* 1.1b  Same, with external states *)
+  exploit (sd_at_external_nostep L2_determinate); eauto. contradiction.
++ (* 1.2  L1 can make 0 or several steps; L2 can make 1 or several matching steps. *)
+  inv H2.
+  exploit f2b_determinacy_inv. eexact H5. eexact STEP2.
+  intros [[EQ1 [EQ2 EQ3]] | [NOT1 [NOT2 MT]]].
+* (* 1.2.1  L2 makes a silent transition *)
+  destruct (silent_or_not_silent t2).
+  (* 1.2.1.1  L1 makes a silent transition too: perform transition now and go to "after" state *)
+  subst. simpl in *. destruct (star_starN H6) as [n STEPS2].
+  exists (F2BI_after n); exists s1''; split.
+  left. eapply plus_right; eauto.
+  eapply f2b_match_after'; eauto.
+  (* 1.2.1.2 L1 makes a non-silent transition: keep it for later and go to "before" state *)
+  subst. simpl in *. destruct (star_starN H6) as [n STEPS2].
+  exists (F2BI_before n); exists s1'; split.
+  right; split. auto. constructor.
+  econstructor. eauto. auto. apply star_one; eauto. eauto. eauto.
+* (* 1.2.2 L2 makes a non-silent transition, and so does L1 *)
+  exploit not_silent_length. eapply (sr_traces L1_receptive); eauto. intros [EQ | EQ].
+  congruence.
+  subst t2. rewrite E0_right in H1.
+  (* Use receptiveness to equate the traces *)
+  exploit (sr_receptive L1_receptive); eauto. intros [s1''' STEP1].
+  exploit fsim_simulation_not_E0. eexact STEP1. auto. eauto.
+  intros [i''' [s2''' [P Q]]]. inv P.
+  (* Exploit determinacy *)
+  exploit not_silent_length. eapply (sr_traces L1_receptive); eauto. intros [EQ | EQ].
+  subst t0. simpl in *. exploit @sd_determ_1. eauto. eexact STEP2. eexact H2.
+  intros. elim NOT2. inv H8. auto.
+  subst t2. rewrite E0_right in *.
+  assert (s4 = s2'). eapply sd_determ_2; eauto. subst s4.
+  (* Perform transition now and go to "after" state *)
+  destruct (star_starN H7) as [n STEPS2]. exists (F2BI_after n); exists s1'''; split.
+  left. eapply plus_right; eauto.
+  eapply f2b_match_after'; eauto.
+
+- (* 2. Before *)
+  inv H2. congruence.
+  exploit f2b_determinacy_inv. eexact H4. eexact STEP2.
+  intros [[EQ1 [EQ2 EQ3]] | [NOT1 [NOT2 MT]]].
++ (* 2.1 L2 makes a silent transition: remain in "before" state *)
+  subst. simpl in *. exists (F2BI_before n0); exists s1; split.
+  right; split. apply star_refl. constructor. lia.
+  econstructor; eauto. eapply star_right; eauto.
++ (* 2.2 L2 make a non-silent transition *)
+  exploit not_silent_length. eapply (sr_traces L1_receptive); eauto. intros [EQ | EQ].
+  congruence.
+  subst. rewrite E0_right in *.
+  (* Use receptiveness to equate the traces *)
+  exploit (sr_receptive L1_receptive); eauto. intros [s1''' STEP1].
+  exploit fsim_simulation_not_E0. eexact STEP1. auto. eauto.
+  intros [i''' [s2''' [P Q]]].
+  (* Exploit determinacy *)
+  exploit f2b_determinacy_star. eauto. eexact STEP2. auto. apply plus_star; eauto.
+  intro R. inv R. congruence.
+  exploit not_silent_length. eapply (sr_traces L1_receptive); eauto. intros [EQ | EQ].
+  subst. simpl in *. exploit @sd_determ_1. eauto. eexact STEP2. eexact H2.
+  intros. elim NOT2. inv H7; auto.
+  subst. rewrite E0_right in *.
+  assert (s3 = s2'). eapply sd_determ_2; eauto. subst s3.
+  (* Perform transition now and go to "after" state *)
+  destruct (star_starN H6) as [n STEPS2]. exists (F2BI_after n); exists s1'''; split.
+  left. apply plus_one; auto.
+  eapply f2b_match_after'; eauto.
+
+- (* 3. After *)
+  inv H. exploit Eapp_E0_inv; eauto. intros [EQ1 EQ2]; subst.
+  exploit f2b_determinacy_inv. eexact H2. eexact STEP2.
+  intros [[EQ1 [EQ2 EQ3]] | [NOT1 [NOT2 MT]]].
+  subst. exists (F2BI_after n); exists s1; split.
+  right; split. apply star_refl. constructor; lia.
+  eapply f2b_match_after'; eauto.
+  congruence.
+Qed.
+
+End FORWARD_TO_BACKWARD.
+
+(** The backward simulation *)
+
+Lemma forward_to_backward_simulation:
+  forall {li1 li2} (cc: callconv li1 li2),
+  forall L1 L2,
+  forward_simulation cc L1 L2 -> receptive L1 -> determinate L2 ->
+  backward_simulation cc L1 L2.
+Proof.
+  intros until L2. intros FS L1_receptive L2_determinate.
+  destruct FS as [[index order match_states Hskel FS order_wf]].
+  set (ms se1 se2 w := f2b_match_states cc (L1 se1) (L2 se2) (match_states := match_states se1 se2 w)).
+  constructor.
+  eapply Backward_simulation with f2b_order ms; auto using wf_f2b_order.
+  intros se1 se2 wB Hse Hse1.
+  specialize (FS se1 se2 wB Hse Hse1).
+  specialize (L1_receptive se1). specialize (L2_determinate se2).
+  split.
+- (* valid queries *)
+  eapply fsim_match_valid_query; eauto.
+- split.
+  (* initial states exist *)
+  intros. exploit (fsim_match_initial_states FS); eauto. intros [i [s2 [A B]]].
+  exists s2; auto.
+  (* initial states *)
+  intros. exploit (fsim_match_initial_states FS); eauto. intros [i [s2' [A B]]].
+  assert (s2 = s2') by (eapply sd_initial_determ; eauto). subst s2'.
+  exists s1; split; auto. exists (F2BI_after O). econstructor; eauto.
+- (* final states *)
+  intros. inv H.
+  exploit @f2b_progress; eauto. intros TRANS; inv TRANS.
+  assert (r0 = r2) by eauto using sd_final_determ; subst.
+  exists s1',r1,gw'. eauto.
+  eelim sd_final_noext; eauto.
+  inv H4. exploit (sd_final_nostep L2_determinate); eauto. contradiction.
+  inv H5. congruence. exploit (sd_final_nostep L2_determinate); eauto. contradiction.
+  inv H2. exploit (sd_final_nostep L2_determinate); eauto. contradiction.
+- (* external states *)
+  intros. inv H.
+  + exploit @f2b_progress; eauto.
+    intros TRANS; inv TRANS.
+    * eelim (sd_final_noext L2_determinate); eauto.
+    * assert (q0 = q2) by eauto using sd_at_external_determ; subst.
+      exists wA, s1', q1. intuition auto. split.
+      intros. edestruct H9 as (j & s2' & Hs2' & Hs'); eauto.
+      intros. edestruct H9 as (j & s2' & Hs2' & Hs'); eauto.
+      assert (s3 = s2') by eauto using sd_after_external_determ; subst.
+      exists s0. intuition auto.
+      exists (F2BI_after O). econstructor; eauto.
+    * inv H4. eelim (sd_at_external_nostep L2_determinate); eauto.
+  + inv H5. congruence. eelim (sd_at_external_nostep L2_determinate); eauto.
+  + inv H2. eelim (sd_at_external_nostep L2_determinate); eauto.
+- (* progress *)
+  intros. inv H.
+  exploit @f2b_progress; eauto. intros TRANS; inv TRANS; eauto.
+  inv H3. eauto.
+  inv H4. congruence. eauto.
+  inv H1. eauto.
+- (* simulation *)
+  eapply f2b_simulation_step; eauto.
+Qed.
+
 End GS.
 
 (** Transform the old callconv into new callconv with [world_unit], therefore new fsim is essentially the same as old one *)
