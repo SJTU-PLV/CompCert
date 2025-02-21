@@ -1304,6 +1304,69 @@ Ltac Equalities :=
   inv H; inv H0. congruence.
 Qed.
 
+
+Lemma semantics_receptive: forall p, receptive (semantics p).
+Proof.
+  intros. red. intros. pose proof (semantics_determinate p se).
+  inv H. constructor; eauto.
+  intros.  destruct s as [nb1 s0], s1 as [nb2 s2]; subst.
+  inv H; inv H0; eauto.
+  - simpl. simpl in H1. exists (nb1, s2). split; eauto.
+  - simpl. simpl in H1. 
+    (* destruct res1; destruct res2; inv H3; eauto. *)
+    inv H1.
+    + exploit external_call_receptive; eauto.
+    econstructor; eauto.
+    intros (vres2 & m2 & Hext).
+    exists (nb1,State (nextinstr_nf (set_res res vres2 (undef_regs preg_of ## (destroyed_by_builtin ef) rs))) m2 true).
+    split; eauto. econstructor; eauto.
+    + exploit external_call_receptive; eauto.
+    econstructor; eauto.
+    intros (vres2 & m2 & Hext).
+    set (rs2 := (set_pair (loc_external_result (ef_sig ef)) vres2 (undef_caller_save_regs rs)) # PC <- (rs RA)).
+    exists (nb1,State rs2 m2 live).
+    split; eauto. eapply exec_step_external; eauto.
+  - simpl in H1. simpl. inv H1.
+    + exploit external_call_receptive; eauto.
+      econstructor; eauto.
+      intros (vres2 & m2 & Hext).
+      set (rs2 := nextinstr_nf (set_res res vres2 (undef_regs preg_of ## (destroyed_by_builtin ef) rs))).
+      exists (nb1,State rs2 m2 true).
+      split; eauto. econstructor; eauto.
+    + exploit external_call_receptive; eauto.
+      econstructor; eauto.
+      intros (vres2 & m2 & Hext).
+      set (rs2 := (set_pair (loc_external_result (ef_sig ef)) vres2 (undef_caller_save_regs rs)) # PC <- (rs RA)).
+      exists (nb1,State rs2 m2 live).
+      split; eauto. econstructor; eauto.
+  - simpl in H1. simpl. inv H1.
+    + exploit external_call_receptive; eauto.
+      econstructor; eauto.
+      intros (vres2 & m2 & Hext).
+      set (rs2 := nextinstr_nf (set_res res vres2 (undef_regs preg_of ## (destroyed_by_builtin ef) rs))).
+      exists (nb1,State rs2 m2 true).
+      split; eauto. econstructor; eauto.
+    + exploit external_call_receptive; eauto.
+      econstructor; eauto.
+      intros (vres2 & m2 & Hext).
+      set (rs2 := (set_pair (loc_external_result (ef_sig ef)) vres2 (undef_caller_save_regs rs)) # PC <- (rs RA)).
+      exists (nb1,State rs2 m2 live).
+      split; eauto. econstructor; eauto.
+  - simpl in H1. simpl. inv H1.
+    + exploit external_call_receptive; eauto.
+      econstructor; eauto.
+      intros (vres2 & m2 & Hext).
+      set (rs2 := nextinstr_nf (set_res res vres2 (undef_regs preg_of ## (destroyed_by_builtin ef) rs))).
+      exists (nb1,State rs2 m2 true).
+      split; eauto. econstructor; eauto.
+    + exploit external_call_receptive; eauto.
+      econstructor; eauto.
+      intros (vres2 & m2 & Hext).
+      set (rs2 := (set_pair (loc_external_result (ef_sig ef)) vres2 (undef_caller_save_regs rs)) # PC <- (rs RA)).
+      exists (nb1,State rs2 m2 live).
+      split; eauto. econstructor; eauto.
+Qed.
+
 (** Classification functions for processor registers (used in Asmgenproof). *)
 
 Definition data_preg (r: preg) : bool :=

@@ -472,4 +472,17 @@ Section ASM_LINKING.
           destruct H; inv H9. destruct H1; congruence.
     - apply well_founded_ltof.
   Qed.
+
+  Lemma asm_linking_backward:
+    backward_simulation cc_id cc_id
+      (SmallstepLinking.semantics L (erase_program p))
+      (semantics p).
+  Proof.
+    eapply forward_to_backward_simulation.
+    eapply asm_linking.
+    eapply SmallstepLinking.semantics_receptive.
+    intros. eapply Asm.semantics_receptive.
+    eapply semantics_determinate.
+  Qed.
+  
 End ASM_LINKING.

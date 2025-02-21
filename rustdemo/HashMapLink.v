@@ -46,20 +46,34 @@ Proof.
   eapply cc_rust_compcert_eqv.
 Qed.
 
-(** The semantically linked assembly module (linked_list_asm +
+(** The syntactic linked assembly module (linked_list_asm +
 hash_map_asm) is totally safe under the invariant ((hmap_inv @@
-rs_own) @! cc_rust_compcert). For now, the adequacy of Asm linking
-cannot be used to prove the safety of the syntactic linked module
-because it is a forward_simulation. *)
-Theorem link_linked_list_hash_map_safe: forall linked_list_asm hash_map_asm composed_sem,
+rs_own) @! cc_rust_compcert). *)
+Theorem link_linked_list_hash_map_safe: forall linked_list_asm hash_map_asm linked_mod,
     transf_rustlight_program linked_list_mod = OK linked_list_asm ->
     transf_clight_program hash_map_prog = OK hash_map_asm ->
-    SmallstepLinking.compose (Asm.semantics linked_list_asm) (Asm.semantics hash_map_asm) = Some composed_sem ->
-    module_type_safe ((hmap_inv @@ rs_own) @! cc_rust_compcert) ((hmap_inv @@ rs_own) @! cc_rust_compcert) composed_sem SIF.
+    Linking.link linked_list_asm hash_map_asm = Some linked_mod ->
+    module_type_safe ((hmap_inv @@ rs_own) @! cc_rust_compcert) ((hmap_inv @@ rs_own) @! cc_rust_compcert) (Asm.semantics linked_mod) SIF.
 Proof.
   intros.
-  eapply compose_total_type_safety; eauto.
-  eapply compiled_linked_list_safe; auto.
-  eapply compiled_hash_map_safe; auto.
+  assert (SAFE: module_type_safe (((hmap_inv @@ rs_own) @! cc_rust_compcert) @! 1)
+                  (((hmap_inv @@ rs_own) @! cc_rust_compcert) @! 1) (Asm.semantics linked_mod) SIF).
+  { eapply module_type_safe_preservation.
+    2: { eapply AsmLinking.asm_linking_backward. eauto. }
+    eapply compose_total_type_safety; eauto.
+    eapply compiled_linked_list_safe; eauto.
+    eapply compiled_hash_map_safe; eauto.
+    unfold SmallstepLinking.compose. simpl.
+    erewrite Linking.link_erase_program; eauto. simpl.
+    f_equal. f_equal.
+    apply Axioms.functional_extensionality. intros [|]; auto. }      
+  eapply open_safety_inv_ref.
+  eapply cc_inv_ref. reflexivity.
+  eapply CallconvAlgebra.cc_compose_id_right.
+  red. eapply cc_inv_ref. reflexivity.
+  eapply CallconvAlgebra.cc_compose_id_right.
+  eapply open_safety_inv_ref; eauto.
+  rewrite invcc_compose_assoc. reflexivity.
+  rewrite invcc_compose_assoc. reflexivity.
 Qed.
 
