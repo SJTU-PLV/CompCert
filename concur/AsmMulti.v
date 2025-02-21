@@ -258,7 +258,7 @@ Section MultiThread.
   |step_switch : forall ge s s' s'' target gmem',
       switch_out s s' target gmem' ->
       switch_in s' s'' target gmem' ->
-      step ge s E0 s''.
+      step ge s (Event_switch target :: nil) s''.
 
   Definition globalenv := Smallstep.globalenv OpenLTS.
   

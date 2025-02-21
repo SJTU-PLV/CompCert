@@ -70,7 +70,8 @@ Inductive event: Type :=
   | Event_syscall: string -> list eventval -> eventval -> event
   | Event_vload: memory_chunk -> ident -> ptrofs -> eventval -> event
   | Event_vstore: memory_chunk -> ident -> ptrofs -> eventval -> event
-  | Event_annot: string -> list eventval -> event.
+  | Event_annot: string -> list eventval -> event
+  | Event_switch : nat -> event. (*t : nat is the target thread id*)
 
 (** The dynamic semantics for programs collect traces of events.
   Traces are of two kinds: finite (type [trace]) or infinite (type [traceinf]). *)
@@ -519,7 +520,9 @@ Inductive match_traces: trace -> trace -> Prop :=
   | match_traces_vstore: forall chunk id ofs arg,
       match_traces (Event_vstore chunk id ofs arg :: nil) (Event_vstore chunk id ofs arg :: nil)
   | match_traces_annot: forall id args,
-      match_traces (Event_annot id args :: nil) (Event_annot id args :: nil).
+      match_traces (Event_annot id args :: nil) (Event_annot id args :: nil)
+  | match_traces_switch : forall tid1 tid2,
+      match_traces (Event_switch tid1 :: nil) (Event_switch tid2 :: nil).
 
 End MATCH_TRACES.
 
@@ -547,6 +550,7 @@ Definition output_event (ev: event) : Prop :=
   match ev with
   | Event_syscall _ _ _ => False
   | Event_vload _ _ _ _ => False
+  | Event_switch _ => False
   | Event_vstore _ _ _ _ => True
   | Event_annot _ _ => True
   end.

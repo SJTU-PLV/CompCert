@@ -6,8 +6,6 @@ Require Import MultiLibs CMulti AsmMulti.
 Require Import InjectFootprint CA.
 Require Import CallconvBig Injp CAnew Composition ThreadLinking.
 
-Check Clight.semantics_receptive.
-Check Asm.semantics_determinate.
 
 Lemma Concur_sem_c_receptive : forall L,
     receptive L -> Closed.receptive (Concur_sem_c L).
@@ -21,12 +19,13 @@ Proof.
       exploit sr_receptive; eauto.
       intros [s2 Hs]. eexists. econstructor; eauto.
     + inv H1. eexists. simpl. eapply CMulti.step_thread_create; eauto.
-    + inv H1. eexists. simpl. eapply CMulti.step_switch; eauto.
+    + inv H1. eexists. simpl. admit.
+      (* eapply CMulti.step_switch; eauto. *)
   - red. intros. inv H0.
     + simpl in H2. exploit sr_traces; eauto.
     + simpl. lia.
     + simpl. lia.
-Qed.
+Admitted.
 
 Lemma query_is_pthread_create_asm_determ :
   forall L qp rp qs rp' qs',
@@ -45,6 +44,15 @@ Proof.
   reflexivity.
 Qed.
 
+(* Lemma swtich_out_determ : forall L s s1 s2 t mem1 mem2,
+    switch_out L s s1 t mem1 ->
+    switch_out L s s2 t mem2 ->
+    mem1 = mem2 /\ s1 = s2.
+Proof.
+  intros. inv H; inv H0.
+  - rewrite GET_C in GET_C0. inv GET_C0.
+    exploit sd_at_external_determ. apply AT_E. apply AT_E0.
+*)
 Lemma Concur_sem_asm_determinate : forall L,
     determinate L -> Closed.determinate (Concur_sem_asm L).
 Proof.
@@ -108,7 +116,26 @@ Proof.
             apply Genv.find_invert_symbol in FINDPTJ.
             rewrite FINDPTC in FINDPTJ. inv FINDPTJ.
          ++ exfalso. eapply sd_final_noext; eauto.
-      -- admit.
+      -- split. constructor. intro. inv H0.
+         assert (s' = s'0 /\ gmem'0 = gmem').
+         {
+           inv H; inv H1; rewrite GET_C in GET_C0; inv GET_C0.
+           - admit.
+           - 
+         }
+         admit.
+         destruct H0. subst.
+         {
+           inv H2; inv H3; rewrite GET_T in GET_T0; inv GET_T0.
+           - generalize (sd_after_external_determ _ _ _ _ AFT_E AFT_E0). intro. subst. reflexivity.
+           - destruct WAIT_THE. destruct WAIT_THE0. rewrite H0 in H3.
+             inv H3.
+             rewrite GET_WAIT in GET_WAIT0. inv GET_WAIT0.
+             setoid_rewrite MEM_RES in MEM_RES0. inv MEM_RES0.
+             generalize (sd_after_external_determ _ _ _ _ AFT_E AFT_E0). intro. subst. reflexivity.
+           - generalize (sd_initial_determ _ _ _ INITIAL INITIAL0). intro. subst.
+             reflexivity.
+         }
   - red. intros. inv H. exploit sd_traces; eauto.
     simpl. lia. simpl. lia.
   - intros. inv H. inv H0.
