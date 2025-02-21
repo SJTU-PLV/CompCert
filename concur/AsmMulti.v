@@ -166,9 +166,10 @@ Section MultiThread.
       (RS_RSI : rs # RSI = Vptr b_start Ptrofs.zero)
       (RS_RDX : rs # RDX = Vptr b_arg ofs_arg)
       (RSR: rs_r = (rs # PC <- (rs RA) # RAX <- (Vint (Int.one))))
-      (RSQ_PC : rs_q # PC = Vptr b_start Ptrofs.zero)
+      (RSQ: rs_q = (rs # PC <- (Vptr b_start Ptrofs.zero) # RDI <- (Vptr b_arg ofs_arg) #RSP <- (Vptr sp Ptrofs.zero)))
+      (* (RSQ_PC : rs_q # PC = Vptr b_start Ptrofs.zero)
       (RSQ_RDI : rs_q # RDI = Vptr b_arg ofs_arg)
-      (RSQ_RSP: rs_q # RSP = Vptr sp Ptrofs.zero)
+      (RSQ_RSP: rs_q # RSP = Vptr sp Ptrofs.zero) *)
       (** We may need more requirements of rs' here *)
       (MEM_CREATE: Mem.thread_create m = (m1, new_tid))
       (MEM_YIELD: Mem.yield m1 new_tid P1 = m2)
@@ -227,9 +228,6 @@ Section MultiThread.
   |switch_in_join : forall s' s'' target gmem' ls1 ls1' wait gmem'' rs1 i res rs1'
       (GET_T: get_thread s' target = Some (Returnj ls1 rs1))
       (WAIT_THE: rs1 # RDI = Vint i /\ int_to_nat i = wait)
-      
-      (* the thread [target] is waiting for thread [wait] *)
-      (* the "wait" thread is already finished *)
       (RNG_WAIT: (1 <= wait < next_tid s') %nat)
       (GET_WAIT: get_thread s' wait = Some (Final res))
       (MEM_RES: Mem.storev Many64 gmem' (rs1 # RSI) res = Some gmem'')
@@ -249,9 +247,9 @@ Section MultiThread.
       Smallstep.step OpenLTS ge ls1 t ls2 ->
       update_thread s (cur_tid s) (Local ls2) = s' ->
       step ge s t s'
-  |step_thread_create : forall ge s s' q_ptc r_ptc q_str rs gm0 ls ls',
+  |step_thread_create : forall ge s s' q_ptc r_ptc q_str ls ls',
       get_cur_thread s = Some (Local ls) -> (* get the current local state *)
-      Smallstep.at_external OpenLTS ls (rs, gm0) -> (* get the query to pthread_create *)
+      Smallstep.at_external OpenLTS ls q_ptc -> (* get the query to pthread_create *)
       query_is_pthread_create_asm q_ptc r_ptc q_str -> (* get the reply to [pthread_create] and query to start_routine *)
       Smallstep.after_external OpenLTS ls r_ptc ls' ->
       (* the current thread completes the primitive, regsets are unchanged *)

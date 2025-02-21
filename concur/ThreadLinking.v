@@ -958,13 +958,9 @@ Qed.
        fold se in FINDSTR. rewrite SE_eq in FINDSTR.
        econstructor.
        eapply FINDPTC. eapply FINDSTR. eauto. eauto. eauto. eauto. reflexivity.
-       unfold trs_q.  rewrite Pregmap.gso.
-       rewrite Pregmap.gso.
-       rewrite Pregmap.gss.
-       eauto. congruence. congruence.
-       unfold trs_q. rewrite Pregmap.gso; try congruence.
-       rewrite Pregmap.gss. eauto.
-       unfold trs_q. rewrite Pregmap.gss. eauto. eauto. eauto.
+       unfold trs_q. instantiate (1:= sp0). rewrite RDXVAL'.
+       rewrite RSIVAL'. reflexivity.
+       eauto. eauto.
        instantiate (1:= TTP1). fold ttm'2. eauto. reflexivity.
      - (** accg *)
        simpl. econstructor.

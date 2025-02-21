@@ -202,7 +202,7 @@ CONCUR=CallconvBig.v \
        SelectionproofC.v RTLgenproofC.v TailcallproofC.v \
        AllocproofC.v TunnelingproofC.v AsmgenproofC.v \
        InjpAccoComp.v InjpExtAccoComp.v CallConvLibs.v \
-       CAnew.v MultiLibs.v CMulti.v AsmMulti.v MultiSimBig.v ThreadLinking.v \
+       CAnew.v MultiLibs.v CMulti.v AsmMulti.v ThreadLinking.v \
        StackingRefine.v RTLselfsim.v Asmselfsim.v Composition.v
 
 
