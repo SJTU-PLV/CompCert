@@ -935,9 +935,46 @@ Proof.
         intros.
         eapply orb_false_iff in VQ as (B1 & B2).
         destruct i; destruct j; simpl in B2; auto.
-    + admit.
-      Admitted.
+    + do 2 right.
+      do 2 eexists. eapply step_internal. eauto.
+  (* initial state *)
+  - intros q VQ QINV.
+    simpl in VQ. eapply orb_true_iff in VQ.
+    assert (VQ1: exists j, valid_query (L j se) q = true).
+    { destruct VQ.
+      1-2: eexists; eauto. }
+    destruct VQ1 as (j & VQ1).
+    exploit @initial_preserves_progress. eapply SAFE.
+    1-4: eauto. intros (s & A1 & A2).
+    exists (st L j s :: nil). split.
+    econstructor; eauto.
+    intros. inv H.
+    (* The initial state is state (L i) instead of state (L j) *)
+    exploit @initial_preserves_progress. eapply SAFE.
+    1-4: eauto. intros (s' & B1 & B2).
+    econstructor. econstructor.
+    eauto. eauto.
+  (* external *)
+  - intros s q SINV EXT. inv EXT.
+    inv SINV. subst_dep.
+    exploit @external_preserves_progress. eapply SAFE.
+    1-4: eauto. intros (wA & A1 & A2 & A3).
+    exists wA. repeat apply conj; auto.
+    intros. exploit A3; eauto. intros (s' & B1 & B2).
+    eexists. split.
+    econstructor; eauto.
+    intros. inv H2. subst_dep. 
+    econstructor; eauto.
+  (* final *)
+  - intros s r SINV FINAL. inv FINAL.
+    inv SINV. subst_dep.
+    inv WFS.
+    eapply final_state_preserves. eapply SAFE.
+    all: eauto.
+Qed.
 
+End COMPOSE_TYPE_SAFE.
+    
 
 (** *Experiment code: safety preservation using type preserving method *)
 
