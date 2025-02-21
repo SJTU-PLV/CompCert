@@ -6,7 +6,7 @@
 typedef struct List List;
 typedef List** Hashmap;
 extern List* empty_list();
-extern List* find(List* l, int k);
+extern List* find_and_process(List* l, int k);
 extern List* insert(List* l, int k, int v);
 extern List* remove(List* l, int k);
 extern int delete_list(List* l);
@@ -66,13 +66,13 @@ int process_with_key(int key, int val){
     return val;
 }
 
-void hmap_operate_on(Hashmap hmap, int key){
+void hmap_process(Hashmap hmap, int key){
     List** buk = find_bucket(hmap, key);
     if(*buk == NULL){
         return;
     }
     else{
-        *buk = find(*buk, key);
+        *buk = find_and_process(*buk, key);
     }
 
     // int index = hash(key);

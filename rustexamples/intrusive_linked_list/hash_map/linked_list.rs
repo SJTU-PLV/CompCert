@@ -19,10 +19,11 @@ fn hash(k: i32, range: u32) -> u32{
 }
 
 // use callback function instead of returning the value?
-fn find(l: Box<List>, k: i32) -> Box<List>{
+fn find_and_process(l: Box<List>, k: i32) -> Box<List>{
     match *l {
         List::Nil => {
             // *l = List::Nil; l is not moved out
+            // use playground to certify it
             return l;
         }
         List::Cons(node) => {
@@ -30,7 +31,7 @@ fn find(l: Box<List>, k: i32) -> Box<List>{
                 node.val = process(node.val);
             }
             else {
-                node.next = find(node.next, k);
+                node.next = find_and_process(node.next, k);
             }
             *l = List::Cons(node);
             return l;

@@ -115,13 +115,12 @@ Definition bucket_val_pred m fp v :=
 Remark sizeof_List_ty: Rusttypes.sizeof ll_ce List_ty = 24.
   reflexivity. Defined.
 
-Lemma bucket_val_pred_unchanged_on: forall m1 m2 fp v,
+Lemma bucket_val_spec_unchanged_on: forall m1 m2 fp v,
     Mem.unchanged_on (fun b _ => In b (footprint_flat fp)) m1 m2 ->
-    bucket_val_pred m1 fp v ->
-    bucket_val_pred m2 fp v.
+    bucket_val_spec m1 fp v ->
+    bucket_val_spec m2 fp v.
 Proof.
-  intros until v. intros UNC PRED.
-  unfold bucket_val_pred in *. destruct Val.eq; auto.
+  intros until v. intros UNC PRED.  
   inv PRED. econstructor; eauto.
   eapply sem_wt_val_unchanged_blocks. eauto.
   eapply Mem.unchanged_on_implies. eauto.
@@ -130,6 +129,17 @@ Proof.
   rewrite sizeof_List_ty in *. inv WTVAL.
   simpl in H. simpl. destruct H; try contradiction; eauto.
   destruct H; try contradiction; eauto.
+Qed.  
+
+
+Lemma bucket_val_pred_unchanged_on: forall m1 m2 fp v,
+    Mem.unchanged_on (fun b _ => In b (footprint_flat fp)) m1 m2 ->
+    bucket_val_pred m1 fp v ->
+    bucket_val_pred m2 fp v.
+Proof.
+  intros until v. intros UNC PRED.
+  unfold bucket_val_pred in *. destruct Val.eq; auto.
+  eapply bucket_val_spec_unchanged_on; eauto.
 Qed.
   
 Program Definition bucket_pred (b: block) (pos: Z) (fp: footprint) : massert :=
@@ -166,6 +176,16 @@ Next Obligation.
       eapply sem_wt_val_footprint_valid_block with (ce := ll_ce) (v:=H3); eauto.
       eapply ll_ce_composite_members_norepet.
 Defined.
+
+Lemma bucket_val_spec_inv: forall m fp v,
+    bucket_val_spec m fp v ->
+    exists b, v = Vptr b Ptrofs.zero.
+Proof.
+  intros. inv H. inv WTFP.
+  inv WTVAL. simpl in WF. congruence.
+  rewrite sizeof_List_ty in *. inv WTVAL.
+  eauto.
+Qed.
 
 Lemma bucket_pred_elim: forall m b ofs fp P,
     m |= bucket_pred b ofs fp ** P ->
@@ -310,14 +330,14 @@ Admitted.
     
 (** TODO: property of splitting hmap_pred_rec  *)
 
-(* Pre-condition of hmap_operate_on function *)
-(** We should not make hmap_operate_on an external function because
-its pre-condition of the hmap argument is not compatible with rs_own
-because it cannot be called from Rust side. The rust module cannot
+(* Pre-condition of hmap_process function *)
+(** We should not make hmap_process an external function because
+its pre-condition of the hmap argument is not compatible with rs_own.
+It cannot be called from Rust side. The rust module cannot
 instantiate a value with type hmap_ty. One way to resolve this problem
 is that prove manually {I'}M[..] refining {I@@rs_own}M[..] where I' is
 a more dedicated condition that distinguish the call to
-hmap_operate_on or process and then use different conditions. *)
+hmap_process or process and then use different conditions. *)
 
 
 (* state invariant *)
@@ -336,8 +356,8 @@ Definition return_find_bucket_cont k :=
            (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr)))) k).
 
 (* The continuation (that inside Kcall) of calling find_bucket. The
-caller can be hmap_operate_on, hmap_set, hmap_remove. It outputs a
-predicate which describe the contents of hmap_operate_on. [b] is the
+caller can be hmap_process, hmap_set, hmap_remove. It outputs a
+predicate which describe the contents of hmap_process. [b] is the
 block storing the hash_map *)
 Inductive call_find_bucket_from_operate_on (b: block) : cont -> massert -> Prop :=
 | call_find_bucket_from_operate_on_intro: forall k e le b_hmap b_key ki
@@ -349,7 +369,7 @@ Inductive call_find_bucket_from_operate_on (b: block) : cont -> massert -> Prop 
 .
 
 Inductive call_find_bucket_cont (b: block) : cont -> massert -> Prop :=
-(* from hmap_operate_on *)
+(* from hmap_process *)
 | call_find_bucket_cont_intro1: forall k MP
     (CONT: call_find_bucket_from_operate_on b k MP),
     call_find_bucket_cont b k MP
@@ -399,7 +419,7 @@ Inductive call_find_cont : cont -> massert -> Prop :=
 
 Inductive call_hmap_operate_on: state -> Prop :=
 | call_hmap_operate_on_intro: forall b1 b2 kv k m fpl
-    (SYM: Genv.invert_symbol se b1 = Some hmap_operate_on)
+    (SYM: Genv.invert_symbol se b1 = Some hmap_process)
     (** TODO: specify the cont *)
     (HMAP: m |= hmap_pred b2 fpl),
     call_hmap_operate_on (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m).
@@ -462,7 +482,25 @@ Inductive sound_state : state -> Prop :=
     (CONT: call_find_cont k MP),
     sound_state (Returnstate v k m)
 (* execution after returning from find *)
-(* | hmap_operate_on_internal3: forall  *)
+| hmap_operate_on_internal3: forall k idx fpl1 fpl2 b b_hmap b_key ki vspec s0 t s m fp MP n v
+    (SEQ: s0 = (State hmap_operate_on_func Sskip
+                  (Kseq (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr)) k) (PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
+                  (set_opttemp (Some tmp) v (PTree.set buk (Vptr b (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx))) (PTree.set buk Vundef (PTree.set tmp Vundef (PTree.empty Values.val)))))
+                  m))
+    (MPEQ: MP = contains Mptr b (size_chunk Mptr * Int.unsigned idx) vspec **
+              contains Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z.of_nat N * size_chunk Mptr)))) **
+              hmap_pred_rec (int_to_nat idx) fpl1 b 0 **
+              hmap_pred_rec (N - 1 - int_to_nat idx) fpl2 b (size_chunk Mptr * Int.unsigned idx + size_chunk Mptr) **
+              contains Mptr b_hmap 0 (eq (Vptr b Ptrofs.zero)) **
+              contains Mint32 b_key 0 (eq (Vint ki)))
+    (MPRED: m |= MP)
+    (DISJOINT: forall b ofs, m_footprint MP b ofs -> In b (footprint_flat fp) -> False)
+    (VSPEC: bucket_val_spec m fp v)
+    (STAR: starNf step1 num_frames ge n s0 t s)
+    (NOTCALLRET: not_call_return_state s)
+    (RAN: (0 <= n <= 3)%nat),
+    sound_state s
+(*     sound_state s *)
 | hmap_operate_on_returnstate: forall k m,
     (** TODO: specify the cont *)
     sound_state (Returnstate Vundef k m)
@@ -794,7 +832,7 @@ Lemma step_preservation_progress: forall s,
                sound_state s').
 Proof.
   intros s INV. inv INV.
-  (* call hmap_operate_on *)
+  (* call hmap_process *)
   - inv CALL.
     assert (FIND: Genv.find_funct ge (Vptr b1 Ptrofs.zero) = Some (Internal hmap_operate_on_func)).
     { simpl. destruct Ptrofs.eq_dec; try congruence.
@@ -880,7 +918,7 @@ Proof.
         eapply MPRED1. } 
     lia.
     
-  (** TODO: hmap_operate_on after returning from find_bucket *)
+  (** TODO: hmap_process after returning from find_bucket *)
   - generalize MPRED as MPRED1. intros.
     generalize STAR as STAR1. intros.
     assert (OFSEQ: Ptrofs.unsigned (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx)) =
@@ -1078,12 +1116,81 @@ Proof.
     + intros. inv H.
       rewrite FINDFUN in FIND. inv FIND.
       rewrite FINDFUN in FIND. inv FIND. inv H6.
-      
-  (*  TODO: show returnstate in hmap_operate_on is not stuck. We
+  (* return from find *)
+  - inv CONT. split.
+    + do 2 right. do 2 eexists.
+      econstructor.
+    + intros. inv H. eapply hmap_operate_on_internal3 with (n := 0%nat); eauto.
+      econstructor. simpl. auto.
+  (* execution after returning from find *)
+  - generalize MPRED as MPRED1. intros.
+    generalize STAR as STAR1. intros.
+    assert (OFSEQ: Ptrofs.unsigned (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx)) =
+                     (size_chunk Mptr * Int.unsigned idx)).
+    admit.
+    inv STAR; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply hmap_operate_on_internal3 with (n:=1%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. }
+    inv STEP.
+    2: { simpl in H6. contradiction. }    
+    (* assign to *buk *)
+    exploit bucket_val_spec_inv; eauto. intros (b1 & VEQ). subst.
+    exploit store_rule. eapply MPRED.
+    instantiate (1 := Vptr b1 Ptrofs.zero). instantiate (1 := eq (Vptr b1 Ptrofs.zero)).
+    eauto. intros (m1 & STORE1 & MPRED2).
+    (* show bucket_val_spec in m1 *)
+    exploit bucket_val_spec_unchanged_on; eauto.
+    eapply Mem.store_unchanged_on. eauto. intros. intro.
+    eapply DISJOINT; eauto. simpl. left. split; eauto.
+    intros VSPEC1.
+    (* combine vspec and memory predicate *)
+    exploit bucket_pred_intro. eapply MPRED2. 
+    red. rewrite dec_eq_false. eauto. intro. vm_compute in H. inv H.
+    intro. eapply DISJOINT; eauto.
+    instantiate (1 := size_chunk Mptr * Int.unsigned idx).
+    simpl. left. split; auto. rewrite size_chunk_Mptr.
+    destruct Archi.ptr64; lia. eauto.
+    intros MPRED3.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - red. do 2 right.
+        do 2 eexists. econstructor.
+        econstructor. econstructor. reflexivity.
+        econstructor. reflexivity. reflexivity.
+        econstructor. reflexivity. simpl. rewrite OFSEQ. eauto.
+      - intros. eapply hmap_operate_on_internal3 with (n:=2%nat).
+        reflexivity. reflexivity. eapply MPRED1. eauto. eauto.
+        eapply starNf_step_right; eauto.
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    2: { destruct H7; congruence. }
+    2: { destruct H7; congruence. }
+    inv H9. inv H2.
+    2: { inv H. }
+    inv H11; inv H.
+    inv H8. inv H4.
+    2: { inv H. }
+    inv H3. simpl in H10. inv H10.
+    simpl in H0. rewrite OFSEQ in H0. setoid_rewrite STORE1 in H0. inv H0.
+    (* combine MPERD3 *)
+    rewrite sep_swap12, sep_swap23 in MPRED3.
+    assert (MPRED4: m' |= hmap_pred loc (fpl1 ++ fp :: fpl2) **
+                      contains Mptr b_hmap 0 (eq (Vptr loc Ptrofs.zero)) **
+                      contains Mint32 b_key 0 (eq (Vint ki))).
+    { admit. }    
+    inv STAR; cbn [num_frames num_frames_cont] in *.    
+    (* return from hmap_process (we need to specify the cont of hmap_process) *)
+    admit.
+    admit.
+
+  (*  TODO: show returnstate in hmap_process is not stuck. We
     need to specify the continuation. *)
   - admit.
-  (* return from find *)
-  - admit.
+    
   (* call find_bucket *)
   - inv CALL. 
     assert (FIND: Genv.find_funct ge (Vptr b1 Ptrofs.zero) = Some (Internal find_bucket_func)).
@@ -1256,7 +1363,7 @@ Proof.
     + do 2 right. do 2 eexists.
       econstructor.
     + intros. inv H.
-      (* return to hmap_operate_on *)
+      (* return to hmap_process *)
       eapply hmap_operate_on_internal2 with (n:= 0%nat).
       2: econstructor. reflexivity.
       eauto. lia. simpl. auto. lia.
@@ -1273,7 +1380,7 @@ Lemma hash_map_module_safe:
 Proof.
   red. econstructor.
   (* cannot specify msafek_invariant for unknown reason *)
-  eapply (Module_ksafe_components li_c li_c hash_map_sem ((hmap_inv @@ rs_own) @! cc_rust_c) ((hmap_inv @@ rs_own) @! cc_rust_c) SIF (fun se w => sound_state 10%nat se)).
+  eapply (Module_type_safe_components li_c li_c hash_map_sem ((hmap_inv @@ rs_own) @! cc_rust_c) ((hmap_inv @@ rs_own) @! cc_rust_c) SIF (fun se w => sound_state 10%nat se)).
   intros se ((w_hm, (?, w_rs)) & ?) SYMB VSE.
   inv SYMB. destruct H. inv H0. inv H.
   inv H0. inv H1. rename H2 into SYM1.

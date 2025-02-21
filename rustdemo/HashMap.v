@@ -22,7 +22,7 @@ Definition index : ident := 145%positive.
 Definition buk : ident := 90%positive.
 Definition main : ident := 23%positive.
 Definition delete_hmap : ident := 190%positive.
-Definition hmap_operate_on : ident := 33%positive.
+Definition hmap_process : ident := 33%positive.
 
 
 (** Type definitions  *)
@@ -54,7 +54,7 @@ Definition find_bucket_func : function := {|
 |}.
 
 
-(* hmap_operate_on function *)
+(* hmap_process function *)
   
 Definition hmap_operate_on_func := {|
   fn_return := tvoid;
@@ -114,13 +114,13 @@ Definition find_ext: fundef := (External (EF_external "find"
 Definition global_definitions : list (ident * globdef fundef type) :=
   (find_bucket, Gfun(Internal find_bucket_func)) ::
   (process, Gfun(Internal process_func)) ::
-  (hmap_operate_on, Gfun(Internal hmap_operate_on_func)) ::
+  (hmap_process, Gfun(Internal hmap_operate_on_func)) ::
   (hash, Gfun hash_ext) ::
   (find, Gfun find_ext) :: nil.
 
 
 Definition public_idents : list ident :=
-  (hmap_operate_on :: process :: find_bucket :: hash :: find :: nil).
+  (hmap_process :: process :: find_bucket :: hash :: find :: nil).
 
 Definition hash_map_prog : Clight.program :=
   mkprogram composites global_definitions public_idents main Logic.I.
