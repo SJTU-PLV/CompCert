@@ -90,7 +90,9 @@ Definition length_of_args (f: ident) : nat :=
     2
   else
     if ident_eq f hash then
-      2     
+      2
+    else if ident_eq f process then
+           1
   else O.
 
 (* Initial preservation and progress *)

@@ -989,7 +989,7 @@ Context (IA1 : invariant liA1) (IB1: invariant liB1).
 (* Hypothesis L2_determ: open_determinate L2. *)
 
 (* why we need inhabited? *)
-Lemma module_safek_components_preservation:
+Lemma module_type_safe_preservation:
   module_type_safe IA1 IB1 L1 SIF ->
   backward_simulation ccA ccB L1 L2 ->
   module_type_safe (invcc IA1 ccA) (invcc IB1 ccB) L2 SIF.
@@ -1106,7 +1106,7 @@ Context {liA1 liA2 liB1 liB2} (ccA: callconv liA1 liA2) (ccB: callconv liB1 liB2
 Context (L1: semantics liA1 liB1) (L2: semantics liA2 liB2).
 Context (IA2 : invariant liA2) (IB2: invariant liB2).
 
-Lemma module_safek_components_preservation_fsimg:
+Lemma module_type_safe_preservation_fsimg:
   module_type_safe IA2 IB2 L2 SIF ->
   forward_simulation_progress ccA ccB L1 L2 ->
   module_type_safe (ccinv ccA IA2) (ccinv ccB IB2) L1 SIF.

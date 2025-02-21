@@ -64,11 +64,11 @@ Proof.
   red in RB. econstructor.
   inv SAFE.
   set (ms se wB2 s :=
-         exists wB1, msafek_invariant se wB1 s
+         exists wB1, type_safe_invariant se wB1 s
                 /\ symtbl_inv IB1 wB1 se
                 /\ forall r, reply_inv IB1 wB1 r ->
                        reply_inv IB2 wB2 r).  
-  eapply Module_ksafe_components with (msafek_invariant := ms).
+  eapply Module_type_safe_components with (type_safe_invariant := ms).
   intros se wB2 SINV2 VSE.
   econstructor.
   - intros s t s' (wB1 & INV & SINV1 & RINV) STEP.

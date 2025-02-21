@@ -977,87 +977,140 @@ Proof.
   reflexivity.
 Qed.
 
+Lemma cc_rust_compcert_eqv:
+  cceqv cc_rust_compcert (cc_rust_c @ cc_compcert).
+Proof.
+  unfold cc_rust_compcert, cc_compcert.
+  split.
+  - rewrite cainjp__injp_ca_equiv.
+    rewrite rainjp_injpra_equiv.
+    rewrite cc_ra_rcca_equiv.
+    (* 1. wt_rs => (wt_rs @ lessdef_rs) *)
+    rewrite !cc_compose_assoc.
+    rewrite <- (cc_compose_assoc wt_rs).
+    rewrite <- lessdef_rs_cklr at 1.
+    rewrite ! cc_compose_assoc, <- (cc_compose_assoc wt_rs).
+    (* 2. swap injp @ rc *)
+    rewrite <- (cc_compose_assoc (cc_rs injp) cc_rust_c).
+    rewrite injp_rs__rc_injp.
+    rewrite (cc_compose_assoc cc_rust_c).
+    (* 3 swap (wt_rs @ lessdef_rs) and cc_rust_c *)
+    rewrite <- (cc_compose_assoc (wt_rs @ lessdef_rs)).
+    rewrite commut_rust_c_wt_lessdef.
+    (* 4 absorb lessdef_c into injp *)
+    rewrite !cc_compose_assoc. 
+    rewrite <- (cc_compose_assoc lessdef_c).
+    rewrite lessdef_c_cklr.  
+    (* 5. swap ro_rs @ cc_rust_c *)
+    rewrite <- (cc_compose_assoc ro_rs cc_rust_c).
+    rewrite ro_rs__rc_ro.
+    rewrite cc_compose_assoc.
+    reflexivity.
+  - rewrite cainjp__injp_ca_equiv.
+    rewrite rainjp_injpra_equiv.
+    rewrite cc_ra_rcca_equiv.
+    rewrite !cc_compose_assoc.
+    (* 1. swap rc and ro *)
+    rewrite !(commute_around cc_rust_c).
+    (* 2. wt_rs => (wt_rs @ lessdef_rs) *)
+    rewrite <- (cc_compose_assoc wt_c).
+    rewrite <- lessdef_c_cklr at 1.
+    rewrite ! cc_compose_assoc, <- (cc_compose_assoc wt_c).
+    (* 3 swap cc_rust_c and (wt_rs @ lessdef_rs) *)
+    rewrite <- (cc_compose_assoc cc_rust_c (wt_c @ lessdef_c)).
+    rewrite <- commut_rust_c_wt_lessdef.
+    (* 4. swap rc and injp *)
+    rewrite cc_compose_assoc.
+    rewrite !(commute_around cc_rust_c).
+    (* 5 absorb lessdef_rs into injp *)
+    rewrite !cc_compose_assoc. 
+    rewrite <- (cc_compose_assoc lessdef_rs).
+    rewrite lessdef_rs_cklr.  
+    reflexivity.
+Qed.    
+    
+
 (** ** Composition of passes *)
 
 Theorem clight_semantic_preservation:
   forall p tp,
-  match_prog p tp ->
-  forward_simulation cc_compcert cc_compcert (Clight.semantics1 p) (Asm.semantics tp)
-  /\ backward_simulation cc_compcert cc_compcert (Clight.semantics1 p) (Asm.semantics tp).
+    match_prog p tp ->
+    forward_simulation cc_compcert cc_compcert (Clight.semantics1 p) (Asm.semantics tp)
+    /\ backward_simulation cc_compcert cc_compcert (Clight.semantics1 p) (Asm.semantics tp).
 Proof.
   intros p tp M. unfold match_prog, pass_match in M; simpl in M.
-Ltac DestructM :=
-  match goal with
-    [ H: exists p, _ /\ _ |- _ ] =>
-      let p := fresh "p" in let M := fresh "M" in let MM := fresh "MM" in
-      destruct H as (p & M & MM); clear H
-  end.
+  Ltac DestructM :=
+    match goal with
+      [ H: exists p, _ /\ _ |- _ ] =>
+        let p := fresh "p" in let M := fresh "M" in let MM := fresh "MM" in
+                                                    destruct H as (p & M & MM); clear H
+    end.
   repeat DestructM. subst tp.
   assert (F: forward_simulation cc_compcert cc_compcert (Clight.semantics1 p) (Asm.semantics p20)).
   {
-  eapply cc_compcert_merge; eauto.
-  rewrite cc_expand. rewrite <- cc_collapse at 1.
-  eapply compose_forward_simulations.
+    eapply cc_compcert_merge; eauto.
+    rewrite cc_expand. rewrite <- cc_collapse at 1.
+    eapply compose_forward_simulations.
     eapply top_ro_selfsim; eassumption.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     eapply SimplLocalsproof.transf_program_correct'; eassumption.
-  eapply compose_identity_pass.
+    eapply compose_identity_pass.
     eapply Cshmgenproof.transl_program_correct; eassumption.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     eapply Cminorgenproof.transl_program_correct; eassumption.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     eapply Selectionproof.transf_program_correct; eassumption.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     eapply RTLgenproof.transf_program_correct; eassumption.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     eapply RTLrel.semantics_rel.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     unfold match_if in M4. destruct (optim_tailcalls tt).
     eapply Tailcallproof.transf_program_correct; eauto.
     subst. eapply RTLrel.semantics_rel.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     eapply Inliningproof.transf_program_correct; eassumption.
-  eapply compose_identity_pass.
+    eapply compose_identity_pass.
     eapply Renumberproof.transf_program_correct; eassumption.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     eapply RTLrel.semantics_rel.
-  eapply compose_forward_simulations.
-  { unfold match_if in M7. destruct (optim_constprop tt).
-    eapply Constpropproof.transf_program_correct; eassumption.
-    subst. apply va_interface_selfsim. }
-  eapply compose_identity_pass. 
+    eapply compose_forward_simulations.
+    { unfold match_if in M7. destruct (optim_constprop tt).
+      eapply Constpropproof.transf_program_correct; eassumption.
+      subst. apply va_interface_selfsim. }
+    eapply compose_identity_pass. 
     unfold match_if in M8. destruct (optim_constprop tt).
     eapply Renumberproof.transf_program_correct; eassumption.
     subst. eapply identity_forward_simulation.
-  eapply compose_forward_simulations.
-  { unfold match_if in M9. destruct (optim_CSE tt).
-    eapply CSEproof.transf_program_correct; eassumption.
-    subst. apply va_interface_selfsim. }
-  eapply compose_forward_simulations.
-  { unfold match_if in M10. destruct (optim_redundancy tt).
-    eapply deadcode_va_correct.
-    eapply Deadcodeproof.transf_program_correct'; eassumption.
-    subst. apply va_interface_selfsim. }
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
+    { unfold match_if in M9. destruct (optim_CSE tt).
+      eapply CSEproof.transf_program_correct; eassumption.
+      subst. apply va_interface_selfsim. }
+    eapply compose_forward_simulations.
+    { unfold match_if in M10. destruct (optim_redundancy tt).
+      eapply deadcode_va_correct.
+      eapply Deadcodeproof.transf_program_correct'; eassumption.
+      subst. apply va_interface_selfsim. }
+    eapply compose_forward_simulations.
     eapply Unusedglobproof.transf_program_correct; eassumption.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     eapply Allocproof.transf_program_correct; eassumption.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     eapply Tunnelingproof.transf_program_correct; eassumption.
-  eapply compose_identity_pass.
+    eapply compose_identity_pass.
     eapply Linearizeproof.transf_program_correct; eassumption.
-  eapply compose_identity_pass.
+    eapply compose_identity_pass.
     eapply CleanupLabelsproof.transf_program_correct; eassumption.
-  eapply compose_optional_pass; eauto using compose_identity_pass.
+    eapply compose_optional_pass; eauto using compose_identity_pass.
     exact Debugvarproof.transf_program_correct.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     rewrite <- cc_stacking_lm, cc_lm_stacking.
     eapply Stackingproof.transf_program_correct with (rao := Asmgenproof0.return_address_offset).
     exact Asmgenproof.return_address_exists.
     eassumption.
-  eapply compose_forward_simulations.
+    eapply compose_forward_simulations.
     eapply Asmgenproof.transf_program_correct; eassumption.
-  apply semantics_asm_rel.
+    apply semantics_asm_rel.
   }
   split. auto.
   apply forward_to_backward_simulation. auto.
@@ -1067,8 +1120,8 @@ Qed.
 
 Theorem c_semantic_preservation:
   forall p tp,
-  match_c_prog p tp ->
-  backward_simulation cc_compcert cc_compcert (Csem.semantics p) (Asm.semantics tp).
+    match_c_prog p tp ->
+    backward_simulation cc_compcert cc_compcert (Csem.semantics p) (Asm.semantics tp).
 Proof.
   intros p tp (p' & Hp' & Htp). cbn in Hp'.
   rewrite <- (cc_compose_id_left cc_compcert) at 1.
@@ -1108,6 +1161,30 @@ Theorem transf_c_program_correct:
   backward_simulation cc_compcert cc_compcert (Csem.semantics p) (Asm.semantics tp).
 Proof.
   intros. apply c_semantic_preservation. apply transf_c_program_match; auto.
+Qed.
+
+(** Safety preservation of the CompCert compiler (with Clight as the
+source language) *)
+
+Local Open Scope inv_scope.
+
+Lemma clight_total_safety_preservation I: forall p tp,
+  match_prog p tp ->
+  module_type_safe I I (Clight.semantics1 p) SIF ->
+  module_type_safe (I @! cc_compcert) (I @! cc_compcert) (Asm.semantics tp) SIF.
+Proof.
+  intros.
+  eapply module_type_safe_preservation. eauto.
+  eapply clight_semantic_preservation. auto.
+Qed.
+
+Theorem transf_clight_total_safety_preservation I: forall p tp,
+  transf_clight_program p = OK tp ->
+  module_type_safe I I (Clight.semantics1 p) SIF ->
+  module_type_safe (I @! cc_compcert) (I @! cc_compcert) (Asm.semantics tp) SIF.
+Proof.
+  intros. eapply clight_total_safety_preservation; eauto.
+  eapply transf_clight_program_match; eauto.
 Qed.
 
 (** * Correctness of the Rust compiler *)
@@ -1211,7 +1288,6 @@ Qed.
              where cc ≡ cc1 @ cc2 (i.e., cc ≡ cc_rust_compcert)
  *)
 
-Local Open Scope inv_scope.
 
 Theorem rustlight_partial_safe_to_total_safe I:
   forall p tp,
@@ -1244,7 +1320,7 @@ Proof.
   red. eapply inv_commute_ref2. eapply invcc_commute_id2.
   intros TSAFE1.
   (* 4. show backward simulation between RustIRown and Asm *)  
-  exploit @module_safek_components_preservation.
+  exploit @module_type_safe_preservation.
   eapply TSAFE1. eapply rustir_semantic_preservation; eauto.
   intros TSAFE2.
   (** show total safety in Asm and Rustlght  *)
@@ -1272,13 +1348,23 @@ Proof.
   { eapply fsim_progress_ubpreserve_implies_progress.
     eapply RustIRgenProof.transl_program_correct1. auto. }
   (* 7. show total safety of Rustlight *)
-  exploit @module_safek_components_preservation_fsimg. eapply TSAFE1.
+  exploit @module_type_safe_preservation_fsimg. eapply TSAFE1.
   eauto. intros TSAFE0.
   eapply open_safety_inv_ref. 3: eapply TSAFE0.
   eapply id_inv_id_equiv.  eapply id_inv_id_equiv.  
 Qed.
 
-  
+Theorem transf_rustlight_partial_safe_to_total_safe I:
+  forall p tp,
+  transf_rustlight_program p = OK tp ->
+  module_type_safe I I (Rustlightown.semantics p) (Rustlightown.mem_error p) ->
+  module_type_safe ((I @@ rs_own) @! cc_rust_compcert) ((I @@ rs_own) @! cc_rust_compcert) (Asm.semantics tp) SIF
+  /\ module_type_safe (I @@ rs_own) (I @@ rs_own) (Rustlightown.semantics p) SIF.
+Proof.
+  intros. eapply rustlight_partial_safe_to_total_safe; auto.
+  eapply transf_rustlight_program_match; auto.
+Qed.
+
 (*
 (** Here is the separate compilation case.  Consider a nonempty list [c_units]
   of C source files (compilation units), [C1 ,,, Cn].  Assume that every

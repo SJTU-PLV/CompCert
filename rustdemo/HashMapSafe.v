@@ -1412,4 +1412,3 @@ Proof.
   (* final state *)
   - admit.
 Admitted.
-

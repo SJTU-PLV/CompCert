@@ -7,7 +7,7 @@ Require Import Values.
 Require Import AST.
 Require Import Cop RustOp.
 Require Import Ctypes Rusttypes Rustlight.
-Require Import LinkedList.
+Require Import LinkedList HashMap.
 Require Import Values Globalenvs Memory.
 Require Import InitDomain.
 Require Import Events.
@@ -54,11 +54,8 @@ Context (w: hmap_world).
 Let ge := globalenv se linked_list_mod.
 
 (* The following hypothese are derived from symtbl_inv *)
-Hypothesis wf_senv: forall id,
-    if in_dec ident_eq id (prog_defs_names linked_list_mod) then
-      exists b, Genv.find_symbol se id = Some b
-    else True.
-
+Hypothesis wf_senv: wf_senv se.
+    
 Hypothesis hmap_senv_eq: w.(hmap_senv) = se.
 
 (** Local state of find function *)
@@ -250,11 +247,12 @@ Inductive sound_state : state -> Prop :=
     (NOTCALL: not_call_return_state s1)
     (RAN: (1 <= n <= 20)%nat),
     sound_state s1
-| find_state_call_process: forall vf al k m
-    (PROC: Genv.find_funct ge vf = Some process_ext)
+| find_state_call_process: forall b v k m
+    (PROC: Genv.invert_symbol se b = Some process)
     (FIDEQ: w.(hmap_callee) = inl find)
+    (CASTED: val_casted v type_int32s)
     (CONT: find_cont_ret_process k),
-    sound_state (Callstate vf al k m)
+    sound_state (Callstate (Vptr b Ptrofs.zero) [v] k m)
 | find_state_return_process: forall v k m
     (CONT: find_cont_ret_process k)
     (FIDEQ: w.(hmap_callee) = inl find),
@@ -511,8 +509,8 @@ Qed.
 Lemma linked_list_external: forall s q,
     sound_state s ->
     at_external ge s q ->
-    exists w', vq_hash_map w' q
-          (* TODO: prove symtbl_inv *)
+    exists w', symtbl_inv hmap_inv w' se
+          /\ vq_hash_map w' q
           /\ forall r, vr_hash_map w' r ->
                  (exists s', after_external s r s'
                         /\ (forall s', after_external s r s' -> sound_state s')).
@@ -521,16 +519,49 @@ Proof.
   inv SINV; try simpl in NOTCALL; try contradiction.
   (* call hash (contradiction) *)
   - inv CALL.
-    admit.
+    assert (FIND: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some (Internal hash_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYM.
+      auto. }
+    rewrite H in FIND. inv FIND.
   (* call find (contradiction) *)
   - inv CALL.
-    admit.
+    assert (FIND: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some (Internal find_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYM.
+      auto. }
+    rewrite H in FIND. inv FIND.
   (* call process *)
-  - rewrite H in PROC. inv PROC.
+  - assert (FIND: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some process_ext).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite PROC.
+      auto. }
+    rewrite H in FIND. inv FIND.
+    assert (FIND2: Genv.find_funct (Genv.globalenv se hash_map_prog) (Vptr b Ptrofs.zero) = Some (Ctypes.Internal process_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite PROC.
+      auto. }
     exists (Build_hmap_world (inr process) se w.(hmap_hash_range)).
-    repeat apply conj.
-    Admitted.
-    
+    repeat apply conj; auto.
+    + replace (genv_cenv ge) with (prog_comp_env linked_list_mod) by auto.
+      eapply vq_hash_map_intro2.
+      eauto. simpl.
+      unfold Genv.is_internal. simpl in H.  setoid_rewrite H. reflexivity.
+      reflexivity.
+      econstructor. auto. econstructor. 
+      eauto. auto. simpl. econstructor.
+      auto. auto.
+    + intros. inv H0. inv FIDEQ0. inv FIDEQ0.
+      eexists. split.
+      econstructor.
+      intros. inv H0.
+      eapply find_state_return_process; eauto.
+Qed.
+      
 Local Open Scope sep_scope.
 
 Lemma step_preservation_progress: forall s,
@@ -1507,16 +1538,16 @@ Proof.
           - intros. inv H. inv SDROP.
             (* show that vf points to process_ext *)
             inv H21. inv H0. inv DEF; simpl in H; try congruence.
+            (* show arguments are casted*)
+            inv H22. inv H11. inv H19.
+            exploit cast_val_is_casted. eapply H3. intros CASTED.
             generalize (wf_senv process). intros FINDPRO.
             simpl in FINDPRO. destruct FINDPRO as (?b & FINDPRO). 
             simpl in GADDR. rewrite GADDR in FINDPRO. inv FINDPRO.
             eapply find_state_call_process.
-            (* find_funct *)
-            simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
-            rewrite Genv.find_def_spec.
+            (* invert_symbol *)
             erewrite Genv.find_invert_symbol; eauto.
-            reflexivity.
-            eauto.
+            auto. auto.
             (* sound_find_cont *)
             simpl. econstructor. eauto. eauto. }
         inv STEP. inv SDROP. simpl in FEQ15.
@@ -1666,14 +1697,19 @@ Proof.
     }
     
   (* call process *)
-  - split.
+  - assert (FINDF: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some (process_ext)).
+    { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
+      rewrite Genv.find_def_spec.
+      rewrite PROC. eauto. }
+    split.    
     + left. right. left.
-      eexists. econstructor. simpl in PROC. simpl.
-      rewrite PROC. f_equal. unfold process_ext. f_equal.
+      eexists. econstructor.
+      simpl in FINDF. setoid_rewrite FINDF.
+      f_equal. unfold process_ext. f_equal.
     (* use the fact that there is not step in the state of
     at_external *)
-    + intros. inv H. rewrite PROC in FIND. inv FIND.
-      rewrite PROC in FIND. inv FIND. inv H6.
+    + intros. inv H. rewrite FINDF in FIND. inv FIND.
+      rewrite FINDF in FIND. inv FIND. inv H6.
   (* return from process *)
   - split.
     + inv CONT.
@@ -2224,6 +2260,23 @@ Admitted.
 End SOUNDNESS.
 
 
-        
-                
-  
+Lemma linked_list_module_safe:
+  module_type_safe hmap_inv hmap_inv linked_list_sem (mem_error linked_list_mod).
+Proof.
+  red. econstructor.
+  (* cannot specify msafek_invariant for unknown reason *)
+  eapply (Module_type_safe_components li_rs li_rs linked_list_sem hmap_inv hmap_inv (mem_error linked_list_mod) (fun se w => sound_state se w)).
+  intros se w_hm SYMB VSE.
+  destruct SYMB.
+  econstructor.
+  (* preservation *)
+  - intros. eapply step_preservation_progress; eauto.
+  (* progress *)
+  - intros. eapply step_preservation_progress; eauto.
+  (* initial safe *)
+  - eapply initial_preservation_progress; eauto.
+  (* external safe *)
+  - eapply linked_list_external; eauto.
+  (* final state *)
+  - eapply linked_list_final; eauto.
+Qed.
