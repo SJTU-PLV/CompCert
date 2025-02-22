@@ -443,7 +443,8 @@ Section ConcurSim.
       (CUR_GWORLD: NatMap.get cur worldsP = Some wPcur)
       (CUR_INJP_TID: cur = gw_tid wPcur /\ next = gw_nexttid wPcur)
       (FIND_TID: forall n wp, NatMap.get n worldsP = Some wp -> gw_tid wp = n /\ (1<= n < next)%nat)
-      (THREADS_DEFAULT: fst threadsA = None)
+      (THREADS_DEFAULTC: fst threadsC = None)
+      (THREADS_DEFAULTA: fst threadsA = None)
       (THREADS: forall n, (1 <= n < next)%nat -> exists wB owA wP lsc lsa i,
             NatMap.get n worldsB = Some wB /\
               nth_error gi (n-1)%nat = Some i /\
@@ -703,10 +704,10 @@ Section ConcurSim.
         congruence.
     Qed.
  *)
-    
+
     Lemma concur_final_states: forall i s1 s2 r,
         match_states i s1 s2 -> Closed.safe ConcurC s1 ->  Closed.final_state ConcurA s2 r ->
-        exists s1', star (Closed.step ConcurC) (Closed.globalenv ConcurC) s1 E0 s1' /\ Closed.final_state ConcurC s1 r.
+        exists s1', star (Closed.step ConcurC) (Closed.globalenv ConcurC) s1 E0 s1' /\ Closed.final_state ConcurC s1' r.
     Proof.
       Admitted.
    (*   intros. inv H0. inv H. inv H0.
@@ -1762,9 +1763,11 @@ Qed.
        specialize (bsim_lts se tse wB MSEw valid_se) as BSIM.
        inversion BSIM.
        clear bsim_simulation bsim_match_initial_states
-            bsim_match_final_states.
+         bsim_match_final_states.
+   Admitted.
+   (*
        exploit bsim_match_external; eauto.
-       
+       red.
        intros (wA & [rs_q tm_q] & HX & GW_ACC & MQ & MS & MR).
        assert (wP = wPcur). congruence. subst wP.
        destruct wA as (se0 & [se0' m0'] & se1 & [se1' sig'] & se2 & w_cap & w_e).
@@ -2059,7 +2062,7 @@ Qed.
          unfold CMulti.get_thread, CMulti.update_thread. simpl. rewrite NatMap.gss. congruence.
        + unfold gw'. destruct w_cap. simpl in H. inv H. constructor; eauto; econstructor; eauto; reflexivity.
    Qed.
-
+    *)
    Lemma yield_unchanged: forall m target p P,
        Mem.unchanged_on P m (Mem.yield m target p).
    Proof.
@@ -2116,6 +2119,8 @@ Qed.
            AsmMulti.switch_in OpenA s2' s2'' target ttm' /\
              match_states i' s1'' s2''.
    Proof.
+   Admitted.
+   (*
      intros until wpc. intros cur MS' GETwpc NOTINIT ACCY TID_TARGET SWITCH.
      assert (RANGE: (1 <= target < CMulti.next_tid OpenC s1')%nat).
      {
@@ -2698,16 +2703,100 @@ Qed.
          apply FIND_TID in I. destruct I as [X Y]. rewrite X.
          unfold gw_tid. simpl. rewrite <- TTID. lia.
    Qed.
-   
-   Lemma Concur_FSimP : Closed.fsim_properties ConcurC ConcurA global_index global_order match_states.
+    *)
+
+   Lemma local_star_c : forall gs t sc1 sc2,
+        Star (OpenC se) sc1 t sc2 ->
+        fst (CMulti.threads OpenC gs) = None ->
+        NatMap.get (CMulti.cur_tid OpenC gs) (CMulti.threads OpenC gs)  = Some (CMulti.Local OpenC sc1) ->
+        star (CMulti.step OpenC) (CMulti.globalenv OpenC) gs t (CMulti.update_cur_thread OpenC gs (CMulti.Local OpenC sc2)).
+    Proof.
+      intros. generalize dependent gs.
+      induction H; intros.
+      - unfold CMulti.update_cur_thread, CMulti.update_thread.
+        destruct gs. simpl.
+        rewrite NatMap.set3. eapply star_refl. eauto.
+        simpl in H0. congruence.
+      - eapply star_step; eauto.
+        eapply CMulti.step_local. eauto. eauto. eauto.
+        set (gs' := (CMulti.update_thread OpenC gs (CMulti.cur_tid OpenC gs) (CMulti.Local OpenC s2))).
+        assert (EQ: CMulti.update_cur_thread OpenC gs (CMulti.Local OpenC s3) = CMulti.update_cur_thread OpenC gs' (CMulti.Local OpenC s3)).
+        unfold gs'. unfold CMulti.update_cur_thread. simpl. unfold CMulti.update_thread.
+        simpl. rewrite NatMap.set2. reflexivity.
+        rewrite EQ.
+        eapply IHstar; eauto.
+        unfold gs'. simpl. rewrite NatMap.gss. reflexivity.
+    Qed.        
+(*
+    Lemma local_plus : forall gs t sa1 sa2,
+        Plus (OpenA tse) sa1 t sa2 ->
+        fst (threads OpenA gs) = None ->
+        NatMap.get (cur_tid OpenA gs) (threads OpenA gs)  = Some (Local OpenA sa1) ->
+        plus (step OpenA) (globalenv OpenA) gs t (update_cur_thread OpenA gs (Local OpenA sa2)).
+    Proof.
+      intros. inv H.
+      econstructor; eauto.
+      econstructor. eauto. eauto. eauto.
+      set (gs' := update_thread OpenA gs (cur_tid OpenA gs) (Local OpenA s2)).
+      assert (EQ: update_cur_thread OpenA gs (Local OpenA sa2) = update_cur_thread OpenA gs' (Local OpenA sa2)).
+      unfold gs', update_cur_thread, update_thread. simpl. rewrite NatMap.set2.
+      reflexivity.
+      rewrite EQ.
+      eapply local_star; eauto.
+      unfold gs'. simpl. rewrite NatMap.gss. reflexivity.
+    Qed.
+*)
+    
+   Lemma Concur_BSimP : Closed.bsim_properties ConcurC ConcurA global_index global_order match_states.
       constructor. auto.
       - eapply global_index_wf.
+      - eapply concur_initial_states_exist; eauto.
       - eapply concur_initial_states.
       - eapply concur_final_states.
+      - (* progress *)
+        intros. exploit H0; eauto.
+        eapply star_refl.  intros [[r F]| [t [s1'' S]]].
+        + (*final*)
+          inv F. inv H. inv H4. simpl in H1, H2. unfold CMulti.get_cur_thread in H2. simpl in H2.
+          specialize (THREADS cur CUR_VALID) as THR_CUR. 
+          destruct THR_CUR as (wB & owA & wP & lsc & lsa & li & GETW & GETi & MSEw & GETC & GETA & GETWa & MS & GETWp & ACC).
+          assert (lsc = CMulti.Local OpenC ls).
+          eapply foo; eauto. subst lsc. inv MS.
+          specialize (bsim_lts se tse wB MSEw valid_se) as BSIM.
+          inversion BSIM.
+          exploit bsim_progress. eauto.
+          { (*safe lemma, to be moved out *)
+            red. red in H0. intros. exploit H0.
+            eapply local_star_c; eauto. simpl.
+            intros [[r1 F]| [t [s1'' S]]].
+            - inv F.
+              unfold CMulti.get_cur_thread, CMulti.update_cur_thread, CMulti.get_thread,
+                CMulti.update_thread in H5.
+              simpl in H5.  rewrite NatMap.gss in H5. inv H5.
+              left. eauto.
+            - inv S; unfold CMulti.get_cur_thread, CMulti.update_cur_thread, CMulti.get_thread,
+                CMulti.update_thread in H1;
+              simpl in H1.
+              + rewrite NatMap.gss in H1. inv H1. right. right. eauto.
+              + rewrite NatMap.gss in H1. inv H1. right. left. eauto. 
+              + inv H1.
+                -- unfold CMulti.get_cur_thread, CMulti.update_cur_thread, CMulti.get_thread,
+                     CMulti.update_thread in GET_C; simpl in GET_C; rewrite NatMap.gss in GET_C. inv GET_C.
+                   right. left. eauto.
+                -- unfold CMulti.get_cur_thread, CMulti.update_cur_thread, CMulti.get_thread,
+                     CMulti.update_thread in GET_C; simpl in GET_C; rewrite NatMap.gss in GET_C. inv GET_C.
+                   right. left. eauto.
+                -- unfold CMulti.get_cur_thread, CMulti.update_cur_thread, CMulti.get_thread,
+                     CMulti.update_thread in GET_C; simpl in GET_C; rewrite NatMap.gss in GET_C. inv GET_C.
+                   left. eauto.
+          }
+          intros [[r1 F]| [[q E]|[t [sa' S]]]].
+          -- 
+          intros []
       - (* step *)
         intros. inv H.
         + (* Local *)
-          inv H0. inv H. simpl in *.
+          inv H1. inv H. simpl in *.
           specialize (THREADS cur CUR_VALID) as THR_CUR.
           destruct THR_CUR as (wB & owA & wP & lsc & lsa & li & GETW & GETi & MSEw & GETC & GETA & GETWa & MS & GETWp & ACC).
           assert (lsc = CMulti.Local OpenC ls1).

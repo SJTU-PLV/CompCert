@@ -136,7 +136,6 @@ BACKEND=\
   ConstpropOp.v Constprop.v ConstpropOpproof.v \
   CSEdomain.v CombineOp.v CSE.v CombineOpproof.v \
   NeedDomain.v NeedOp.v Deadcode.v \
-  Unusedglob.v \
   Machregs.v Locations.v Conventions1.v Conventions.v LTL.v \
   Allocation.v Allocproof.v \
   Tunneling.v Tunnelingproof.v \
@@ -198,7 +197,7 @@ CONCUR=CallconvBig.v \
        Injp.v Ext.v \
        SimplLocalsproofC.v CminorgenproofC.v InliningproofC.v \
        InvariantC.v StackingproofC.v \
-       ConstpropproofC.v CSEproofC.v DeadcodeproofC.v UnusedglobproofC.v \
+       ConstpropproofC.v CSEproofC.v DeadcodeproofC.v \
        SelectionproofC.v RTLgenproofC.v TailcallproofC.v \
        AllocproofC.v TunnelingproofC.v AsmgenproofC.v \
        InjpAccoComp.v InjpExtAccoComp.v CallConvLibs.v \

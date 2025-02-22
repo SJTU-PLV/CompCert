@@ -30,10 +30,7 @@ Unset Program Cases.
     Constprop : option (ro @ injp)
     CSE      : option (ro @ injp)
     Deadcode  : option (ro @ injp)
-    Unusedglob : injp 
-    
 
-    ?
     Alloc : wt_c @ ext @ CL
     Tunneling : cc_locset ext
     Linearize : id
@@ -706,7 +703,6 @@ Lemma cc_collapse :
       c_injp @
       c_ext @ c_injp @
       (ro @ c_injp) @ (ro @ c_injp) @ (ro @ c_injp) @
-      c_injp @                                   (* Unusedglob *)
       (wt_c @ c_ext @ cc_c_locset) @            (* Alloc *)
       locset_ext @                              (* Tunneling *)
       (wt_loc @ cc_stacking_injp) @ (* Stacking *)
@@ -753,9 +749,6 @@ Proof.
   rewrite cctrans_ro_injp_compose.
 
   rewrite cc_compose_assoc_2.
-
-  rewrite (cc_compose_assoc_1 c_injp).
-  rewrite cctrans_injp_comp.
 
   rewrite (cc_compose_assoc_1 wt_c).
   rewrite cctrans_wt_c_ro.
