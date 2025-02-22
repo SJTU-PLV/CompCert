@@ -440,8 +440,8 @@ Qed.
 Theorem clight_semantic_preservation:
   forall p tp,
   match_prog p tp ->
-  GS.forward_simulation cc_compcert (Clight.semantics1 p) (Asm.semantics tp).
-  (* /\ GS.backward_simulation cc_compcert cc_compcert (Clight.semantics1 p) (Asm.semantics tp). *)
+  GS.forward_simulation cc_compcert (Clight.semantics1 p) (Asm.semantics tp)
+  /\ GS.backward_simulation cc_compcert (Clight.semantics1 p) (Asm.semantics tp). 
 Proof.
   intros p tp M. unfold match_prog, pass_match in M; simpl in M.
 Ltac DestructM :=
@@ -510,11 +510,10 @@ Ltac DestructM :=
     exact Asmgenproof.return_address_exists. eassumption.
     eapply AsmgenproofC.transf_program_correct; eassumption.
   }
-  auto.
-  (*split. auto.
-  apply forward_to_backward_simulation. auto.
+  split. auto.
+  apply GS.forward_to_backward_simulation. auto.
   apply Clight.semantics_receptive.
-  apply Asm.semantics_determinate. *)
+  apply Asm.semantics_determinate.
 Qed.
 
 (*
