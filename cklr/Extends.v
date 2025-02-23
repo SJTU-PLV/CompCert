@@ -368,3 +368,72 @@ Proof.
       repeat rstep; eauto.
 Qed.
 
+
+Lemma injp_ext_injp__injp:
+  subcklr (injp @ ext @ injp) injp.
+Proof.
+  red. 
+  intros (w1 & we & w2).
+  intros se1 se3 m1 m3 [se2 [Hs2 [se2' [Hs3 Hs4]]]].
+  intros [m2 [Hm1 [m2' [Hm2 Hm3]]]].
+  destruct w1 as [j12 m1' m2'' Hm12'].
+  destruct w2 as [j23 m2''' m3' Hm23'].
+  simpl in *. inv Hs3.
+  inv Hm1. inv Hm3. 
+  assert (Hm13 : Mem.inject (compose_meminj j12 j23) m1 m3).
+  { eapply Mem.inject_compose; eauto. eapply Mem.extends_inject_compose; eauto. }
+  inv Hs2. inv Hs4.
+  exists (injpw (compose_meminj j12 j23) m1 m3 Hm13).
+  repeat apply conj.
+  - econstructor; eauto. eapply Genv.match_stbls_compose; eauto.
+  - eauto.
+  - simpl.
+    eapply compose_meminj_incr. eapply inject_incr_refl.
+    rewrite compose_meminj_id_left. eapply inject_incr_refl.
+  - intros w13' m1' m3' MMEM13' INCR13'.
+    (* The same construction as injp_injp2 *)
+    unfold rel_compose.
+    inv MMEM13'. rename f into j13'. rename Hm15 into INJ13'.
+    cbn.
+    assert (INJ12: Mem.inject j12 m1 m2').
+    { eapply Mem.inject_extends_compose. eapply Hm12'. eauto. }
+    rename Hm6 into INJ23.
+    inversion INCR13' as [? ? ? ? ? ? ? ? ROUNC1 ROUNC3 MAXPERM1 MAXPERM3 UNCHANGE1 UNCHANGE3 INCR13 DISJ13]. subst.    
+    generalize (inject_implies_image_in _ _ _ INJ12).
+    intros IMGIN12.
+    generalize (inject_implies_image_in _ _ _ INJ23).
+    intros IMGIN23.
+    generalize (inject_implies_dom_in _ _ _ INJ12).
+    intros DOMIN12.
+    generalize (inject_implies_dom_in _ _ _ INJ23).
+    intros DOMIN23.
+    generalize (inject_implies_dom_in _ _ _ INJ13').
+    intros DOMIN13'.
+    generalize (Mem.unchanged_on_support _ _ _ UNCHANGE1).
+    intros SUPINCL1.
+    generalize (Mem.unchanged_on_support _ _ _ UNCHANGE3).
+    intros SUPINCL3.
+    rewrite <- (Mem.mext_sup _ _ Hm2) in *.    
+    generalize (inject_incr_inv _ _ _ _ _ _ _ DOMIN12 IMGIN12 DOMIN23 DOMIN13' SUPINCL1 INCR13 DISJ13).
+    intros (j12' & j23' & m2'_sup & JEQ & INCR12 & INCR23 & SUPINCL2 & DOMIN12' & IMGIN12' & DOMIN23' & INCRDISJ12 & INCRDISJ23 & INCRNOLAP & ADDZERO & ADDEXISTS & ADDSAME).
+    subst.
+    set (m2'' := InjectFootprint.m2' m1 m2' m1' j12 j23 j12' m2'_sup INJ12 ).
+    rewrite (Mem.mext_sup _ _ Hm2) in *.
+    assert (INJ12' :  Mem.inject j12' m1' m2'').
+    { eapply INJ12'; eauto. }
+    assert (EXT22' : Mem.extends m2'' m2''). eapply Mem.extends_refl.
+    assert (INJ23' : Mem.inject j23' m2'' m3').
+    { eapply INJ23'; eauto. }
+      (* eapply Mem.extends_inject_compose. eapply Hm2. eauto. }     *)
+    set (w1' := injpw j12' m1' m2'' INJ12').
+    set (w2' := injpw j23' m2'' m3' INJ23').
+    exists (w1', (tt, w2')).
+    repeat apply conj.
+    + exists m2''. split.
+      econstructor.
+      exists m2''. split; eauto.
+      econstructor.
+    + unfold w1'. constructor; auto.
+      (** Stuck here. We need to introduce a new construction layer of
+      construting the Mem.extend *)
+Admitted.      

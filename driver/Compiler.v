@@ -59,7 +59,7 @@ Require Renumber.
 Require Constprop.
 Require CSE.
 Require Deadcode.
-Require Unusedglob.
+(* Require Unusedglob. *)
 Require Allocation.
 Require Tunneling.
 Require Linearize.
@@ -80,7 +80,7 @@ Require Renumberproof.
 Require Constpropproof.
 Require CSEproof.
 Require Deadcodeproof.
-Require Unusedglobproof.
+(* Require Unusedglobproof. *)
 
 Require Allocproof.
 Require Tunnelingproof.
@@ -192,8 +192,8 @@ Definition transf_rtl_program (f: RTL.program) : res Asm.program :=
   !@@ print (print_RTL 6)
   @@@ partial_if Compopts.optim_redundancy (time "Redundancy elimination" Deadcode.transf_program)
   !@@ print (print_RTL 7)
-  @@@ time "Unused globals" Unusedglob.transform_program
-  !@@ print (print_RTL 8)
+  (* @@@ time "Unused globals" Unusedglob.transform_program *)
+  (* !@@ print (print_RTL 8) *)
   @@@ time "Register allocation" Allocation.transf_program
   !@@ print print_LTL
   !@@ time "Branch tunneling" Tunneling.tunnel_program
@@ -333,7 +333,7 @@ Definition CompCertO's_passes :=
   ::: mkpass (match_if Compopts.optim_constprop Renumberproof.match_prog)
   ::: mkpass (match_if Compopts.optim_CSE CSEproof.match_prog)
   ::: mkpass (match_if Compopts.optim_redundancy Deadcodeproof.match_prog)
-  ::: mkpass Unusedglobproof.match_prog
+  (* ::: mkpass Unusedglobproof.match_prog *)
   ::: mkpass Allocproof.match_prog
   ::: mkpass Tunnelingproof.match_prog
   ::: mkpass Linearizeproof.match_prog
@@ -410,8 +410,9 @@ Proof.
   set (p11 := total_if optim_constprop Renumber.transf_program p10) in *.
   destruct (partial_if optim_CSE CSE.transf_program p11) as [p12|e] eqn:P12; simpl in T; try discriminate.
   destruct (partial_if optim_redundancy Deadcode.transf_program p12) as [p13|e] eqn:P13; simpl in T; try discriminate.
-  destruct (Unusedglob.transform_program p13) as [p14|e] eqn:P14; simpl in T; try discriminate.
-  destruct (Allocation.transf_program p14) as [p15|e] eqn:P15; simpl in T; try discriminate.
+  (* destruct (Unusedglob.transform_program p13) as [p14|e] eqn:P14; simpl in T; try discriminate. *)
+  (* destruct (Allocation.transf_program p14) as [p15|e] eqn:P15; simpl in T; try discriminate. *)
+  destruct (Allocation.transf_program p13) as [p15|e] eqn:P15; simpl in T; try discriminate.
   set (p16 := Tunneling.tunnel_program p15) in *.
   destruct (Linearize.transf_program p16) as [p17|e] eqn:P17; simpl in T; try discriminate.
   set (p18 := CleanupLabels.transf_program p17) in *.
@@ -430,7 +431,7 @@ Proof.
   exists p11; split. apply total_if_match. apply Renumberproof.transf_program_match.
   exists p12; split. eapply partial_if_match; eauto. apply CSEproof.transf_program_match.
   exists p13; split. eapply partial_if_match; eauto. apply Deadcodeproof.transf_program_match.
-  exists p14; split. apply Unusedglobproof.transf_program_match; auto.
+  (* exists p14; split. apply Unusedglobproof.transf_program_match; auto. *)
   exists p15; split. apply Allocproof.transf_program_match; auto.
   exists p16; split. apply Tunnelingproof.transf_program_match.
   exists p17; split. apply Linearizeproof.transf_program_match; auto.
@@ -573,7 +574,7 @@ Lemma cc_compcert_expand:
   ccref
     cc_compcert_cod
     (cc_c_level @                                          (* Passes up to Alloc *)
-     cc_c inj @                                            (* Unusedglob *)
+     (* cc_c inj @                                            (* Unusedglob *) *)
      (wt_c @ cc_c ext @ cc_c_locset) @                     (* Alloc *)
      cc_locset ext @                                       (* Tunneling *)
      (wt_loc @ cc_locset_mach @ cc_mach inj) @             (* Stacking *)
@@ -585,12 +586,13 @@ Proof.
   etransitivity.
   {
     rewrite inj_inj, !cc_asm_compose.
-    rewrite inj_inj at 1. rewrite !cc_asm_compose. rewrite cc_compose_assoc.
+    (* rewrite inj_inj at 1.  *)
+    (* rewrite !cc_asm_compose. rewrite cc_compose_assoc. *)
     rewrite <- lessdef_c_cklr, cc_compose_assoc.
     rewrite <- (cc_compose_assoc wt_c lessdef_c).
     rewrite (inv_dup wt_c), (cc_compose_assoc wt_c), (cc_compose_assoc wt_c).
     rewrite (commute_around (_@_) (R2:= cc_c injp)).
-    do 4 rewrite (commute_around _ (R2 := _ inj)).
+    (* do 4 rewrite (commute_around _ (R2 := _ inj)). *)
     reflexivity.
   }
   repeat (rstep; [rauto | ]).
@@ -614,7 +616,7 @@ Qed.
 Lemma cc_compcert_collapse:
   ccref
     (cc_c_level @                                 (* Passes up to Alloc *)
-     cc_c inj @                                   (* Unusedglob  *)
+     (* cc_c inj @                                   (* Unusedglob  *) *)
      (wt_c @ cc_c ext @ cc_c_locset) @            (* Alloc *)
      cc_locset ext @                              (* Tunneling *)
      (wt_loc @ cc_locset injp @ cc_locset_mach) @ (* Stacking *)
@@ -637,35 +639,37 @@ Proof.
   unfold cc_c_level. rewrite !cc_compose_assoc.
 
   (* compose the wt_c invaraint using its propagatation property *)
-  rewrite <- lessdef_c_cklr, cc_compose_assoc, <- (cc_compose_assoc wt_c) at 1.
-  rewrite (commute_around (wt_c @ lessdef_c)), cc_compose_assoc.
-  rewrite <- (cc_compose_assoc lessdef_c).
-  rewrite lessdef_c_cklr.
-  rewrite <- (cc_compose_assoc (cc_c inj)).
+  (* rewrite <- lessdef_c_cklr, cc_compose_assoc, <- (cc_compose_assoc wt_c) at 1. *)
+  (* rewrite (commute_around (wt_c @ lessdef_c)), cc_compose_assoc. *)
+  (* rewrite <- (cc_compose_assoc lessdef_c). *)
+  (* rewrite lessdef_c_cklr. *)
+  (* rewrite <- (cc_compose_assoc (cc_c inj)). *)
+  rewrite <- (cc_compose_assoc (cc_c injp)).
   rewrite <- (cc_compose_assoc wt_c).
   rewrite (inv_drop _ wt_c), !cc_compose_assoc.
   (* move the wt_c to top level *)
   rewrite <- (lessdef_c_cklr ext) , cc_compose_assoc, <- (cc_compose_assoc wt_c) at 1.
-  rewrite <- (cc_compose_assoc (cc_c inj)).
-  rewrite !wt_R_refinement. rewrite cc_compose_assoc.
+  (* rewrite <- (cc_compose_assoc (cc_c inj)). *)
+  (* rewrite !wt_R_refinement. rewrite cc_compose_assoc. *)
   rewrite <- (cc_compose_assoc (cc_c injp)).
   rewrite wt_R_refinement. rewrite !cc_compose_assoc.
   rewrite <- (cc_compose_assoc lessdef_c).
   rewrite lessdef_c_cklr.
 
   (* manully compose the cklrs into a single injp *)
-  rewrite <- (cc_compose_assoc (cc_c inj)), <- cc_c_compose.
-  rewrite inj_ext.
-  rewrite <- (cc_compose_assoc (cc_c inj)), <- cc_c_compose.
-  rewrite inj_ext.
+  rewrite <- (cc_compose_assoc (cc_c ext)), <- cc_c_compose.
+  rewrite ext_ext.
+  rewrite <- (cc_compose_assoc (cc_c ext)), <- cc_c_compose.
+  rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose.
+  rewrite injp_ext_injp__injp.
   rewrite <- (cc_compose_assoc (cc_c ext)), <- cc_c_compose.
   rewrite ext_inj.
   rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose.
   rewrite injp_inj.
-  rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose.
-  rewrite injp_injp_eq.
-  rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose.
-  rewrite injp_inj.
+  (* rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose. *)
+  (* rewrite injp_injp_eq. *)
+  (* rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose. *)
+  (* rewrite injp_inj. *)
   reflexivity.
 Qed.
 
@@ -769,7 +773,7 @@ Lemma cc_expand :
       cc_c inj @
       cc_c ext @ cc_c inj @ cc_c injp @
       (ro @ injp) @ (ro @ injp) @ (ro @ injp) @
-    cc_c inj @                                   (* Unusedglob *)
+    (* cc_c inj @                                   (* Unusedglob *) *)
     (wt_c @ cc_c ext @ cc_c_locset) @            (* Alloc *)
     cc_locset ext @                              (* Tunneling *)
     (wt_loc @ cc_locset_mach @ cc_mach inj ) @   (* Stacking *)
@@ -791,7 +795,7 @@ Lemma cc_collapse :
       cc_c inj @
       cc_c ext @ cc_c injp @ cc_c injp @
       (ro @ injp) @ (ro @ injp) @ (ro @ injp) @
-      cc_c inj @                                   (* Unusedglob *)
+      (* cc_c inj @                                   (* Unusedglob *) *)
       (wt_c @ cc_c ext @ cc_c_locset) @            (* Alloc *)
       cc_locset ext @                              (* Tunneling *)
       (wt_loc @ cc_locset injp @ cc_locset_mach) @ (* Stacking *)
@@ -1046,7 +1050,7 @@ Proof.
                                                     destruct H as (p & M & MM); clear H
     end.
   repeat DestructM. subst tp.
-  assert (F: forward_simulation cc_compcert cc_compcert (Clight.semantics1 p) (Asm.semantics p20)).
+  assert (F: forward_simulation cc_compcert cc_compcert (Clight.semantics1 p) (Asm.semantics p19)).
   {
     eapply cc_compcert_merge; eauto.
     rewrite cc_expand. rewrite <- cc_collapse at 1.
@@ -1092,8 +1096,8 @@ Proof.
       eapply Deadcodeproof.transf_program_correct'; eassumption.
       subst. apply va_interface_selfsim. }
     eapply compose_forward_simulations.
-    eapply Unusedglobproof.transf_program_correct; eassumption.
-    eapply compose_forward_simulations.
+    (* eapply Unusedglobproof.transf_program_correct; eassumption. *)
+    (* eapply compose_forward_simulations. *)
     eapply Allocproof.transf_program_correct; eassumption.
     eapply compose_forward_simulations.
     eapply Tunnelingproof.transf_program_correct; eassumption.
