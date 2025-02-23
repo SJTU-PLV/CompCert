@@ -195,9 +195,29 @@ Definition inv_compose {li} (I1 I2: invariant li) : invariant li :=
     reply_inv '(w1, w2) r := reply_inv I1 w1 r /\ reply_inv I2 w2 r;
   |}.
 
+Definition inv_sum {li} (I1 I2: invariant li) : invariant li :=
+  {|
+    inv_world := (inv_world I1 + inv_world I2);
+    symtbl_inv w se := match w with
+                       | inl w1 => symtbl_inv I1 w1 se
+                       | inr w2 => symtbl_inv I2 w2 se
+                       end;
+    query_inv w q := match w with
+                     | inl w1 => query_inv I1 w1 q
+                     | inr w2 => query_inv I2 w2 q
+                     end;
+    reply_inv w r := match w with
+                     | inl w1 => reply_inv I1 w1 r
+                     | inr w2 => reply_inv I2 w2 r
+                     end;
+  |}.
+
+Declare Scope inv_scope.
+Infix "⊕" := inv_sum (at level 30, right associativity) : inv_scope.
 Infix "@@" := inv_compose (at level 30, right associativity) : inv_scope.
 Infix "@!" := invcc (at level 30, right associativity) : inv_scope.
 Infix "!@" := ccinv (at level 30, right associativity) : inv_scope.
+
 
 (** * Invariant-based simulation proof methods *)
 

@@ -974,7 +974,310 @@ Proof.
 Qed.
 
 End COMPOSE_TYPE_SAFE.
-    
+
+Local Open Scope inv_scope.
+
+Section WITH_INV.
+
+Context {li} (I1 I2: invariant li) (L: bool -> semantics li li).
+Context (sk: AST.program unit unit) (se: Genv.symtbl).
+
+Context (SAFE1 : module_type_safe_components (L true) I1 I2 SIF).
+Context (SAFE2 : module_type_safe_components (L false) I2 I1 SIF).
+(* Context (SAFE : forall i, module_type_safe_components (L false) (Il i) (Ir i) SIF). *)
+
+Let I := I1 ⊕ I2.
+
+(* | type_safe_frames_gen_cons1: forall (i: bool) s q (w1: inv_world I1) (w2: inv_world I2) w' fms *)
+(*     (VSE: symtbl_inv (Ir i) *)
+(*             (match i as i' return inv_world (Ir i') with | true => w1 | false => w2 end) *)
+(*             se) *)
+(*     (WF: type_safe_frames_gen w fms (match i return inv_world I with | true => inl w1 | false => inr w2 end)) *)
+(*     (EXT: at_external (L i se) s q) *)
+(*     (WTQ: query_inv (Il i) w' q) *)
+(*     (* desrible progress property here *) *)
+(*     (PGS: forall r, reply_inv (Il i) w' r -> *)
+(*                exists s', after_external (L i se) s r s' *)
+(*                      /\ (forall s', after_external (L i se) s r s' -> *)
+(*                               match i with *)
+(*                               | true => type_safe_invariant (L i) (Il i) (Ir i) SIF (SAFE i) se w1 s' *)
+(*                               | false => type_safe_invariant (L i) (Il i) (Ir i) SIF (SAFE i) se w2 s' *)
+(*                               end)), *)
+(*     type_safe_frames_gen w ((st L i s) :: fms) (match i with | true => inl w' | false => inr w' end). *)
+
+
+Inductive type_safe_frames_gen (w: inv_world I) : list (frame L) -> inv_world I -> Prop :=
+| type_safe_frames_gen_nil: type_safe_frames_gen w nil w
+| type_safe_frames_gen_cons1: forall s q w1 w2 fms
+    (WF: type_safe_frames_gen w fms (inr w2))
+    (VSE: symtbl_inv I2 w2 se)
+    (EXT: at_external (L true se) s q)
+    (WTQ: query_inv I1 w1 q)
+    (* desrible progress property here *)
+    (PGS: forall r, reply_inv I1 w1 r ->
+               exists s', after_external (L true se) s r s'
+                     /\ (forall s', after_external (L true se) s r s' ->
+                              type_safe_invariant (L true) I1 I2 SIF SAFE1 se w2 s')),
+    type_safe_frames_gen w ((st L true s) :: fms) (inl w1)
+| type_safe_frames_gen_cons2: forall s q w1 w2 fms
+    (WF: type_safe_frames_gen w fms (inl w1))
+    (VSE: symtbl_inv I1 w1 se)
+    (EXT: at_external (L false se) s q)
+    (WTQ: query_inv I2 w2 q)
+    (* desrible progress property here *)
+    (PGS: forall r, reply_inv I2 w2 r ->
+               exists s', after_external (L false se) s r s'
+                     /\ (forall s', after_external (L false se) s r s' ->
+                              type_safe_invariant (L false) I2 I1 SIF SAFE2 se w1 s')),
+    type_safe_frames_gen w ((st L false s) :: fms) (inr w2)
+.
+
+Inductive type_safe_state_gen w: list (frame L) -> Prop :=
+| type_safe_state_gen_cons1: forall s frs w2
+    (WFS: type_safe_frames_gen w frs (inr w2))
+    (VSE: symtbl_inv I2 w2 se)
+    (TYSAFE: type_safe_invariant (L true) I1 I2 SIF SAFE1 se w2 s),
+    type_safe_state_gen w (st L true s :: frs)
+| type_safe_state_gen_cons2: forall s frs w1
+    (WFS: type_safe_frames_gen w frs (inl w1))
+    (VSE: symtbl_inv I1 w1 se)
+    (TYSAFE: type_safe_invariant (L false) I2 I1 SIF SAFE2 se w1 s),
+    type_safe_state_gen w (st L false s :: frs)
+.
+
+End WITH_INV.
+
+
+Section COMPOSE_TYPE_SAFE_GENERAL.
+  
+Context {li} (I1 I2: invariant li) (L1 L2 L': semantics li li).
+
+Let L (i: bool) := if i then L1 else L2.
+
+(* used to make sure that the query_inv of I1 and I2 in (I1 ⊕ I2) are
+disjoint *)
+Hypothesis valid_query_disjoint1: forall w q se,
+    query_inv I1 w q ->
+    valid_query (L1 se) q = false.
+
+Hypothesis valid_query_disjoint2: forall w q se,
+    query_inv I2 w q ->
+    valid_query (L2 se) q = false.
+
+Hypothesis external_not_valid_query: forall i se s q,
+    Smallstep.at_external (L i se) s q ->
+    Smallstep.valid_query (L i se) q = false.
+
+Let Il (i: bool) := match i with | true => I1 | false => I2 end.
+Let Ir (i: bool) := match i with | true => I2 | false => I1 end.
+
+Lemma compose_total_type_safety_general:
+  module_type_safe I1 I2 L1 SIF ->
+  module_type_safe I2 I1 L2 SIF ->
+  compose L1 L2 = Some L' ->
+  module_type_safe (I1 ⊕ I2) (I1 ⊕ I2) L' SIF.
+Proof.
+  intros [SAFE1] [SAFE2] COMP.
+  unfold compose in *. unfold option_map in *.
+  destruct (link (skel L1) (skel L2)) as [sk|] eqn:Hsk; try discriminate. inv COMP.
+  assert (SAFE: forall i, module_type_safe_components (L i) (Il i) (Ir i) SIF).
+  { intros i. destruct i.
+    eapply SAFE1; eauto.
+    eapply SAFE2; eauto. }
+  red. econstructor.
+  eapply Module_type_safe_components with (type_safe_invariant := fun se w => type_safe_state_gen I1 I2 L se (SAFE true) (SAFE false) w).
+  intros se wB SYM VSE.
+  assert (VALIDSE: forall i, Genv.valid_for (skel (L i)) se).
+  { destruct i.
+    eapply Genv.valid_for_linkorder.
+    eapply (link_linkorder _ _ _ Hsk). eauto.
+    eapply Genv.valid_for_linkorder.
+    eapply (link_linkorder _ _ _ Hsk). eauto. }
+  econstructor.
+  - intros. inv H.
+    (* true *)
+    + inv H0; subst_dep.
+      * econstructor; eauto.
+        eapply internal_step_preserves; eauto.
+        eapply (SAFE true); eauto. 
+      * exploit @external_preserves_progress.
+        eapply (SAFE true). eapply VSE0. eapply VALIDSE. eauto.
+        eauto.
+        intros (wA & A1 & A2 & A3).
+        exploit (external_not_valid_query true). eapply H3.
+        intros VQF. destruct j; simpl in VQF; try rewrite H6 in VQF. inv VQF.
+        econstructor. 2: eapply A1.
+        econstructor; eauto.
+        exploit @initial_preserves_progress.
+        eapply (SAFE false). eapply A1. eapply VALIDSE. eauto. eauto.
+        intros (s & B1 & B2).
+        eapply B2. eauto.
+      * inv WFS. subst_dep.
+        econstructor; eauto.
+        exploit PGS. eapply final_state_preserves. eapply (SAFE true).
+        eauto. eapply VALIDSE. eauto. eauto.
+        intros (s & B1 & B2).
+        eapply B2. eauto.
+    (* false *)
+    + inv H0; subst_dep.
+      * econstructor; eauto.
+        eapply internal_step_preserves; eauto.
+        eapply (SAFE false); eauto. 
+      * exploit @external_preserves_progress.
+        eapply (SAFE false). eapply VSE0. eapply VALIDSE. eauto.
+        eauto.
+        intros (wA & A1 & A2 & A3).
+        exploit (external_not_valid_query false). eapply H3.
+        intros VQF. destruct j; simpl in VQF; try rewrite H6 in VQF. 2: inv VQF.
+        econstructor. 2: eapply A1.
+        econstructor; eauto.
+        exploit @initial_preserves_progress.
+        eapply (SAFE true). eapply A1. eapply VALIDSE. eauto. eauto.
+        intros (s & B1 & B2).
+        eapply B2. eauto.
+      * inv WFS. subst_dep.
+        econstructor; eauto.
+        exploit PGS. eapply final_state_preserves. eapply (SAFE false).
+        eauto. eapply VALIDSE. eauto. eauto.
+        intros (s & B1 & B2).
+        eapply B2. eauto.
+  - intros. inv H.
+    (* true *)
+    + exploit @internal_state_progress. eapply (SAFE true); eauto.
+      eauto. intros A. destruct A.
+      2: { contradiction. }
+      left.
+      destruct H as [(r & FINAL)|[(q & EXT)|(t1 & s1 & STEP1)]].
+      * inv WFS.
+        -- left. exists r.
+           econstructor. eauto.
+        -- do 2 right.
+           exploit @final_state_preserves. eapply (SAFE true). eapply VSE0.
+           all: eauto. intros VR.
+           exploit PGS; eauto.
+           intros (s' & B1 & B2).
+           do 2 eexists.
+           eapply step_pop; eauto.
+      * exploit @external_preserves_progress. eapply (SAFE true). 1-4: eauto.
+        intros (wA & A1 & A2 & A3).
+        destruct (valid_query (L false se) q) eqn: VQ.
+        -- exploit @initial_preserves_progress. eapply (SAFE false). 1-4: eauto. 
+           intros (s' & B1 & B2).        
+           do 2 right. do 2 eexists.        
+           eapply step_push with (j := false); eauto.
+        -- right. left.
+           exists q. econstructor. eauto.
+           intros. destruct j; auto.
+           eapply (external_not_valid_query true). eauto.
+      * do 2 right.
+        do 2 eexists. eapply step_internal. eauto.
+    (* false *)
+    + exploit @internal_state_progress. eapply (SAFE false); eauto.
+      eauto. intros A. destruct A.
+      2: { contradiction. }
+      left.
+      destruct H as [(r & FINAL)|[(q & EXT)|(t1 & s1 & STEP1)]].
+      * inv WFS.
+        -- left. exists r.
+           econstructor. eauto.
+        -- do 2 right.
+           exploit @final_state_preserves. eapply (SAFE false). eapply VSE0.
+           all: eauto. intros VR.
+           exploit PGS; eauto.
+           intros (s' & B1 & B2).
+           do 2 eexists.
+           eapply step_pop; eauto.
+      * exploit @external_preserves_progress. eapply (SAFE false). 1-4: eauto.
+        intros (wA & A1 & A2 & A3).
+        destruct (valid_query (L true se) q) eqn: VQ.
+        -- exploit @initial_preserves_progress. eapply (SAFE true). 1-4: eauto. 
+           intros (s' & B1 & B2).        
+           do 2 right. do 2 eexists.        
+           eapply step_push with (j := true); eauto.
+        -- right. left.
+           exists q. econstructor. eauto.
+           intros. destruct j; auto.
+           eapply (external_not_valid_query false). eauto.
+      * do 2 right.
+        do 2 eexists. eapply step_internal. eauto.
+  (* initial state *)
+  - intros q VQ QINV.
+    simpl in VQ. eapply orb_true_iff in VQ.
+    (* With valid_query_disjoint. We can prove that QINV must relate
+    the query in the same module as the valid_query *)
+    destruct VQ as [VQ1 | VQ2].
+    + simpl in QINV. destruct wB as [w1|w2].
+      eapply valid_query_disjoint1 in QINV. rewrite VQ1 in QINV.
+      congruence.
+      simpl in SYM.
+      exploit @initial_preserves_progress. eapply (SAFE true).
+      1-4: eauto. intros (s & A1 & A2).
+      exists (st L true s :: nil). split.
+      econstructor; eauto.
+      intros. inv H.
+      (* The initial state is state (L i) instead of state (L j) *)
+      exploit @initial_preserves_progress. eapply (SAFE true).
+      1-4: eauto. intros (s' & B1 & B2).
+      destruct i.
+      2: { eapply valid_query_disjoint2 in QINV. rewrite H0 in QINV.           
+           congruence. }      
+      econstructor. econstructor.
+      eauto. eauto.
+    + simpl in QINV. destruct wB as [w1|w2].
+      2: { eapply valid_query_disjoint2 in QINV. rewrite VQ2 in QINV.
+           congruence. }
+      simpl in SYM.
+      exploit @initial_preserves_progress. eapply (SAFE false).
+      1-4: eauto. intros (s & A1 & A2).
+      exists (st L false s :: nil). split.
+      econstructor; eauto.
+      intros. inv H.
+      (* The initial state is state (L i) instead of state (L j) *)
+      exploit @initial_preserves_progress. eapply (SAFE false).
+      1-4: eauto. intros (s' & B1 & B2).
+      destruct i.
+      eapply valid_query_disjoint1 in QINV. rewrite H0 in QINV.           
+      congruence.
+      econstructor. econstructor.
+      eauto. eauto.
+  (* external *)
+  - intros s q SINV EXT. inv EXT.
+    destruct i.
+    + inv SINV. subst_dep.
+      exploit @external_preserves_progress. eapply (SAFE true).
+      1-4: eauto. intros (wA & A1 & A2 & A3).
+      exists (inl wA). repeat apply conj; auto.
+      intros. simpl in H1. exploit A3; eauto. intros (s' & B1 & B2).
+      eexists. split.
+      econstructor; eauto.
+      intros. inv H2. subst_dep.
+      econstructor; eauto.
+    + inv SINV. subst_dep.
+      exploit @external_preserves_progress. eapply (SAFE false).
+      1-4: eauto. intros (wA & A1 & A2 & A3).
+      exists (inr wA). repeat apply conj; auto.
+      intros. simpl in H1. exploit A3; eauto. intros (s' & B1 & B2).
+      eexists. split.
+      econstructor; eauto.
+      intros. inv H2. subst_dep.
+      econstructor; eauto.
+  (* final *)
+  - intros s r SINV FINAL. inv FINAL.
+    destruct i.
+    + inv SINV. subst_dep.
+      simpl in TYSAFE.
+      inv WFS. simpl.
+      eapply final_state_preserves. eapply (SAFE true).
+      all: eauto.
+    + inv SINV. subst_dep.
+      simpl in TYSAFE.
+      inv WFS. simpl.
+      eapply final_state_preserves. eapply (SAFE false).
+      all: eauto.
+Qed.
+
+End COMPOSE_TYPE_SAFE_GENERAL.
+
 
 (** *Experiment code: safety preservation using type preserving method *)
 
