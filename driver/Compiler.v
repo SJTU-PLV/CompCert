@@ -574,7 +574,7 @@ Lemma cc_compcert_expand:
   ccref
     cc_compcert_cod
     (cc_c_level @                                          (* Passes up to Alloc *)
-     (* cc_c inj @                                            (* Unusedglob *) *)
+     cc_c inj @                                            (* RTL self sim *)
      (wt_c @ cc_c ext @ cc_c_locset) @                     (* Alloc *)
      cc_locset ext @                                       (* Tunneling *)
      (wt_loc @ cc_locset_mach @ cc_mach inj) @             (* Stacking *)
@@ -586,13 +586,12 @@ Proof.
   etransitivity.
   {
     rewrite inj_inj, !cc_asm_compose.
-    (* rewrite inj_inj at 1.  *)
-    (* rewrite !cc_asm_compose. rewrite cc_compose_assoc. *)
+    rewrite inj_inj at 1. rewrite !cc_asm_compose. rewrite cc_compose_assoc.
     rewrite <- lessdef_c_cklr, cc_compose_assoc.
     rewrite <- (cc_compose_assoc wt_c lessdef_c).
     rewrite (inv_dup wt_c), (cc_compose_assoc wt_c), (cc_compose_assoc wt_c).
     rewrite (commute_around (_@_) (R2:= cc_c injp)).
-    (* do 4 rewrite (commute_around _ (R2 := _ inj)). *)
+    do 4 rewrite (commute_around _ (R2 := _ inj)).
     reflexivity.
   }
   repeat (rstep; [rauto | ]).
@@ -616,7 +615,7 @@ Qed.
 Lemma cc_compcert_collapse:
   ccref
     (cc_c_level @                                 (* Passes up to Alloc *)
-     (* cc_c inj @                                   (* Unusedglob  *) *)
+     cc_c inj @                                   (* RTL self sim  *)
      (wt_c @ cc_c ext @ cc_c_locset) @            (* Alloc *)
      cc_locset ext @                              (* Tunneling *)
      (wt_loc @ cc_locset injp @ cc_locset_mach) @ (* Stacking *)
@@ -639,37 +638,35 @@ Proof.
   unfold cc_c_level. rewrite !cc_compose_assoc.
 
   (* compose the wt_c invaraint using its propagatation property *)
-  (* rewrite <- lessdef_c_cklr, cc_compose_assoc, <- (cc_compose_assoc wt_c) at 1. *)
-  (* rewrite (commute_around (wt_c @ lessdef_c)), cc_compose_assoc. *)
-  (* rewrite <- (cc_compose_assoc lessdef_c). *)
-  (* rewrite lessdef_c_cklr. *)
-  (* rewrite <- (cc_compose_assoc (cc_c inj)). *)
-  rewrite <- (cc_compose_assoc (cc_c injp)).
+  rewrite <- lessdef_c_cklr, cc_compose_assoc, <- (cc_compose_assoc wt_c) at 1.
+  rewrite (commute_around (wt_c @ lessdef_c)), cc_compose_assoc.
+  rewrite <- (cc_compose_assoc lessdef_c).
+  rewrite lessdef_c_cklr.
+  rewrite <- (cc_compose_assoc (cc_c inj)).
   rewrite <- (cc_compose_assoc wt_c).
   rewrite (inv_drop _ wt_c), !cc_compose_assoc.
   (* move the wt_c to top level *)
   rewrite <- (lessdef_c_cklr ext) , cc_compose_assoc, <- (cc_compose_assoc wt_c) at 1.
-  (* rewrite <- (cc_compose_assoc (cc_c inj)). *)
-  (* rewrite !wt_R_refinement. rewrite cc_compose_assoc. *)
+  rewrite <- (cc_compose_assoc (cc_c inj)).
+  rewrite !wt_R_refinement. rewrite cc_compose_assoc.
   rewrite <- (cc_compose_assoc (cc_c injp)).
   rewrite wt_R_refinement. rewrite !cc_compose_assoc.
   rewrite <- (cc_compose_assoc lessdef_c).
   rewrite lessdef_c_cklr.
 
   (* manully compose the cklrs into a single injp *)
-  rewrite <- (cc_compose_assoc (cc_c ext)), <- cc_c_compose.
-  rewrite ext_ext.
-  rewrite <- (cc_compose_assoc (cc_c ext)), <- cc_c_compose.
-  rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose.
-  rewrite injp_ext_injp__injp.
+  rewrite <- (cc_compose_assoc (cc_c inj)), <- cc_c_compose.
+  rewrite inj_ext.
+  rewrite <- (cc_compose_assoc (cc_c inj)), <- cc_c_compose.
+  rewrite inj_ext.
   rewrite <- (cc_compose_assoc (cc_c ext)), <- cc_c_compose.
   rewrite ext_inj.
   rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose.
   rewrite injp_inj.
-  (* rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose. *)
-  (* rewrite injp_injp_eq. *)
-  (* rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose. *)
-  (* rewrite injp_inj. *)
+  rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose.
+  rewrite injp_injp_eq.
+  rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose.
+  rewrite injp_inj.
   reflexivity.
 Qed.
 
@@ -773,7 +770,7 @@ Lemma cc_expand :
       cc_c inj @
       cc_c ext @ cc_c inj @ cc_c injp @
       (ro @ injp) @ (ro @ injp) @ (ro @ injp) @
-    (* cc_c inj @                                   (* Unusedglob *) *)
+    cc_c inj @                                   (* RTL self sim *)
     (wt_c @ cc_c ext @ cc_c_locset) @            (* Alloc *)
     cc_locset ext @                              (* Tunneling *)
     (wt_loc @ cc_locset_mach @ cc_mach inj ) @   (* Stacking *)
@@ -795,7 +792,7 @@ Lemma cc_collapse :
       cc_c inj @
       cc_c ext @ cc_c injp @ cc_c injp @
       (ro @ injp) @ (ro @ injp) @ (ro @ injp) @
-      (* cc_c inj @                                   (* Unusedglob *) *)
+      cc_c inj @                                   (* RTL self sim *)
       (wt_c @ cc_c ext @ cc_c_locset) @            (* Alloc *)
       cc_locset ext @                              (* Tunneling *)
       (wt_loc @ cc_locset injp @ cc_locset_mach) @ (* Stacking *)
@@ -1096,8 +1093,11 @@ Proof.
       eapply Deadcodeproof.transf_program_correct'; eassumption.
       subst. apply va_interface_selfsim. }
     eapply compose_forward_simulations.
+    (** A hack: using self-simulation to prove inj forward simulation,
+    preventing modifying lots of code when removing Unusedglob pass *)
+    eapply RTLrel.semantics_rel.
     (* eapply Unusedglobproof.transf_program_correct; eassumption. *)
-    (* eapply compose_forward_simulations. *)
+    eapply compose_forward_simulations.
     eapply Allocproof.transf_program_correct; eassumption.
     eapply compose_forward_simulations.
     eapply Tunnelingproof.transf_program_correct; eassumption.
