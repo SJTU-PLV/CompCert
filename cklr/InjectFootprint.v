@@ -227,6 +227,104 @@ Proof.
 Qed.
 
 
+Lemma injp_acc_local :
+  forall f0 wm wtm Htm j1 m1 tm1 Hm1 j2 m2 tm2 Hm2,
+    injp_acc (injpw f0 wm wtm Htm) (injpw j1 m1 tm1 Hm1) ->
+    Mem.ro_unchanged m1 m2 -> Mem.ro_unchanged tm1 tm2 ->
+    injp_max_perm_decrease m1 m2 ->
+    injp_max_perm_decrease tm1 tm2 ->
+    inject_incr j1 j2 ->
+    inject_separated f0 j2 wm wtm ->
+    Mem.unchanged_on (fun b ofs => Mem.valid_block wm b /\ loc_unmapped f0 b ofs) m1 m2 ->
+    Mem.unchanged_on (fun b ofs => Mem.valid_block wtm b /\ loc_out_of_reach f0 wm b ofs) tm1 tm2 ->
+    injp_acc (injpw f0 wm wtm Htm) (injpw j2 m2 tm2 Hm2).
+Proof.
+  intros.  inv H.
+  apply Mem.unchanged_on_support in H18 as SUP.
+  apply Mem.unchanged_on_support in H19 as TSUP.
+  constructor.
+  - red. intros. eapply H14; eauto. eapply H0; eauto.
+    eapply SUP; eauto. intros. intro. eapply H9; eauto.
+  - red. intros. eapply H15; eauto. eapply H1; eauto.
+    eapply TSUP; eauto. intros. intro. eapply H9; eauto.
+  - eapply max_perm_decrease_trans; eauto.
+  - eapply max_perm_decrease_trans; eauto.
+  - inversion H18. inversion H6.
+    constructor; eauto.
+    intros. etransitivity; eauto.
+    eapply unchanged_on_perm0; eauto.
+    unfold Mem.valid_block in *. eauto.
+    intros. etransitivity. eapply unchanged_on_contents0.
+    split; eauto.
+    eapply Mem.perm_valid_block; eauto.
+    eapply unchanged_on_perm; eauto.
+    eapply Mem.perm_valid_block; eauto.
+    eauto.
+  - inversion H19. inversion H7.
+    constructor; eauto.
+    intros. etransitivity; eauto.
+    eapply unchanged_on_perm0; eauto.
+    unfold Mem.valid_block in *. eauto.
+    intros. etransitivity. eapply unchanged_on_contents0.
+    split; eauto.
+    eapply Mem.perm_valid_block; eauto.
+    eapply unchanged_on_perm; eauto.
+    eapply Mem.perm_valid_block; eauto.
+    eauto.
+  - eapply inject_incr_trans; eauto.
+  - eauto.
+Qed.
+
+Inductive injp_acc_small (w0: injp_world) : relation injp_world :=
+    injp_acc_small_intro : forall (f : meminj) (m1 m2 : mem) (Hm : Mem.inject f m1 m2) (f' : meminj) 
+                        (m1' m2' : mem) (Hm' : Mem.inject f' m1' m2') j m10 m20 Hm0,
+                     w0 = injpw j m10 m20 Hm0 ->
+                     Mem.ro_unchanged m1 m1' ->
+                     Mem.ro_unchanged m2 m2' ->
+                     injp_max_perm_decrease m1 m1' ->
+                     injp_max_perm_decrease m2 m2' ->
+                     Mem.unchanged_on (fun b ofs => loc_unmapped f b ofs /\ Mem.valid_block m10 b) m1 m1' ->
+                     Mem.unchanged_on (fun b ofs => loc_out_of_reach f m1 b ofs /\ Mem.valid_block m20 b) m2 m2' ->
+                     inject_incr f f' ->                     
+                     inject_separated f f' m10 m20 ->
+                     injp_acc_small w0 (injpw f m1 m2 Hm) (injpw f' m1' m2' Hm').
+
+Lemma injp_acc_small_implies : forall w0 w1 w2,
+    injp_acc w0 w1 -> injp_acc_small w0 w1 w2 -> injp_acc w0 w2.
+Proof.
+  intros. inv H. inv H0.
+  apply Mem.unchanged_on_support in H5 as SUP.
+  apply Mem.unchanged_on_support in H6 as TSUP.
+  apply Mem.unchanged_on_support in H16 as SUP1.
+  apply Mem.unchanged_on_support in H17 as TSUP1.
+  constructor.
+  - red. intros. eapply H1; eauto. eapply H12; eauto.
+    eapply SUP; eauto. intros. intro. eapply H9; eauto.
+  - red. intros. eapply H2; eauto. eapply H13; eauto.
+    eapply TSUP; eauto. intros. intro. eapply H9; eauto.
+  - eapply max_perm_decrease_trans; eauto.
+  - eapply max_perm_decrease_trans; eauto.
+  - inv H11. eapply mem_unchanged_on_trans_implies_valid; eauto.
+    intros. simpl. split; auto. red in H.
+    red. destruct (f' b) as [[b' d']|] eqn:Hj.
+    apply H8 in Hj as Heq; auto.
+    destruct Heq. congruence. auto.
+  - inv H11. eapply mem_unchanged_on_trans_implies_valid; eauto.
+    intros. simpl. split; auto. red in H.
+    red. intros. destruct (j b0) as [[b' d']|] eqn:Hj.
+    apply H7 in Hj as Heq. rewrite H9 in Heq. inv Heq.
+    intro. eapply H; eauto. eapply H3; eauto using Mem.valid_block_inject_1.
+    intro. eapply H8; eauto.
+  - eapply inject_incr_trans; eauto.
+  - intros b1 b2 delta Hb Hb''.
+    destruct (f' b1) as [[xb2 xdelta] | ] eqn:Hb'.
+    * assert (xb2 = b2 /\ xdelta = delta) as [? ?]
+          by (eapply H19 in Hb'; split; congruence); subst.
+      eapply H8; eauto.
+    * inv H11. eauto. 
+Qed.
+
+
 Lemma injp_acc_free: forall f m1 m2 b1 b2 delta lo1 sz m1' m2' Hm Hm',
     Mem.free m1 b1 lo1 (lo1 + sz) = Some m1' ->
     Mem.free m2 b2 (lo1 + delta) (lo1 + sz + delta) = Some m2' ->
