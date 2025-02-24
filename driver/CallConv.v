@@ -1284,6 +1284,22 @@ Proof.
         destruct in_dec; eauto.
 Qed.
 
+Lemma cc_lm_stacking_injp:
+  ccref (cc_locset_mach @ cc_mach injp) (cc_stacking injp).
+Proof.
+  (* red. intros ((se2 & w1) & w2). *)
+  (* intros se1 se3 q1 q3 [Hs1 [Hs2 Hs3]] [q2 [Hq1 Hq3]]. *)
+  (* destruct w1 as [sg [j12' m1' m2' Hm12']]. *)
+  (* destruct w2 as [[j34' m3' m4' Hm34'] xxsg ls3 rs4 sp4 xm4]. *)
+  (* inv H. *)
+  (* inv Hq1. inv H2. inv Hq2. inv H10. simpl in H2. subst we. inv Hq3. rename ls4 into ls3. *)
+  (* rename xm4 into m4'. rename m7 into m3'. rename m5 into m2'. rename m0 into m1'. *)
+  (* assert (Hm14' : Mem.inject (compose_meminj j12' j34') m1' m4'). *)
+  (* eapply Mem.inject_compose; eauto. eapply Mem.extends_inject_compose; eauto. *)
+  (* exists (stkjw (injpw (compose_meminj j12' j34') m1' m4' Hm14') sg ls1 rs4 sp4 m4'). *)
+  (* repeat apply conj. *)
+Abort.
+
 (** *** Outgoing calls *)
 
 Import Separation.

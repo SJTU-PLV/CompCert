@@ -201,6 +201,31 @@ Proof.
     split; eauto using Mem.fresh_block_alloc.
 Qed.
 
+Lemma injp_acc_alloc': forall f f' m1 m2 b1 b2 lo1 hi1 lo2 hi2 m1' m2' Hm Hm' d,
+    Mem.alloc m1 lo1 hi1 = (m1',b1) ->
+    Mem.alloc m2 lo2 hi2 = (m2',b2) ->
+    inject_incr f f' ->
+    f' b1 = Some (b2, d) ->
+    inject_separated f f' m1 m2 ->
+    injp_acc (injpw f m1 m2 Hm) (injpw f' m1' m2' Hm').
+Proof.
+  intros. constructor.
+  - eauto using Mem.ro_unchanged_alloc.
+  - eauto using Mem.ro_unchanged_alloc.
+  - intros b ofs p Hb Hp.
+    eapply Mem.perm_alloc_inv in Hp; eauto.
+    destruct (eq_block b b1); eauto; subst.
+    eelim (Mem.fresh_block_alloc m1); eauto.
+  - intros b ofs p Hb Hp.
+    eapply Mem.perm_alloc_inv in Hp; eauto.
+    destruct (eq_block b b2); eauto; subst.
+    eelim (Mem.fresh_block_alloc m2); eauto.
+  - eapply Mem.alloc_unchanged_on; eauto.
+  - eapply Mem.alloc_unchanged_on; eauto.
+  - assumption.
+  - auto. 
+Qed.
+
 
 Lemma injp_acc_free: forall f m1 m2 b1 b2 delta lo1 sz m1' m2' Hm Hm',
     Mem.free m1 b1 lo1 (lo1 + sz) = Some m1' ->
