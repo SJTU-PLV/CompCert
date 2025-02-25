@@ -1047,9 +1047,10 @@ Proof.
     + apply Mem.unchanged_on_refl.
     + reflexivity.
 Qed.      
-
+(*
 Axiom size_arguments_always_64: forall sg,
   (2 | size_arguments sg).
+*)
 (*
 Proof.
   unfold size_arguments.
@@ -1092,7 +1093,7 @@ Proof.
 Qed.
 
 (** With this, we can state and prove the commutation property. *)
-
+(*
 Instance commut_locset_mach R `{HR: Mixable R}:
   Commutes cc_locset_mach (cc_locset R) (cc_mach R).
 Proof.
@@ -1160,7 +1161,7 @@ Proof.
       destruct is_callee_save eqn:Hr; auto.
       rewrite H20 by auto. cbn. generalize (H5 r). rauto.
 Qed.
-
+*)
 
 (** ** Matching [cc_stacking] *)
 
@@ -1168,7 +1169,7 @@ Qed.
   conventions involving [cc_locset_mach]. *)
 
 (** *** Incoming calls *)
-
+(*
 Lemma cc_lm_stacking:
   ccref (cc_locset_mach @ cc_mach inj) (cc_stacking inj).
 Proof.
@@ -1279,7 +1280,7 @@ Proof.
         destruct is_callee_save eqn:CSR; eauto.
         destruct in_dec; eauto.
 Qed.
-
+*)
 (** *** Outgoing calls *)
 
 Import Separation.
