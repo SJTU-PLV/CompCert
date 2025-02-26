@@ -7,31 +7,7 @@ Require Import Extends InjectFootprint CA.
 Require Import CallconvBig Ext Injp CAnew Composition.
 
 
-    
-(** * TODOs after completing this : Generalization *)
-
-(**
-  1. generalize the callconv in this file :
-  forall cc : lic <-> liasm , sim cc cc OpenC OpenA -> concur_sim OpenC OpenA
-
-  2. generalize the language interface? can we?
-
-  3. Implementing the primitives using assembly code... do a semantics -> syntantic sim
-
-    [|a.asm|]_O -> [|a.asm]_G
-
-    sim?
-
-    [|a.asm + pthreads.asm|]_Closed
-
-  4. Complete coroutine, non-preemptive, thread_join (thread variable), lock, unlock, condition variable
-
-  5. preeptive, more primitives
-
-  6. C++ atomics, SC consistency, Concurrent things
-
- *)
-
+Require Import ThreadLinking.
 
 Section ConcurSim.
 
@@ -111,81 +87,6 @@ Section ConcurSim.
     |gorder_intro : forall hd tl li1 li2,
         bsim_order li1 li2 ->
         global_order (hd ++ (li1 :: tl)) (hd ++ (li2 :: tl)).
-
-      (** * Lemmas about nth_error. *)
-    Fixpoint set_nth_error {A:Type} (l: list A) (n: nat) (a: A) : option (list A) :=
-      match n with
-      |O => match l with
-           |nil => None
-           |hd :: tl => Some (a :: tl)
-           end
-      |S n' => match l with
-           |nil => None
-              |hd :: tl => match (set_nth_error tl n' a) with
-                         |Some tl' => Some (hd :: tl')
-                         |None => None
-                         end
-              end
-      end.
-
-    Lemma set_nth_error_length : forall {A: Type} (l l' : list A) n a,
-        set_nth_error l n a = Some l' ->
-        length l' = length l.
-    Proof.
-      induction l; intros.
-      - destruct n; simpl in H; inv H.
-      - destruct n; simpl in H. inv H. reflexivity.
-        destruct set_nth_error eqn:SET in H; inv H.
-        simpl. erewrite IHl; eauto.
-    Qed.
-
-    Lemma get_nth_set : forall {A: Type} (n:nat) (l: list A) (a b: A),
-        nth_error l n = Some a ->
-        exists l', set_nth_error l n b = Some l'
-              /\ nth_error l' n = Some b
-              /\ forall n0 : nat, (n0 <> n)%nat -> nth_error l n0 = nth_error l' n0.
-    Proof.
-      induction n; intros.
-      - destruct l. inv H. exists (b :: l).
-        split. reflexivity. split. reflexivity. intros.
-        destruct n0. extlia. reflexivity.
-      - simpl in H. destruct l. inv H.
-        specialize (IHn l a b H). destruct IHn as (l' & X & Y & Z).
-        exists (a0 :: l'). repeat apply conj; eauto. simpl. rewrite X. reflexivity.
-        intros. destruct n0. simpl. reflexivity. simpl. apply Z. lia.
-    Qed.
-
-
-    Lemma nth_error_split {A: Type} : forall n (a: A) (l : list A),
-        nth_error l n = Some a ->
-        exists hd tl, l = hd ++ (a :: tl) /\ length hd = n.
-    Proof.
-      induction n; intros.
-      - destruct l. simpl in H. inv H.
-        simpl in H. inv H. exists nil. exists l. split. reflexivity. eauto.
-      - simpl in H. destruct l. inv H.
-        apply IHn in H. destruct H as [hd [tl [C B]]].
-        exists (a0 :: hd), tl. split. simpl. rewrite C. simpl. reflexivity.
-        simpl. lia.
-    Qed.
-
-    Lemma set_nth_error_split {A: Type} : forall n (a a':A) (l l' hd tl: list A),
-        set_nth_error l n a' = Some l' ->
-        l = hd ++ (a :: tl) ->
-        length hd = n ->
-        l' = hd ++ (a' :: tl).
-    Proof.
-      induction n; intros.
-      - destruct l; simpl in H. inv H.
-        inv H. inv H0. simpl. destruct hd. simpl in *. inv H2. eauto.
-        inv H1.
-      - destruct l; simpl in H. inv H.
-        destruct (set_nth_error l n a') eqn:HS; inv H.
-        destruct hd. inv H1. simpl in H1. simpl in H0.
-        inv H0.
-        exploit IHn. apply HS. reflexivity. lia.
-        intros. rewrite H. reflexivity.
-    Qed.
 
     Lemma global_order_decrease : forall i i' li li' n,
         nth_error i n = Some li ->
@@ -315,20 +216,6 @@ Section ConcurSim.
    Definition initial_gworlds {T:Type} (w: T) := NatMap.set 1%nat (Some w) empty_gworlds.
    Definition initial_indexs (i: bsim_index) := i :: nil.
     
-    (** * We shall add more and more invariants about global states here *)
-
-    (** Discuss : we may need to store [two] worlds for each thread, one is the
-        initial wB, the another is for the latest (if exists) [yield], is the wA,
-        waiting for replies related by wA's accessibility.
-
-        The current world should be [legal] accessibility of all threads waiting
-        at [yield()], therefore they can be resumed.
-
-        GS.fsim_lts.
-     *)
-
-    (** Maybe the thread_state needs to be further extended fsim_match_external *)
-
     
     Definition sig_w_compcert (w: GS.ccworld cc_compcert) : signature :=
       (snd (fst (snd (snd (snd w))))).
@@ -592,30 +479,43 @@ Section ConcurSim.
       unfold CMulti.initial_se, CMulti.main_id in H0.
       rewrite <- bsim_skel. eauto. rewrite <- bsim_skel. eauto.
     Qed.
-    
 
+
+    Ltac unfoldC_in H := 
+      unfold CMulti.initial_se, CMulti.main_id,
+        CMulti.update_cur_thread, CMulti.update_thread,
+        CMulti.get_cur_thread, CMulti.get_thread
+        in H; simpl in H.
+
+    Ltac unfoldA_in H :=
+      unfold initial_se, AsmMulti.main_id,
+        AsmMulti.get_cur_thread, AsmMulti.get_thread,
+        AsmMulti.update_cur_thread, AsmMulti.update_thread
+        in H; simpl in H.
+
+    Ltac unfoldC := 
+      unfold CMulti.initial_se, CMulti.main_id,
+        CMulti.update_cur_thread, CMulti.update_thread,
+        CMulti.get_cur_thread, CMulti.get_thread
+        ; simpl.
+
+    Ltac unfoldA H :=
+      unfold initial_se, AsmMulti.main_id,
+        AsmMulti.get_cur_thread, AsmMulti.get_thread,
+        AsmMulti.update_cur_thread, AsmMulti.update_thread
+        ; simpl.
+    
     Lemma concur_initial_states :
       forall s1 s2, Closed.initial_state ConcurC s1 -> Closed.initial_state ConcurA s2 ->
                exists i s1', Closed.initial_state ConcurC s1' /\ match_states i s1' s2.
     Proof.
-      intros. inv H. inv H0.
-    Admitted.
-(*      
-      exists (initial_indexs i), s1. 
-    Lemma concur_initial_states :
-      forall s1, Closed.initial_state ConcurC s1 ->
-            exists i s2, Closed.initial_state ConcurA s2 /\ match_states i s1 s2.
-    Proof.
-      intros. inv H.
-      (* Genv.initmem_inject. *)
-      apply Genv.initmem_inject in H1 as Hm0.
+      intros s1 s2 INIC INIA. inv INIC. inv INIA.
+      unfoldC_in H. unfoldA_in H2. rewrite <- bsim_skel in H2.
+      rewrite H in H2. inv H2. rewrite <- bsim_skel in H3.
+      rewrite H0 in H3. inv H3. rename m0' into tm1.
       exploit Genv.init_mem_genv_sup; eauto. intro SUP.
-      case_eq (Mem.alloc m0 0 0). intros tm0 sp0 DUMMY.
-      (* set (j0 := Mem.flat_inj (Mem.support m0)).
-        se   t (wj0 := injpw j0 m0 m0 Hm0). *)
-      set (w0 := init_w m0 main_b tm0 sp0 H1 DUMMY). unfold init_w, wj0 in w0.
+      set (w0 := init_w m1 main_b0 tm1 sb H0 H4). unfold init_w, wj0 in w0.
       generalize valid_se. intro VALID.
-      simpl in fsim_lts.
       assert (MSE': GS.match_senv cc_compcert w0 se tse).
       (* assert (MSE': injp_match_stbls (injp_w_compcert w0) se tse). *)
       { constructor. constructor. constructor.
@@ -624,14 +524,14 @@ Section ConcurSim.
         constructor.  rewrite <- SE_eq. apply match_se_initial; eauto.
         unfold se, CMulti.initial_se. rewrite SUP. eauto with mem. rewrite <- SE_eq.
         unfold se, CMulti.initial_se. rewrite SUP.
-        apply Mem.support_alloc in DUMMY as SUPA. rewrite SUPA.
+        apply Mem.support_alloc in H4 as SUPA. rewrite SUPA.
         simpl. eauto with mem.
         constructor. }
-      specialize (fsim_lts se tse w0 MSE' VALID) as FSIM.
-      set (rs0 := initial_regset (Vptr main_b Ptrofs.zero) (Vptr sp0 Ptrofs.zero)).
-      set (q2 := (rs0,tm0)).
-      set (q1 := {| cq_vf := Vptr main_b Ptrofs.zero; cq_sg := main_sig; cq_args := nil; cq_mem := m0 |}).
-      assert (MQ: GS.match_query cc_compcert w0 q1 q2).
+      specialize (bsim_lts se tse w0 MSE' VALID) as BSIM.
+      set (rs0 := initial_regset (Vptr main_b0 Ptrofs.zero) (Vptr sb Ptrofs.zero)).
+      set (q2 := (rs0,tm1)).
+      set (q1 := {| cq_vf := Vptr main_b0 Ptrofs.zero; cq_sg := main_sig; cq_args := nil; cq_mem := m1 |}).
+       assert (MQ: GS.match_query cc_compcert w0 q1 q2).
       { (* match initial query *)
         assert (NONEARG: Conventions1.loc_arguments main_sig = nil).
         unfold main_sig. unfold Conventions1.loc_arguments. destruct Archi.ptr64; simpl; eauto.
@@ -649,8 +549,8 @@ Section ConcurSim.
         - econstructor. unfold Mem.flat_inj. rewrite pred_dec_true.
           reflexivity.  rewrite <- SUP.
           eapply Genv.genv_symb_range; eauto. reflexivity.
-        - intros. unfold Conventions.size_arguments in H.
-          rewrite NONEARG in H. simpl in H. inv H. extlia.
+        - intros. unfold Conventions.size_arguments in H2.
+          rewrite NONEARG in H2. simpl in H2. inv H2. extlia.
         - simpl. unfold Tptr. replace Archi.ptr64 with true. reflexivity.
           eauto.
         - simpl. unfold initial_regset. rewrite Pregmap.gso.
@@ -673,111 +573,108 @@ Section ConcurSim.
         rewrite Pregmap.gss. congruence.
         constructor.
       }
-      eapply GS.fsim_match_initial_states in FSIM as FINI; eauto.
-      destruct FINI as [i [ls2 [A B]]].
+      eapply GS.bsim_match_initial_states in BSIM as FINI; eauto.
+      inv FINI. exploit bsim_match_cont_match; eauto.
+      intros (ls1' & INI1' & [i Hm]).
       exists (initial_indexs i). eexists. split.
-      + econstructor. unfold AsmMulti.main_id, initial_se.
-        unfold CMulti.initial_se, CMulti.main_id in H0.
-        rewrite <- fsim_skel. eauto. rewrite <- fsim_skel. eauto.
-        eauto. reflexivity. eauto.
-      + econstructor; eauto. econstructor; eauto.
-        intros. simpl. rewrite NatMap.gss. congruence.
-        instantiate (1:= DUMMY). instantiate (1:= H1).
-        instantiate (1:= initial_worlds w0). reflexivity.
-        intros. unfold initial_worlds in H3. rewrite NatMap.gso in H3.
-        inv H3. auto.
-        instantiate (2:= initial_gworlds (get w0)). reflexivity.
-        unfold gw_tid. simpl.
-        simpl. split.  erewrite init_mem_tid; eauto.
-        unfold gw_nexttid. simpl.
-        erewrite init_mem_nexttid; eauto.
-        intros. simpl in H. unfold initial_gworlds in H.
-        destruct (Nat.eq_dec n 1). subst. rewrite NatMap.gss in H.
-        inv H. unfold gw_tid. simpl. erewrite init_mem_tid; eauto.
-        rewrite NatMap.gso in H. inv H. lia.
-        instantiate (1:= empty_worlds). 
-        intros.
-        assert (n=1)%nat. lia. subst. 
-        exists w0, None, (get w0), (CMulti.Local OpenC ls), (Local OpenA ls2), i.
-        repeat apply conj; eauto. simpl.
+      econstructor; eauto.
+      econstructor; eauto.
+      instantiate (1:= initial_worlds (get w0)).
+      econstructor; eauto.
+      - intros. rewrite NatMap.gss. congruence.
+      - instantiate (6:= initial_worlds w0). reflexivity.
+      - intros. unfold initial_worlds in H3. rewrite NatMap.gso in H3. inv H3. eauto.
+      - setoid_rewrite NatMap.gss. reflexivity.
+      - split. simpl. unfold gw_tid. simpl. erewrite init_mem_tid; eauto.
+        unfold gw_nexttid. simpl. erewrite init_mem_nexttid; eauto.
+      - intros. setoid_rewrite NatMap.gsspec in H2. destr_in H2; inv H2.
+        unfold gw_tid. split; eauto. simpl. erewrite init_mem_tid; eauto.
+      - intros.   assert (n=1)%nat. lia. subst. instantiate (1:= empty_worlds).
+        exists w0, None, (get w0), (CMulti.Local OpenC ls1'), (Local OpenA ls0), i.
+        repeat apply conj; eauto. 
         constructor. unfold match_local_states. eauto.
         congruence.
     Qed.
- *)
-
-    Lemma concur_final_states: forall i s1 s2 r,
-        match_states i s1 s2 -> Closed.safe ConcurC s1 ->  Closed.final_state ConcurA s2 r ->
-        exists s1', star (Closed.step ConcurC) (Closed.globalenv ConcurC) s1 E0 s1' /\ Closed.final_state ConcurC s1' r.
-    Proof.
-      Admitted.
-   (*   intros. inv H0. inv H. inv H0.
-      simpl in *. subst cur.
-      unfold CMulti.get_cur_thread, CMulti.get_thread in H2. simpl in H2.
-      specialize (THREADS 1%nat CUR_VALID).
-      destruct THREADS as (wB & owA & wP & lsc & lsa & i' & GETWB & GETi & MSEw & GETC & GETA & GETWA & MS & GETP & ACC).
-      assert (lsc = CMulti.Local OpenC ls).
-      eapply foo; eauto. subst lsc.
-      specialize (fsim_lts se tse wB MSEw valid_se) as FSIM.
-      inversion FSIM.
-      assert (wB = init_w m0 main_b tm0 sp0 INITMEM DUMMYSP).
-      eapply foo; eauto. subst wB.
-      inv MS.
-      unfold match_local_states in M_STATES.
-      exploit fsim_match_final_states. eauto.
-      eauto. intros [r2 [gw' [FIN [ACCE [ACCI MR]]]]]. destruct r2.
-      destruct gw' as [p [q [wp we]]]. simpl in p, q,wp,we.
-      destruct MR as [q1' [MRro [q1'' [MRwt [q2' [MRp MRe]]]]]].
-      inv MRro. inv MRwt. inv MRp. inv MRe.
-      econstructor. 5: eauto. eauto. eauto.
-      subst. simpl in *. unfold tres in H9.
-      - assert (rs' PC = Vnullptr). eauto. generalize (H4 PC).
-        intro RLD. rewrite H6 in RLD. unfold Vnullptr in *.
-        destr; inv RLD; eauto.
-      - assert (rs' RAX = Vint r).
-        unfold Conventions1.loc_result, main_sig in H9. simpl in H9.
-        destruct Archi.ptr64; simpl in H9. inv H9. eauto. inv H9. eauto.
-        generalize (H4 RAX). intro. simpl in H7. rewrite H6 in H7. inv H7. reflexivity.
-Qed.
-    *)
-    Lemma local_star : forall gs t sa1 sa2,
-        Star (OpenA tse) sa1 t sa2 ->
-        fst (threads OpenA gs) = None ->
-        NatMap.get (cur_tid OpenA gs) (threads OpenA gs)  = Some (Local OpenA sa1) ->
-        star (step OpenA) (globalenv OpenA) gs t (update_cur_thread OpenA gs (Local OpenA sa2)).
+   
+    Lemma local_star_c : forall gs t sc1 sc2,
+        Star (OpenC se) sc1 t sc2 ->
+        fst (CMulti.threads OpenC gs) = None ->
+        NatMap.get (CMulti.cur_tid OpenC gs) (CMulti.threads OpenC gs)  = Some (CMulti.Local OpenC sc1) ->
+        star (CMulti.step OpenC) (CMulti.globalenv OpenC) gs t (CMulti.update_cur_thread OpenC gs (CMulti.Local OpenC sc2)).
     Proof.
       intros. generalize dependent gs.
       induction H; intros.
-      - unfold update_cur_thread, update_thread.
+      - unfold CMulti.update_cur_thread, CMulti.update_thread.
         destruct gs. simpl.
         rewrite NatMap.set3. eapply star_refl. eauto.
         simpl in H0. congruence.
       - eapply star_step; eauto.
-        eapply step_local. eauto. eauto. eauto.
-        set (gs' := (update_thread OpenA gs (cur_tid OpenA gs) (Local OpenA s2))).
-        assert (EQ: update_cur_thread OpenA gs (Local OpenA s3) = update_cur_thread OpenA gs' (Local OpenA s3)).
-        unfold gs'. unfold update_cur_thread. simpl. unfold update_thread.
+        eapply CMulti.step_local. eauto. eauto. eauto.
+        set (gs' := (CMulti.update_thread OpenC gs (CMulti.cur_tid OpenC gs) (CMulti.Local OpenC s2))).
+        assert (EQ: CMulti.update_cur_thread OpenC gs (CMulti.Local OpenC s3) = CMulti.update_cur_thread OpenC gs' (CMulti.Local OpenC s3)).
+        unfold gs'. unfold CMulti.update_cur_thread. simpl. unfold CMulti.update_thread.
         simpl. rewrite NatMap.set2. reflexivity.
         rewrite EQ.
         eapply IHstar; eauto.
         unfold gs'. simpl. rewrite NatMap.gss. reflexivity.
-    Qed.        
+    Qed.
 
-    Lemma local_plus : forall gs t sa1 sa2,
-        Plus (OpenA tse) sa1 t sa2 ->
-        fst (threads OpenA gs) = None ->
-        NatMap.get (cur_tid OpenA gs) (threads OpenA gs)  = Some (Local OpenA sa1) ->
-        plus (step OpenA) (globalenv OpenA) gs t (update_cur_thread OpenA gs (Local OpenA sa2)).
+    (*The hypothesis is required for this lemma, it is trivially satisfied by Clight semantics *)
+    Hypothesis OpenC_final_int : forall s v m,
+        Smallstep.final_state (OpenC se) s (cr v m) ->
+        v <> Vundef.
+    
+    Lemma concur_final_states: forall i s1 s2 r,
+        match_states i s1 s2 -> Closed.safe ConcurC s1 ->  Closed.final_state ConcurA s2 r ->
+        exists s1', star (Closed.step ConcurC) (Closed.globalenv ConcurC) s1 E0 s1' /\ Closed.final_state ConcurC s1' r.
     Proof.
-      intros. inv H.
-      econstructor; eauto.
-      econstructor. eauto. eauto. eauto.
-      set (gs' := update_thread OpenA gs (cur_tid OpenA gs) (Local OpenA s2)).
-      assert (EQ: update_cur_thread OpenA gs (Local OpenA sa2) = update_cur_thread OpenA gs' (Local OpenA sa2)).
-      unfold gs', update_cur_thread, update_thread. simpl. rewrite NatMap.set2.
-      reflexivity.
-      rewrite EQ.
-      eapply local_star; eauto.
-      unfold gs'. simpl. rewrite NatMap.gss. reflexivity.
+      intros i s1 s2 r Hm Safe1 F2.
+      inv F2. inv Hm. inv H4.
+      simpl in H. subst cur.
+      unfoldA H0. 
+      specialize (THREADS 1%nat CUR_VALID).
+      destruct THREADS as (wB & owA & wP & lsc & lsa & i' & GETWB & GETi & MSEw & GETC & GETA & GETWA & MS & GETP & ACC).
+      assert (lsa = AsmMulti.Local OpenA ls).
+      eapply foo; eauto. subst lsa.
+      specialize (bsim_lts se tse wB MSEw valid_se) as BSIM.
+      assert (wB = init_w m0 main_b tm0 sp0 INITMEM DUMMYSP).
+      eapply foo; eauto. subst wB.
+      inv MS.
+      unfold match_local_states in M_STATES.
+      exploit @GS.bsim_match_final_states; eauto.
+      {
+        clear - GETC Safe1 THREADS_DEFAULTC.
+        red. red in Safe1.
+        intros.
+        exploit Safe1. eapply local_star_c; eauto.
+        intros [[r1 Hr]|[t [s Hs]]].
+        - left. inv Hr. simpl in H0. unfoldC_in H1. rewrite NatMap.gss in H1. inv H1. eauto.
+        - inv Hs; unfoldC_in H0; try rewrite NatMap.gss in H0; inv H0; eauto;
+            unfoldC_in GET_C; rewrite NatMap.gss in GET_C; inv GET_C; eauto.
+      } 
+      intros [s1' [r1 [gw' [Star1 [FIN [ACCE [ACCI MR]]]]]]]. destruct r1.
+      destruct gw' as [p [q [wp we]]]. simpl in p, q,wp,we.
+      destruct MR as [q1' [MRro [q1'' [MRwt [q2' [MRp MRe]]]]]].
+      inv MRro. inv MRwt. inv MRp. inv MRe.
+      simpl in H, H5. unfold proj_sig_res, main_sig in H5. simpl in H5.
+      eexists. split.
+      eapply local_star_c; eauto.
+      unfoldC. econstructor; eauto. unfoldC.
+      rewrite NatMap.gss. reflexivity.
+      instantiate (1:= cr_mem).
+      assert (cr_retval= Vint r).
+      {
+        apply OpenC_final_int in FIN as Rint.
+        simpl in H6. generalize (H6 RAX). intro.
+        assert (tres = rs' RAX).
+        subst tres. reflexivity.
+        assert (Val.inject j' cr_retval (Vint r)).
+        rewrite <- H2.
+        rewrite <- (compose_meminj_id_right j').
+        eapply val_inject_compose; eauto.
+        inv H10; eauto. congruence.
+      }
+      rewrite <- H8. eauto.
     Qed.
 
     Lemma thread_create_inject : forall j m tm m' tm' id tid,
