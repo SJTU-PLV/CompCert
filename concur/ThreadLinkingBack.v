@@ -583,6 +583,206 @@ Section ConcurSim.
 
     Hypothesis determinate_big_C : determinate_big OpenC.
 
+    Lemma pthread_create_progress: forall q_ptc r_ptc q_str qa_ptc wA,
+        query_is_pthread_create OpenC q_ptc r_ptc q_str ->
+        GS.match_query cc_compcert wA q_ptc qa_ptc ->
+        GS.match_senv cc_compcert wA se tse ->
+        exists (gw: GS.gworld cc_compcert) ra_ptc qa_str,
+          query_is_pthread_create_asm OpenA qa_ptc ra_ptc qa_str
+          /\ (get wA) o-> gw
+          /\ GS.match_reply cc_compcert (set wA gw) r_ptc ra_ptc.
+    Proof.
+      intros until wA. intros H H0 MSE.
+     inv H. destruct wA as (se0 & [se0' m0'] & se1 & [se1' sig'] & se2 & w_cap & w_e).
+     destruct H0 as [q1' [Hqr [q1'' [Hqw [qa' [Hqca Hqe]]]]]].
+     inv Hqr. inv Hqw. simpl in H. destruct H0. simpl in H0. inv H0. simpl in H1.
+     inv Hqca. destruct qa_ptc as [trs ttm]. inv Hqe. destruct H2 as [PCN Hme].
+     inv Hme. clear Hm4. rename Hm3 into Hme.
+     subst tvf targs. rewrite pthread_create_locs in H5. simpl in H5.
+     inv H5. inv H17. inv H18. inv H19.
+     destruct MSE as [EQ1 [EQ2 [MSE EQ3]]].
+     inv EQ1. inv EQ2. inv EQ3. inv H2. inv H3.
+     (** prepare arguments *)
+     assert (INJPTC: j b_ptc = Some (b_ptc, 0)).
+     {
+       inv MSE. inv H17.
+       exploit mge_dom; eauto. eapply Genv.genv_symb_range. apply FINDPTC.
+       intros (b3 & INJ).
+       exploit mge_symb; eauto.
+       intro HH. apply HH in FINDPTC as FINDPTC'.
+       rewrite <- SE_eq in FINDPTC'. fold se in FINDPTC. setoid_rewrite FINDPTC in FINDPTC'.
+       inv FINDPTC'. eauto.
+     }
+     assert (PCVAL: rs PC = Vptr b_ptc Ptrofs.zero).
+     inv H6. rewrite H17 in INJPTC. inv INJPTC. reflexivity.
+     assert (INJSTR: j b_start = Some (b_start, 0)).
+     {
+       inv MSE. inv H17.
+       exploit mge_dom; eauto. eapply Genv.genv_symb_range. apply FINDSTR. eauto.
+       intros (b3 & INJ).
+       exploit mge_symb; eauto.
+       intro HH. apply HH in FINDSTR as FINDSTR'.
+       rewrite <- SE_eq in FINDSTR'. fold se in FINDSTR. setoid_rewrite FINDSTR in FINDSTR'.
+       inv FINDSTR'. eauto.
+     }
+     assert (RSIVAL: rs RSI = Vptr b_start Ptrofs.zero).
+     inv H5. rewrite H17 in INJSTR. inv INJSTR. reflexivity.
+     case (Mem.thread_create tm) as [tm' id] eqn:MEM_CREATE'.
+     exploit thread_create_inject; eauto. intros [Hm1' eqid]. subst id.
+     assert (exists b_t' ofs_t', rs RDI = Vptr b_t' ofs_t').
+     inv H11. eauto. destruct H2 as [b_t' [ofs_t' RDIVAL]].
+     assert (exists b_arg' ofs_arg', rs RDX = Vptr b_arg' ofs_arg').
+     inv H13. eauto. destruct H2 as [b_arg' [ofs_arg' RDXVAL]].
+
+     (** prepare memories *)
+     (** Here we allocate a dummy block on new thread for target memory.
+         It's address is used as the initial value of RSP on this new procedure *)
+     assert (TP1: Mem.range_prop tid (Mem.support tm')).
+     {
+       inv P1. constructor. auto. erewrite <- inject_next_tid; eauto.
+     }
+     set (tm'2 := Mem.yield tm' tid TP1).
+     case (Mem.alloc tm'2 0 0 ) as [tm'3 sp0] eqn:DUMMY.
+     assert (TP2: Mem.range_prop (Mem.tid (Mem.support tm)) (Mem.support tm'3)).
+     {
+       generalize (Mem.tid_valid (Mem.support tm)). intro.
+       constructor; eauto. lia.
+       apply Mem.support_alloc in DUMMY. rewrite DUMMY. simpl.
+       unfold Mem.next_tid, sup_incr, Mem.sup_yield. simpl.
+       rewrite Mem.update_list_length. inv MEM_CREATE'. simpl.
+       rewrite app_length. simpl. lia.
+     }
+     set (tm'4 := Mem.yield tm'3 (Mem.tid (Mem.support tm)) TP2).
+     
+     set (m1' := Mem.yield m1 tid P1).
+     assert (Hm'2 : Mem.inject j m1' tm'2).  unfold m1', tm'2.
+     eapply yield_inject. eauto.
+     assert (Hmq: Mem.inject j m1' tm'3).
+     eapply Mem.alloc_right_inject; eauto.
+     assert (Hmr: Mem.inject j m1 tm'4).
+     {
+       clear - Hm1 MEM_CREATE Hmq.
+       inv Hmq. constructor; eauto.
+       + inv mi_thread. constructor; eauto.
+         inv Hms. constructor; eauto. simpl. inv MEM_CREATE.
+         simpl. eapply inject_tid; eauto.
+       + inv mi_inj. constructor; eauto.
+     }
+          
+
+     (** similarly we need Mem.extends tm'4 ttm'4*)
+     case (Mem.thread_create ttm) as [ttm' id] eqn:MEM_CREATE'2.
+     assert (Hme1: Mem.extends tm' ttm').
+     {
+       clear - Hme MEM_CREATE' MEM_CREATE'2.
+       unfold Mem.thread_create in *. inv MEM_CREATE'.
+       inv MEM_CREATE'2. inv Hme.
+       constructor; simpl; eauto. congruence.
+       inv mext_inj. constructor; eauto.
+     }
+     assert (tid = id).
+     {
+       clear -Hme MEM_CREATE' MEM_CREATE'2.
+       unfold Mem.thread_create in *. inv MEM_CREATE'.
+       inv MEM_CREATE'2. inv Hme. rewrite mext_sup. reflexivity.
+     }
+     subst id.
+     assert (TTP1: Mem.range_prop tid (Mem.support ttm')).
+     {
+       erewrite <- Mem.mext_sup; eauto.
+     }
+     set (ttm'2 := Mem.yield ttm' tid TTP1).
+     assert (Hme2: Mem.extends tm'2 ttm'2).
+     apply yield_extends; eauto.
+     exploit Mem.alloc_extends. apply Hme2. eauto. reflexivity. reflexivity.
+     intros (ttm'3 & DUMMY2 & Hmqe).
+     assert (TTP2: Mem.range_prop (Mem.tid (Mem.support ttm)) (Mem.support ttm'3)).
+     {
+       erewrite <- Mem.mext_sup; eauto.
+       erewrite <- (Mem.mext_sup tm'3 ttm'3); eauto.
+     }
+     set (ttm'4 := Mem.yield ttm'3 (Mem.tid (Mem.support ttm)) TTP2).
+     assert (Hmre: Mem.extends tm'4 ttm'4).
+     apply yield_extends; eauto. inv Hme. congruence.
+     
+     set (rs_q := rs # PC <- (rs RSI) # RDI <- (rs RDX) # RSP <- (Vptr sp0 Ptrofs.zero)).
+     set (rs_r := rs # PC <- (rs RA) # RAX <- (Vint Int.one)).
+     set (trs_q := trs # PC <- (trs RSI) # RDI <- (trs RDX) # RSP <- (Vptr sp0 Ptrofs.zero)).
+     set (trs_r := trs # PC <- (trs RA) # RAX <- (Vint Int.one)).
+     rename H0 into RSLD. simpl in RSLD.
+     eapply lessdef_trans in PCVAL as PCVAL'; eauto.
+     eapply lessdef_trans in RSIVAL as RSIVAL'; eauto; try congruence.
+     eapply lessdef_trans in RDIVAL as RDIVAL'; eauto; try congruence.
+     eapply lessdef_trans in RDXVAL as RDXVAL'; eauto; try congruence.
+     inv H.
+     exists (tt, (tt, (injpw j m1 tm'4 Hmr, extw tm'4 ttm'4 Hmre))).
+     exists (trs_r, ttm'4). exists (trs_q, ttm'3).
+     assert (UNC23: Mem.unchanged_on (fun _ _ => True) tm'2 tm'3). eapply Mem.alloc_unchanged_on. eauto.
+     assert (UNC23': Mem.unchanged_on (fun _ _ => True) ttm'2 ttm'3). eapply Mem.alloc_unchanged_on. eauto.
+     apply Mem.support_alloc in DUMMY as HSUP.
+     apply Mem.support_alloc in DUMMY2 as HSUP2. simpl.
+     assert (ROACCR1 : ro_acc m m1). eapply ro_acc_thread_create; eauto.
+     assert (ROACCQ1: ro_acc m m1'). eapply ro_acc_trans. eauto. eapply ro_acc_yield; eauto. reflexivity.
+     assert (ROACCQ2: ro_acc tm tm'3).
+     eapply ro_acc_trans. eapply ro_acc_thread_create; eauto.
+     eapply ro_acc_trans. eapply ro_acc_yield. 
+     instantiate (1:= tm'2). reflexivity. eapply ro_acc_alloc; eauto.
+     assert (ROACCR2: ro_acc tm tm'4). eapply ro_acc_trans. eauto. eapply ro_acc_yield; eauto. reflexivity.
+     assert (ROACCQ3: ro_acc ttm ttm'3).
+      eapply ro_acc_trans. eapply ro_acc_thread_create; eauto.
+     eapply ro_acc_trans. eapply ro_acc_yield. 
+     instantiate (1:= ttm'2). reflexivity. eapply ro_acc_alloc; eauto.
+     assert (ROACCR3: ro_acc ttm ttm'4). eapply ro_acc_trans. eauto. eapply ro_acc_yield; eauto. reflexivity.
+     assert (SINC1: Mem.sup_include (Mem.support tm) (Mem.support tm'4)).
+     { inv ROACCR2. eauto. }
+     assert (SINC2: Mem.sup_include (Mem.support ttm) (Mem.support ttm'4)).
+     { inv ROACCR3. eauto. } 
+     repeat apply conj; eauto.
+     - fold se in FINDPTC. rewrite SE_eq in FINDPTC.
+       fold se in FINDSTR. rewrite SE_eq in FINDSTR.
+       econstructor.
+       eapply FINDPTC. eapply FINDSTR. eauto. eauto. eauto. eauto. reflexivity.
+       unfold trs_q. instantiate (1:= sp0). rewrite RDXVAL'.
+       rewrite RSIVAL'. reflexivity.
+       eauto. eauto.
+       instantiate (1:= TTP1). fold ttm'2. eauto. reflexivity.
+     -  simpl. inv MEM_CREATE. inv MEM_CREATE'.
+       constructor; simpl; eauto; try red; intros; simpl in *; try congruence; eauto.
+       assert (Mem.loadbytes tm'3 b ofs n = Some bytes). eauto.
+       erewrite Mem.loadbytes_unchanged_on_1 in H17. 2: eauto. eauto.
+       red. simpl. rewrite <- Mem.sup_yield_in, <- Mem.sup_create_in. eauto.
+       intros. simpl. reflexivity.
+       assert (Mem.perm tm'3 b ofs Max p). eauto.
+       exploit Mem.perm_unchanged_on_2; eauto. reflexivity.
+       red. simpl. rewrite <- Mem.sup_yield_in, <- Mem.sup_create_in. eauto.
+       split. split; simpl; eauto. rewrite app_length. simpl. lia. constructor; simpl; eauto. 
+       red. intros. rewrite <- Mem.sup_create_in. auto. intros. reflexivity.
+       split. split; simpl; eauto. rewrite HSUP. simpl. rewrite Mem.update_list_length. rewrite app_length. simpl. lia.
+       constructor; eauto.
+       intros. unfold tm'4. transitivity (Mem.perm tm'2 b ofs k p). reflexivity.
+       transitivity (Mem.perm tm'3 b ofs k p). 2: reflexivity.
+       inv UNC23. apply unchanged_on_perm; eauto. red. simpl. rewrite <- Mem.sup_yield_in, <- Mem.sup_create_in. eauto.
+       intros. transitivity (  Maps.ZMap.get ofs (NMap.get (Maps.ZMap.t memval) b (Mem.mem_contents tm'2))).
+       2: reflexivity.
+       inv UNC23. apply unchanged_on_contents; eauto.
+     - simpl. constructor; eauto. inv ROACCR2. eauto. inv ROACCR3. eauto.
+     - econstructor; eauto.
+       split. econstructor; eauto. constructor. eauto.
+       eexists. split. econstructor; eauto. 
+       unfold pthread_create_sig. simpl. auto.
+       exists (rs_r, tm'4). split. econstructor; eauto.
+       unfold pthread_create_sig. simpl.
+       unfold Conventions1.loc_result. replace Archi.ptr64 with true. simpl.
+       unfold rs_r. rewrite Pregmap.gss. constructor. eauto.
+       intros. unfold rs_r. rewrite !Pregmap.gso; eauto.
+       destruct r; simpl in H1; simpl; congruence.
+       destruct r; simpl in H; simpl; congruence.
+       constructor; simpl; eauto.
+       intros. unfold rs_r. unfold trs_r.
+       setoid_rewrite Pregmap.gsspec. destr. constructor.
+       setoid_rewrite Pregmap.gsspec. destr. eauto. eauto. constructor.
+    Qed.
+    
     Lemma concur_progress : forall i s1 s2,
         match_states i s1 s2 -> Closed.safe ConcurC s1 ->
         (exists r, Closed.final_state ConcurA s2 r) \/ (exists t s2', Closed.step ConcurA (Closed.globalenv ConcurA) s2 t s2').
@@ -592,15 +792,78 @@ Section ConcurSim.
       destruct THR_CUR as (wB & owA & wP & lsc & lsa & li & GETW & GETi & MSEw & GETC & GETA & GETWa & MS & GETWp & ACC).
       specialize (bsim_lts se tse wB MSEw valid_se) as BSIM.
       generalize (determinate_big_C se). intro DetC.
-      inv MS.
+      inv MS. (** going to enhence [match_states] stating that the current thread is always in [local] state*)
       - specialize (safe_concur_single _ _ Hsafe THREADS_DEFAULTC GETC). intro Hsafel.
-        exploit @GS.bsim_progress; eauto.
+        exploit @GS.bsim_progress; eauto. (* exploiting the progress of local state at target level *)
         intros [[r2 F]|[[q2 X]|[t [s2' S]]]].
         + inv BSIM. exploit bsim_match_final_states; eauto.
           intros (s1''' & r1' & gw' & Hstar' & Hf1 & ACO & ACI & MR).
+          (** we know source current local state can only execute [final] here*)
           exploit Hsafe; eauto. eapply local_star_c; eauto.
-          admit.
-        + admit.
+          intros [[r1 Fc]|[tc [s1'' Sc]]].
+          -- (* source global final - possible *)
+            inv Fc. unfoldC_in H. unfoldC_in H1. subst. rewrite NatMap.gss in H1. inv H1.
+            assert (wB = init_w m0 main_b tm0 sp0 INITMEM DUMMYSP).
+            eapply foo; eauto. subst wB.  unfold CMulti.OpenLTS in H2. fold se in H2.
+            inv DetC. exploit sd_big_final_determ. apply Hf1. apply H2. intro. subst.
+            destruct gw' as [p [q [wp we]]]. simpl in p, q,wp,we.
+            destruct MR as [q1' [MRro [q1'' [MRwt [q2' [MRp MRe]]]]]]. destruct r2.
+            inv MRro. inv MRwt. inv MRp. inv MRe. left.
+            eexists. econstructor. 5: eauto. eauto. eauto.
+            assert (rs' PC = Vnullptr). eauto. generalize (H3 PC). simpl. intro.
+            rewrite H5 in H6. unfold Vnullptr in *. destr_in H6; inv H6; eauto.
+            assert (rs' RAX = Vint r1). subst tres.
+            unfold Conventions1.loc_result in H8. replace Archi.ptr64 with true in H8 by reflexivity.
+            simpl in H8. inv H8. reflexivity.
+            generalize (H3 RAX). simpl. intro.
+            rewrite H5 in H6. inv H6. reflexivity.
+          -- (* source global step *)
+            inv Sc.
+            ++ (* source local step - contradiction*)
+              unfoldC_in H. rewrite NatMap.gss in H. inv H.
+              inv DetC. exfalso. eapply sd_big_final_nostep; eauto.
+            ++ (* source pthread - contradiction *)
+              unfoldC_in H. rewrite NatMap.gss in H. inv H.
+              inv DetC. exfalso. eapply sd_big_final_noext; eauto.
+            ++ inv H; unfoldC_in GET_C; rewrite NatMap.gss in GET_C; inv GET_C.
+               inv DetC. exfalso. eapply sd_big_final_noext; eauto.
+               inv DetC. exfalso. eapply sd_big_final_noext; eauto.
+               unfoldC_in H1. inv H1. unfoldC_in GET_T.
+               destruct (Nat.eq_dec cur target).
+               (*ending thread can not switch to itself*)
+               subst. exfalso. rewrite NatMap.gss in GET_T. inv GET_T.
+               (*switch to [tatget] *)
+               rewrite !NatMap.gso in GET_T; eauto.
+               generalize (THREADS )
+               (* a switch from ending state - possible *)
+               admit.
+        + inv BSIM. exploit bsim_match_external; eauto.
+          intros (wA & s1''' & q1 & Hstar' & Hx1 & ACI & MQ & MS & MR).
+          (** we know source current local state can only execute [final] here*)
+          exploit Hsafe; eauto. eapply local_star_c; eauto.
+          intros [[r1 Fc]|[tc [s1'' Sc]]].
+          -- (* source global final - contradiction *)
+            inv Fc. unfoldC_in H. subst. unfoldC_in H1. rewrite NatMap.gss in H1. inv H1.
+            inv DetC. exfalso. eapply sd_big_final_noext; eauto.
+          -- (* source global step *)
+            inv Sc.
+            ++ (* source local step - contradiction*)
+              unfoldC_in H. rewrite NatMap.gss in H. inv H.
+              inv DetC. exfalso. eapply sd_big_at_external_nostep; eauto.
+            ++ (* source pthread - possible *)
+              unfoldC_in H. rewrite NatMap.gss in H. inv H.
+              inv DetC. exploit sd_big_at_external_determ. apply H1. apply Hx1.
+              intros. subst.
+              exploit pthread_create_progress; eauto.
+              intros [gw [ra_ptc [qa_str [CREATEa [ACO Mr]]]]].
+              exploit MR; eauto. intro Hrex. destruct Hrex as [Hy1 Hy2].
+              exploit Hy1; eauto. intros [s2' AFTER2].
+              exploit Hy2; eauto. intros [s1'1 [AFTER1 [i' Hm']]].
+              right. do 2 eexists. eapply step_thread_create; eauto.
+            ++ inv H; unfoldC_in GET_C; rewrite NatMap.gss in GET_C; inv GET_C.
+               (*a switch from X to yield - possible*) admit.
+               (*a switch from X to join - possible*) admit.
+               inv DetC. exfalso. eapply sd_big_final_noext; eauto.
         + right. do 2 eexists. econstructor; eauto.
       - admit.
       - admit.
