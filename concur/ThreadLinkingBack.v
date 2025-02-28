@@ -825,18 +825,55 @@ Section ConcurSim.
             ++ (* source pthread - contradiction *)
               unfoldC_in H. rewrite NatMap.gss in H. inv H.
               inv DetC. exfalso. eapply sd_big_final_noext; eauto.
-            ++ inv H; unfoldC_in GET_C; rewrite NatMap.gss in GET_C; inv GET_C.
-               inv DetC. exfalso. eapply sd_big_final_noext; eauto.
-               inv DetC. exfalso. eapply sd_big_final_noext; eauto.
-               unfoldC_in H1. inv H1. unfoldC_in GET_T.
-               destruct (Nat.eq_dec cur target).
-               (*ending thread can not switch to itself*)
-               subst. exfalso. rewrite NatMap.gss in GET_T. inv GET_T.
-               (*switch to [tatget] *)
-               rewrite !NatMap.gso in GET_T; eauto.
-               generalize (THREADS )
-               (* a switch from ending state - possible *)
+            ++ unfoldC_in H.
+               inv H; unfoldC_in GET_C; rewrite NatMap.gss in GET_C; inv GET_C.
+               * inv DetC; exfalso. eapply sd_big_final_noext; eauto.
+               * inv DetC; exfalso. eapply sd_big_final_noext; eauto.
+               * unfold CMulti.OpenLTS in FINAL. fold se in FINAL.
+                 assert (r1' = cr res gmem).
+                 inv DetC. eapply sd_big_final_determ; eauto. subst.
+                 
+                 unfoldC_in H1. inv H1. unfoldC_in GET_T.
+                 destruct (Nat.eq_dec cur target).
+                 (*ending thread can not switch to itself*)
+                 subst. exfalso. rewrite NatMap.gss in GET_T. inv GET_T.
+                 (*switch to [tatget] *)
+                 rewrite !NatMap.gso in GET_T; eauto.
+                 assert (RANGEt: (1 <= target < next)%nat).
+                 {
+                   admit. (** can be proved using CUR_INJP_ID of gw'*)
+                 }
+                 specialize (THREADS target RANGEt) as THR_TAR.
+               destruct THR_TAR as (wBt & owAt & wPt & lsct & lsat & lit & GETWt & GETit & MSEwt & GETCt & GETAt & GETWat & MSt & GETWpt & ACCt).
+               assert (lsct = CMulti.Returny OpenC ls1). congruence. subst lsct.
+
+               (** split the replies from current ending thread *)
+               assert (wP = wPcur). congruence. subst wP.
+               destruct wB as (se0 & [se0' m0'] & se1 & [se1' sig'] & se2 & w_cap & w_e).
+               destruct gw' as [pp [qq [gwp' gwe']]]. simpl in MR.
+               destruct MR as [r1' [Hrr [r1'' [Hrw [qa' [Hrca Hre]]]]]].
+               assert (sig' = start_routine_sig).
+               {
+                 exploit SUB_THREAD_SIG; eauto. intros [A B].
+                 eauto.
+               }
+               assert (SIG2: cajw_sg w_cap = start_routine_sig).
+               { exploit SUB_THREAD_SIG; eauto. intros [A B]. eauto. }
+               subst sig'.
+               inv Hrr. inv Hrw. simpl in H1. inv H.
+               inv Hrca. destruct r2 as [trs' ttm'].
+               inv Hre. inv H4. clear Hm2. rename Hm1 into Hme. simpl in H2.
+               destruct MSEw as [EQ1 [EQ2 [MSE EQ3]]]. inv EQ1. inv EQ2. inv EQ3.
+               inv H4. inv H8. inv MSE.
+               (* rename tm_r into ttm_r. rename rs_r into rrs_r.
+               rename rs' into rs_r. rename tm' into tm_r.
+               simpl in H2. simpl in gwp'. *)
+               right. do 2 eexists. eapply step_switch.
+               eapply switch_out_final; eauto.
                admit.
+               admit.
+               admit.
+               econstructor; eauto.
         + inv BSIM. exploit bsim_match_external; eauto.
           intros (wA & s1''' & q1 & Hstar' & Hx1 & ACI & MQ & MS & MR).
           (** we know source current local state can only execute [final] here*)
