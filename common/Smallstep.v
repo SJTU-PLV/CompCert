@@ -1274,6 +1274,27 @@ Record lts_determinate {liA liB st} (L: lts liA liB st) se: Prop :=
       final_state L s r1 -> final_state L s r2 -> r1 = r2
   }.
 
+(** The determinacy of LTS which only cares about behaviors at the interface,
+    allowing internal non-determinacy  *)
+
+Record lts_determinate_big {liA liB st} (L: lts liA liB st): Prop :=
+  Determinate_big {
+    sd_big_initial_determ: forall q s1 s2,
+      initial_state L q s1 -> initial_state L q s2 -> s1 = s2;
+    sd_big_at_external_nostep: forall s q,
+      at_external L s q -> Nostep L s;
+    sd_big_at_external_determ: forall s q1 q2,
+      at_external L s q1 -> at_external L s q2 -> q1 = q2;
+    sd_big_after_external_determ: forall s r s1 s2,
+      after_external L s r s1 -> after_external L s r s2 -> s1 = s2;
+    sd_big_final_nostep: forall s r,
+      final_state L s r -> Nostep L s;
+    sd_big_final_noext: forall s r q,
+      final_state L s r -> at_external L s q -> False;
+    sd_big_final_determ: forall s r1 r2,
+      final_state L s r1 -> final_state L s r2 -> r1 = r2
+    }.
+
 Section DETERMINACY.
 
 Context {liA liB st} (L: lts liA liB st) (se: Genv.symtbl).
@@ -1329,6 +1350,9 @@ Definition receptive {liA liB} (L: semantics liA liB) :=
 
 Definition determinate {liA liB} (L: semantics liA liB) :=
   forall se, lts_determinate (L se) se.
+
+Definition determinate_big {liA liB} (L: semantics liA liB) :=
+  forall se, lts_determinate_big (L se).
 
 (** Extra simulation diagrams for determinate languages. *)
 

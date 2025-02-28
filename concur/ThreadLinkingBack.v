@@ -692,7 +692,7 @@ Section ConcurSim.
         + rewrite NatMap.gss in H1. inv H1. eauto.
         + inv H1; unfoldC_in GET_C; rewrite NatMap.gss in GET_C; inv GET_C; eauto.
     Qed.
-    
+
     Lemma concur_progress : forall i s1 s2,
         match_states i s1 s2 -> Closed.safe ConcurC s1 ->
         (exists r, Closed.final_state ConcurA s2 r) \/ (exists t s2', Closed.step ConcurA (Closed.globalenv ConcurA) s2 t s2').
@@ -701,18 +701,60 @@ Section ConcurSim.
       specialize (THREADS cur CUR_VALID) as THR_CUR. 
       destruct THR_CUR as (wB & owA & wP & lsc & lsa & li & GETW & GETi & MSEw & GETC & GETA & GETWa & MS & GETWp & ACC).
       specialize (bsim_lts se tse wB MSEw valid_se) as BSIM.
-      (** should we use Hsafe here in this way? *)
+      (* start from ls2 progress, no enough info *)
+      (*
+        inv MS.
+      - (*local*)
+        specialize (safe_concur_single _ _ Hsafe THREADS_DEFAULTC GETC). intro Hsafel.
+        exploit @GS.bsim_progress; eauto.
+        intros [[r2 F]|[[q2 X]|[t [s2' S]]]].
+        + left. eexists. econstructor; eauto. *)
       exploit Hsafe; eauto.
-      eapply star_refl.  intros [[r F]| [t [s1'' S]]].
+      eapply star_refl.  intros [[r1 F]| [t [s1'' S]]].
       - (*final*)
-        inv F.
+        inv F. unfoldC_in H. unfoldC_in H0.
         assert (lsc = CMulti.Local OpenC ls).
         eapply foo; eauto. subst lsc. inv MS.
-        exploit @GS.bsim_progress; eauto. eapply safe_concur_single; eauto.
-        intros [[r1 F]| [[q E]|[t [sa' S]]]].
-        + left. eexists. inv F. econstructor; eauto.
+        assert (wB = init_w m0 main_b tm0 sp0 INITMEM DUMMYSP).
+        eapply foo; eauto. subst wB.
+        specialize (safe_concur_single _ _ Hsafe THREADS_DEFAULTC GETC). intro Hsafel.
+        exploit @GS.bsim_progress; eauto.
+        intros [[r2 F]| [[q2 E]|[t [sa' S]]]].
+        + inv BSIM. exploit bsim_match_final_states; eauto.
+          intros (s1''' & r1' & gw' & Hstar' & Hf1 & ACO & ACI & MR).
+          assert (s1''' = ls /\ r1' = (cr (Vint r1) m)). admit. (*deter_big for C*)
+          destruct H. subst.
+          left.
+          destruct gw' as [p [q [wp we]]]. simpl in p, q,wp,we.
+          destruct MR as [q1' [MRro [q1'' [MRwt [q2' [MRp MRe]]]]]]. destruct r2.
+          inv MRro. inv MRwt. inv MRp. inv MRe.
+          eexists. econstructor. 5: eauto. eauto. eauto.
+          assert (rs' PC = Vnullptr). eauto. generalize (H3 PC). simpl. intro.
+          rewrite H6 in H7. unfold Vnullptr in *. destr_in H7; inv H7; eauto.
+          assert (rs' RAX = Vint r1). subst tres.
+          unfold Conventions1.loc_result in H9. replace Archi.ptr64 with true in H9 by reflexivity.
+          simpl in H9. inv H9. reflexivity.
+          generalize (H3 RAX). simpl. intro.
+          rewrite H6 in H7. inv H7. reflexivity.
+        + inv BSIM. exploit bsim_match_external; eauto.
+          intros (wA & s1' & q1 & Hstar & X & ACI & MQ & MS & MR).
+          
+          admit.
+        + admit.
+      - 
+          
+          
+Admitted
 
-(*
+
+
+
+
+
+
+
+          
+          (*
    Lemma trans_pthread_create__start_routine: forall q_ptc r_ptc q_str qa_ptc wA,
         query_is_pthread_create OpenC q_ptc r_ptc q_str ->
         GS.match_query cc_compcert wA q_ptc qa_ptc ->
