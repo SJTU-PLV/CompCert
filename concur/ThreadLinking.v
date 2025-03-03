@@ -366,7 +366,6 @@ Section ConcurSim.
         (SG_STR: cqv_sg cqv = start_routine_sig),
         match_thread_states wB None (get wB) i (CMulti.Initial OpenC cqv) (Initial OpenA rs)
     |match_returny : forall wB wA i sc sa wp wp' rs
-        (M_STATES: match_local_states wB wp i sc sa)
         (WT_WA: wt_w_compcert wA)
         (WA_SIG : sig_w_compcert wA = yield_sig)
         (GET: get wA = wp')
@@ -381,7 +380,6 @@ Section ConcurSim.
         match_thread_states wB (Some wA) wp' i (CMulti.Returny OpenC sc) (Returny OpenA sa rs)
     |match_returnj : forall wB wA i sc sa wp wp' wait vptr int rs
         (RSLD: regset_lessdef (rs_w_compcert wA) rs)                     
-        (M_STATES: match_local_states wB wp i sc sa)
         (WAIT: rs # RDI = Vint int /\ int_to_nat int = wait)
         (VPTR: Val.inject (injp_mi (injp_w_compcert wA)) vptr (rs # RSI))
         (WT_WA: wt_w_compcert wA)
