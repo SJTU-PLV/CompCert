@@ -1611,13 +1611,6 @@ Section ConcurSim.
       rewrite H1B in H1A. inv H1A. rewrite H0 in A. inv A. reflexivity.
     Qed.
 
-
-    Lemma cc_compcert_mq_PCinj : forall b sg args m rs tm w,
-        GS.match_query cc_compcert w (cq (Vptr b Ptrofs.zero) sg args m) (rs,tm) ->
-        exists b' j, rs PC = Vptr b' Ptrofs.zero /\ j b = Some (b',0).
-    Proof.
-    Admitted.
-
     Lemma cc_compcert_mq_ms_id : forall b sg args m rs tm w id1 id2 b',
         GS.match_query cc_compcert w (cq (Vptr b Ptrofs.zero) sg args m) (rs,tm) ->
         GS.match_senv cc_compcert w se tse ->
@@ -1625,7 +1618,23 @@ Section ConcurSim.
         Genv.find_symbol se id1 = Some b ->
         Genv.find_symbol tse id2 = Some b' ->
         id1 = id2.
-    Admitted.
+    Proof.
+      intros until b'. intros MQ MS rsPC FIND1 FIND2.
+      destruct w as (se0 & [se0' m0'] & se1 & [se1' sig'] & se2 & w_cap & w_e).
+      destruct MQ as [q1' [Hqr [q1'' [Hqw [qa' [Hqca Hqe]]]]]].
+      inv Hqr. inv Hqw. simpl in H. destruct H0. simpl in H1. inv H0.
+      inv Hqca. inv Hqe. destruct H2 as [PCN Hme].
+      inv Hme. clear Hm4. rename Hm3 into Hme.
+      subst tvf targs.
+      destruct MS as [EQ1 [EQ2 [MSE EQ3]]].
+      inv EQ1. inv EQ2. inv EQ3. inv H2. inv H3. simpl in H0.
+      inv MSE. inv H6. generalize (H0 PC). intro. rewrite <- H4 in H2. inv H2. inv H20.
+      rewrite rsPC in H17. inv H17.
+      inv H11. exploit mge_symb; eauto. intro. apply H2 in FIND1.
+      apply Genv.find_invert_symbol in FIND1.
+      apply Genv.find_invert_symbol in FIND2.
+      unfold se in FIND2. congruence.
+    Qed.
 
     Lemma substep_switch_out : forall i s1 s2 s2' target ttm',
        match_states i s1 s2 ->
@@ -1992,23 +2001,6 @@ Section ConcurSim.
        + unfold gw'. destruct w_cap. simpl in H. inv H. constructor; eauto; econstructor; eauto; reflexivity.
    Qed.
 
-
-   Lemma storev_mapped_inject_rev : forall f chunk m1 a1 v1 m2 m2' a2 v2,
-       Mem.inject f m1 m2 ->
-       Mem.storev chunk m2 a2 v2 = Some m2' ->
-       Val.inject f a1 a2 -> Val.inject f v1 v2 ->
-       exists m1', Mem.storev chunk m1 a1 v1 = Some m1' /\ Mem.inject f m1' m2'.
-   Admitted.
-
-   Lemma storev_extends_rev :
-     forall (chunk : memory_chunk) (m1 m2 : mem) (addr1 v1 : val) (m2' : mem) (addr2 v2 : val),
-       Mem.extends m1 m2 ->
-       Mem.storev chunk m2 addr2 v2 = Some m2' ->
-       Val.lessdef addr1 addr2 ->
-       Val.lessdef v1 v2 ->
-       exists m1' : mem, Mem.storev chunk m1 addr1 v1 = Some m1' /\ Mem.extends m1' m2'.
-   Admitted.
-   
    Lemma substep_switch_in : forall i s1' s2' s2'' target m' tm' ttm' f Hmj' Hme' worldsP wpc,
        (* sth more about gtmem'*)
        let cur := CMulti.cur_tid OpenC s1' in
@@ -2167,7 +2159,11 @@ Section ConcurSim.
          set (trs' := Pregmap.set RAX (Vint Int.one)(Pregmap.set PC (trs RA) trs)).
          unfold injp_w_compcert in VPTR. simpl in VPTR.
          setoid_rewrite <- H in VPTR. simpl in VPTR.
-         exploit storev_extends_rev. eauto. eauto. 
+         
+         unfold Mem.storev in MEM_RES. destruct (trs RSI); inv MEM_RES.
+         exploit Mem.storev_extends_rev. eauto. unfold Mem.storev. instantiate (4:= Vptr b i1).
+         simpl. eauto. 
+         eapply Val.lessdef_refl.
          instantiate (1:= trs RSI). eauto. instantiate (1:= res). eauto.
          intros [tm'' [MEM_RES' Hme'']].
          exploit storev_mapped_inject_rev.
@@ -3011,50 +3007,13 @@ Section ConcurSim.
               + inv H. inv DetC. exfalso. eapply sd_big_at_external_nostep; eauto.
               + inv H. inv DetC. exploit sd_big_at_external_determ. apply H6. apply AT_PTC.
                 intro. subst. eauto.
-                (* assert (rc_ptc = r_ptc0).
-                { clear - H9 PTR_TO_STR_ASM.
-                  inv H9. inv PTR_TO_STR_ASM.
-                  rewrite MEM_CREATE in MEM_CREATE0. inv MEM_CREATE0. reflexivity.
-                }
-                subst. eauto. *)
               + inv H; unfoldC_in H6; unfoldC_in GET_C; rewrite NatMap.gss in GET_C; inv GET_C.
                 -- inv DetC.  exploit sd_big_at_external_determ. apply AT_PTC. apply AT_E.
-                   intro. subst. exfalso. (* clear - Q_YIE H4 AT_E MQ_PTC MS bsim_order. *)
-                   inv H4. inv Q_YIE. 
-                   (* Lemma cc_compcert_mq_PCinj : forall b sg args m rs tm w,
-                       GS.match_query cc_compcert (cq (Vptr b Ptrofs.zero sg args m)) (rs,tm) -> *)
-                   destruct wA as (se0 & [se0' m0'] & se1 & [se1' sig'] & se2 & w_cap & w_e).
-                   destruct MQ_PTC as [q1' [Hqr [q1'' [Hqw [qa' [Hqca Hqe]]]]]].
-                   inv Hqr. inv Hqw. simpl in H1. destruct H2.
-                   inv Hqca. inv Hqe. destruct H9 as [PCN Hme].
-                   inv Hme. clear Hm4. rename Hm3 into Hme.
-                   subst tvf targs.
-                   destruct MS as [EQ1 [EQ2 [MSE EQ3]]].
-                   inv EQ1. inv EQ2. inv EQ3. inv H9. inv H10. simpl in H2.
-                   inv MSE. inv H13. generalize (H2 PC). intro. rewrite <- H11 in H9. inv H9. inv H27.
-                   rewrite RS_PC in H24. inv H24.
-                   inv H18. exploit mge_symb; eauto. intro. apply H9 in FINDPTC.
-                   apply Genv.find_invert_symbol in FINDPTC.
-                   apply Genv.find_invert_symbol in H.
-                   unfold se in FINDPTC.
-                   setoid_rewrite FINDPTC in H. inv H.
+                   intro. subst.
+                   inv H4. inv Q_YIE. exploit cc_compcert_mq_ms_id; eauto. intro. inv H7.
                 -- inv DetC.  exploit sd_big_at_external_determ. apply AT_PTC. apply AT_E.
-                   intro. subst. exfalso. clear - Q_JOIN H4 AT_E MQ_PTC MS.
-                   inv H4. inv Q_JOIN.
-                   destruct wA as (se0 & [se0' m0'] & se1 & [se1' sig'] & se2 & w_cap & w_e).
-                   destruct MQ_PTC as [q1' [Hqr [q1'' [Hqw [qa' [Hqca Hqe]]]]]].
-                   inv Hqr. inv Hqw. simpl in H0. destruct H0.
-                   inv Hqca. inv Hqe. destruct H2 as [PCN Hme].
-                   subst tvf targs.
-                   destruct MS as [EQ1 [EQ2 [MSE EQ3]]].
-                   inv EQ1. inv EQ2. inv EQ3. inv H2. inv H3. simpl in H0.
-                   inv MSE. inv H7. generalize (H0 PC). intro. rewrite <- H4 in H2. inv H2. inv H20.
-                   rewrite RS_PC in H14. inv H14.
-                   inv H5. exploit mge_symb; eauto. intro. apply H2 in FINDPTC.
-                   apply Genv.find_invert_symbol in FINDPTC.
-                   apply Genv.find_invert_symbol in FINDPTJ.
-                   unfold se in FINDPTC.
-                   setoid_rewrite FINDPTC in FINDPTJ. inv FINDPTJ.
+                   intro. subst.
+                   inv H4. inv Q_JOIN.  exploit cc_compcert_mq_ms_id; eauto. intro. inv H.
                 -- inv DetC. exfalso. eapply sd_big_final_noext; eauto.
           }
           destruct H as [rc_ptc [qc_str [s1'k [CREATE AFTER]]]].
