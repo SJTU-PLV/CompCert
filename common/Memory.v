@@ -3568,6 +3568,54 @@ Proof.
   eapply mi_memval; eauto. eauto with mem.
 Qed.
 
+Lemma store_mapped_inj_rev:
+  forall f chunk m1 b1 ofs v1 n2 m2 b2 delta v2,
+    mem_inj f m1 m2 ->
+    valid_access m1 chunk b1 ofs Writable ->
+    store chunk m2 b2 (ofs + delta) v2 = Some n2 ->
+    meminj_no_overlap f m1 ->
+    f b1 = Some (b2, delta) ->
+    Val.inject f v1 v2 ->
+    exists n1,
+      store chunk m1 b1 ofs v1 = Some n1
+      /\ mem_inj f n1 n2.
+Proof.
+  intros.
+  destruct (valid_access_store _ _ _ _ v1 H0) as [n1 STORE].
+  exists n1; split. auto.
+  constructor.
+(* perm *)
+  intros. eapply perm_store_1; [eexact H1|].
+  eapply mi_perm; eauto.
+  eapply perm_store_2; eauto.
+(* align *)
+  intros. eapply mi_align with (ofs := ofs0) (p := p); eauto.
+  red; intros; eauto with mem.
+(* mem_contents *)
+  intros.
+  rewrite (store_mem_contents _ _ _ _ _ _ STORE).
+  rewrite (store_mem_contents _ _ _ _ _ _ H1).
+  rewrite ! NMap.gsspec.
+  destruct (NMap.elt_eq b0 b1). subst b0.
+  (* block = b1, block = b2 *)
+  assert (b3 = b2) by congruence. subst b3.
+  assert (delta0 = delta) by congruence. subst delta0.
+  rewrite neq_true.
+  apply setN_inj with (access := fun ofs => perm m1 b1 ofs Cur Readable).
+  apply encode_val_inject; auto. intros. eapply mi_memval; eauto. eauto with mem.
+  destruct (NMap.elt_eq b3 b2). subst b3.
+  (* block <> b1, block = b2 *)
+  rewrite setN_other. eapply mi_memval; eauto. eauto with mem.
+  rewrite encode_val_length. rewrite <- size_chunk_conv. intros.
+  assert (b2 <> b2 \/ ofs0 + delta0 <> (r - delta) + delta).
+    eapply H2; eauto. eauto 6 with mem.
+    exploit store_valid_access_3. eexact STORE. intros [A B].
+    eapply perm_implies. apply perm_cur_max. apply A. lia. auto with mem.
+  destruct H8. congruence. lia.
+  (* block <> b1, block <> b2 *)
+  eapply mi_memval; eauto. eauto with mem.
+Qed.
+
 Lemma store_unmapped_inj:
   forall f chunk m1 b1 ofs v1 n1 m2,
   mem_inj f m1 m2 ->
@@ -4060,6 +4108,30 @@ Proof.
   intros. exploit mext_perm_inv0; intuition eauto using perm_store_1, perm_store_2.
 Qed.
 
+Theorem store_within_extends_rev:
+  forall chunk m1 m2 b ofs v1 m2' v2,
+  extends m1 m2 ->
+  valid_access m1 chunk b ofs Writable ->
+  store chunk m2 b ofs v2 = Some m2' ->
+  Val.lessdef v1 v2 ->
+  exists m1',
+     store chunk m1 b ofs v1 = Some m1'
+  /\ extends m1' m2'.
+Proof.
+  intros. inversion H. replace (ofs) with (ofs + 0) in H1 by lia.
+  exploit store_mapped_inj_rev. 3: eauto. eauto. eauto.
+  unfold inject_id. red; intros. inv H4; inv H5. auto.
+  unfold inject_id; reflexivity.
+  rewrite val_inject_id. eauto.
+  intros [m1' [A B]].
+  exists m1'; split. eauto.
+  constructor; auto.
+  rewrite (support_store _ _ _ _ _ _ H1).
+  rewrite (support_store _ _ _ _ _ _ A).
+  auto.
+  intros. exploit mext_perm_inv0; intuition eauto using perm_store_1, perm_store_2.
+Qed.
+
 Theorem store_outside_extends:
   forall chunk m1 m2 b ofs v m2',
   extends m1 m2 ->
@@ -4073,6 +4145,7 @@ Proof.
   unfold inject_id; intros. inv H2. eapply H1; eauto. lia.
   intros. eauto using perm_store_2.
 Qed.
+
 
 Theorem storev_extends:
   forall chunk m1 m2 addr1 v1 m1' addr2 v2,
@@ -4089,6 +4162,20 @@ Proof.
   congruence.
 Qed.
 
+
+Lemma storev_extends_rev :
+  forall chunk m1 m2 v1 m2' addr2 v2 b i,
+    extends m1 m2 ->
+    storev chunk m2 addr2 v2 = Some m2' ->
+    Val.lessdef (Vptr b i) addr2 ->
+    valid_access m1 chunk b (Ptrofs.unsigned i) Writable ->
+    Val.lessdef v1 v2 ->
+    exists m1' : mem, Mem.storev chunk m1 (Vptr b i) v1 = Some m1' /\ Mem.extends m1' m2'.
+Proof.
+  unfold storev; intros. inv H1.
+  eapply store_within_extends_rev; eauto.
+Qed.
+  
 Theorem storebytes_within_extends:
   forall m1 m2 b ofs bytes1 m1' bytes2,
   extends m1 m2 ->
@@ -4687,6 +4774,43 @@ Proof.
   intuition eauto using perm_store_1, perm_store_2.
 Qed.
 
+Theorem store_mapped_inject_rev:
+  forall f chunk m1 b1 ofs v1 n2 m2 b2 delta v2,
+  inject f m1 m2 ->
+  store chunk m2 b2 (ofs + delta) v2 = Some n2 ->
+  f b1 = Some (b2, delta) ->
+  Val.inject f v1 v2 ->
+  valid_access m1 chunk b1 ofs Writable ->
+  exists n1,
+    store chunk m1 b1 ofs v1 = Some n1
+    /\ inject f n1 n2.
+Proof.
+  intros. inversion H.
+  exploit store_mapped_inj_rev; eauto. intros [n1 [STORE MI]].
+  exists n1; split. eauto. constructor.
+  (* thread*)
+  inv mi_thread0.
+  econstructor; auto.
+  erewrite support_store; eauto.
+  rewrite (support_store _ _ _ _ _ _ H0); eauto. 
+(* inj *)
+  auto.
+(* freeblocks *)
+  eauto with mem.
+(* mappedblocks *)
+  eauto with mem.
+(* no overlap *)
+  red; intros. eauto with mem.
+(* representable *)
+  intros. eapply mi_representable; try eassumption.
+  destruct H4; eauto with mem.
+(* perm inv *)
+  intros. simpl. 
+  intuition eauto using perm_store_1, perm_store_2.
+  intros. exploit mi_perm_inv0; eauto using perm_store_2.
+  intuition eauto using perm_store_1, perm_store_2.
+Qed.
+
 Theorem store_unmapped_inject:
   forall f chunk m1 b1 ofs v1 n1 m2,
   inject f m1 m2 ->
@@ -4759,6 +4883,21 @@ Proof.
   symmetry. eapply address_inject'; eauto with mem.
 Qed.
 
+Lemma storev_mapped_inject_rev : forall f chunk m1 b i v1 m2 m2' a2 v2,
+    inject f m1 m2 ->
+    storev chunk m2 a2 v2 = Some m2' ->
+    Val.inject f (Vptr b i) a2 -> Val.inject f v1 v2 ->
+    valid_access m1 chunk b (Ptrofs.unsigned i) Writable ->    
+    exists m1', Mem.storev chunk m1 (Vptr b i) v1 = Some m1' /\ Mem.inject f m1' m2'.
+Proof.
+  intros. inv H1; simpl in H0; try discriminate.
+  unfold storev.
+  replace (Ptrofs.unsigned (Ptrofs.add i (Ptrofs.repr delta)))
+    with (Ptrofs.unsigned i + delta) in H0.
+  eapply store_mapped_inject_rev; eauto.
+  symmetry. eapply address_inject'; eauto with mem.
+Qed.
+   
 Theorem storebytes_mapped_inject:
   forall f m1 b1 ofs bytes1 n1 m2 b2 delta bytes2,
   inject f m1 m2 ->
