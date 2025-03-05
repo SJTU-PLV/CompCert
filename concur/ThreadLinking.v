@@ -979,6 +979,7 @@ Qed.
          generalize (Mem.tid_valid (Mem.support ttm)). intro. unfold Mem.next_tid. lia.
          red. intros. eauto with mem. red. intros. eauto with mem.
          red. intros. eauto with mem. red. intros. eauto with mem.
+         red. intros. simpl in H3. exfalso. eauto with mem.
        }
      - intros. inv H. inv MEM_CREATE. inv MEM_CREATE'. constructor.
        unfold injp_gw_compcert.
@@ -1000,12 +1001,35 @@ Qed.
          transitivity (Mem.perm tm'3 b ofs k p). 2: reflexivity. inv UNC23. apply unchanged_on_perm0; eauto.
          red. simpl. rewrite <- Mem.sup_yield_in, <- Mem.sup_create_in. eauto.
          intros. inv UNC23. rewrite unchanged_on_contents0; eauto. apply unchanged_on_perm in H0; eauto with mem.
+       + red. intros.
+         assert (~Mem.perm tm b2 (ofs1+ delta) Max Nonempty). eapply H32; eauto.
+         intro.
+         apply H18. assert (Mem.perm tm'2 b2 (ofs1 + delta) Max Nonempty).
+         eapply Mem.perm_alloc_4; eauto.
+         intro. subst. apply Mem.fresh_block_alloc in DUMMY.
+         apply H29 in H.
+         apply DUMMY. eapply Mem.valid_block_inject_2; eauto.
+         eauto with mem.
        + inv H21. inv ROACCR2. inv ROACCR3.
          constructor; simpl. eauto. eauto.
          eapply Mem.sup_include_trans; eauto.
          eapply Mem.sup_include_trans; eauto.
          eapply max_perm_decrease_trans. apply MPD1. eauto. eauto.
          eapply max_perm_decrease_trans. apply MPD2. eauto. eauto.
+         red. intros.
+         intro. eapply FREEP; eauto.
+         intro. apply H24.
+         assert (Mem.perm tm'2 b ofs Max Nonempty). eauto with mem.
+         eapply Mem.perm_alloc_1 in H27. 2: eauto. eauto with mem.
+         assert (Mem.perm ttm'3 b ofs Max Nonempty). eauto with mem.
+         eapply Mem.perm_alloc_4 in H26. 2: eauto.
+         assert (Mem.perm ttm' b ofs Max Nonempty). eauto with mem.
+         inv MEM_CREATE'2. eauto.
+         intro. subst b.
+         apply Mem.fresh_block_alloc in DUMMY.
+         apply DUMMY.
+         assert (Mem.valid_block tm sp0). apply SUP1. eapply Mem.perm_valid_block; eauto.
+         unfold tm'2. unfold Mem.valid_block. simpl. apply Mem.sup_yield_in. rewrite <- Mem.sup_create_in. eauto.
      - auto.
      - auto.
      - simpl. inv MEM_CREATE. inv MEM_CREATE'.
@@ -1138,14 +1162,14 @@ Qed.
       intros. destruct w1 as [j1 m1 tm1 Htm1]. destruct w2 as [j2 m2 tm2 Htm2].
       destruct w3 as [j3 m3 tm3 Htm3].
       inv H. inv H0. destruct H11 as [[S11 S11'] H11]. destruct H12 as [[S12 S12'] H12].
-      destruct H19 as [[A B] H19]. destruct H20 as [[C D] H20].
+      destruct H20 as [[A B] H20]. destruct H21 as [[C D] H21].
       constructor; eauto.
       - eapply Mem.ro_unchanged_trans; eauto. inversion H11. eauto.
       - eapply Mem.ro_unchanged_trans; eauto. inversion H12. eauto.
       -  intros b ofs p Hb ?.
-         eapply H9, H17; eauto using Mem.valid_block_unchanged_on.
+         eapply H9, H18; eauto using Mem.valid_block_unchanged_on.
       - intros b ofs p Hb ?.
-        eapply H10, H18; eauto using Mem.valid_block_unchanged_on.
+        eapply H10, H19; eauto using Mem.valid_block_unchanged_on.
       - split. split. setoid_rewrite <- A.  auto. congruence.
         eapply mem_unchanged_on_trans_implies_valid; eauto.
         unfold loc_unmapped, Mem.thread_external_P. simpl.
@@ -1168,24 +1192,37 @@ Qed.
       - intros b1 b2 delta Hb Hb'' Ht.
       destruct (j2 b1) as [[xb2 xdelta] | ] eqn:Hb'.
       * assert (xb2 = b2 /\ xdelta = delta) as [? ?]
-          by (eapply H21 in Hb'; split; congruence); subst.
+          by (eapply H22 in Hb'; split; congruence); subst.
         eapply H14; eauto.
-      * edestruct H22; eauto. congruence.
+      * edestruct H23; eauto. congruence.
         intuition eauto using Mem.valid_block_unchanged_on.
       - intros b1 b2 delta Hb Hb''.
       destruct (j2 b1) as [[xb2 xdelta] | ] eqn:Hb'.
       * assert (xb2 = b2 /\ xdelta = delta) as [? ?]
-          by (eapply H21 in Hb'; split; congruence); subst.
+          by (eapply H22 in Hb'; split; congruence); subst.
         eapply H15; eauto.
       * eapply inject_incr_local_noglobal; eauto.
+      - red. intros.
+        destruct (Mem.perm_dec m2 b1 ofs1 Max Nonempty).
+        * eapply H25; eauto. lia.
+        * red in H19. intro. apply H19 in H3.
+          eapply H16; eauto. inv H12. apply unchanged_on_support.
+        eapply Mem.valid_block_inject_2; eauto.
     Qed.
 
     Lemma ext_accg_acci_accg : forall w1 w2 w3,
         ext_accg w1 w2 -> ext_acci w2 w3 -> ext_accg w1 w3.
     Proof.
       intros. inv H. inv H0. constructor; eauto.
-      lia. lia. eapply max_perm_decrease_trans; eauto.
-      eapply max_perm_decrease_trans; eauto.
+      lia. lia.
+      - eapply max_perm_decrease_trans; eauto.
+      - eapply max_perm_decrease_trans; eauto.
+      - red. intros. destruct (Mem.perm_dec m1' b ofs Max Nonempty).
+        * eapply FREEP; eauto. lia.
+        * red in H19. intro. apply H19 in H3.
+          eapply H16; eauto. inv H12. apply unchanged_on_support.
+        eapply Mem.valid_block_inject_2; eauto.
+      
     Qed.
     
     Inductive wt_gw : GS.gworld cc_compcert -> Prop :=

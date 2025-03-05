@@ -89,6 +89,12 @@ Record unchanged_on_g (P : block -> Z -> Prop) (m_before m_after : mem) : Prop :
                               /\ Mem.tid (Mem.support m_before) <> Mem.tid (Mem.support m_after);
       unchanged_on_g' : Mem.unchanged_on (Mem.thread_internal_P P m_before) m_before m_after }.
 
+Definition free_preserved_g j m1 m1' m2' :=
+  forall b1 ofs1 b2 delta,
+    j b1 = Some (b2, delta) -> fst b1 = Mem.tid (Mem.support m1) ->
+    Mem.perm m1 b1 ofs1 Max Nonempty -> ~ Mem.perm m1' b1 ofs1 Max Nonempty ->
+    ~ Mem.perm m2' b2 (ofs1 + delta) Max Nonempty.
+
 (** injp_accg: the transition for one thread [t] to another (usually the current running) thread,
                New threads may be introduced, the thread [t] has switched out and never runs again yet, thus its
                private memory is unchanged *)
@@ -104,6 +110,7 @@ Inductive injp_accg : relation injp_world :=
                      inject_incr f f' ->
                      inject_separated_internal f f' m1 m2 ->
                      inject_separated_noglobal f f' ->
+                     free_preserved_g f m1 m1' m2' ->
                      injp_accg (injpw f m1 m2 Hm) (injpw f' m1' m2' Hm').
 
 
