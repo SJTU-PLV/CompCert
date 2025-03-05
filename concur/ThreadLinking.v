@@ -1218,11 +1218,10 @@ Qed.
       - eapply max_perm_decrease_trans; eauto.
       - eapply max_perm_decrease_trans; eauto.
       - red. intros. destruct (Mem.perm_dec m1' b ofs Max Nonempty).
-        * eapply FREEP; eauto. lia.
-        * red in H19. intro. apply H19 in H3.
-          eapply H16; eauto. inv H12. apply unchanged_on_support.
-        eapply Mem.valid_block_inject_2; eauto.
-      
+        * eapply FREEP0; eauto. lia.
+        * intro. apply MPD3 in H2.
+          eapply FREEP; eauto. apply SUP2. 
+          setoid_rewrite <- Mem.valid_block_extends; eauto. eauto with mem.
     Qed.
     
     Inductive wt_gw : GS.gworld cc_compcert -> Prop :=
@@ -1304,11 +1303,7 @@ Qed.
     Proof.
       intros. inv H. simpl in H0. inversion Hm.
       inversion Hm'. simpl in *.
-      constructor; simpl; eauto. congruence.
-      red. intros. eauto with mem.
-      red. intros. eauto with mem.
-      red. intros. eauto with mem.
-      red. intros. eauto with mem.
+      constructor; simpl; eauto; try (red; intros; eauto with mem); congruence.
     Qed.
 
     Lemma gw_acc_yield_accg :  forall w1 w2,
@@ -1405,6 +1400,7 @@ Qed.
           eapply unchanged_on_contents; eauto. split. auto. simpl. congruence.
       - red. intros. eapply H11; eauto. simpl. congruence.
       - eapply inject_incr_local_noglobal; eauto.
+      - red. intros. eapply H14; eauto. simpl. lia.
     Qed.
 
     Lemma ext_yield_acci_accg : forall w1 w2 w3,
@@ -1414,6 +1410,7 @@ Qed.
       simpl in H1, TID1, TID2.
       econstructor; eauto. lia.
       erewrite <- Mem.mext_sup; eauto. lia.
+      red. intros. eapply FREEP; simpl; eauto. lia.
     Qed.
 
     Lemma gw_yield_acci_accg : forall w1 w2 w3,
@@ -1454,6 +1451,7 @@ Qed.
           eapply unchanged_on_contents; eauto. split. auto. simpl in B. congruence.
       - red. intros. exploit H11; eauto. simpl in H2. congruence.
       - eapply inject_incr_local_noglobal; eauto.
+      - red. intros. eapply H14; eauto. simpl in H0. lia.
     Qed.
 
     Lemma thread_create_inject' : forall j m1 m2,

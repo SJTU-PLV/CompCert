@@ -2267,7 +2267,7 @@ Section ConcurSim.
                eapply gw_accg_acci_accg. eauto.
                rewrite <- H in HwaTid.
                repeat apply conj; simpl; eauto. rewrite <- H.
-               eapply injp_acci_storev; eauto.
+               eapply injp_acci_storev; eauto. instantiate (1:= Hmj'1).
                eapply injp_acc_yield_acci; eauto.
                inv H3. econstructor; simpl; eauto.
                etransitivity. eapply ext_acc_yield_acci; simpl; eauto.
@@ -2419,49 +2419,60 @@ Section ConcurSim.
          set (qc := cr (Vint Int.one) m').
          set (rs' := Pregmap.set RAX (Vint Int.one)(Pregmap.set PC (rs RA) rs)).
          set (trs' := Pregmap.set RAX (Vint Int.one)(Pregmap.set PC (trs RA) trs)).
-
-
          simpl in VPTR_LOCAL, VPTR_PERM.
-         assert (PERM1': Mem.valid_access m' Many64 b (Ptrofs.unsigned ofs) Writable).
-         { clear - ACCEJ VPTR_LOCAL VPTR_PERM.
-           inv ACCEJ.
-            unfold gw_tid in VPTR_LOCAL. unfold gw_m in VPTR_PERM.
-            unfold injp_gw_compcert in VPTR_LOCAL, VPTR_PERM.
-            simpl in VPTR_LOCAL, VPTR_PERM.
-            inv VPTR_PERM. constructor; eauto.
-            red. intros. inv H6. inv unchanged_on_e'.
-
-            eapply unchanged_on_perm; eauto. constructor.
+         inv VPTR.
+         assert (PERMs: Mem.valid_access m' Many64 b (Ptrofs.unsigned ofs) Writable /\
+                          Mem.valid_access tm' Many64 b2 (Ptrofs.unsigned ofs + delta) Writable).
+         { 
+           clear - H3 H4 MEM_RES ACCG ACCY VPTR_LOCAL VPTR_PERM.
+           inv ACCG. inv ACCY.  simpl in H4.
+           unfold gw_tid in VPTR_LOCAL. unfold gw_m in VPTR_PERM.
+           unfold injp_gw_compcert in VPTR_LOCAL, VPTR_PERM.
+           simpl in VPTR_LOCAL, VPTR_PERM.
+           rename VPTR_PERM into PERM1.
+           assert (PERM3': Mem.valid_access ttm' Many64 b2 (Ptrofs.unsigned ofs + delta) Writable).
+           { rewrite <- H3 in MEM_RES. simpl in MEM_RES.
+           erewrite Mem.address_inject in MEM_RES.
+           eapply Mem.store_valid_access_3. eauto. 3: eauto. eauto. eauto with mem.
+           }
+           exploit Mem.valid_access_inject. 3: eapply PERM1. eauto. eauto. intro PERM2.
+           exploit Mem.valid_access_extends. 2: eapply PERM2. eauto. intro PERM3.
+           assert (TID2: fst b2 = Mem.tid (Mem.support m2)).
+           erewrite <- inject_block_tid. 3: eauto. 2: eauto. erewrite <- inject_tid; eauto.
+           assert (PERM2':  Mem.valid_access tm' Many64 b2 (Ptrofs.unsigned ofs + delta) Writable).
+           {
+             inv PERM3'. split; eauto. red. intros.
+             exploit H. instantiate (1:= ofs0). lia. intro Hp3'.
+             inv Hme'4. exploit mext_perm_inv. apply Hp3'.
+             intros [A | B].
+             eauto. inv H5. inv H14.
+             red in FREEP.
+             exploit FREEP. eauto. 
+             inv PERM2. instantiate (1:= ofs0). exploit H5. instantiate (1:= ofs0). lia.
+             eauto with mem. intro. apply B. eauto. eauto with mem.
+             intro. inv H5.
+           }
+           split; eauto.
+           inv PERM2'. split; eauto. red. intros.
+           exploit H. instantiate (1:= ofs0 + delta). lia. intro Hp2'.
+           inv Hmj'4. exploit mi_perm_inv. inv H1. eauto. eauto.
+           intros [A | B]. eauto.
+           inv H1. inv H2. exploit H25. eauto. eauto. inv PERM1.
+           instantiate (1:= ofs0). eauto with mem.
+           intro. apply B. eauto with mem. eauto with mem. intro. inv H1. inv PERM1. eauto.
          }
-         
-         exploit Mem.valid_access_inject. 3: eauto. 2: eauto. eauto.
-         intros PERM2.
-         assert (PERM1': Mem.valid_access m' Many64 b (Ptrofs.unsigned ofs) Writable).
-         { clear -H3 VPTR_PERM. inv H3. inv VPTR_PERM. constructor; eauto. }
-         assert (PERM2': Mem.valid_access tm' Many64 b2 (Ptrofs.unsigned ofs + delta) Writable).
-         { clear -H8 PERM2. inv H8. inv PERM2. constructor; eauto. }
-         exploit Mem.storev_extends_rev. eauto. eauto. rewrite <- H5. eauto.
-         erewrite Mem.address_inject; eauto. eauto with mem. eapply Val.lessdef_refl.
+         destruct PERMs as [PERM1' PERM2'].
+
+         exploit Mem.storev_extends_rev. eauto. eauto. rewrite <- H3. eauto.
+         erewrite Mem.address_inject; eauto. eauto with mem. inv ACCEJ. eauto.
+         eapply Val.lessdef_refl.
          intros [tm'' [MEM_RES' Hme'']].
-         exploit Mem.storev_mapped_inject_rev. eauto. eauto. econstructor; eauto.
-         instantiate (1:= res0).
-         simpl in ACCt'. unfold get_injp in ACCt'.
-         unfold get_injp in H. rewrite <- H in ACCt'.
-         eapply val_inject_incr. 2: eauto. inv ACCt'.
-         inv H10. simpl. eauto. eauto.
-  
-         
-         
-         exploit storev_extends_rev. eauto. eauto.
-         instantiate (1:= trs RSI). eauto. instantiate (1:= res). eauto.
-         intros [tm'' [MEM_RES' Hme'']].
-         exploit storev_mapped_inject_rev.
-         2: eauto. eauto. inv ACCEJ.
-         instantiate (1:= vptr).
-         eapply val_inject_incr. 2: eauto. simpl. eauto.
+         exploit Mem.storev_mapped_inject_rev. 5: eauto. eauto. eauto.
+         econstructor; eauto. inv ACCEJ. eauto.
          inv ACCEJ. eapply val_inject_incr. 2: eauto. simpl.
-         destruct ACCT. inv ACCY. inv H. simpl. inv H15. eauto.
-         inv ACCY. eauto. rename m'' into ttm''.
+         destruct ACCT. inv ACCY. inv H. simpl. inv H17. eauto.
+         inv ACCY. eauto.
+         rename m'' into ttm''.
          intros [m'' [MEM_RES'' Hmj'']].
          set (r_a := (rs', tm'')).
          set (tr_a := (trs', ttm'')).
@@ -2471,8 +2482,7 @@ Section ConcurSim.
          eapply injp_acce_storev; eauto. simpl in *. inv ACCEJ. eauto.
          assert (ACCEE' : ext_acce wAe (extw tm'' ttm'' Hme'')).
          { etransitivity. eauto. exploit ext_acci_storev. apply MEM_RES'.
-           apply MEM_RES.
-           eauto. eauto. }
+           apply MEM_RES. rewrite <- H3. eauto. eauto. }
          simpl in H1. inv WT_WA. simpl in ACC1. unfold rs_w_compcert in RSLD. simpl in RSLD.
          simpl in HwaTid.
          assert (exists sc', after_external (OpenC se) sc (cr (Vint Int.one) m'') sc'). admit.
@@ -2482,7 +2492,7 @@ Section ConcurSim.
          repeat apply conj; eauto.
          { instantiate (1:= tr_a). unfold tr_a.
            eexists. split. econstructor; eauto. constructor.
-           eapply ro_acc_trans. instantiate (1:= m'). inv ACCEJ. destruct H11 as [_ [A _]].
+           eapply ro_acc_trans. instantiate (1:= m'). inv ACCEJ. destruct H13 as [_ [A _]].
            constructor; eauto. unfold Mem.storev in MEM_RES''. destr_in MEM_RES''.
            eapply ro_acc_store; eauto.
            eexists. split. econstructor; eauto. constructor.
@@ -2503,7 +2513,7 @@ Section ConcurSim.
          rewrite X' in WAIT1. inv WAIT1.
          eexists. exists i'. split.
          (*switch_in*)
-         eapply CMulti.switch_in_join; eauto. simpl.
+         eapply CMulti.switch_in_join; eauto.
          (*match*)
          econstructor. instantiate (1:= NatMap.set target (Some wp') worldsP).
          econstructor. simpl. 8:{  rewrite NatMap.gss. reflexivity. }
@@ -2516,7 +2526,7 @@ Section ConcurSim.
             split.
             transitivity (Mem.tid (Mem.support m')). reflexivity. erewrite Mem.support_storev; eauto.
             unfold wp', wpj'. unfold gw_tid. simpl. reflexivity.
-            inv ACCY. inv H4. unfold gw_nexttid. simpl.
+            inv ACCY. inv H6. unfold gw_nexttid. simpl.
             transitivity (Mem.next_tid (Mem.support ((Mem.yield m1 n0 p)))). reflexivity.
             erewrite Mem.support_storev; eauto.
          -- intros. destruct (Nat.eq_dec n0 target).
@@ -2537,7 +2547,7 @@ Section ConcurSim.
                assert (ACIJS: injp_acci (injpw f m' tm' Hmj') (injpw f m'' tm'' Hmj'')).
                apply injp_acc_tl_i.
                eapply injp_acc_tl_storev; eauto. inv ACCEJ. eauto.
-               exploit ext_acci_storev. apply MEM_RES'. apply MEM_RES.
+               exploit ext_acci_storev. apply MEM_RES'. apply MEM_RES. rewrite <- H3.
                eauto. intro ACIES.
                destruct (Nat.eq_dec n0 cur).
                subst. replace wnp with wPcur by congruence.
@@ -2545,7 +2555,7 @@ Section ConcurSim.
                eapply gw_acc_yield_accg. eauto.
                simpl in ACCG.
                apply gw_accg_neq in ACCG as NEQ.
-               inv ACCEJ. destruct H12 as [[AA BB] _]. simpl.
+               inv ACCEJ. destruct H14 as [[AA BB] _]. simpl.
                unfold gw_tid. simpl. rewrite <- BB.
                unfold gw_tid in NEQ. simpl in NEQ. eauto.
                repeat apply conj; simpl; eauto. constructor.
@@ -2671,6 +2681,7 @@ Section ConcurSim.
          eapply gw_accg_yield_accg. eauto. eauto.
          apply FIND_TID in I. destruct I as [X Y]. rewrite X.
          unfold gw_tid. simpl. rewrite <- TTID. lia.
+
    Admitted.
 
    Lemma local_plus_c : forall gs t sc1 sc2,
@@ -2851,6 +2862,7 @@ Section ConcurSim.
          generalize (Mem.tid_valid (Mem.support ttm)). intro. unfold Mem.next_tid. lia.
          red. intros. eauto with mem. red. intros. eauto with mem.
          red. intros. eauto with mem. red. intros. eauto with mem.
+         red. intros. eauto with mem.
        }
      - intros. inv H. inv MEM_CREATE0. inv MEM_CREATE'. constructor. 
        unfold injp_gw_compcert.
@@ -2872,12 +2884,35 @@ Section ConcurSim.
          transitivity (Mem.perm tm3 b ofs k p). 2: reflexivity. inv UNC23. apply unchanged_on_perm0; eauto.
          red. simpl. rewrite <- Mem.sup_yield_in, <- Mem.sup_create_in. eauto.
          intros. inv UNC23. rewrite unchanged_on_contents0; eauto. apply unchanged_on_perm in H0; eauto with mem.
+       + red. intros.
+         assert (~Mem.perm tm b2 (ofs1+ delta) Max Nonempty). eapply H32; eauto.
+         intro.
+         apply H18. assert (Mem.perm tm2 b2 (ofs1 + delta) Max Nonempty).
+         eapply Mem.perm_alloc_4; eauto.
+         intro. subst. apply Mem.fresh_block_alloc in DUMMY.
+         apply H29 in H.
+         apply DUMMY. eapply Mem.valid_block_inject_2; eauto.
+         eauto with mem.
        + inv H21. inv ROACCR2. inv ROACCR3.
          constructor; simpl. eauto. eauto.
          eapply Mem.sup_include_trans; eauto.
          eapply Mem.sup_include_trans; eauto.
          eapply max_perm_decrease_trans. apply MPD1. eauto. eauto.
          eapply max_perm_decrease_trans. apply MPD2. eauto. eauto.
+          red. intros.
+         intro. eapply FREEP; eauto.
+         intro. apply H24.
+         assert (Mem.perm tm2 b ofs Max Nonempty). eauto with mem.
+         eapply Mem.perm_alloc_1 in H27. 2: eauto. eauto with mem.
+         assert (Mem.perm ttm3 b ofs Max Nonempty). eauto with mem.
+         eapply Mem.perm_alloc_4 in H26. 2: eauto.
+         assert (Mem.perm ttm1 b ofs Max Nonempty). eauto with mem.
+         inv MEM_CREATE. eauto.
+         intro. subst b.
+         apply Mem.fresh_block_alloc in DUMMY.
+         apply DUMMY.
+         assert (Mem.valid_block tm sp0). apply SUP1. eapply Mem.perm_valid_block; eauto.
+         unfold tm2. unfold Mem.valid_block. simpl. apply Mem.sup_yield_in. rewrite <- Mem.sup_create_in. eauto.
      - auto.
      - auto.
      - simpl. inv MEM_CREATE0. inv MEM_CREATE'.
