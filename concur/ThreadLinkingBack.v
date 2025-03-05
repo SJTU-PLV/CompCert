@@ -223,7 +223,8 @@ Section ConcurSim.
         (M_QUERIES: GS.match_query cc_compcert wB (get_query cqv m) (rs,tm))
         (SG_STR: cqv_sg cqv = start_routine_sig),
         match_thread_states wB None (get wB) i (CMulti.Initial OpenC cqv) (Initial OpenA rs)
-    |match_returny : forall wB wA i sc sa wp wp' rs
+   |match_returny : forall wB wA i sc sa wp wp' rs q
+        (AT_EXT: Smallstep.at_external (OpenC se) sc q)
         (WT_WA: wt_w_compcert wA)
         (WA_SIG : sig_w_compcert wA = yield_sig)
         (GET: get wA = wp')
@@ -238,7 +239,8 @@ Section ConcurSim.
             exists i' sa', (after_external (OpenA tse)) sa r2 sa' /\
                         match_local_states wB wp'' i' sc' sa'), *)
         match_thread_states wB (Some wA) wp' i (CMulti.Returny OpenC sc) (Returny OpenA sa rs)
-    |match_returnj : forall wB wA i sc sa wp wp' wait b ofs int rs 
+   |match_returnj : forall wB wA i sc sa wp wp' wait b ofs int rs q
+        (AT_EXT: Smallstep.at_external (OpenC se) sc q)
         (RSLD: regset_lessdef (rs_w_compcert wA) rs)                     
         (WAIT: rs # RDI = Vint int /\ int_to_nat int = wait)
         (VPTR: Val.inject (injp_mi (injp_w_compcert wA)) (Vptr b ofs) (rs # RSI))
@@ -519,7 +521,7 @@ Section ConcurSim.
     Hypothesis OpenC_final_int : forall s v m,
         Smallstep.final_state (OpenC se) s (cr v m) ->
         v <> Vundef.
-    
+
     Lemma concur_final_states: forall i s1 s2 r,
         match_states i s1 s2 -> Closed.safe ConcurC s1 ->  Closed.final_state ConcurA s2 r ->
         exists s1', star (Closed.step ConcurC) (Closed.globalenv ConcurC) s1 E0 s1' /\ Closed.final_state ConcurC s1' r.
@@ -1642,6 +1644,10 @@ Section ConcurSim.
       unfold se in FIND2. congruence.
     Qed.
 
+    Hypothesis OpenC_after_external_receptive : forall s q r,
+        Smallstep.at_external (OpenC se) s q ->
+        exists s', Smallstep.after_external (OpenC se) s r s'.
+      
     Lemma substep_switch_out : forall i s1 s2 s2' target ttm',
        match_states i s1 s2 ->
        Closed.safe ConcurC s1 -> fst (CMulti.threads OpenC s1) = None ->
@@ -2083,7 +2089,8 @@ Section ConcurSim.
            destr; apply val_inject_id; eauto. constructor.
          } 
          intros [Hy1 Hy2].
-         assert (exists sc', after_external (OpenC se) sc (cr Vundef m') sc'). admit.
+         assert (exists sc', after_external (OpenC se) sc (cr Vundef m') sc').
+         eapply OpenC_after_external_receptive; eauto.
          destruct H0 as [sc'1 Hyc]. exploit Hy2; eauto.
          intros [sc' [AFT_E' [li' MLS']]]. clear Hy1 Hy2 sc'1 Hyc.
          specialize (get_nth_set (target-1) i li li' GETi) as SETi.
@@ -2197,7 +2204,8 @@ Section ConcurSim.
          assert (ACCEE2: ext_acce (extw m2 m3 Hme0) (extw tm'' ttm'' Hme'')).
          { etransitivity. eauto.
            exploit ext_acci_storev. apply MEM_RES'. apply MEM_RES. rewrite <- H5. eauto. eauto. }
-         assert (exists sc', after_external (OpenC se) sc (cr (Vint Int.one) m'') sc'). admit.
+         assert (exists sc', after_external (OpenC se) sc (cr (Vint Int.one) m'') sc').
+         eapply OpenC_after_external_receptive; eauto.
          destruct H0 as [sc'1 AFT_E'1]. 
          exploit M_REPLIES; eauto.
          instantiate (1:= (tt,(tt,(injpw f m'' tm'' Hmj'', extw tm'' ttm'' Hme'')))).
@@ -2338,7 +2346,8 @@ Section ConcurSim.
            constructor.
          }
          intros [Hy1 Hy2].
-         assert (exists sc', after_external (OpenC se) sc (cr Vundef m') sc'). admit.
+         assert (exists sc', after_external (OpenC se) sc (cr Vundef m') sc').
+         eapply OpenC_after_external_receptive; eauto.
          destruct H0 as [sc'1 AFT_E'1].
          exploit Hy2; eauto.
          intros (sa' & AFT_E' & li' & MLS').
@@ -2485,7 +2494,8 @@ Section ConcurSim.
            apply MEM_RES. rewrite <- H3. eauto. eauto. }
          simpl in H1. inv WT_WA. simpl in ACC1. unfold rs_w_compcert in RSLD. simpl in RSLD.
          simpl in HwaTid.
-         assert (exists sc', after_external (OpenC se) sc (cr (Vint Int.one) m'') sc'). admit.
+         assert (exists sc', after_external (OpenC se) sc (cr (Vint Int.one) m'') sc').
+         eapply OpenC_after_external_receptive; eauto.
          destruct H as [sc'1 AFT_E'1]. 
          exploit M_REPLIES; eauto.
          simpl. instantiate (1:= wp').
@@ -3250,14 +3260,52 @@ Section ConcurSim.
         Smallstep.final_state (lts se) s (cr v m) ->
         v <> Vundef.
     
-    
+  Definition after_external_receptive (lts : semantics li_c li_c) : Prop :=
+    forall s q r se,
+      Smallstep.at_external (lts se) s q ->
+      exists s', Smallstep.after_external (lts se) s r s'.
+
   Lemma BSIM : GS.backward_simulation cc_compcert OpenC OpenA ->
                final_noundef OpenC ->
                determinate_big OpenC ->
+               after_external_receptive OpenC ->
                Closed.backward_simulation ConcurC ConcurA.
   Proof.
     intros. inv H. inv X. eapply Concur_Sim; eauto.
   Qed.
 
 End ConcurSim.
+
+
+  Lemma Clight_final_noundef : forall (p: Clight.program), final_noundef (Clight.semantics1 p).
+  Proof.
+    intros. red. intros. Admitted. (*TODO*)
+
+  Lemma Clight_determinate_big: forall p, determinate_big (Clight.semantics1 p).
+  Proof.
+    intros p se. constructor.
+    - (*initial_determ*)
+      intros. inv H; inv H0. reflexivity.
+    - (*initial_nostep*)
+      intros. red. intros. intro. inv H. inv H0. 
+      setoid_rewrite H1 in FIND. inv FIND.
+      setoid_rewrite H1 in FIND. inv FIND. inv H7.
+    - (*ext_determ*)
+      intros. inv H. inv H0. setoid_rewrite H1 in H6. inv H6. reflexivity.
+    - (*after_determ*)
+    intros. inv H. inv H0. reflexivity.
+    - (*final_nostep*)
+      intros. red. intros. intro. inv H. inv H0.
+    - (*final_noext*)
+      intros. inv H. inv H0.
+    - (*final_determ*)
+      intros. inv H. inv H0. reflexivity.
+  Qed.
+
+  Lemma Clight_after_external_receptive : forall (p: Clight.program), after_external_receptive (Clight.semantics1 p).
+  Proof.
+    intros p. red. intros. inv H. destruct r.
+    eexists. econstructor; eauto.
+  Qed.
+  
 
