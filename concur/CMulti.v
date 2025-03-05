@@ -173,12 +173,15 @@ Section MultiThread.
     let s' := update_next_tid s (S ntid) in
     let s'' := update_thread s' ntid (Initial cqv) in
     update_thread s'' ctid ls'.
-    
+
   Inductive query_is_pthread_join : query li_c -> nat -> val -> Prop :=
   |pthread_join_intro :
     forall m arglist b_ptj target_id b_vptr ofs_vptr i
       (FINDPTJ: Genv.find_symbol initial_se pthread_join_id = Some b_ptj)
       (ARGLIST: arglist = (Vint i) :: (Vptr b_vptr ofs_vptr) :: nil)
+      (LOCALARG: fst b_vptr = Mem.tid (Mem.support m))
+      (** we reserve [Writable] permission for the returned [void*] pointer*)
+      (VALIDARG: Mem.valid_access m Many64 b_vptr (Ptrofs.unsigned ofs_vptr) Writable)
       (TARGETID: target_id = int_to_nat i),
       query_is_pthread_join
         (cq (Vptr b_ptj Ptrofs.zero) pthread_join_sig arglist m) target_id (Vptr b_vptr ofs_vptr).
