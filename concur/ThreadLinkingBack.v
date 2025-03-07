@@ -219,8 +219,9 @@ Section ConcurSim.
     |match_local : forall wB i sc sa wp
         (M_STATES: match_local_states wB wp i sc sa),
         match_thread_states wB None wp i (CMulti.Local OpenC sc) (Local OpenA sa)
-    |match_initial : forall wB i cqv rs m tm
+    |match_initial : forall wB i cqv rs m tm q_ptc r_ptc q_str
         (M_QUERIES: GS.match_query cc_compcert wB (get_query cqv m) (rs,tm))
+        (INIT_QUERY: query_is_pthread_create OpenC q_ptc r_ptc q_str)
         (SG_STR: cqv_sg cqv = start_routine_sig),
         match_thread_states wB None (get wB) i (CMulti.Initial OpenC cqv) (Initial OpenA rs)
    |match_returny : forall wB wA i sc sa wp wp' rs q

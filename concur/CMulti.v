@@ -150,12 +150,14 @@ Section MultiThread.
     intros. inv H. constructor. simpl. unfold Mem.next_tid. lia.
     simpl. unfold Mem.next_tid. simpl. rewrite app_length. simpl. lia.
   Qed.
-   
+
   Inductive query_is_pthread_create : query li_c -> reply li_c -> query li_c -> Prop :=
   |pthread_create_intro :
     forall m arglist b_ptc b_start b_arg ofs_arg b_t ofs_t m1 start_id tid m2 P1
       (FINDPTC: Genv.find_symbol initial_se pthread_create_id = Some b_ptc)
       (FINDSTR: Genv.find_symbol initial_se start_id = Some b_start)
+      (INITSTR: exists s, Smallstep.initial_state OpenLTS
+                       (cq (Vptr b_start Ptrofs.zero) start_routine_sig ((Vptr b_arg ofs_arg)::nil) m2) s)
       (ARGLIST: arglist = (Vptr b_t ofs_t) :: (Vptr b_start Ptrofs.zero) :: (Vptr b_arg ofs_arg) :: nil)
       (MEM_CREATE: Mem.thread_create m = (m1, tid)) (** allocate a new thread id*)
       (MEM_YIELD: Mem.yield m1 tid P1 = m2) (** The initial query for new thread has new tid *)

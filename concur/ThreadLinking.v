@@ -789,7 +789,15 @@ Qed.
      intros. inv H. constructor; red; simpl; eauto.
      intros. rewrite <- Mem.sup_create_in; eauto.
    Qed.
-   
+
+   Lemma yield_unchanged: forall m target p P,
+       Mem.unchanged_on P m (Mem.yield m target p).
+   Proof.
+     intros. constructor; simpl; eauto.
+     - red. intros. simpl. rewrite <- Mem.sup_yield_in. auto.
+     - intros. simpl. reflexivity.
+   Qed.
+
    Lemma trans_pthread_create__start_routine: forall q_ptc r_ptc q_str qa_ptc wA,
         query_is_pthread_create OpenC q_ptc r_ptc q_str ->
         GS.match_query cc_compcert wA q_ptc qa_ptc ->
@@ -805,7 +813,7 @@ Qed.
                            GS.match_senv cc_compcert wA' se tse /\
                            worlds_ptc_str (cainjp_w_compcert wA) (cainjp_w_compcert wA').
    Proof.
-     intros until wA. intros H H0 MSE.
+     intros until wA. intros H H0 MSE.  
      inv H. destruct wA as (se0 & [se0' m0'] & se1 & [se1' sig'] & se2 & w_cap & w_e).
      destruct H0 as [q1' [Hqr [q1'' [Hqw [qa' [Hqca Hqe]]]]]].
      inv Hqr. inv Hqw. simpl in H. destruct H0. simpl in H0. inv H0. simpl in H1.
@@ -852,7 +860,7 @@ Qed.
          It's address is used as the initial value of RSP on this new procedure *)
      assert (TP1: Mem.range_prop tid (Mem.support tm')).
      {
-       inv P1. constructor. auto. erewrite <- inject_next_tid; eauto.
+       inversion P1. constructor. auto. erewrite <- inject_next_tid; eauto.
      }
      set (tm'2 := Mem.yield tm' tid TP1).
      case (Mem.alloc tm'2 0 0 ) as [tm'3 sp0] eqn:DUMMY.
@@ -955,7 +963,59 @@ Qed.
      - fold se in FINDPTC. rewrite SE_eq in FINDPTC.
        fold se in FINDSTR. rewrite SE_eq in FINDSTR.
        econstructor.
-       eapply FINDPTC. eapply FINDSTR. eauto. eauto. eauto. eauto. reflexivity.
+       eapply FINDPTC. eapply FINDSTR.
+       {
+         destruct INITSTR as [sc INIc].
+         set (wA'c_injp :=
+                {|
+                  cajw_injp := injpw j m1' tm'3 Hmq;
+                  cajw_sg := start_routine_sig;
+                  cajw_rs := rs_q |} ).
+         set (wA'c := (se,(row se m1',(se,(se, start_routine_sig, (tse,(wA'c_injp,extw tm'3 ttm'3 Hmqe))))))).
+         assert (MQ_str: GS.match_query cc_compcert wA'c (cq (Vptr b_start Ptrofs.zero) start_routine_sig
+                                                            (Vptr b_arg ofs_arg :: nil) m1') (trs_q,ttm'3)).
+         {
+           inv ROACCR1.
+           eexists. split. econstructor; eauto. simpl. constructor.
+           eapply ro_acc_sound; eauto.
+           eexists. split. econstructor. simpl. eauto.
+           exists (rs_q,tm'3). split. econstructor; eauto. rewrite start_routine_loc.
+           simpl. constructor; eauto. intros. unfold Conventions.size_arguments in H4.
+           rewrite start_routine_loc in H4. simpl in H4. inv H4. extlia.
+           unfold rs_q. rewrite Pregmap.gss. constructor.
+           unfold rs_q. rewrite Pregmap.gss. constructor.
+           eapply Mem.valid_new_block; eauto.
+           unfold rs_q. rewrite Pregmap.gss. constructor.
+           apply Mem.alloc_result in DUMMY as XX. subst sp0.
+           erewrite Mem.support_alloc; eauto. reflexivity.
+           econstructor. red. unfold Conventions.size_arguments. rewrite start_routine_loc. reflexivity.
+           congruence.
+           econstructor; eauto. simpl. unfold rs_q, trs_q.
+           intros r. 
+           destruct (Pregmap.elt_eq r RSP). subst. rewrite !Pregmap.gss. eapply val_inject_id. eauto.
+           rewrite Pregmap.gso; eauto. rewrite Pregmap.gso with (j := RSP); eauto.
+           destruct (Pregmap.elt_eq r RDI). subst. rewrite !Pregmap.gss. eauto.
+           rewrite Pregmap.gso; eauto. rewrite Pregmap.gso with (j := RDI); eauto.
+           destruct (Pregmap.elt_eq r PC). subst. rewrite !Pregmap.gss. eauto.
+           rewrite Pregmap.gso; eauto. rewrite Pregmap.gso with (j := PC); eauto.
+           split. unfold rs_q. rewrite Pregmap.gso; try congruence.
+           rewrite Pregmap.gso; try congruence. rewrite Pregmap.gss. congruence.
+           constructor.
+         }
+         assert (MSE_str: GS.match_senv cc_compcert wA'c se tse).
+         split. simpl. constructor. reflexivity.
+         split. constructor. reflexivity.
+         split. inv MSE. constructor. eauto.
+         unfold m1'.
+         eapply Mem.sup_include_trans. eauto. red. intros. simpl. inv ROACCR1. erewrite <- Mem.sup_yield_in; eauto.
+         eapply Mem.sup_include_trans; eauto. reflexivity.
+         generalize valid_se. intro VALID.
+         specialize (fsim_lts se tse wA'c MSE_str VALID) as FSIM.
+         inv FSIM. clear fsim_simulation  fsim_match_external  fsim_match_final_states fsim_match_valid_query.
+         exploit fsim_match_initial_states. eauto. eauto. eauto.
+         intros [i [s2' [X Y]]]. eauto.
+       }
+       eauto. eauto. eauto. eauto. reflexivity.
        unfold trs_q. instantiate (1:= sp0). rewrite RDXVAL'.
        rewrite RSIVAL'. reflexivity.
        eauto. eauto.
@@ -2003,14 +2063,6 @@ Qed.
        + intros. simpl. unfold CMulti.get_cur_thread, CMulti.update_cur_thread. simpl.
          unfold CMulti.get_thread, CMulti.update_thread. simpl. rewrite NatMap.gss. congruence.
        + unfold gw'. destruct w_cap. simpl in H. inv H. constructor; eauto; econstructor; eauto; reflexivity.
-   Qed.
-
-   Lemma yield_unchanged: forall m target p P,
-       Mem.unchanged_on P m (Mem.yield m target p).
-   Proof.
-     intros. constructor; simpl; eauto.
-     - red. intros. simpl. rewrite <- Mem.sup_yield_in. auto.
-     - intros. simpl. reflexivity.
    Qed.
 
    (** The following 3 lemmas have the *exactly the same* proof,

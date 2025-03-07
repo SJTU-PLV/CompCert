@@ -161,6 +161,7 @@ Section MultiThread.
     forall m b_ptc b_the ofs_the b_start b_arg ofs_arg m1 rs rs_r rs_q start_id new_tid P1 m2 m3 sp P2 m4
       (FINDPTC: Genv.find_symbol initial_se pthread_create_id = Some b_ptc)
       (FINDSTR: Genv.find_symbol initial_se start_id = Some b_start)
+      (INITSTR: exists s, Smallstep.initial_state OpenLTS (rs_q,m3) s)
       (RS_PC: rs # PC = Vptr b_ptc Ptrofs.zero)
       (RS_RDI : rs # RDI = Vptr b_the ofs_the)
       (RS_RSI : rs # RSI = Vptr b_start Ptrofs.zero)
