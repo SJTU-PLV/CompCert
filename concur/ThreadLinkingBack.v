@@ -219,9 +219,9 @@ Section ConcurSim.
     |match_local : forall wB i sc sa wp
         (M_STATES: match_local_states wB wp i sc sa),
         match_thread_states wB None wp i (CMulti.Local OpenC sc) (Local OpenA sa)
-    |match_initial : forall wB i cqv rs m tm q_ptc r_ptc q_str
+    |match_initial : forall wB i cqv rs m tm 
         (M_QUERIES: GS.match_query cc_compcert wB (get_query cqv m) (rs,tm))
-        (INIT_QUERY: query_is_pthread_create OpenC q_ptc r_ptc q_str)
+        (INIT_QUERY: exists s, Smallstep.initial_state (OpenC se) (get_query cqv m) s)
         (SG_STR: cqv_sg cqv = start_routine_sig),
         match_thread_states wB None (get wB) i (CMulti.Initial OpenC cqv) (Initial OpenA rs)
    |match_returny : forall wB wA i sc sa wp wp' rs q
@@ -650,7 +650,7 @@ Section ConcurSim.
          It's address is used as the initial value of RSP on this new procedure *)
      assert (TP1: Mem.range_prop tid (Mem.support tm')).
      {
-       inv P1. constructor. auto. erewrite <- inject_next_tid; eauto.
+       inversion P1. constructor. auto. erewrite <- inject_next_tid; eauto.
      }
      set (tm'2 := Mem.yield tm' tid TP1).
      case (Mem.alloc tm'2 0 0 ) as [tm'3 sp0] eqn:DUMMY.
@@ -752,7 +752,60 @@ Section ConcurSim.
      - fold se in FINDPTC. rewrite SE_eq in FINDPTC.
        fold se in FINDSTR. rewrite SE_eq in FINDSTR.
        econstructor.
-       eapply FINDPTC. eapply FINDSTR. eauto. eauto. eauto. eauto. reflexivity.
+       eapply FINDPTC. eapply FINDSTR.
+        {
+         destruct INITSTR as [sc INIc].
+         set (wA'c_injp :=
+                {|
+                  cajw_injp := injpw j m1' tm'3 Hmq;
+                  cajw_sg := start_routine_sig;
+                  cajw_rs := rs_q |} ).
+         set (wA'c := (se,(row se m1',(se,(se, start_routine_sig, (tse,(wA'c_injp,extw tm'3 ttm'3 Hmqe))))))).
+         assert (MQ_str: GS.match_query cc_compcert wA'c (cq (Vptr b_start Ptrofs.zero) start_routine_sig
+                                                            (Vptr b_arg ofs_arg :: nil) m1') (trs_q,ttm'3)).
+         {
+           inv ROACCR1.
+           eexists. split. econstructor; eauto. simpl. constructor.
+           eapply ro_acc_sound; eauto.
+           eexists. split. econstructor. simpl. eauto.
+           exists (rs_q,tm'3). split. econstructor; eauto. rewrite start_routine_loc.
+           simpl. constructor; eauto. intros. unfold Conventions.size_arguments in H4.
+           rewrite start_routine_loc in H4. simpl in H4. inv H4. extlia.
+           unfold rs_q. rewrite Pregmap.gss. constructor.
+           unfold rs_q. rewrite Pregmap.gss. constructor.
+           eapply Mem.valid_new_block; eauto.
+           unfold rs_q. rewrite Pregmap.gss. constructor.
+           apply Mem.alloc_result in DUMMY as XX. subst sp0.
+           erewrite Mem.support_alloc; eauto. reflexivity.
+           econstructor. red. unfold Conventions.size_arguments. rewrite start_routine_loc. reflexivity.
+           congruence.
+           econstructor; eauto. simpl. unfold rs_q, trs_q.
+           intros r. 
+           destruct (Pregmap.elt_eq r RSP). subst. rewrite !Pregmap.gss. eapply val_inject_id. eauto.
+           rewrite Pregmap.gso; eauto. rewrite Pregmap.gso with (j := RSP); eauto.
+           destruct (Pregmap.elt_eq r RDI). subst. rewrite !Pregmap.gss. eauto.
+           rewrite Pregmap.gso; eauto. rewrite Pregmap.gso with (j := RDI); eauto.
+           destruct (Pregmap.elt_eq r PC). subst. rewrite !Pregmap.gss. eauto.
+           rewrite Pregmap.gso; eauto. rewrite Pregmap.gso with (j := PC); eauto.
+           split. unfold rs_q. rewrite Pregmap.gso; try congruence.
+           rewrite Pregmap.gso; try congruence. rewrite Pregmap.gss. congruence.
+           constructor.
+         }
+         assert (MSE_str: GS.match_senv cc_compcert wA'c se tse).
+         split. simpl. constructor. reflexivity.
+         split. constructor. reflexivity.
+         split. inv MSE. constructor. eauto.
+         unfold m1'.
+         eapply Mem.sup_include_trans. eauto. red. intros. simpl. inv ROACCR1. erewrite <- Mem.sup_yield_in; eauto.
+         eapply Mem.sup_include_trans; eauto. reflexivity.
+         generalize valid_se. intro VALID.
+         specialize (bsim_lts se tse wA'c MSE_str VALID) as BSIM.
+         inv BSIM.
+         exploit bsim_match_initial_states. eauto. intros [Hi1 Hi2].
+         eauto.
+       }
+       
+       eauto. eauto. eauto. eauto. reflexivity.
        unfold trs_q. instantiate (1:= sp0). rewrite RDXVAL'.
        rewrite RSIVAL'. reflexivity.
        eauto. eauto.
@@ -2014,6 +2067,11 @@ Section ConcurSim.
        + unfold gw'. destruct w_cap. simpl in H. inv H. constructor; eauto; econstructor; eauto; reflexivity.
    Qed.
 
+   Hypothesis OpenC_initial_state_receptive : forall s vf sg args m m',
+       Smallstep.initial_state (OpenC se) (cq vf sg args m) s ->
+       Mem.sup_include (Mem.support m) (Mem.support m') ->
+       exists s', Smallstep.initial_state (OpenC se) (cq vf sg args m') s'.
+   
    Lemma substep_switch_in : forall i s1' s2' s2'' target m' tm' ttm' f Hmj' Hme' worldsP wpc,
        (* sth more about gtmem'*)
        let cur := CMulti.cur_tid OpenC s1' in
@@ -2642,7 +2700,10 @@ Section ConcurSim.
          exploit bsim_match_initial_states.  eauto.
          intros [Hi1 Hi2].
          assert (exists s1'1, Smallstep.initial_state (OpenC se) (cq cqv_vf start_routine_sig cqv_args m') s1'1).
-         admit. destruct H4 as [s1'1 INIT'1].
+         destruct INIT_QUERY as [s' INIT1''].
+         eapply OpenC_initial_state_receptive; eauto.
+         inv ACCGJ. destruct H27 as [_ [? _]]. eauto.
+         destruct H4 as [s1'1 INIT'1].
          exploit Hi2; eauto.
          intros (ls' & INIT & li' & MLS').
          specialize (get_nth_set (target-1) i li li' GETi) as SETi.
@@ -2692,8 +2753,7 @@ Section ConcurSim.
          eapply gw_accg_yield_accg. eauto. eauto.
          apply FIND_TID in I. destruct I as [X Y]. rewrite X.
          unfold gw_tid. simpl. rewrite <- TTID. lia.
-
-   Admitted.
+   Qed.
 
    Lemma local_plus_c : forall gs t sc1 sc2,
         Plus (OpenC se) sc1 t sc2 ->
@@ -2767,7 +2827,7 @@ Section ConcurSim.
       inv H13. eauto. destruct H2 as [b_arg' [ofs_arg' RDXVAL]].
       assert (TP1: Mem.range_prop tid (Mem.support tm1)).
       {
-        inv P0. constructor. auto. erewrite <- inject_next_tid; eauto.
+        inversion P0. constructor. auto. erewrite <- inject_next_tid; eauto.
       }
       set (tm2 := Mem.yield tm1 tid TP1).
       case (Mem.alloc tm2 0 0 ) as [tm3 sp0] eqn:DUMMY.
@@ -3197,7 +3257,8 @@ Section ConcurSim.
                ** rewrite NatMap.gss. reflexivity.
                ** destruct q_str, qc_str.
                   econstructor. 
-                  unfold get_cqv, get_query. eauto. simpl. 
+                  unfold get_cqv, get_query. eauto. simpl.
+                  inv CREATE. eauto.
                   inv CREATE. reflexivity.
                **
                unfold worldsP'. rewrite NatMap.gss. reflexivity.
@@ -3266,10 +3327,17 @@ Section ConcurSim.
       Smallstep.at_external (lts se) s q ->
       exists s', Smallstep.after_external (lts se) s r s'.
 
+  Definition initial_state_receptive (lts : semantics li_c li_c) : Prop :=
+    forall s vf sg args se m m',
+      Smallstep.initial_state (lts se) (cq vf sg args m) s ->
+      Mem.sup_include (Mem.support m) (Mem.support m') ->
+      exists s', Smallstep.initial_state (lts se) (cq vf sg args m') s'.
+
   Lemma BSIM : GS.backward_simulation cc_compcert OpenC OpenA ->
                final_noundef OpenC ->
                determinate_big OpenC ->
                after_external_receptive OpenC ->
+               initial_state_receptive OpenC ->
                Closed.backward_simulation ConcurC ConcurA.
   Proof.
     intros. inv H. inv X. eapply Concur_Sim; eauto.
@@ -3303,9 +3371,17 @@ End ConcurSim.
       intros. inv H. inv H0. reflexivity.
   Qed.
 
-  Lemma Clight_after_external_receptive : forall (p: Clight.program), after_external_receptive (Clight.semantics1 p).
+  Lemma Clight_after_external_receptive :
+    forall (p: Clight.program), after_external_receptive (Clight.semantics1 p).
   Proof.
     intros p. red. intros. inv H. destruct r.
+    eexists. econstructor; eauto.
+  Qed.
+
+  Lemma Clight_initial_state_receptive :
+    forall (p: Clight.program), initial_state_receptive (Clight.semantics1 p).
+  Proof.
+    intros p. red. intros. inv H.
     eexists. econstructor; eauto.
   Qed.
   
