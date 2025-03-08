@@ -551,11 +551,16 @@ Section ConcurSim.
         - inv Hs; unfoldC_in H0; try rewrite NatMap.gss in H0; inv H0; eauto;
             unfoldC_in GET_C; rewrite NatMap.gss in GET_C; inv GET_C; eauto.
       } 
-      intros [s1' [r1 [gw' [Star1 [FIN [ACCE [ACCI MR]]]]]]]. destruct r1.
+      intros [s1' [r1 [gw' [Star1 [FIN [ACCE [ACCI MR]]]]]]].
+      (* destruct r1.
       destruct gw' as [p [q [wp we]]]. simpl in p, q,wp,we.
       destruct MR as [q1' [MRro [q1'' [MRwt [q2' [MRp MRe]]]]]].
       inv MRro. inv MRwt. inv MRp. inv MRe.
-      simpl in H, H5. unfold proj_sig_res, main_sig in H5. simpl in H5.
+      simpl in H, H5. unfold proj_sig_res, main_sig in H5. simpl in H5. *)
+      exploit Safe1. eapply local_star_c; eauto. intros [[r1' Hr]| [t [s'' Hs]]].
+      eexists. split. eapply local_star_c; eauto. inv Hr.
+      unfoldC_in H. unfoldC_in H5. rewrite NatMap.gss in H5. inv H5.
+      
       eexists. split.
       eapply local_star_c; eauto.
       unfoldC. econstructor; eauto. unfoldC.
