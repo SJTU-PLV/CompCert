@@ -56,6 +56,8 @@ Extraction Inline DecidableClass.Decidable_witness DecidableClass.decide
 (* Wfsimpl *)
 Extraction Inline Wfsimpl.Fix Wfsimpl.Fixm.
 
+(* AST *)
+Extraction NoInline AST.globals_of_builtin_args.
 
 (* Memory - work around an extraction bug. *)
 Extraction NoInline Memory.Mem.valid_pointer.
@@ -128,8 +130,8 @@ Extract Constant Compiler.time  => "Timing.time_coq".
 
 (* Initializers *)
 
-Extract Constant Initializers.ident_to_block => "(fun x -> x)".
-Extract Constant Initializers.block_to_ident => "(fun x -> x)".
+Extract Constant Initializers.ident_to_block => "(fun x -> (S O, x))".
+Extract Constant Initializers.block_to_ident => "(fun (n,x) -> x)".
 
 (*Extraction Inline Compiler.apply_total Compiler.apply_partial.*)
 
@@ -150,7 +152,8 @@ Load extractionMachdep.
 (* Avoid name clashes *)
 Extraction Blacklist List String Int.
 
-Extraction Floats.Float. 
+Extraction Floats.Float.
+
 
 (*
 (* Cutting the dependency to R. *)
@@ -185,11 +188,12 @@ Separate Extraction
    Conventions1.int_callee_save_regs Conventions1.float_callee_save_regs
    Conventions1.dummy_int_reg Conventions1.dummy_float_reg
    Conventions1.allocatable_registers
+   Op.globals_addressing Op.globals_operation
    RTL.instr_defs RTL.instr_uses
    Machregs.mregs_for_operation Machregs.mregs_for_builtin
    Machregs.two_address_op Machregs.is_stack_reg
    Machregs.destroyed_at_indirect_call
-   AST.signature_main
+   AST.signature_main AST.globals_of_builtin_args
    Floats.Float32.from_parsed Floats.Float.from_parsed
    Floats.Float.of_bits Floats.Float.to_bits
    Floats.Float32.of_bits Floats.Float32.to_bits
