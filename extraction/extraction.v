@@ -56,9 +56,6 @@ Extraction Inline DecidableClass.Decidable_witness DecidableClass.decide
 (* Wfsimpl *)
 Extraction Inline Wfsimpl.Fix Wfsimpl.Fixm.
 
-(* AST *)
-Extraction NoInline AST.globals_of_builtin_args.
-
 (* Memory - work around an extraction bug. *)
 Extraction NoInline Memory.Mem.valid_pointer.
 
