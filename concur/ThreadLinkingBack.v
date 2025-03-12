@@ -518,16 +518,13 @@ Section ConcurSim.
         unfold gs'. simpl. rewrite NatMap.gss. reflexivity.
     Qed.
 
-    (*The hypothesis is required for this lemma, it is trivially satisfied by Clight semantics *)
-    Hypothesis OpenC_final_int : forall s v m,
-        Smallstep.final_state (OpenC se) s (cr v m) ->
-        v <> Vundef.
+    Hypothesis determinate_big_C : determinate_big OpenC.
 
     Lemma concur_final_states: forall i s1 s2 r,
         match_states i s1 s2 -> Closed.safe ConcurC s1 ->  Closed.final_state ConcurA s2 r ->
         exists s1', star (Closed.step ConcurC) (Closed.globalenv ConcurC) s1 E0 s1' /\ Closed.final_state ConcurC s1' r.
     Proof.
-      intros i s1 s2 r Hm Safe1 F2.
+      intros i s1 s2 r Hm Safe1 F2. specialize (determinate_big_C se) as DetC.
       inv F2. inv Hm. inv H4.
       simpl in H. subst cur.
       unfoldA_in H0. 
@@ -558,27 +555,28 @@ Section ConcurSim.
       inv MRro. inv MRwt. inv MRp. inv MRe.
       simpl in H, H5. unfold proj_sig_res, main_sig in H5. simpl in H5. *)
       exploit Safe1. eapply local_star_c; eauto. intros [[r1' Hr]| [t [s'' Hs]]].
+      2: { unfoldC_in Hs. inv Hs; unfoldC_in H.
+           - rewrite NatMap.gss in H. inv H. exfalso. inv DetC.
+             eapply sd_big_final_nostep; eauto.
+           - rewrite NatMap.gss in H. inv H. exfalso. inv DetC.
+             eapply sd_big_final_noext; eauto.
+           - inv H; unfoldC_in GET_C; rewrite NatMap.gss in GET_C; inv GET_C.
+             + exfalso. inv DetC. eapply sd_big_final_noext; eauto.
+             + exfalso. inv DetC. eapply sd_big_final_noext; eauto.
+             + unfoldC_in SUB_THREAD. extlia. }
       eexists. split. eapply local_star_c; eauto. inv Hr.
       unfoldC_in H. unfoldC_in H5. rewrite NatMap.gss in H5. inv H5.
-      
-      eexists. split.
-      eapply local_star_c; eauto.
-      unfoldC. econstructor; eauto. unfoldC.
+      inv DetC. exploit sd_big_final_determ. apply H6. apply FIN.
+      intro. subst. econstructor; unfoldC; eauto.
       rewrite NatMap.gss. reflexivity.
-      instantiate (1:= cr_mem).
-      assert (cr_retval= Vint r).
-      {
-        apply OpenC_final_int in FIN as Rint.
-        simpl in H6. generalize (H6 RAX). intro.
-        assert (tres = rs' RAX).
-        subst tres. reflexivity.
-        assert (Val.inject j' cr_retval (Vint r)).
-        rewrite <- H2.
-        rewrite <- (compose_meminj_id_right j').
-        eapply val_inject_compose; eauto.
-        inv H10; eauto. congruence.
-      }
-      rewrite <- H8. eauto.
+      assert (r = r1').
+      { clear - MR H2.
+        destruct gw' as [p [q [wp we]]]. simpl in p, q,wp,we.
+        destruct MR as [q1' [MRro [q1'' [MRwt [q2' [MRp MRe]]]]]].
+        inv MRro. inv MRwt. inv MRp. inv MRe. subst tres.
+        unfold Conventions1.loc_result in H7. replace Archi.ptr64 with true in H7 by reflexivity.
+        simpl in H7. simpl in H1. inv H7. generalize (H1 RAX).
+        intro. rewrite <- H6 in H4. inv H4. congruence. } subst. eauto.
     Qed.
 
     Lemma safe_concur_single : forall s ls,
@@ -596,8 +594,6 @@ Section ConcurSim.
         + rewrite NatMap.gss in H1. inv H1. eauto.
         + inv H1; unfoldC_in GET_C; rewrite NatMap.gss in GET_C; inv GET_C; eauto.
     Qed.
-
-    Hypothesis determinate_big_C : determinate_big OpenC.
 
     Lemma pthread_create_progress: forall q_ptc r_ptc q_str qa_ptc wA,
         query_is_pthread_create OpenC q_ptc r_ptc q_str ->
@@ -3339,7 +3335,6 @@ Section ConcurSim.
       exists s', Smallstep.initial_state (lts se) (cq vf sg args m') s'.
 
   Lemma BSIM : GS.backward_simulation cc_compcert OpenC OpenA ->
-               final_noundef OpenC ->
                determinate_big OpenC ->
                after_external_receptive OpenC ->
                initial_state_receptive OpenC ->
@@ -3350,10 +3345,6 @@ Section ConcurSim.
 
 End ConcurSim.
 
-
-  Lemma Clight_final_noundef : forall (p: Clight.program), final_noundef (Clight.semantics1 p).
-  Proof.
-    intros. red. intros. Admitted. (*TODO*)
 
   Lemma Clight_determinate_big: forall p, determinate_big (Clight.semantics1 p).
   Proof.
