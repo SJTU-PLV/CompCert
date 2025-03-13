@@ -545,15 +545,16 @@ Qed.
   exists a backward simulation of the dynamic semantics of [p]
   by the dynamic semantics of [tp]. *)
 
-(*
-Theorem transf_c_program_correct:
+
+Theorem transf_clight_program_correct:
   forall p tp,
-  transf_c_program p = OK tp ->
-  backward_simulation cc_compcert cc_compcert (Csem.semantics p) (Asm.semantics tp).
+  transf_clight_program p = OK tp ->
+  GS.forward_simulation cc_compcert (Clight.semantics1 p) (Asm.semantics tp) /\
+    GS.backward_simulation cc_compcert (Clight.semantics1 p) (Asm.semantics tp).
 Proof.
-  intros. apply c_semantic_preservation. apply transf_c_program_match; auto.
+  intros. apply clight_semantic_preservation. apply transf_clight_program_match; auto.
 Qed.
- *)
+
 
 (*
 (** Here is the separate compilation case.  Consider a nonempty list [c_units]

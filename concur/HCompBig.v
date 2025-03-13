@@ -9,6 +9,16 @@ Require Import Linking.
 Require Import Classical.
 
 
+Definition after_external_receptive (lts : semantics li_c li_c) : Prop :=
+  forall s q r se,
+    Smallstep.at_external (lts se) s q ->
+    exists s', Smallstep.after_external (lts se) s r s'.
+
+Definition initial_state_receptive (lts : semantics li_c li_c) : Prop :=
+  forall s vf sg args se m m',
+    Smallstep.initial_state (lts se) (cq vf sg args m) s ->
+    Mem.sup_include (Mem.support m) (Mem.support m') ->
+    exists s', Smallstep.initial_state (lts se) (cq vf sg args m') s'.
 
 Ltac subst_dep :=
   subst;
@@ -115,6 +125,7 @@ Section LINK.
 
   (** * Receptiveness and determinacy *)
 
+      
   Lemma semantics_receptive:
     (forall i, receptive (L i)) ->
     receptive semantics.
@@ -134,6 +145,33 @@ Section LINK.
       Smallstep.valid_query (L i se) q = true ->
       Smallstep.valid_query (L j se) q = true ->
       i = j.
+    
+  Lemma semantics_determinate_big :
+    (forall i, determinate_big (L i)) ->
+    determinate_big semantics.
+  Proof.
+     intros HL se. unfold determinate_big in HL.
+    constructor; cbn.
+    - destruct 1; inversion 1; subst. assert (i0 = i) by eauto; subst.
+      edestruct (sd_big_initial_determ (HL i se) q s s0); eauto.
+    - destruct 1. inversion 1; subst_dep.
+      + eapply sd_big_at_external_nostep; eauto.
+      + edestruct (sd_big_at_external_determ (HL i se) s q q0); eauto.
+        specialize (H0 j). congruence.
+      + eapply sd_big_final_noext; eauto.
+    - destruct 1. inversion 1; subst_dep.
+      eapply sd_big_at_external_determ; eauto.
+    - destruct 1. inversion 1; subst_dep.
+      edestruct (sd_big_after_external_determ (HL i se) s r s' s'0); eauto.
+    - destruct 1. inversion 1; subst_dep.
+      + eapply sd_big_final_nostep; eauto.
+      + eapply sd_big_final_noext; eauto.
+    - destruct 1. inversion 1; subst_dep.
+      eapply sd_big_final_noext; eauto.
+    - destruct 1. inversion 1; subst_dep.
+      eapply sd_big_final_determ; eauto.
+  Qed.
+
 
   Lemma semantics_determinate:
     (forall i, determinate (L i)) ->
