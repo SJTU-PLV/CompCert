@@ -138,9 +138,6 @@ Definition func_server :=
 
 Definition global_defs_server : list (ident * globdef fundef type) :=
   (server_id, Gfun (Internal func_server)) ::
-  (yield_id, Gfun func_yield_external) ::
-  (pthread_create_id, Gfun func_pthread_create_external) ::
-  (pthread_join_id, Gfun func_pthread_join_external) ::
   nil.
 
 (** we need ids of primitives here? *)

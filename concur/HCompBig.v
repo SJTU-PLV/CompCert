@@ -8,18 +8,6 @@ Require Import Smallstep CallconvBig.
 Require Import Linking.
 Require Import Classical.
 
-
-Definition after_external_receptive (lts : semantics li_c li_c) : Prop :=
-  forall s q r se,
-    Smallstep.at_external (lts se) s q ->
-    exists s', Smallstep.after_external (lts se) s r s'.
-
-Definition initial_state_receptive (lts : semantics li_c li_c) : Prop :=
-  forall s vf sg args se m m',
-    Smallstep.initial_state (lts se) (cq vf sg args m) s ->
-    Mem.sup_include (Mem.support m) (Mem.support m') ->
-    exists s', Smallstep.initial_state (lts se) (cq vf sg args m') s'.
-
 Ltac subst_dep :=
   subst;
   lazymatch goal with

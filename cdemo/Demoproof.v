@@ -98,9 +98,100 @@ Section LINKING.
     eapply Clight.semantics_receptive.
   Qed.
                      
+  Lemma L_E_determinate_big : determinate_big L_E.
+  Proof.
+    red. intros. constructor; intros; inv H.
+    - inv H0. reflexivity.
+    - red. intros. intro. inv H.
+    - inv H0.
+    - inv H0. reflexivity.
+  Qed.
+
+  Lemma valid_query_neq1 : forall se q,
+      Smallstep.valid_query (semantics1 server se) q = true ->
+      Smallstep.valid_query (L_E se) q = true -> False .
+  Proof.
+    intros. inv H. inv H0.
+    unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr in *.
+    repeat destr_in H1. repeat destr_in Heqo. simpl.
+    destr_in H2. repeat destr_in Heqo.
+    rewrite Genv.find_def_spec in Heqo0, Heqo1.
+    destr_in Heqo0.
+    exfalso. clear - Heqo0  Heqo1.
+    unfold encrypt_s in Heqo0.
+    apply in_prog_defmap in Heqo0.
+    unfold server in Heqo1.
+    apply in_prog_defmap in Heqo1. simpl in *.
+    destruct Heqo0 as [H|[H|H]]; inv H.
+    destruct Heqo1 as [H|H]; inv H.
+  Qed.
+
+  Lemma valid_query_neq2 : forall se q,
+      Smallstep.valid_query (semantics1 client se) q = true ->
+      Smallstep.valid_query (L_E se) q = true -> False.
+  Proof.
+    intros. inv H. inv H0.
+    unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr in *.
+    repeat destr_in H1. repeat destr_in Heqo. simpl.
+    destr_in H2. repeat destr_in Heqo.
+    rewrite Genv.find_def_spec in Heqo0, Heqo1.
+    destr_in Heqo0.
+    exfalso. clear - Heqo0  Heqo1.
+    apply in_prog_defmap in Heqo0.
+    apply in_prog_defmap in Heqo1. simpl in *.
+    destruct Heqo0 as [H|[H|H]]; inv H.
+    destruct Heqo1 as [H|[H|[H|[H|[H|H]]]]]; inv H.
+  Qed.
+
+  Lemma valid_query_neq3 : forall se q,
+      Smallstep.valid_query (semantics1 client se) q = true ->
+      Smallstep.valid_query (semantics1 server se) q = true -> False.
+  Proof.
+    intros. inv H. inv H0.
+    unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr in *.
+    repeat destr_in H1. repeat destr_in Heqo. simpl.
+    destr_in H2. repeat destr_in Heqo.
+    rewrite Genv.find_def_spec in Heqo0, Heqo1.
+    destr_in Heqo0.
+    exfalso.  clear - H2 H0 Heqo0  Heqo1.
+    apply in_prog_defmap in Heqo0.
+    apply in_prog_defmap in Heqo1. simpl in *.
+    destruct Heqo0 as [H|H]; inv H;
+      destruct Heqo1 as [H|[H|[H|[H|[H|H]]]]]; inv H.
+    inv H2.
+  Qed.
   
   Lemma c_spec_determinate_big : determinate_big c_spec.
-  Admitted.
+  Proof.
+    unfold compose in compose_c2. unfold option_map in compose_c2.
+    destruct link eqn:Hl in compose_c2;  inv compose_c2.
+    eapply HCompBig.semantics_determinate_big.
+    {
+      intros. destruct i; destruct j; eauto.
+      - unfold compose in compose_c1. unfold option_map in compose_c1.
+        destruct link eqn:Hl1 in compose_c1; inv compose_c1. inv H0.
+        unfold valid_query in H2. exfalso.
+        destruct (Smallstep.valid_query (L_E se) q) eqn:HLE;
+          destruct ( Smallstep.valid_query (semantics1 server se) q) eqn:Hs;
+          eauto using valid_query_neq1,valid_query_neq2,valid_query_neq3.
+      - unfold compose in compose_c1. unfold option_map in compose_c1.
+        destruct link eqn:Hl1 in compose_c1; inv compose_c1. inv H.
+        unfold valid_query in H2. exfalso.
+        destruct (Smallstep.valid_query (L_E se) q) eqn:HLE;
+          destruct ( Smallstep.valid_query (semantics1 server se) q) eqn:Hs;
+          eauto using valid_query_neq1,valid_query_neq2,valid_query_neq3.
+    }
+    destruct i. eapply Clight_determinate_big.
+    unfold compose in compose_c1. unfold option_map in compose_c1.
+    destruct link eqn:Hl1 in compose_c1; inv compose_c1.
+    eapply HCompBig.semantics_determinate_big.
+    {
+      intros. destruct i; destruct j; eauto using valid_query_neq1.
+      exfalso. eapply valid_query_neq1; eauto.
+    }
+    intros. destruct i. eapply L_E_determinate_big.
+    eapply Clight_determinate_big.
+  Qed.
 
   Lemma compose_after_receptive : forall (Lc1 Lc2 Lc : Smallstep.semantics li_c li_c),
       compose Lc1 Lc2 = Some Lc ->
@@ -110,8 +201,7 @@ Section LINKING.
   Proof.
     intros Lc1 Lc2 Lc Hc Hr1 Hr2.
     unfold compose in Hc. unfold option_map in Hc.
-    destruct link in Hc; inv Hc.
-    red. intros. inv H. destruct i.
+    destruct link in Hc; inv Hc.    red. intros. inv H. destruct i.
     - red in Hr1.
       exploit Hr1; eauto. instantiate (1:= r).
       intros [s' Hy].
@@ -123,20 +213,22 @@ Section LINKING.
   Lemma compose_initial_receptive : forall (Lc1 Lc2 Lc : Smallstep.semantics li_c li_c),
       compose Lc1 Lc2 = Some Lc ->
       initial_state_receptive Lc1 ->
+      valid_query_receptive Lc1 ->
       initial_state_receptive Lc2 ->
+      valid_query_receptive Lc2 ->
       initial_state_receptive Lc.
   Proof.
-    intros Lc1 Lc2 Lc Hc Hi1 Hi2.
+    intros Lc1 Lc2 Lc Hc Hi1 Hv1 Hi2 Hv2.
     unfold compose in Hc. unfold option_map in Hc.
     destruct link in Hc; inv Hc.
     red. intros. inv H. destruct i.
     - exploit Hi1; eauto.
       intros [s' Hi].
       eexists. econstructor. instantiate (1:=true). simpl.
-      eauto.
-    - exploit Hr2; eauto. instantiate (1:= r).
-      intros [s' Hy]. eexists. econstructor; eauto.
-  Admitted.
+      eauto. eauto.
+    - exploit Hi2; eauto. intros [s' Hi]. eexists. econstructor.
+      instantiate (1:= false). eauto. eauto.
+  Qed.
   
   Lemma c_spec_receptive_after_external : after_external_receptive c_spec.
   Proof.
@@ -149,10 +241,14 @@ Section LINKING.
 
   Lemma c_spec_receptive_initial_state : initial_state_receptive c_spec.
     eapply compose_initial_receptive. eauto.
-    apply Clight_initial_state_receptive.
+    apply Clight_initial_state_receptive. apply Clight_valid_query_receptive.
     eapply compose_initial_receptive. eauto.
     red. intros. inv H. eexists. econstructor; eauto.
-    apply Clight_initial_state_receptive.
+    red. intros. reflexivity.
+    apply Clight_initial_state_receptive. apply Clight_valid_query_receptive.
+    red. intros.
+    unfold compose in compose_c1. unfold option_map in compose_c1.
+    destruct link in compose_c1; inv compose_c1. reflexivity.
   Qed.
   
   Theorem module_linking_back :

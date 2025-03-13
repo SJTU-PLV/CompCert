@@ -4,7 +4,7 @@ Require Import Smallstep SmallstepClosed.
 Require Import ValueAnalysis.
 Require Import MultiLibs CMulti AsmMulti.
 Require Import Extends InjectFootprint CA.
-Require Import CallconvBig HCompBig Ext Injp CAnew Composition.
+Require Import CallconvBig Ext Injp CAnew Composition.
 Require Import ThreadLinking.
 
 Section ConcurSim.
@@ -3365,4 +3365,8 @@ End ConcurSim.
     eexists. econstructor; eauto.
   Qed.
   
-
+  Lemma Clight_valid_query_receptive :
+     forall (p: Clight.program), valid_query_receptive (Clight.semantics1 p).
+  Proof.
+    intros p. red. reflexivity.
+  Qed.

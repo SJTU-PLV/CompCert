@@ -279,9 +279,6 @@ Definition global_defs_client : list (ident * globdef fundef type) :=
   (arg_id, Gvar arg_def) ::
   (main_id, Gfun (Internal func_main)) ::
   (server_id, Gfun func_server_external) ::
-  (yield_id, Gfun func_yield_external) ::
-  (pthread_create_id, Gfun func_pthread_create_external) ::
-  (pthread_join_id, Gfun func_pthread_join_external) ::
   nil.
 
 (** we need ids of primitives here? *)
