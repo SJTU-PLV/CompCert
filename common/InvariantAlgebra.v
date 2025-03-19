@@ -18,8 +18,7 @@ Definition invref {li} (I1 I2: invariant li) :=
       symtbl_inv I2 w2 se
       /\ query_inv I2 w2 q
       /\ forall r,
-        reply_inv I2 w2 r ->ake
-        
+        reply_inv I2 w2 r ->
         reply_inv I1 w1 r.
 
 Definition inveqv {li} (I1 I2: invariant li) :=

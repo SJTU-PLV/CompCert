@@ -202,10 +202,12 @@ Separate Extraction
    Conventions1.int_callee_save_regs Conventions1.float_callee_save_regs
    Conventions1.dummy_int_reg Conventions1.dummy_float_reg
    Conventions1.allocatable_registers
+   Op.globals_addressing Op.globals_operation
    RTL.instr_defs RTL.instr_uses
    Machregs.mregs_for_operation Machregs.mregs_for_builtin
    Machregs.two_address_op Machregs.is_stack_reg
    Machregs.destroyed_at_indirect_call
+   AST.signature_main AST.globals_of_builtin_args
    AST.signature_main
    Floats.Float32.from_parsed Floats.Float.from_parsed
    Floats.Float.of_bits Floats.Float.to_bits

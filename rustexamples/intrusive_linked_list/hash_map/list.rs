@@ -3,7 +3,7 @@ struct Node;
 
 struct Node {
     key: i32,
-    val : i32,
+    val : Box<i32>,
     next : Box<List>
 }
 
@@ -31,7 +31,7 @@ fn find_and_process(l: Box<List>, k: i32) -> Box<List>{
         }
         List::Cons(node) => {
             if (k == node.key) {
-                node.val = process(node.val);
+                node.val = process_box(node.val);
             }
             else {
                 node.next = find_and_process(node.next, k);
@@ -46,7 +46,7 @@ fn empty_list() -> Box<List> {
     return Box(List::Nil);
 }
 
-fn insert(l: Box<List>, k: i32, v: i32) -> Box<List>{
+fn insert(l: Box<List>, k: i32, v: Box<i32>) -> Box<List>{
     let head: Node = Node{key: k, val: v, next: l};
     l = Box(List::Cons(head));
     return l;

@@ -60,7 +60,7 @@ int process(int val){
 }
 
 int* process_box(int* val){
-    printf("The key is mapped to %d\n", *val);
+    printf("The key is mapped to a pointer points to %d\n", *val);
     return val;
 }
 
@@ -116,9 +116,17 @@ void delete_hmap(HashMap* hmap){
 
 int main(){
     HashMap* hmap = init_hmap();
-    hmap_set(hmap, 19, 10);
+    int *v1 = malloc(sizeof(int));
+    *v1 = 10;
+    int *v2 = malloc(sizeof(int));
+    *v2 = 20;
+    int *v3 = malloc(sizeof(int));
+    *v3 = 30;
+    hmap_set(hmap, 19, v1);
+    hmap_set(hmap, 13, v2);
+    hmap_set(hmap, 23, v3);
     hmap_process(hmap, 19);
-    hmap_process(hmap, 19);
-    hmap_process(hmap, 19);
+    hmap_process(hmap, 13);
+    hmap_process(hmap, 23);
     delete_hmap(hmap);
 }
