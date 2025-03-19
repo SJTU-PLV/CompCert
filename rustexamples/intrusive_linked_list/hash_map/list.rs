@@ -14,6 +14,9 @@ enum List {
 
 extern fn process(v: i32) -> i32
 
+// used to process large data
+extern fn process_box(v: Box<i32>) -> Box<i32>
+
 fn hash(k: i32, range: u32) -> u32{
     return k % range;
 }

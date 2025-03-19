@@ -3,13 +3,13 @@
 #define DEFAULT_HASH_MAP_LENGTH 10
 
 // maybe just use void* instead of List*
-typedef struct List List;
-typedef List** Hashmap;
-extern List* empty_list();
-extern List* find_and_process(List* l, int k);
-extern List* insert(List* l, int k, int v);
-extern List* remove(List* l, int k);
-extern int delete_list(List* l);
+typedef void* List_ptr; // bucket
+typedef List_ptr* HashMap;
+extern List_ptr empty_list();
+extern List_ptr find_and_process(List_ptr l, int k);
+extern List_ptr insert(List_ptr l, int k, int v);
+extern List_ptr remove(List_ptr l, int k);
+extern int delete_list(List_ptr l);
 
 // The hash function can be implemented in assembly. It must guarantee
 // that the return index must less than DEFAULT_HASH_MAP_LENGTH.
@@ -19,8 +19,8 @@ extern unsigned int hash(int k, unsigned int range);
 // static List* hmap[DEFAULT_HASH_MAP_LENGTH] = {NULL};
 
 // Less efficient
-Hashmap init_hmap(){
-    Hashmap hmap = malloc(sizeof(void*) * DEFAULT_HASH_MAP_LENGTH);
+HashMap* init_hmap(){
+    HashMap* hmap = malloc(sizeof(List_ptr) * DEFAULT_HASH_MAP_LENGTH);
     for(int i = 0; i < DEFAULT_HASH_MAP_LENGTH; ++i){
         // hmap[i] = empty_list();
         hmap[i] = NULL;
@@ -28,22 +28,21 @@ Hashmap init_hmap(){
     return hmap;
 }
 
-List** find_bucket(Hashmap hmap, int key){
+List_ptr* find_bucket(HashMap hmap, int key){
     unsigned int index = hash(key, DEFAULT_HASH_MAP_LENGTH);
     return &(hmap[index]);
 }
 
-Hashmap hmap_set(Hashmap hmap, int key, int val){
-    List** buk = find_bucket(hmap, key);
+void hmap_set(HashMap* hmap, int key, int val){
+    List_ptr* buk = find_bucket(hmap, key);
     if(*buk == NULL){
-        List* l = empty_list(); // do we need to check the malloc result?
+        List_ptr l = empty_list(); // do we need to check the malloc result?
         l = insert(l, key, val);
         *buk = l;
     }
     else{
         *buk = insert(*buk, key, val);
     }
-    return hmap;
     // int index = hash(key);
     // if(hmap[index] == NULL){
     //     List* list = empty_list(); // do we need to check the malloc result?
@@ -60,14 +59,19 @@ int process(int val){
     return val;
 }
 
+int* process_box(int* val){
+    printf("The key is mapped to %d\n", *val);
+    return val;
+}
+
 // process_with_key takes (key, val) as arguments
 int process_with_key(int key, int val){
     printf("The key %d is mapped to %d\n", key, val);
     return val;
 }
 
-void hmap_process(Hashmap hmap, int key){
-    List** buk = find_bucket(hmap, key);
+void hmap_process(HashMap hmap, int key){
+    List_ptr* buk = find_bucket(hmap, key);
     if(*buk == NULL){
         return;
     }
@@ -84,8 +88,8 @@ void hmap_process(Hashmap hmap, int key){
     // }
 }
 
-void hmap_remove(Hashmap hmap, int key){
-    List** buk = find_bucket(hmap, key);
+void hmap_remove(HashMap* hmap, int key){
+    List_ptr* buk = find_bucket(hmap, key);
     if(*buk == NULL){
         return;
     }
@@ -102,7 +106,7 @@ void hmap_remove(Hashmap hmap, int key){
     // }
 }
 
-void delete_hmap(Hashmap hmap){
+void delete_hmap(HashMap* hmap){
     for(int i = 0; i < DEFAULT_HASH_MAP_LENGTH; ++i){
         if (hmap[i] != NULL) delete_list(hmap[i]);
     }
@@ -111,10 +115,10 @@ void delete_hmap(Hashmap hmap){
 }
 
 int main(){
-    Hashmap hmap = init_hmap();
+    HashMap* hmap = init_hmap();
     hmap_set(hmap, 19, 10);
-    hmap_operate_on(hmap, 19);
-    hmap_operate_on(hmap, 19);
-    hmap_operate_on(hmap, 19);
+    hmap_process(hmap, 19);
+    hmap_process(hmap, 19);
+    hmap_process(hmap, 19);
     delete_hmap(hmap);
 }

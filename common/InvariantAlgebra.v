@@ -8,7 +8,7 @@ Local Open Scope inv_scope.
 
 (* Refinement of invariants *)
 
-(* [I1] is refined by [I2], meaning that any lts is safe under [I2] is
+(* [I2] is refined by [I1], meaning that any lts is safe under [I2] is
 also safe under [I1] *)
 Definition invref {li} (I1 I2: invariant li) :=
   forall w1 se q,
@@ -18,7 +18,8 @@ Definition invref {li} (I1 I2: invariant li) :=
       symtbl_inv I2 w2 se
       /\ query_inv I2 w2 q
       /\ forall r,
-        reply_inv I2 w2 r ->
+        reply_inv I2 w2 r ->ake
+        
         reply_inv I1 w1 r.
 
 Definition inveqv {li} (I1 I2: invariant li) :=

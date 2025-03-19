@@ -297,10 +297,6 @@ Proof.
   destruct IHstar as [n P]. exists (S n); econstructor; eauto.
 Qed.
 
-Remark starN_step_right ge: forall n s t t1 s' t2 s'',
-    starN ge n s t1 s' -> step ge s' t2 s'' -> t = t1 ** t2 ->
-    starN ge (S n) s t s''.
-Admitted.
 
 (** Infinitely many transitions *)
 

@@ -269,9 +269,11 @@ Definition drop_in_place_List : function :=
 
 (* composite definitions *)
 
+Definition Node_members := [Member_plain key type_int32s; Member_plain val (Tbox type_int32s); Member_plain next List_box].
+
 Definition composite_types : list composite_definition :=
   (* Node *)
-  Composite Node Struct [Member_plain key type_int32s; Member_plain val type_int32s; Member_plain next List_box] nil nil ::
+  Composite Node Struct Node_members nil nil ::
   (* List *)
   Composite List TaggedUnion [Member_plain Nil Tunit; Member_plain Cons Node_ty] nil nil ::
   nil.
@@ -306,3 +308,6 @@ Definition linked_list_mod : program :=
     prog_comp_env_eq := proj2_sig build_ce_ok; |}.
 
 
+(* Compute (sizeof (prog_comp_env linked_list_mod) (Tstruct nil List)). *)
+(* Compute (field_offset (prog_comp_env linked_list_mod) val Node_members). *)
+(* Compute (field_offset (prog_comp_env linked_list_mod) next Node_members). *)
