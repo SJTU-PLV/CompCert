@@ -52,7 +52,7 @@ fn insert(l: Box<List>, k: i32, v: Box<i32>) -> Box<List>{
     return l;
 }
 
-fn remove(l: Box<List>, k: i32) -> Box<List>{
+fn list_remove(l: Box<List>, k: i32) -> Box<List>{
     match *l {
         List::Nil => {
             // *l = List::Nil;
@@ -63,7 +63,7 @@ fn remove(l: Box<List>, k: i32) -> Box<List>{
                 return node.next;
             }
             else {
-                node.next = remove(node.next, k);
+                node.next = list_remove(node.next, k);
                 *l = List::Cons(node);
                 return l;
             }
