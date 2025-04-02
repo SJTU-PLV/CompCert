@@ -243,15 +243,6 @@ End Initial.
 
 Let LTS_asm := L_asm tse.
 
-(** seems to be unprovable for any given LTS where the [final_state] is opaque *)
-Lemma reply_sound_cc_compcert : forall s2 r, Smallstep.final_state LTS_asm s2 r -> exists i, final_asm i r.
-Proof.
-  intros. destruct r. 
-  Admitted.
-(*  exists i.
-  econstructor; eauto.
-Qed.
- *)
 
 Lemma match_initial_backward_ca1 : forall q1,
     initial_c q1 -> exists wB q2,
@@ -288,7 +279,6 @@ Proof.
   eapply Hmatch_senv; eauto. constructor.
 Qed.
 
-(** seems we have to deal with the Vundef issue *)
 Lemma match_final_backward_ca : forall rv1 rv2 r1 r2 wB,
     match_reply cc_compcert wB r1 r2 -> valid_world_cc_compcert wB ->
     final_asm rv2 r2 -> final_c rv1 r1 -> rv1 = rv2.
@@ -303,6 +293,20 @@ Proof.
   inv H1. inv H2. inv H10. rewrite <- H3 in H. inv H. congruence.
 Qed.
 
+Lemma match_final_forward_ca : forall rv r1 r2 wB,
+    match_reply cc_compcert wB r1 r2 -> valid_world_cc_compcert wB ->
+     final_c rv r1 -> final_asm rv r2.
+Proof.
+  intros. inv H0. destruct H as [rx [Hr1 [ry [Hr2 [rz [Hr3 Hr4]]]]]].
+  inv Hr1. inv Hr2. inv H. simpl in H0. inv Hr3. inv Hr4. destruct H as [Hw Hj].
+  destruct r2. inv Hj. inv H3. rename m into ttm'.
+  simpl in H.
+  subst tres. unfold main_sg in H9. simpl in H9. unfold Conventions1.loc_result in H9.
+  replace Archi.ptr64 with true in H9 by reflexivity. simpl in H9.
+  specialize (H RAX). 
+  inv H1. inv H2. inv H9. constructor. rewrite <- H6 in H. inv H. congruence.
+Qed.
+
 Definition close_c := close_semantics L_c initial_c final_c.
 Definition close_asm := close_semantics L_asm initial_asm final_asm.
 
@@ -312,11 +316,11 @@ Theorem closed_backward_simulation_cc_compcert :
 Proof.
   eapply close_sound_backward.
   intros. eapply closed_Lasm.
-  exact reply_sound_cc_compcert.
   exact match_initial_backward_ca1.
   exact match_initial_backward_ca2.
   exact det_big_C.
   intros. symmetry. eapply match_final_backward_ca; eauto.
+  exact match_final_forward_ca.
   exact BSIM_CC.
 Qed.
   

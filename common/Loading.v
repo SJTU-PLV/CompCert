@@ -144,9 +144,9 @@ Proof.
   specialize (H _ H0) as [(r & r0 & REPLY & FS)|(t & s'' & STEP)]; eauto.
 Qed.
 
+(** Maybe it can also be removed by using [determinate_big] instead for progress*)
+(** But it'ok to use it because we are "closing" the semantics here *)
 Hypothesis closed2 : forall s q, Smallstep.safe lts2 s -> ~ at_external lts2 s q.
-
-Hypothesis reply_sound2: forall s r, Smallstep.final_state lts2 s r -> exists i, reply2 i r.
 
 (** for bsim_initial_states_exists *)
 Hypothesis Hmatch_query_backward1 : forall q1,      
@@ -167,6 +167,10 @@ Hypothesis source_determinate_big: determinate_big s1.
 Hypothesis Hmatch_reply_backward : forall rv1 rv2 r1 r2 wB,
   match_reply ccB wB r1 r2 -> valid_wB wB ->
   reply2 rv2 r2 -> reply1 rv1 r1 -> rv2 = rv1.
+
+Hypothesis Hmatch_reply_forward : forall rv r1 r2 wB,
+  match_reply ccB wB r1 r2 -> valid_wB wB ->
+  reply1 rv r1 -> reply2 rv r2.
 
 Lemma star_internal : forall {li1 li2} (lts1: Smallstep.semantics li1 li2) s1 s1' Pq Pr,
     star (Smallstep.step (lts1 (se lts1))) (Smallstep.globalenv (lts1 (se lts1))) s1 E0 s1' ->
@@ -223,15 +227,22 @@ Proof.
     + destruct Hs' as [t [s'' Hs1']].
       inv Hdet. exfalso. eapply sd_big_final_nostep; eauto.
   - (* progress *)
-    intros. apply safe_sound_1 in H0.
+    intros. apply safe_sound_1 in H0 as Hsafeo.
     destruct H as [wB [H [Hs Hw]]].
     specialize (bsim_lts se1 se2 wB Hs Hvalid).
     inv bsim_lts.
     pose proof (progress := bsim_progress0).
-    specialize (bsim_progress0 _ _ _ H H0) as [(r & FS)|[|]].
-    left. destruct (reply_sound2 _ _ FS) as (ri & REPLY). eauto.
-    destruct H1. exfalso. eapply closed2; eauto. eapply open_progress'; eauto.
-    auto.
+    specialize (bsim_progress0 _ _ _ H Hsafeo) as [(r & FS)|[|]].
+    + exploit bsim_match_final_states0; eauto. intros (s1' & r1 & Hstar1 & Hf1 & Hr).
+      exploit H0. eapply star_internal. eauto. simpl. specialize (source_determinate_big se1) as Hdet.
+      intros [Hrb|Hsb].
+      -- destruct Hrb as [rv [r1' [Hr1 Hf1']]]. inv Hdet. exploit sd_big_final_determ. apply Hf1. apply Hf1'.
+         intro. subst r1'.
+         left. do 2 eexists. split; eauto.
+      -- exfalso. destruct Hsb as [t [s'' Hstepb]]. inv Hdet. eapply sd_big_final_nostep; eauto.
+    (* left. destruct (reply_sound2 _ _ FS) as (ri & REPLY). eauto. *)
+    + destruct H1. exfalso. eapply closed2; eauto. eapply open_progress'; eauto.
+    + auto.
   - (* simulation *)
     intros. apply safe_sound_1 in H1.
     destruct H0 as [wB [H0 [Hs Hw]]].
