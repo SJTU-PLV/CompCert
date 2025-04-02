@@ -128,6 +128,31 @@ Section LINK.
       eapply sr_traces; eauto.
   Qed.
 
+    
+  Lemma semantics_determinate_big :
+    (forall i, determinate_big (L i)) ->
+    determinate_big semantics.
+  Proof.
+    intros HL se. unfold determinate_big in HL.
+    constructor; cbn.
+    - destruct 1. inversion 1; subst_dep.
+      + eapply sd_big_at_external_nostep; eauto.
+      + edestruct (sd_big_at_external_determ (HL i se) s q q0); eauto.
+        specialize (H0 j). congruence.
+      + eapply sd_big_final_noext; eauto.
+    - destruct 1. inversion 1; subst_dep.
+      eapply sd_big_at_external_determ; eauto.
+    - destruct 1. inversion 1; subst_dep.
+      edestruct (sd_big_after_external_determ (HL i se) s r s' s'0); eauto.
+    - destruct 1. inversion 1; subst_dep.
+      + eapply sd_big_final_nostep; eauto.
+      + eapply sd_big_final_noext; eauto.
+    - destruct 1. inversion 1; subst_dep.
+      eapply sd_big_final_noext; eauto.
+    - destruct 1. inversion 1; subst_dep.
+      eapply sd_big_final_determ; eauto.
+  Qed.
+
   Hypothesis valid_query_excl:
     forall i j se q,
       Smallstep.valid_query (L i se) q = true ->
@@ -187,3 +212,15 @@ Definition compose {li} (La Lb: Smallstep.semantics li li) :=
   let L i := match i with true => La | false => Lb end in
   option_map (semantics L) (link (skel La) (skel Lb)).
 
+
+Lemma compose_determinate_big {li}: forall (L1 L2 L: Smallstep.semantics li li),
+    compose L1 L2 = Some L ->
+    determinate_big L1 ->
+    determinate_big L2 ->
+    determinate_big L.
+Proof.
+  intros. unfold compose in H.
+  unfold option_map in H. destr_in H.
+  inv H. eapply semantics_determinate_big; eauto.
+  intros. destr.
+Qed.

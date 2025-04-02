@@ -12,6 +12,7 @@ Variable L_c : semantics li_c li_c.
 Variable L_asm : semantics li_asm li_asm.
 
 Hypothesis BSIM_CC : backward_simulation cc_compcert cc_compcert L_c L_asm.
+Hypothesis det_big_C: determinate_big L_c.
 
 Let skel_c := skel L_c.
 Let main_id_c := prog_main skel_c.
@@ -51,10 +52,10 @@ Inductive initial_c : query li_c -> Prop :=
 (** This definition is not deterministic. Will this becomes a problem? *)
 Inductive final_c : int -> reply li_c -> Prop :=
 |final_c_int : forall r m,
-    final_c r (cr (Vint r) m)
-|final_c_other : forall res r m,
+    final_c r (cr (Vint r) m).
+(*|final_c_other : forall res r m,
     (forall i, res <> Vint i) ->
-    final_c r (cr res m).
+    final_c r (cr res m). *)
 
 
 Definition initial_regset (pc : val) (sp: val):=
@@ -73,10 +74,10 @@ Inductive initial_asm : query li_asm -> Prop :=
 Inductive final_asm : int -> reply li_asm -> Prop :=
 |final_asm_int : forall r (rs : regset) m,
      rs # RAX = Vint r ->
-     final_asm r (rs,m)
-|final_asm_other : forall r (rs: regset) m,
+     final_asm r (rs,m).
+(*|final_asm_other : forall r (rs: regset) m,
     (forall i, rs # RAX <> Vint i) ->
-    final_asm r (rs,m).
+    final_asm r (rs,m). *)
 
 Inductive valid_world_cc_compcert : ccworld cc_compcert -> Prop :=
 |valid_w_intro: forall se j1 j2 m1 m2 m3 Hm1 Hm2 rs,
@@ -246,11 +247,11 @@ Let LTS_asm := L_asm tse.
 Lemma reply_sound_cc_compcert : forall s2 r, Smallstep.final_state LTS_asm s2 r -> exists i, final_asm i r.
 Proof.
   intros. destruct r. 
-  destruct (r # RAX) eqn: rRAX;
-    try ( exists Int.one; eapply final_asm_other; congruence).
-  exists i.
+  Admitted.
+(*  exists i.
   econstructor; eauto.
 Qed.
+ *)
 
 Lemma match_initial_backward_ca1 : forall q1,
     initial_c q1 -> exists wB q2,
@@ -288,25 +289,18 @@ Proof.
 Qed.
 
 (** seems we have to deal with the Vundef issue *)
-Lemma match_final_backward_ca : forall r r1 r2 wB,
+Lemma match_final_backward_ca : forall rv1 rv2 r1 r2 wB,
     match_reply cc_compcert wB r1 r2 -> valid_world_cc_compcert wB ->
-    final_asm r r2 -> final_c r r1.
+    final_asm rv2 r2 -> final_c rv1 r1 -> rv1 = rv2.
 Proof.
   intros. inv H0. destruct H as [rx [Hr1 [ry [Hr2 [rz [Hr3 Hr4]]]]]].
   inv Hr1. inv Hr2. inv H. simpl in H0. inv Hr3. inv Hr4. destruct H as [Hw Hj].
   destruct r2. inv Hj. inv H3. rename m into ttm'.
   simpl in H.
-  subst tres. unfold main_sg in H9. simpl in H9. unfold Conventions1.loc_result in H9.
-  replace Archi.ptr64 with true in H9 by reflexivity. simpl in H9.
+  subst tres. unfold main_sg in H10. simpl in H10. unfold Conventions1.loc_result in H10.
+  replace Archi.ptr64 with true in H10 by reflexivity. simpl in H10.
   specialize (H RAX). 
-  inv H1.
-  - rewrite H5 in H. inv H. rewrite <- H3 in H9. inv H9.
-    econstructor; eauto.
-    eapply final_c_other. congruence.
-    rewrite <- H3 in H9. inv H9. eapply final_c_other. congruence.
-  - eapply final_c_other.
-    intros. intro.
-    rewrite H1 in H9. inv H9. rewrite <- H6 in H. inv H. congruence.
+  inv H1. inv H2. inv H10. rewrite <- H3 in H. inv H. congruence.
 Qed.
 
 Definition close_c := close_semantics L_c initial_c final_c.
@@ -321,7 +315,8 @@ Proof.
   exact reply_sound_cc_compcert.
   exact match_initial_backward_ca1.
   exact match_initial_backward_ca2.
-  exact match_final_backward_ca.
+  exact det_big_C.
+  intros. symmetry. eapply match_final_backward_ca; eauto.
   exact BSIM_CC.
 Qed.
   
@@ -359,6 +354,7 @@ Proof.
   eapply closed_backward_simulation_cc_compcert.
   apply clight_semantic_preservation.
   apply transf_clight_program_match; auto.
+  eapply Clight_determinate_big.
   eapply closed_program_asm_LTS; eauto.  
 Qed.
 
@@ -370,6 +366,7 @@ Proof.
   intros.
   eapply closed_backward_simulation_cc_compcert.
   apply transf_c_program_correct; auto.
+  eapply Csem_determinate_big.
   eapply closed_program_asm_LTS; eauto.  
 Qed.
 
@@ -392,6 +389,7 @@ Proof.
   - unfold compose in H. unfold option_map in H. destr_in H. inv H.
     eapply semantics_receptive. destruct i; eapply Clight.semantics_receptive; eauto.
   - eapply Asm.semantics_determinate.
+  - eapply compose_determinate_big; eauto; eapply Clight_determinate_big.
   - eapply closed_program_asm_LTS; eauto.
 Qed.
 
@@ -408,8 +406,9 @@ Corollary transf_bsim_link_c :
 Proof.
   intros.
   eapply closed_backward_simulation_cc_compcert; eauto.
-  2: { eapply closed_program_asm_LTS; eauto. }
+  3: { eapply closed_program_asm_LTS; eauto. }
   eapply compose_transf_c_program_correct; eauto.
+  eapply compose_determinate_big; eauto; eapply Csem_determinate_big.
 Qed.
 
 Require Import Behaviors.

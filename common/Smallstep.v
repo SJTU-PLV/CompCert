@@ -1275,8 +1275,8 @@ Record lts_determinate {liA liB st} (L: lts liA liB st) se: Prop :=
 
 Record lts_determinate_big {liA liB st} (L: lts liA liB st): Prop :=
   Determinate_big {
-    sd_big_initial_determ: forall q s1 s2,
-      initial_state L q s1 -> initial_state L q s2 -> s1 = s2;
+    (*sd_big_initial_determ: forall q s1 s2,
+      initial_state L q s1 -> initial_state L q s2 -> s1 = s2; *)
     sd_big_at_external_nostep: forall s q,
       at_external L s q -> Nostep L s;
     sd_big_at_external_determ: forall s q1 q2,

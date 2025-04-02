@@ -946,11 +946,10 @@ Qed.
 
 Require Import SmallstepLinkingBack.
 
+
 Lemma Csem_determinate_big: forall p, determinate_big (Csem.semantics p).
 Proof.
   intros p se. constructor.
-  - (*initial_determ*)
-    intros. inv H; inv H0. reflexivity.
   - (*initial_nostep*)
     intros. red. intros. intro. inv H. inv H0. inv H. inv H.
     setoid_rewrite H1 in FIND. inv FIND.
@@ -961,6 +960,25 @@ Proof.
     intros. inv H. inv H0. reflexivity.
   - (*final_nostep*)
     intros. red. intros. intro. inv H. inv H0. inv H. inv H.
+  - (*final_noext*)
+    intros. inv H. inv H0.
+  - (*final_determ*)
+    intros. inv H. inv H0. reflexivity.
+Qed.
+
+Lemma Clight_determinate_big: forall p, determinate_big (Clight.semantics1 p).
+Proof.
+  intros p se. constructor.
+  - (*initial_nostep*)
+    intros. red. intros. intro. inv H. inv H0.
+    setoid_rewrite H1 in FIND. inv FIND.
+    setoid_rewrite H1 in FIND. inv FIND. inv H7.
+  - (*ext_determ*)
+    intros. inv H. inv H0. setoid_rewrite H1 in H6. inv H6. reflexivity.
+  - (*after_determ*)
+    intros. inv H. inv H0. reflexivity.
+  - (*final_nostep*)
+    intros. red. intros. intro. inv H. inv H0.
   - (*final_noext*)
     intros. inv H. inv H0.
   - (*final_determ*)
