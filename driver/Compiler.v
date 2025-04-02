@@ -507,16 +507,15 @@ Ltac DestructM :=
   apply Asm.semantics_determinate.
 Qed.
 
-(*
+
 Theorem c_semantic_preservation:
   forall p tp,
   match_c_prog p tp ->
-  backward_simulation cc_compcert cc_compcert (Csem.semantics p) (Asm.semantics tp).
+  GS.backward_simulation cc_compcert (Csem.semantics p) (Asm.semantics tp).
 Proof.
   intros p tp (p' & Hp' & Htp). cbn in Hp'.
-  rewrite <- (cc_compose_id_left cc_compcert) at 1.
-  rewrite <- (cc_compose_id_left cc_compcert) at 2.
-  apply compose_backward_simulations with (atomic (Cstrategy.semantics p)).
+  rewrite <- cctrans_id_1.
+  apply GS.compose_forward_simulations with (atomic (Cstrategy.semantics p)).
   - apply factor_backward_simulation.
     + apply Cstrategy.strategy_simulation.
     + apply Csem.semantics_single_events.

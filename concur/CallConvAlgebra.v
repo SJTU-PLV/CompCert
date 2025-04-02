@@ -125,6 +125,68 @@ Proof.
     econstructor; eauto.
 Qed.
 
+Lemma open_bsim_cctrans' {li1 li2: language_interface}:
+  forall (cc1 cc2: callconv li1 li2) L1 L2,
+    backward_simulation cc1 L1 L2 ->
+    cctrans' cc1 cc2 ->
+    backward_simulation cc2 L1 L2.
+  (*cc1 : injp @ injp cc2: injp*)
+Proof.
+  intros.
+  destruct X as [match12 INCOM OUTGO].
+  inv H.
+  destruct X as [index order match_states SKEL PROP WF].
+  constructor.
+    set (ms se1 se2 (w2 : ccworld cc2) (wp2: gworld cc2) idx s1 s2 :=
+         exists w1 (wp1 : gworld cc1),
+           match_states se1 se2 w1 wp1 idx s1 s2 /\
+             match_senv cc1 w1 se1 se2 /\
+             match12 (get w1) (get w2) /\
+             match12 wp1 wp2 /\
+             (forall r1 r2 wp1 wp2 wp1', match12 wp1 wp2 -> (get w1) o-> wp1' -> wp1 *-> wp1' -> match_reply cc1 (set w1 wp1') r1 r2 ->
+            exists (wp2' : gworld cc2), (get w2) o-> wp2' /\ wp2 *-> wp2' /\ match_reply cc2 (set w2 wp2') r1 r2)).
+  eapply Backward_simulation with order ms; auto.
+  intros se1 se2 wB' Hse' Hse1.
+  split.
+  - intros q1 q2 Hq'.
+    destruct (INCOM wB' se1 se2 q1 q2) as (wB & Hse & Hq & Hr); auto.
+    eapply bsim_match_valid_query; eauto.
+  - intros q1 q2 Hq'. 
+    constructor.
+    + intros s1 Hi.
+    destruct (INCOM wB' se1 se2 q1 q2) as (wB & Hse & Hq & Htrans & Hf); auto.
+    edestruct @bsim_match_initial_states as (Hi1 & Hi2); eauto.
+    + intros s1 s2 His Hit.
+      destruct (INCOM wB' se1 se2 q1 q2) as (wB & Hse & Hq & Htrans & Hf); auto.
+      edestruct @bsim_match_initial_states as (Hi1 & Hi2); eauto.
+      exploit Hi2; eauto. intros [s1' [A B]].
+      eexists. split. eauto. inv B. econstructor; eauto.
+      red. exists wB,(get wB). repeat apply conj; eauto.
+  - intros gw i s1 s2 r2 (wB & gw' & Hs & Hse & HmB & Hm & Hf) Hsafe1 Hr2.
+    edestruct @bsim_match_final_states as (s1' & r1 & gw1 & Hstar1 & Hr1 & ACCO1 & ACCI1 & Hr); eauto.
+    exploit Hf; eauto. intros (gw2 &  ACCO2 & ACCI2 & Hr2'). exists s1'. exists r1.
+    exists gw2. intuition auto.
+  - (*the most tricky part*)
+    intros gw2 i s1 s2 qA2 (wB & gw1 & Hs & Hse & HmB & Hm & Hf) Hsafe1 HqA2.
+    edestruct @bsim_match_external as (wA & s1' & qA1 & Hstar1 & HqA1 & Hacc1 & HqA & HseA & ?); eauto.
+    edestruct OUTGO as (wA' & Hm' & HseA' & HqA' & Hr); eauto.
+    exists wA', s1', qA1. intuition auto.
+    exploit Hr; eauto. intros (wp1' & ACCO1 & MR1 & Hm'').
+    exploit H. eauto. eauto. intro Hrex2. inv Hrex2.
+    split. eauto.
+    intros. exploit bsim_match_cont_match; eauto.
+    intros [s1'' [A B]]. eexists. split. eauto. inv B. econstructor; eauto.
+    red. exists wB. exists wp1'.
+    intuition eauto.
+  - intros. destruct H as [a [b [c [d [e [f g]]]]]].
+    eapply @bsim_progress; eauto.
+  - intros s2 t s2' Hs2' gw2 i s1 (wB & gw1 & Hs & Hse & Hr') Hsafe1.
+   edestruct @bsim_simulation as (i' & s1' & Hs1' & Hs'); eauto.
+   exists i', s1'. split; auto.
+   econstructor; eauto.
+Qed.
+
+
 Definition cctrans {li1 li2} cc1 cc2 :=
   inhabited (@cctrans' li1 li2 cc1 cc2).
 
@@ -170,6 +232,16 @@ Global Instance open_fsim_cctrans:
 Proof.
   intros li1 li2 cc1 cc2 [Ht] sem1 sem2 L1.
   eapply open_fsim_cctrans'; eauto.
+Qed.
+
+Global Instance open_bsim_cctrans:
+  Monotonic
+    (@GS.backward_simulation)
+    (forallr - @ liA1, forallr - @ liA2, cctrans ++>
+     subrel).
+Proof.
+  intros li1 li2 cc1 cc2 [Ht] sem1 sem2 L1.
+  eapply open_bsim_cctrans'; eauto.
 Qed.
 
 Global Instance cc_compose_ref li1 li2 li3:
