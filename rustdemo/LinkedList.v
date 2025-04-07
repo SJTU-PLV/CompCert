@@ -41,7 +41,8 @@ Definition free : ident := 17%positive.
 Definition hash : ident := 32%positive.
 Definition range : ident := 15%positive.
 Definition tmp : ident := 12%positive.
-Definition _32 : ident := 177%positive.
+Definition tmpv : ident := 177%positive.
+(* Definition _32 : ident := 177%positive. *)
 Definition _33 : ident := 143%positive.
 Definition _34 : ident := 111%positive.
 Definition _35 : ident := 75%positive.
@@ -62,7 +63,7 @@ Definition Node_ty : type := Tstruct nil Node.
 Definition type_int32u := Tint I32 Unsigned.
 
 (* function types declaration *)
-Definition process_ty : type := Tfunction nil nil (Tcons type_int32s Tnil) type_int32s cc_default.
+Definition process_ty : type := Tfunction nil nil (Tcons (Tbox type_int32s) Tnil) (Tbox type_int32s) cc_default.
 
 Local Open Scope rustlight_scope.
 
@@ -86,6 +87,7 @@ Definition hash_func : function :=
 
 Definition List_box : type := Tbox List_ty.
 Definition find_ty : type := Tfunction nil nil (Tcons List_box (Tcons type_int32s Tnil)) List_box cc_default.
+Definition Tbox_int : type := Tbox type_int32s.
 
 (* argument: l: List_box and k: type_int32s *)
 Definition find_body : statement :=
@@ -111,7 +113,10 @@ Definition find_body : statement :=
            (* end; *)
            (* _retv#List_box := move l#List_box; *)
            (* return _retv#List_box *)
-           node#Node_ty proj val <type_int32s> <- process<process_ty> @ {pure (copy node#Node_ty proj val <type_int32s>)}
+           let tmpv : Tbox_int in
+             tmpv#Tbox_int <- process<process_ty> @ {move node#Node_ty proj val <Tbox_int>};
+             node#Node_ty proj val <Tbox_int> := move tmpv#Tbox_int
+           end
          else
            (* let _33 : List_box in *)
            (*   _33#List_box <- find<find_ty> @ {move node#Node_ty proj next<List_box>, pure (copy k#type_int32s)}; *)
@@ -143,7 +148,7 @@ Definition find_func : function :=
     fn_return := List_box;
     fn_callconv := cc_default;
     (* fn_vars := [(_retv, List_box); (wildcard, Tunit); (node, Node_ty); (_31, type_int32s); (_32, List_ty); (_33, List_box); (_34, List_ty)]; *)
-    fn_vars := [(_retv, List_box); (node, Node_ty); (tmp, List_box)];
+    fn_vars := [(_retv, List_box); (node, Node_ty); (tmp, List_box); (tmpv, Tbox_int)];
     fn_params := [(l, List_box); (k, type_int32s)];
     fn_body := find_body |}.
   
@@ -287,21 +292,21 @@ Defined.
 (* external functions *)
 
 Definition process_ext : fundef :=
-  External nil nil (EF_external "process" (AST.mksignature [AST.Tint] AST.Tint cc_default)) (Tcons type_int32s Tnil) type_int32s cc_default.
+  External nil nil (EF_external "process" (AST.mksignature [AST.Tlong] AST.Tlong cc_default)) (Tcons (Tbox type_int32s) Tnil) (Tbox type_int32s) cc_default.
 
 Definition linked_list_mod : program :=
   {| prog_defs := [(hash, Gfun (Internal hash_func));
                    (find, Gfun (Internal find_func));
-                   (empty_list, Gfun (Internal empty_list_func));
-                   (insert, Gfun (Internal insert_func));
-                   (remove, Gfun (Internal remove_func));
+                   (* (empty_list, Gfun (Internal empty_list_func)); *)
+                   (* (insert, Gfun (Internal insert_func)); *)
+                   (* (remove, Gfun (Internal remove_func)); *)
                    (process, Gfun process_ext);
                    (__drop_in_place_Node, Gfun (Internal (drop_in_place_Node)));
                    (__drop_in_place_List, Gfun (Internal (drop_in_place_List)));
                    (* malloc and free place holders. No need to specify its argument types *)
                    (malloc, Gfun (External [] [] AST.EF_malloc Tnil Tunit cc_default));
                    (free, Gfun (External [] [] AST.EF_free Tnil Tunit cc_default))];
-    prog_public := [hash; find; empty_list; insert; remove; process; malloc; free];
+    prog_public := [hash; find; (* empty_list; insert; remove; *) process; malloc; free];
     prog_main := 201%positive;
     prog_types := composite_types;
     prog_comp_env := proj1_sig build_ce_ok;

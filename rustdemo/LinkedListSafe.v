@@ -71,12 +71,13 @@ Definition own_env_find t E1 E2 :=
 
 (* b0-b3 are blocks allocated for the parameters and variables in find
 function *)
-Definition find_env b0 b1 b2 b3 b4 :=
-  (PTree.set tmp (b4, List_box)
-     (PTree.set node (b3, Node_ty)
-        (PTree.set _retv (b2, List_box)
-           (PTree.set LinkedList.k (b0, type_int32s)
-              (PTree.set l (b1, List_box) empty_env))))).
+Definition find_env b0 b1 b2 b3 b4 b5 :=
+  (PTree.set tmpv (b5, Tbox_int)
+     (PTree.set tmp (b4, List_box)
+        (PTree.set node (b3, Node_ty)
+           (PTree.set _retv (b2, List_box)
+              (PTree.set LinkedList.k (b0, type_int32s)
+                 (PTree.set l (b1, List_box) empty_env)))))).
 
 
 Definition return_find_cont (e: env) t E1 E2 k :=
@@ -120,44 +121,45 @@ last find function *)
 Inductive sound_find_cont : cont -> Prop :=
 | sound_find_Kstop:
     sound_find_cont Kstop
-| sound_find_Kcall: forall k b0 b1 b2 b3 b4 t E1 E2
+| sound_find_Kcall: forall k b0 b1 b2 b3 b4 b5 t E1 E2
     (CONT: sound_find_cont k)
     (UNI: collect_func ge find_func = OK t),                      
-    sound_find_cont (return_find_cont (find_env b0 b1 b2 b3 b4) t E1 E2 k).
+    sound_find_cont (return_find_cont (find_env b0 b1 b2 b3 b4 b5) t E1 E2 k).
 
 
 Definition return_process_cont (e: env) t E1 E2 k :=
-  (Kcall
-     (Pfield (Plocal node Node_ty) LinkedList.val type_int32s)
-     find_func
+  (Kcall (Plocal tmpv Tbox_int) find_func
      e
-     (own_transfer_assign
-        (move_place
-           (init_place
-              (init_place
-                 (own_env_find t E1 E2)
-                 (Plocal l List_box))
-              (Plocal LinkedList.k type_int32s))
-           (Pderef (Plocal l List_box) List_ty))
-        (Plocal node Node_ty))
+       (move_place
+          (own_transfer_assign
+             (move_place
+                (init_place
+                   (init_place
+                      (own_env_find t E1 E2)
+                      (Plocal l List_box))
+                   (Plocal LinkedList.k type_int32s)) (Pderef (Plocal l List_box) List_ty))
+             (Plocal node Node_ty)) (Pfield (Plocal node Node_ty) LinkedList.val Tbox_int))
        (Kseq
-          (Ssequence
-             (Sassign_variant (Pderef (Plocal l List_box) List_ty) List
-                Cons (Emoveplace (Plocal node Node_ty) Node_ty))
-             (Ssequence
-                (Sassign (Plocal _retv List_box)
-                   (Emoveplace (Plocal l List_box) List_box))
-                (Sreturn (Plocal _retv List_box))))
-          (Klet node Node_ty k))).       
+          (Sassign (Pfield (Plocal node Node_ty) LinkedList.val Tbox_int)
+             (Emoveplace (Plocal tmpv Tbox_int) Tbox_int))
+          (Klet tmpv Tbox_int
+             (Kseq
+                (Ssequence
+                   (Sassign_variant (Pderef (Plocal l List_box) List_ty) List Cons
+                      (Emoveplace (Plocal node Node_ty) Node_ty))
+                   (Ssequence
+                      (Sassign (Plocal _retv List_box)
+                         (Emoveplace (Plocal l List_box) List_box))
+                      (Sreturn (Plocal _retv List_box)))) (Klet node Node_ty k))))).
 
 
 (* continuation of the returnstate in find function *)
 Inductive find_cont_ret_process : cont -> Prop :=
 (* return from process *)
-| find_return_process: forall k t b0 b1 b2 b3 b4 E1 E2
+| find_return_process: forall k t b0 b1 b2 b3 b4 b5 E1 E2
     (CONT: sound_find_cont k)
     (UNI: collect_func ge find_func = OK t),
-    find_cont_ret_process (return_process_cont (find_env b0 b1 b2 b3 b4) t E1 E2 k)
+    find_cont_ret_process (return_process_cont (find_env b0 b1 b2 b3 b4 b5) t E1 E2 k)
 .
 
 (** Local state of hash function *)
@@ -250,7 +252,7 @@ Inductive sound_state : state -> Prop :=
 | find_state_call_process: forall b v k m
     (PROC: Genv.invert_symbol se b = Some process)
     (FIDEQ: w.(hmap_callee) = inl find)
-    (CASTED: val_casted v type_int32s)
+    (CASTED: val_casted v (Tbox type_int32s) )
     (CONT: find_cont_ret_process k),
     sound_state (Callstate (Vptr b Ptrofs.zero) [v] k m)
 | find_state_return_process: forall v k m
@@ -328,7 +330,7 @@ Qed.
 
 
 Lemma init_own_env_hash_progress:
-  exists own, init_own_env (Smallstep.globalenv (linked_list_sem se)) hash_func = OK own.        
+  exists own, init_own_env (Smallstep.globalenv (linked_list_sem se)) hash_func = OK own.
 Admitted.
 
 
@@ -398,7 +400,7 @@ Qed.
 Lemma split_drop_place_find_node: forall w,
     collect_func ge find_func = OK w ->
     split_drop_place ge (PathsMap.get node w) (Plocal node Node_ty) Node_ty = OK [(Pfield (Plocal node Node_ty) key type_int32s, true);
-    (Pfield (Plocal node Node_ty) LinkedList.val type_int32s, true);
+    (Pfield (Plocal node Node_ty) LinkedList.val (Tbox type_int32s), true);
     (Pfield (Plocal node Node_ty) next List_box, true)].
 Proof.
   intros. unfold collect_func in H.
@@ -416,6 +418,14 @@ Qed.
 Lemma split_drop_place_find_tmp: forall w,
     collect_func ge find_func = OK w ->
     split_drop_place ge (PathsMap.get tmp w) (Plocal tmp List_box) List_box = OK [(Plocal tmp List_box, true)].
+Proof.
+  intros. unfold collect_func in H.
+  vm_compute in H. inv H. reflexivity.  
+Qed.
+
+Lemma split_drop_place_find_tmpv: forall w,
+    collect_func ge find_func = OK w ->
+    split_drop_place ge (PathsMap.get tmpv w) (Plocal tmpv Tbox_int) Tbox_int = OK [(Plocal tmpv Tbox_int, true)].
 Proof.
   intros. unfold collect_func in H.
   vm_compute in H. inv H. reflexivity.  
@@ -470,12 +480,12 @@ Proof.
       econstructor. 
     (* call drop_in_place_List (contradiction) *)
     + inv H. simpl in H11. congruence.
-    (* call remove function (not supported for now) *)
-    + admit.
+    (* (* call remove function (not supported for now) *) *)
+    (* + admit. *)
     (* call process_ext (contradiction) *)    
     + inv H.
-    (* call empty_list function (not supported for now) *)
-    + admit.
+    (* (* call empty_list function (not supported for now) *) *)
+    (* + admit. *)
     (* call free (contradiction) *)
     + inv H.
     (*  call drop_in_place_Node (contradiction) *)
@@ -485,8 +495,8 @@ Proof.
       econstructor; eauto. econstructor.
     (* call malloc (contradiction) *)
     + inv H.
-    (* call insert (not suppored) *)
-    + admit.
+    (* (* call insert (not suppored) *) *)
+    (* + admit. *)
     + inv FINDF.
 Admitted.
 
@@ -890,7 +900,7 @@ Proof.
     generalize flag at 1 3.
     intros flag0 E. destruct flag0; try congruence. intros. inv INITOWN.
     (* construct e *)
-    inv ENTRY. inv ALLOC. inv H7. inv H9. inv H10. inv H11. inv H12.
+    inv ENTRY. inv ALLOC. inv H7. inv H9. inv H10. inv H11. inv H12. inv H13.
     inv STAR0.
     (* stop here: evaluate the if statement *)
     { split.
@@ -901,7 +911,7 @@ Proof.
           (* we should show thata v1 must be a pointer *)
           destruct (val_is_ptr v1) eqn: VPTR.
           * destruct v1; simpl in VPTR; try congruence.
-            destruct (Mem.valid_access_dec m' Mint32 b5 (Ptrofs.unsigned i) Readable) eqn: VA2.
+            destruct (Mem.valid_access_dec m' Mint32 b6 (Ptrofs.unsigned i) Readable) eqn: VA2.
             -- exploit Mem.valid_access_load. eapply v0. intros (v2 & LOAD2).
                destruct (val_is_int v2) eqn: VINT.
                ++ destruct v2; simpl in VINT; try congruence.
@@ -936,13 +946,13 @@ Proof.
         inv H; simpl; auto. lia. }
     (* destruct the if step *)
     inv STEP.
-    2: { destruct H12; unfold find_body in *; try congruence. }
+    2: { destruct H13; unfold find_body in *; try congruence. }
     (* get the bool value *)
-    simpl in H16. inv H14. inv H0.
+    simpl in H17. inv H15. inv H0.
     simpl in PTY. unfold List_ty in PTY. inv PTY.
     vm_compute in CO. inv CO. vm_compute in FTAG. inv FTAG.
     simpl in RANGE. unfold list_length_z in RANGE. simpl in RANGE.
-    destruct (Int.eq tag (Int.repr 0)) eqn: EQZ; vm_compute in H16; inv H16.
+    destruct (Int.eq tag (Int.repr 0)) eqn: EQZ; vm_compute in H17; inv H17.
     (** evaluate the if branch *)
     { inv STAR; cbn [num_frames] in *.
       (* stop here: evaluate Ssequence *)
@@ -954,7 +964,7 @@ Proof.
           inv H; simpl; auto.
           inv H; simpl; auto. lia. }
       inv STEP.
-      2: { destruct H12; congruence. }
+      2: { destruct H13; congruence. }
       inv STAR0; cbn [num_frames num_frames_cont] in *.
       (* stop here: evaluate Sassign to Dassign *)
       { split.
@@ -1065,7 +1075,7 @@ Proof.
           eapply starNf_step_right; eauto. 
           1-2: inv H; simpl; auto. lia. }
       inv STEP.
-      2: { destruct H12; congruence. }
+      2: { destruct H13; congruence. }
       inv STAR; cbn [num_frames num_frames_cont] in *.
       (* evaluate step_dropinsert_return_before *)
       { split.
@@ -1151,11 +1161,17 @@ Proof.
       inv STAR; cbn [num_frames num_frames_cont] in *.
       (* stop here: evaluate step_dropinsert_return_after *)
       { split.
-        - destruct (Mem.valid_access_dec m6 Mptr b2 0 Readable) eqn: ?VA.
+        - destruct (Mem.valid_access_dec m7 Mptr b2 0 Readable) eqn: ?VA.
           + exploit Mem.valid_access_load. eapply v0.
             intros (?v & ?LOAD).
             destruct (sem_cast v2 List_box List_box) eqn: ?CAST.
-            * destruct (Mem.free_list m6 [(b3, 0, 16); (b4, 0, 8); (b1, 0, 8); (b2, 0, 8); (b0, 0, 4)]) eqn: ?FREELIST.
+          (*   Compute (blocks_of_env (proj1_sig build_ce_ok) (PTree.set tmpv (b5, Tbox_int) *)
+          (* (PTree.set tmp (b4, List_box) *)
+          (*    (PTree.set node (b3, Node_ty) *)
+          (*       (PTree.set _retv (b2, List_box) *)
+          (*          (PTree.set LinkedList.k (b0, type_int32s) *)
+          (*             (PTree.set l (b1, List_box) empty_env))))))). *)
+            * destruct (Mem.free_list m7 [(b3, 0, 24); (b4, 0, 8); (b1, 0, 8); (b5, 0, 8); (b2, 0, 8); (b0, 0, 4)]) eqn: ?FREELIST.
               -- left. red. do 2 right.
                  exploit sound_call_cont; eauto.
                  intros (ck & CK & SCK).
@@ -1196,7 +1212,7 @@ Proof.
         find *)
         - split.
           + destruct (val_casted_dec v2 List_box).
-            * destruct (Mem.valid_access_dec m7 Mptr b11 0 Writable).
+            * destruct (Mem.valid_access_dec m8 Mptr b12 0 Writable).
               -- edestruct Mem.valid_access_store with (v:= v2) as (?m & ?STORE).
                  eauto.
                  left. red. do 2 right.
@@ -1237,7 +1253,7 @@ Proof.
           eapply starNf_step_right; eauto. 
           1-2: inv H; simpl; auto. lia. }
       inv STEP.
-      2: { destruct H12; congruence. }
+      2: { destruct H13; congruence. }
       inv STAR0; cbn [num_frames num_frames_cont] in *.
       (* stop here: evaluate Ssequence *)
       { split.
@@ -1335,9 +1351,9 @@ Proof.
       { split.
         (* Note that the evaluation of conditional expression provides
         the fact of loading *l *)        
-        - destruct (Mem.range_perm_dec m' b6 (Ptrofs.unsigned (Ptrofs.add ofs (Ptrofs.repr 8))) ((Ptrofs.unsigned (Ptrofs.add ofs (Ptrofs.repr 8))) + 16) Cur Readable).
+        - destruct (Mem.range_perm_dec m' b7 (Ptrofs.unsigned (Ptrofs.add ofs (Ptrofs.repr 8))) ((Ptrofs.unsigned (Ptrofs.add ofs (Ptrofs.repr 8))) + 24) Cur Readable).
           + exploit Mem.range_perm_loadbytes. eapply r. intros (bys & LOADBYTES).
-            destruct (Mem.range_perm_dec m' b3 0 (0 + 16) Cur Writable).
+            destruct (Mem.range_perm_dec m' b3 0 (0 + 24) Cur Writable).
             * edestruct Mem.range_perm_storebytes with (bytes:= bys) as (?m & ?STOREBYTES).
               erewrite Mem.loadbytes_length; eauto. eauto.
               left. red. do 2 right.
@@ -1355,7 +1371,7 @@ Proof.
               eapply do_assign_loc_sound.
               unfold do_assign_loc.
               replace (sizeof (Smallstep.globalenv (linked_list_sem se))
-               (typeof_place (Plocal node Node_ty))) with 16 by reflexivity.
+               (typeof_place (Plocal node Node_ty))) with 24 by reflexivity.
               rewrite LOADBYTES.
               rewrite Ptrofs.unsigned_zero. rewrite STOREBYTES.
               destruct check_assign_copy.
@@ -1415,11 +1431,11 @@ Proof.
       inv STAR0; cbn [num_frames num_frames_cont] in *.
       (* evaluate Sifthenelse *)
       { split.
-        - destruct (Mem.valid_access_dec m6 Mint32 b0 0 Readable).
+        - destruct (Mem.valid_access_dec m7 Mint32 b0 0 Readable).
           + exploit Mem.valid_access_load. eauto.
             intros (?v & ?LOAD).
             destruct (sem_cast v2 type_int32s type_int32s) eqn: ?CAST.
-            * destruct (Mem.valid_access_dec m6 Mint32 b3 0 Readable).
+            * destruct (Mem.valid_access_dec m7 Mint32 b3 0 Readable).
               -- exploit Mem.valid_access_load. eauto.
                  intros (?v & ?LOAD).
                  destruct (sem_cast v5 type_int32s type_int32s) eqn: ?CAST.
@@ -1468,11 +1484,11 @@ Proof.
           eapply starNf_step_right; eauto. 
           1-2: inv H; simpl; auto. lia. }
       inv STEP.
-      destruct b7.
+      destruct b8.
       
       (* evaluate the true branch *)
       { inv STAR; cbn [num_frames num_frames_cont] in *.
-        (* evaluate Scall to Dcall *)
+        (* evaluate Slet *)
         { split.
           - left. red. do 2 right.
             do 2 eexists. econstructor.
@@ -1481,24 +1497,72 @@ Proof.
             1-2: inv H; simpl; auto. lia. }
         inv STEP.
         inv STAR0; cbn [num_frames num_frames_cont] in *.
-        (* evaluate step_dropinsert_skip_reassign *)
+        (* evaluate Ssequence *)
         { split.
           - left. red. do 2 right.
             do 2 eexists. econstructor.
-            eapply step_dropinsert_skip_reassign.
-            reflexivity.
           - intros. eapply find_state_internal1 with (n:=16%nat); eauto.
+            eapply starNf_step_right; eauto. 
+            1-2: inv H; simpl; auto. lia. }
+        inv STEP.
+        inv STAR; cbn [num_frames num_frames_cont] in *.
+        (* evaluate Scall to Dcall *)
+        { split.
+          - left. red. do 2 right.
+            do 2 eexists. econstructor.
+          - intros. eapply find_state_internal1 with (n:=17%nat); eauto.
+            eapply starNf_step_right; eauto. 
+            1-2: inv H; simpl; auto. lia. }
+        inv STEP.
+        inv STAR0; cbn [num_frames num_frames_cont] in *.
+        (* evaluate step_dropinsert_to_dropplace_reassign *)
+        { split.
+          - left. red. do 2 right.
+            do 2 eexists. econstructor.
+            eapply step_dropinsert_to_dropplace_reassign.
+            reflexivity. reflexivity.
+            eapply split_drop_place_find_tmpv. eauto.
+          - intros. eapply find_state_internal1 with (n:=18%nat); eauto.
             eapply starNf_step_right; eauto. 
             1-2: inv H; inv SDROP; simpl; auto. lia. }
         inv STEP. inv SDROP.
-        vm_compute in OWNTY0. congruence. clear OWNTY0.
+        2: { vm_compute in OWNTY0. congruence. }
+        clear OWNTY0.
+        erewrite split_drop_place_find_tmpv in SPLIT; eauto.
+        inv SPLIT.
         inv STAR; cbn [num_frames num_frames_cont] in *.
+        (* evaluate step_dropplace_init1 *)
+        { split.
+          - left. red. do 2 right.
+            do 2 eexists. econstructor.
+            eapply step_dropplace_init1.
+            unfold collect_func in A. vm_compute in A. inv A.
+            reflexivity.
+          - intros. eapply find_state_internal1 with (n:=19%nat); eauto.
+            eapply starNf_step_right; eauto. 
+            1-2: inv H; inv SDROP; simpl; auto. lia. }
+        inv STEP. inv SDROP.
+        2: { unfold collect_func in A. vm_compute in A. inv A.
+             vm_compute in OWN. congruence. }
+        2: { simpl in SCALAR. congruence. }
+        clear NOTOWN. 
+        inv STAR0; cbn [num_frames num_frames_cont] in *.
+        (* evaluate step_dropplace_return *)
+        { split.
+          - left. red. do 2 right.
+            do 2 eexists. econstructor.
+            eapply step_dropplace_return.
+          - intros. eapply find_state_internal1 with (n:=20%nat); eauto.
+            eapply starNf_step_right; eauto. 
+            1-2: inv H; inv SDROP; simpl; auto. lia. }
+        inv STEP. inv SDROP.
+        inv STAR; cbn [num_frames num_frames_cont] in *.        
         (* evaluate Dcall *)
         { split.
-          - destruct (Mem.valid_access_dec m6 Mint32 b3 4 Readable).
+          - destruct (Mem.valid_access_dec m7 Mptr b3 8 Readable).
             + exploit Mem.valid_access_load. eauto.
               intros (?v & ?LOAD).
-              destruct (sem_cast v3 type_int32s type_int32s) eqn: ?CAST.
+              destruct (sem_cast v3 Tbox_int Tbox_int) eqn: ?CAST.
               * left. red. do 2 right.
                 (* construct the block of process *)
                 generalize (wf_senv process). intros FINDPRO.
@@ -1537,9 +1601,9 @@ Proof.
               eauto.
           - intros. inv H. inv SDROP.
             (* show that vf points to process_ext *)
-            inv H21. inv H0. inv DEF; simpl in H; try congruence.
+            inv H22. inv H0. inv DEF; simpl in H; try congruence.
             (* show arguments are casted*)
-            inv H22. inv H11. inv H19.
+            inv H23. inv H12. inv H20.
             exploit cast_val_is_casted. eapply H3. intros CASTED.
             generalize (wf_senv process). intros FINDPRO.
             simpl in FINDPRO. destruct FINDPRO as (?b & FINDPRO). 
@@ -1623,17 +1687,17 @@ Proof.
             eapply starNf_step_right; eauto. 
             1-2: inv H; inv SDROP; simpl; auto. lia. }
         inv STEP. inv SDROP.
-        inv STAR; cbn [num_frames num_frames_cont] in *.        
+        inv STAR; cbn [num_frames num_frames_cont] in *. 
         (* evaluate Dcall *)
         { split.
-          - (* construct the block of process *)
+          - (* construct the block of find *)
             generalize (wf_senv find). intros FINDF.
             simpl in FINDF. destruct FINDF as (?b & FINDF).
-            destruct (Mem.valid_access_dec m6 Mptr b3 8 Readable).
+            destruct (Mem.valid_access_dec m7 Mptr b3 16 Readable).
             + exploit Mem.valid_access_load. eauto.
               intros (?v & ?LOAD).
               destruct (sem_cast v3 List_box List_box) eqn: ?CAST.
-              * destruct (Mem.valid_access_dec m6 Mint32 b0 0 Readable).
+              * destruct (Mem.valid_access_dec m7 Mint32 b0 0 Readable).
                 -- exploit Mem.valid_access_load. eauto.
                    intros (?v & ?LOAD).
                    destruct (sem_cast v6 type_int32s type_int32s) eqn: ?CAST.
@@ -1686,12 +1750,12 @@ Proof.
               reflexivity. reflexivity. reflexivity.
               econstructor. reflexivity. eauto.
           - intros. inv H. inv SDROP.
-            inv H21. inv H0.
+            inv H22. inv H0.
             inv DEF; simpl in H; try congruence.
             eapply callstate_find. econstructor.
             eapply Genv.find_invert_symbol. eauto.
             econstructor. eauto. eauto.
-            inv H22. inv H11. inv H21. reflexivity. eauto. }
+            inv H23. inv H12. inv H22. reflexivity. eauto. }
         inv STEP. inv SDROP. simpl in FEQ19.
         exfalso. eapply Nat.neq_succ_diag_l; eauto. }
     }
@@ -1713,21 +1777,18 @@ Proof.
   (* return from process *)
   - split.
     + inv CONT.
-      destruct (val_casted_dec v type_int32s).
-      * destruct (Mem.valid_access_dec m Mint32 b3 4 Writable).
+      destruct (val_casted_dec v Tbox_int).
+      * destruct (Mem.valid_access_dec m Mptr b5 0 Writable).
         -- edestruct Mem.valid_access_store as (?m & ?STORE). eauto.
            left. do 2 right.
            do 2 eexists.
            econstructor. reflexivity.
-           econstructor. econstructor. reflexivity. reflexivity.
-           reflexivity. reflexivity.
-           simpl. eauto.
+           econstructor. reflexivity. eauto.
            econstructor. reflexivity.
            eauto.
         -- right.
            eapply step_returnstate_error2. reflexivity.
-           econstructor. econstructor. reflexivity. reflexivity.
-           reflexivity. reflexivity.
+           econstructor. econstructor. 
            econstructor. reflexivity. eauto.
       (* val is not val_casted in returnstate *)
       * admit.
@@ -1749,6 +1810,11 @@ Proof.
         eapply starNf_step_right; eauto. 
         1-2: inv H; simpl; auto. lia. }
     inv STEP.
+    (*** TODO:  evaluate assignment of tmpv *)
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    Abort.
+
+    
     (** The following code may be reused in the execution of returning
     from find *)
     inv STAR0; cbn [num_frames num_frames_cont] in *.

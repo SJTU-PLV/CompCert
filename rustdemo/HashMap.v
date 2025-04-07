@@ -89,13 +89,17 @@ Definition hmap_operate_on_func := {|
 (* process function *)
 
 Definition process_func := {|
-  fn_return := tint;
+  fn_return := tptr tint;
   fn_callconv := cc_default;
-  fn_params := ((val, tint) :: nil);
+  fn_params := ((val, tptr tint) :: nil);
   fn_vars := nil;
   fn_temps := nil;
-  fn_body := (Sreturn (Some (Evar val tint)))
+  fn_body := Ssequence
+               (Sassign (Ederef (Evar val (tptr tint)) tint)
+                  (Ebinop Oxor (Ederef (Evar val (tptr tint)) tint) (Econst_int (Int.repr 42) tint) (tptr tint)))
+               (Sreturn (Some (Evar val (tptr tint))));
 |}.
+
 
 (* Definition of hash_map program *)
 

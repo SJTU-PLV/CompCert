@@ -28,7 +28,7 @@ else
 ARCHDIRS=$(ARCH)_$(BITSIZE) $(ARCH)
 endif
 
-DIRS := lib common $(ARCHDIRS) backend cfrontend driver export cparser cklr rustfrontend rustparser
+DIRS := lib common $(ARCHDIRS) backend cfrontend driver export cparser cklr rustfrontend rustparser rustdemo
 
 COQINCLUDES := $(foreach d, $(DIRS), -R $(d) compcert.$(d)) -R $(COQREL) coqrel
 
@@ -176,8 +176,8 @@ RUSTFRONTEND=Rusttypes.v Rustsyntax.v Rustlight.v RustIR.v\
   # BorrowCheckDomain.v ReplaceOrigins.v BorrowCheckPolonius.v
   # BorrowCheckSafe.v
 
-# RUSTDEMO=LinkedList.v LinkedListSafe.v HashMap.v HashMapSafe.v HashMapCommon.v \
-#   HashMapLink.v
+RUSTDEMO=LinkedList.v LinkedListSafe.v HashMap.v HashMapSafe.v HashMapCommon.v \
+  HashMapLink.v
 
 # Parser
 
@@ -210,7 +210,7 @@ EXPORTLIB= Ctypesdefs.v Clightdefs.v Csyntaxdefs.v
 # All source files
 
 FILES=$(VLIB) $(COMMON) $(CKLR) $(BACKEND) $(CFRONTEND) $(DRIVER) $(FLOCQ) \
-  $(MENHIRLIB) $(PARSER) $(EXPORTLIB) $(RUSTFRONTEND)
+  $(MENHIRLIB) $(PARSER) $(EXPORTLIB) $(RUSTFRONTEND) $(RUSTDEMO)
 
 # Generated source files
 
