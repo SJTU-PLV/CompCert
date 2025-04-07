@@ -782,6 +782,177 @@ Proof.
   right; exists i'; auto.
   left; exists i'; exists s1'; split; auto. econstructor; eauto.
 Qed.
+
+
+
+(** ** Backward simulation diagrams. *)
+
+(** Various simulation diagrams that imply backward simulation. *)
+
+Section BACKWARD_SIMU_DIAGRAMS.
+
+Variable L1: lts li1 li1 state1.
+Variable L2: lts li2 li2 state2.
+
+Variable match_states: gw_type -> state1 -> state2 -> Prop.
+
+Hypothesis match_valid_query:
+  forall q1 q2, match_query cc wb q1 q2 ->
+  valid_query L2 q2 = valid_query L1 q1.
+
+Hypothesis match_initial_states:
+  forall q1 q2, match_query cc wb q1 q2 ->
+           bsim_match_cont (match_states (get wb)) (initial_state L1 q1) (initial_state L2 q2).
+(*
+ bsim_match_final_states:
+      forall gw i s1 s2 r2,
+      match_states gw i s1 s2 -> safe L1 s1 -> final_state L2 s2 r2 ->
+      exists s1' r1 gw', Star L1 s1 E0 s1' /\ final_state L1 s1' r1 /\ (get wb) o-> gw' /\ gw *-> gw' /\
+                      match_reply cc (set wb gw') r1 r2;
+    bsim_match_external:
+      forall gw i s1 s2 q2, match_states gw i s1 s2 -> safe L1 s1 -> at_external L2 s2 q2 ->
+      exists wA s1' q1, Star L1 s1 E0 s1' /\ at_external L1 s1' q1 /\ gw *-> (get wA) /\
+      match_query cc wA q1 q2 /\ match_senv cc wA se1 se2 /\
+      forall r1 r2 gw'', (get wA o-> gw'') -> match_reply cc (set wA gw'') r1 r2 ->
+      bsim_match_cont (rex (match_states gw'')) (after_external L1 s1' r1) (after_external L2 s2 r2); 
+    bsim_progress:
+      forall gw i s1 s2,
+      match_states gw i s1 s2 -> safe L1 s1 ->
+      (exists r, final_state L2 s2 r) \/
+      (exists q, at_external L2 s2 q) \/
+      (exists t, exists s2', Step L2 s2 t s2');
+    bsim_simulation:
+      forall s2 t s2', Step L2 s2 t s2' ->
+      forall gw i s1, match_states gw i s1 s2 -> safe L1 s1 ->
+      exists i', exists s1',
+         (Plus L1 s1 t s1' \/ (Star L1 s1 t s1' /\ order i' i))
+         /\ match_states gw i' s1' s2';
+         *)
+Hypothesis match_final_states:
+  forall gw s1 s2 r2, match_states gw s1 s2 -> final_state L2 s2 r2 ->
+  exists r1 gw', final_state L1 s1 r1 /\ (get wb) o-> gw' /\ gw *-> gw' /\ match_reply cc (set wb gw') r1 r2.
+
+Hypothesis match_external:
+  forall gw s1 s2 q2, match_states gw s1 s2 -> at_external L2 s2 q2 ->
+  exists wA q1, at_external L1 s1 q1 /\ gw *-> (get wA) /\ match_query cc wA q1 q2 /\ match_senv cc wA se1 se2 /\
+  forall r1 r2 gw'', (get wA o-> gw'') -> match_reply cc (set wA gw'') r1 r2 ->
+  bsim_match_cont (match_states gw'') (after_external L1 s1 r1) (after_external L2 s2 r2).
+
+Hypothesis progress:
+  forall gw s1 s2,
+  match_states gw s1 s2 -> safe L1 s1 ->
+  (exists r, final_state L2 s2 r) \/
+  (exists q, at_external L2 s2 q) \/
+  (exists t, exists s2', Step L2 s2 t s2').
+
+Section BACKWARD_SIMULATION_PLUS.
+
+Hypothesis simulation:
+  forall s2 t s2', Step L2 s2 t s2' ->
+  forall s1 gw, match_states gw s1 s2 -> safe L1 s1 ->
+  exists s1', Plus L1 s1 t s1' /\ match_states gw s1' s2'.
+
+Lemma bsim_match_cont_unit gw (k1 k2: _ -> Prop):
+  bsim_match_cont (match_states gw) k1 k2 ->
+  bsim_match_cont (rex (fun (_ : unit) s1 s2 => match_states gw s1 s2)) k1 k2.
+Proof.
+  clear. intros [Hex Hmatch].
+  split; eauto. intros.
+  edestruct Hmatch as (s1' & ? & ?); eauto.
+  exists s1'; split; auto.
+  exists tt; auto.
+Qed.
+
+Lemma backward_simulation_plus:
+  bsim_properties L1 L2 unit (fun _ _ => False) (fun gw i => match_states gw).
+Proof.
+  constructor; eauto.
+- intros. apply bsim_match_cont_unit; eauto.
+- intros. edestruct match_final_states as (r1 & gw' & Hr1 & ACI & ACE & Hr); eauto.
+  exists s1, r1, gw'; split. apply star_refl. eauto.
+- intros. edestruct match_external as (w & q1 & Hq1 & ACI & Hq & Hse & Hk); eauto.
+  exists w, s1, q1.
+  eauto 10 using bsim_match_cont_unit, star_refl.
+- intros. exploit simulation; eauto. intros [s1' [A B]].
+  exists tt; exists s1'; auto.
+Qed.
+
+End BACKWARD_SIMULATION_PLUS.
+
+End BACKWARD_SIMU_DIAGRAMS.
+
+(** ** Backward simulation of transition sequences *)
+
+Section BACKWARD_SIMULATION_SEQUENCES.
+
+Context L1 L2 index order match_states (S: bsim_properties L1 L2 index order match_states).
+
+Lemma bsim_E0_star:
+  forall s2 s2', Star L2 s2 E0 s2' ->
+  forall gw i s1, match_states gw i s1 s2 -> safe L1 s1 ->
+  exists i', exists s1', Star L1 s1 E0 s1' /\ match_states gw i' s1' s2'.
+Proof.
+  intros s20 s20' STAR0. pattern s20, s20'. eapply star_E0_ind; eauto.
+- (* base case *)
+  intros. exists i; exists s1; split; auto. apply star_refl.
+- (* inductive case *)
+  intros. exploit bsim_simulation; eauto. intros [i' [s1' [A B]]].
+  assert (Star L1 s0 E0 s1'). intuition. apply plus_star; auto.
+  exploit H0. eauto. eapply star_safe; eauto. intros [i'' [s1'' [C D]]].
+  exists i''; exists s1''; split; auto. eapply star_trans; eauto.
+Qed.
+
+Lemma bsim_safe:
+  forall gw i s1 s2,
+  match_states gw i s1 s2 -> safe L1 s1 -> safe L2 s2.
+Proof.
+  intros; red; intros.
+  exploit bsim_E0_star; eauto. intros [i' [s1' [A B]]].
+  eapply bsim_progress; eauto. eapply star_safe; eauto.
+Qed.
+
+Lemma bsim_E0_plus:
+  forall s2 t s2', Plus L2 s2 t s2' -> t = E0 ->
+  forall gw i s1, match_states gw i s1 s2 -> safe L1 s1 ->
+     (exists i', exists s1', Plus L1 s1 E0 s1' /\ match_states gw i' s1' s2')
+  \/ (exists i', clos_trans _ order i' i /\ match_states gw i' s1 s2').
+Proof.
+  induction 1 using plus_ind2; intros; subst t.
+- (* base case *)
+  exploit bsim_simulation'; eauto. intros [[i' [s1' [A B]]] | [i' [A [B C]]]].
++ left; exists i'; exists s1'; auto.
++ right; exists i'; intuition.
+- (* inductive case *)
+  exploit Eapp_E0_inv; eauto. intros [EQ1 EQ2]; subst.
+  exploit bsim_simulation'; eauto. intros [[i' [s1' [A B]]] | [i' [A [B C]]]].
++ exploit bsim_E0_star. apply plus_star; eauto. eauto. eapply star_safe; eauto. apply plus_star; auto.
+  intros [i'' [s1'' [P Q]]].
+  left; exists i''; exists s1''; intuition. eapply plus_star_trans; eauto.
++ exploit IHplus; eauto. intros [P | [i'' [P Q]]].
+  left; auto.
+  right; exists i''; intuition. eapply t_trans; eauto. apply t_step; auto.
+Qed.
+
+Lemma star_non_E0_split:
+  forall s2 t s2', Star L2 s2 t s2' -> (length t = 1)%nat ->
+  exists s2x, exists s2y, Star L2 s2 E0 s2x /\ Step L2 s2x t s2y /\ Star L2 s2y E0 s2'.
+Proof.
+  induction 1; intros.
+  simpl in H; discriminate.
+  subst t.
+  assert (EITHER: t1 = E0 \/ t2 = E0).
+    unfold Eapp in H2; rewrite app_length in H2.
+    destruct t1; auto. destruct t2; auto. simpl in H2; extlia.
+  destruct EITHER; subst.
+  exploit IHstar; eauto. intros [s2x [s2y [A [B C]]]].
+  exists s2x; exists s2y; intuition. eapply star_left; eauto.
+  rewrite E0_right. exists s1; exists s2; intuition. apply star_refl.
+Qed.
+
+End BACKWARD_SIMULATION_SEQUENCES.
+
+
+
 End BSIM.
 
 Arguments bsim_properties {_ _} _ _ _ _  {_ _} L1 L2 index order match_states. 

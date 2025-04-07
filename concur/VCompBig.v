@@ -6,6 +6,7 @@ Require Export LanguageInterface.
 Require Export Smallstep.
 
 Require Import Relations.
+Require Import Wellfounded.
 Require Import Axioms.
 Require Import Coqlib.
 Require Import Integers.
@@ -188,10 +189,10 @@ Qed.
 
 Lemma bb_simulation:
   forall s3 t s3', Step L3 s3 t s3' ->
-  forall i s1, bb_match_states i s1 s3 -> safe L1 s1 ->
+  forall gw i s1, bb_match_states gw i s1 s3 -> safe L1 s1 ->
   exists i', exists s1',
     (Plus L1 s1 t s1' \/ (Star L1 s1 t s1' /\ bb_order i' i))
-    /\ bb_match_states i' s1' s3'.
+    /\ bb_match_states gw i' s1' s3'.
 Proof.
   intros. inv H0.
   exploit star_inv; eauto. intros [[EQ1 EQ2] | PLUS].
@@ -217,12 +218,12 @@ Proof.
 Qed.
 
 Lemma compose_bsim_match_cont:
-  forall k1 k2 k3,
-  bsim_match_cont (rex match_states) k1 k2 ->
-  bsim_match_cont (rex match_states') k2 k3 ->
-  bsim_match_cont (rex bb_match_states) k1 k3.
+  forall gw1 gw2 k1 k2 k3,
+  bsim_match_cont (rex (match_states gw1)) k1 k2 ->
+  bsim_match_cont (rex (match_states' gw2)) k2 k3 ->
+  bsim_match_cont (rex (bb_match_states (gw1,gw2))) k1 k3.
 Proof.
-  intros k1 k2 k3 [Hexist Hmatch] [Hexist' Hmatch'].
+  intros gw1 gw2 k1 k2 k3 [Hexist Hmatch] [Hexist' Hmatch'].
   split.
   - intros s1 Hs1. edestruct Hexist as [s2 Hs2]; eauto.
   - intros s1 s3 Hs1 Hs3.
@@ -234,63 +235,67 @@ Qed.
 
 End COMPOSE_BACKWARD_SIMULATIONS.
 
-Lemma compose_backward_simulations:
-  forall {liA1 liA2 liA3} {ccA12: callconv liA1 liA2} {ccA23: callconv liA2 liA3},
-  forall {liB1 liB2 liB3} {ccB12: callconv liB1 liB2} {ccB23: callconv liB2 liB3},
+Lemma st_bsim_vcomp:
+  forall {li1 li2 li3} {cc12: callconv li1 li2} {cc23: callconv li2 li3},
   forall L1 L2 L3,
-    backward_simulation ccA12 ccB12 L1 L2 ->
-    backward_simulation ccA23 ccB23 L2 L3 ->
+    GS.backward_simulation cc12 L1 L2 ->
+    GS.backward_simulation cc23 L2 L3 ->
     (forall se3, single_events (L3 se3)) ->
-    backward_simulation (ccA12 @ ccA23) (ccB12 @ ccB23) L1 L3.
+    backward_simulation (cc12 @ cc23) L1 L3.
 Proof.
   intros until L3. intros [H12] [H23] H3.
-  set (ms := fun se1 se3 '(se2, w12, w23) =>
-               bb_match_states (L2 se2) (bsim_match_states H12 se1 se2 w12)
-                                        (bsim_match_states H23 se2 se3 w23)).
+  set (index := ((bsim_index H12) * (bsim_index H23))%type).
+  set (order := (bb_order (bsim_index H12) (bsim_order H12)
+                   (bsim_index H23) (bsim_order H23))).
+  set (ms := fun se1 se3 '(se2, (w12, w23)) =>
+               bb_match_states (L2 se2) (bsim_index H12) (bsim_match_states H12 se1 se2 w12)
+                 (bsim_index H23) (bsim_match_states H23 se2 se3 w23)).
   constructor.
-  apply Backward_simulation with (bb_order (bsim_order H12) (bsim_order H23)) ms.
+  apply Backward_simulation with order ms.
   - (* skel *)
     etransitivity; eapply bsim_skel; eauto.
   - (* LTS *)
-    intros se1 se3 [[se2 wB12] wB23] [Hse12 Hse23] Hse1. cbn. clear ms.
+    intros se1 se3 [se2 [wB12 wB23]] [Hse12 Hse23] Hse1. cbn.
+    clear ms. clear index.
     assert (Hse2: Genv.valid_for (skel L2) se2).
     { erewrite <- bsim_skel by eauto. eapply match_senv_valid_for; eauto. }
     destruct H12 as [index12 order12 ms12 Hsk12 Hlts12 Hwf12]; cbn.
     destruct H23 as [index23 order23 ms23 Hsk23 Hlts23 Hwf23]; cbn.
-    specialize (Hlts12 se1 se2 wB12 Hse12 Hse1).
-    specialize (Hlts23 se2 se3 wB23 Hse23 Hse2).
+    specialize (Hlts12 se1 se2 wB12 Hse12 Hse1) as Hlts12'.
+    specialize (Hlts23 se2 se3 wB23 Hse23 Hse2) as Hlts23'.
     split.
     + (* valid queries *)
       intros q1 q3 (q2 & Hq12 & Hq23).
       etransitivity; eapply bsim_match_valid_query; eauto.
     + (* initial states *)
       intros q1 q3 (q2 & Hq12 & Hq23).
-      eauto using compose_bsim_match_cont, bsim_match_initial_states.
+      eapply compose_bsim_match_cont; eapply bsim_match_initial_states; eauto.
     + (* match final states *)
-      intros i s1 s3 r MS SAFE FIN. inv MS.
-      edestruct (bsim_match_final_states Hlts23) as (s2' & r2 & A & B & Hr23); eauto.
-        eapply star_safe; eauto. eapply bsim_safe; eauto.
-      edestruct (bsim_E0_star Hlts12) as (i1' & s1' & C & D).
+      intros gw i s1 s3 r MS SAFE FIN. inv MS.
+      edestruct (bsim_match_final_states Hlts23') as (s2' & r2 & gw23' & A & B & C & D & Hr23); eauto.
+      eapply star_safe; eauto. eapply bsim_safe; eauto.
+      edestruct (bsim_E0_star Hlts12') as (i1' & s1' & E & F).
         eapply star_trans. eexact H0. eexact A. auto. eauto. auto.
-      edestruct (bsim_match_final_states Hlts12) as (s1'' & r1 & P & Q & Hr12); eauto.
-        eapply star_safe; eauto.
-      exists s1'', r1; cbn; split; eauto. eapply star_trans; eauto.
+      edestruct (bsim_match_final_states Hlts12') as (s1'' & r1 & gw12'& P & Q & R & S & Hr12); eauto.
+      eapply star_safe; eauto.
+      exists s1'', r1, (gw12',gw23'). cbn. repeat split; eauto.  eapply star_trans; eauto.
     + (* external states *)
-      intros i s1 s3 q3 MS SAFE Hq3. destruct MS.
-      edestruct (bsim_match_external Hlts23) as (w23 & s2' & q2 & Hs2' & Hq2 & Hq23 & Hse23' & Hk23); eauto.
+      intros [gw12 gw23] i s1 s3 q3 MS SAFE Hq3. destruct MS.
+      edestruct (bsim_match_external Hlts23') as (w23 & s2' & q2 & Hs2' & Hq2 & ACI23 & Hq23 & Hse23' & Hk23); eauto.
         eapply star_safe; eauto. eapply bsim_safe; eauto.
-      edestruct (bsim_E0_star Hlts12) as (i' & s1' & Hs1' & Hs12').
+      edestruct (bsim_E0_star Hlts12') as (i' & s1' & Hs1' & Hs12').
         eapply star_trans. eexact H0. eexact Hs2'. auto. eauto. auto.
-      edestruct (bsim_match_external Hlts12) as (w12 & s1'' & q1 & Hs1'' & Hq1 & Hq12 & Hse12' & Hk12); eauto.
-        eapply star_safe; eauto.
-      exists (se2, w12, w23), s1'', q1. cbn. repeat apply conj; eauto using star_trans.
-      intros r1 r3 (r2 & Hr12 & Hr23).
+      edestruct (bsim_match_external Hlts12') as (w12 & s1'' & q1 & Hs1'' & Hq1 & ACI12 & Hq12 & Hse12' & Hk12); eauto.
+      eapply star_safe; eauto.
+      exists (se2, (w12, w23)), s1'', q1. cbn. repeat apply conj; eauto using star_trans.
+      intros r1 r3 [gw12'' gw23''] [ACE1 ACE2] (r2 & Hr12 & Hr23).
       eapply compose_bsim_match_cont; eauto.
     + (* progress *)
-      intros i s1 s3 MS SAFE. inv MS.
-      eapply (bsim_progress Hlts23). eauto. eapply star_safe; eauto. eapply bsim_safe; eauto.
+      intros gw i s1 s3 MS SAFE. inv MS.
+      eapply (bsim_progress Hlts23'). eauto. eapply star_safe; eauto. eapply bsim_safe; eauto.
     + (* simulation *)
       eapply bb_simulation; eauto.
   - (* well founded *)
-    unfold bb_order. auto using wf_lex_ord, wf_clos_trans, bsim_order_wf.
+    unfold bb_order. eauto using wf_lex_ord, wf_clos_trans, bsim_order_wf.
 Qed.
+
