@@ -1326,6 +1326,106 @@ Proof.
   eapply f2b_simulation_step; eauto.
 Qed.
 
+Section FACTOR_FORWARD_SIMULATION.
+
+Context {li1} (L1: semantics li1 li1).
+Context {li2} (L2: semantics li2 li2).
+
+Section LTS.
+
+Context {cc} (FS: fsim_components cc L1 L2).
+Hypothesis L2single: forall se, single_events (L2 se).
+Context se1 se2 w (Hse: match_senv cc w se1 se2) (Hse1: Genv.valid_for (skel L1) se1).
+Let sim := fsim_lts FS se2 w Hse Hse1.
+
+Inductive ffs_match: (gworld cc) -> fsim_index FS -> (trace * state L1) -> state L2 -> Prop :=
+  | ffs_match_at: forall gw i s1 s2,
+      fsim_match_states FS se1 se2 w gw i s1 s2 ->
+      ffs_match gw i (E0, s1) s2
+  | ffs_match_buffer: forall gw i ev t s1 s2 s2',
+      Star (L2 se2) s2 (ev :: t) s2' -> fsim_match_states FS se1 se2 w gw i s1 s2' ->
+      ffs_match gw i (ev :: t, s1) s2.
+
+Lemma star_non_E0_split':
+  forall se2 s2 t s2', Star (L2 se2) s2 t s2' ->
+  match t with
+  | nil => True
+  | ev :: t' => exists s2x, Plus (L2 se2) s2 (ev :: nil) s2x /\ Star (L2 se2) s2x t' s2'
+  end.
+Proof.
+  induction 1. simpl. auto.
+  exploit L2single; eauto. intros LEN.
+  destruct t1. simpl in *. subst. destruct t2. auto.
+  destruct IHstar as [s2x [A B]]. exists s2x; split; auto.
+  eapply plus_left. eauto. apply plus_star; eauto. auto.
+  destruct t1. simpl in *. subst t. exists s2; split; auto. apply plus_one; auto.
+  simpl in LEN. extlia.
+Qed.
+
+Lemma ffs_simulation:
+  forall s1 t s1', Step (atomic L1 se1) s1 t s1' ->
+  forall gw i s2, ffs_match gw i s1 s2 ->
+  exists i', exists s2',
+     (Plus (L2 se2) s2 t s2' \/ (Star (L2 se2) s2 t s2') /\ fsim_order FS i' i)
+  /\ ffs_match gw i' s1' s2'.
+Proof.
+  induction 1; intros.
+- (* silent step *)
+  inv H0.
+  exploit (fsim_simulation sim); eauto.
+  intros [i' [s2' [A B]]].
+  exists i'; exists s2'; split. auto. constructor; auto.
+- (* start step *)
+  inv H0.
+  exploit (fsim_simulation sim); eauto.
+  intros [i' [s2' [A B]]].
+  destruct t as [ | ev' t].
++ (* single event *)
+  exists i'; exists s2'; split. auto. constructor; auto.
++ (* multiple events *)
+  assert (C: Star (L2 se2) s2 (ev :: ev' :: t) s2'). intuition. apply plus_star; auto.
+  exploit star_non_E0_split'. eauto. simpl. intros [s2x [P Q]].
+  exists i'; exists s2x; split. auto. econstructor; eauto.
+- (* continue step *)
+  inv H0.
+  exploit star_non_E0_split'. eauto. simpl. intros [s2x [P Q]].
+  destruct t.
+  exists i; exists s2'; split. left. eapply plus_star_trans; eauto. constructor; auto.
+  exists i; exists s2x; split. auto. econstructor; eauto.
+Qed.
+
+End LTS.
+
+Theorem factor_forward_simulation {cc}:
+  forward_simulation cc L1 L2 ->
+  (forall se, single_events (L2 se)) ->
+  forward_simulation cc (atomic L1) L2.
+Proof.
+  intros [FS] L2single. constructor.
+  apply Forward_simulation with (fsim_order FS) (ffs_match FS); cbn; try apply FS.
+  intros se1 se2 wB Hse Hse1. pose (sim := fsim_lts FS se2 wB Hse Hse1). split; cbn.
+- (* valid query *)
+  cbn. eapply fsim_match_valid_query; eauto.
+- (* initial states *)
+  intros. destruct s1 as [t1 s1]. simpl in H0. destruct H0. subst.
+  exploit (fsim_match_initial_states sim); eauto. intros [i [s2 [A B]]].
+  exists i; exists s2; split; auto. constructor; auto.
+- (* final states *)
+  intros. destruct s1 as [t1 s1]. simpl in H0; destruct H0; subst. inv H.
+  eapply (fsim_match_final_states sim); eauto.
+- (* external states *)
+  intros gw i [t1 s1] s2 q1 Hs [Hq1 Ht1]. cbn in *. subst. inv Hs.
+  edestruct @fsim_match_external as (wA & q2 & Hq2 & ACI & Hq & Hse' & Hk); eauto.
+  exists wA, q2. repeat apply conj; auto.
+  intros r1 r2 [t s1'] gw'' ACE Hr [Hs1' Ht]. cbn in *. subst.
+  edestruct Hk as (i' & s2' & Hs2' & Hs'); eauto.
+  exists i', s2'. split; auto. constructor; auto.
+- (* simulation *)
+  eapply ffs_simulation; eauto.
+Qed.
+
+End FACTOR_FORWARD_SIMULATION.
+
 End GS.
 
 Definition after_external_receptive (lts : semantics li_c li_c) : Prop :=

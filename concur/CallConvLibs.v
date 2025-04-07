@@ -16,11 +16,11 @@ Section TRANS.
   Variable L1 : semantics li1 li1.
   Variable L2 : semantics li2 li2.
 
-  Hypothesis OLDSIM: Smallstep.forward_simulation cc cc L1 L2.
+  Hypothesis FSIM: Smallstep.forward_simulation cc cc L1 L2.
 
-  Lemma NEWSIM: GS.forward_simulation cc L1 L2.
+  Lemma forward_simulation_trans: GS.forward_simulation cc L1 L2.
   Proof.
-    intros. inv OLDSIM. constructor.
+    intros. inv FSIM. constructor.
     inv X. econstructor; eauto.
     intros. exploit fsim_lts0; eauto.
     intros FPros.
@@ -33,6 +33,24 @@ Section TRANS.
     intros (w0 & q2 & A & B & C).
     exists w0, q2. intuition auto. reflexivity.
     eapply H4; eauto.
+  Qed.
+
+  Hypothesis BSIM: Smallstep.backward_simulation cc cc L1 L2.
+
+  Lemma backward_simulation_trans: GS.backward_simulation cc L1 L2.
+  Proof.
+    intros. inv BSIM. constructor.
+    inv X. econstructor; eauto.
+    intros. exploit bsim_lts0; eauto.
+    intros BPros.
+    instantiate (1:= fun se1 se2 wB gw idx s1 s2 =>  bsim_match_states0 se1 se2 wB idx s1 s2).
+    simpl.
+    inv BPros. econstructor; eauto.
+    - intros. exploit bsim_match_final_states0; eauto.
+      intros [s1' [r1 [B [C D]]]].  exists s1', r1, tt. intuition auto. reflexivity. reflexivity.
+    - intros. exploit bsim_match_external0; eauto.
+    intros (w0 & s1' & q1 & A & B & C & D & E).
+    exists w0, s1', q1. intuition auto. reflexivity.
   Qed.
 
 End TRANS.
@@ -89,7 +107,7 @@ Lemma oldfsim_newfsim_ccid : forall {li : language_interface} (L1 L2: semantics 
     Smallstep.forward_simulation LanguageInterface.cc_id LanguageInterface.cc_id L1 L2 ->
     forward_simulation cc_id L1 L2.
 Proof.
-  intros. generalize (NEWSIM LanguageInterface.cc_id L1 L2).
+  intros. generalize (forward_simulation_trans LanguageInterface.cc_id L1 L2).
   intro. apply H0. auto.
 Qed.
 

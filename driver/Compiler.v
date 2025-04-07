@@ -401,7 +401,7 @@ Lemma compose_identity_pass {li1 li2} cc sem bsem tsem:
 Proof.
   intros. rewrite <- cctrans_id_1.
   eapply st_fsim_vcomp; eauto.
-  eapply NEWSIM. auto.
+  eapply forward_simulation_trans. auto.
 Qed.
 
 Lemma compose_identity_pass' {li1 li2} cc sem bsem tsem:
@@ -447,7 +447,7 @@ Ltac DestructM :=
   assert (F: GS.forward_simulation cc_compcert (Clight.semantics1 p) (Asm.semantics p19)).
   {
     rewrite <- cc_collapse.
-  eapply st_fsim_vcomp. apply NEWSIM.
+  eapply st_fsim_vcomp. apply forward_simulation_trans.
     eapply top_ro_selfsim; eassumption.
   eapply st_fsim_vcomp.
     eapply SimplLocalsproofC.transf_program_correct'; eassumption.
@@ -494,7 +494,7 @@ Ltac DestructM :=
   eapply compose_identity_pass.
     eapply CleanupLabelsproof.transf_program_correct; eassumption.
   eapply compose_optional_pass; eauto using compose_identity_pass'.
-  intros. eapply NEWSIM.
+  intros. eapply forward_simulation_trans.
     eapply Debugvarproof.transf_program_correct; eassumption.
   eapply st_fsim_vcomp.
     eapply StackingproofC.transf_program_correct with (rao := Asmgenproof0.return_address_offset).
@@ -515,13 +515,14 @@ Theorem c_semantic_preservation:
 Proof.
   intros p tp (p' & Hp' & Htp). cbn in Hp'.
   rewrite <- cctrans_id_1.
-  apply GS.compose_forward_simulations with (atomic (Cstrategy.semantics p)).
-  - apply factor_backward_simulation.
+  apply st_bsim_vcomp with (atomic (Cstrategy.semantics p)).
+  - apply backward_simulation_trans.
+    apply factor_backward_simulation.
     + apply Cstrategy.strategy_simulation.
     + apply Csem.semantics_single_events.
     + eapply ssr_well_behaved; eapply Cstrategy.semantics_strongly_receptive.
-  - apply forward_to_backward_simulation.
-    + apply factor_forward_simulation.
+  - apply GS.forward_to_backward_simulation.
+    + apply GS.factor_forward_simulation.
       * eapply compose_identity_pass.
         -- apply SimplExprproof.transl_program_correct; eauto.
         -- apply clight_semantic_preservation; eauto.
@@ -531,7 +532,7 @@ Proof.
     + apply Asm.semantics_determinate.
   - intros. eapply sd_traces. apply Asm.semantics_determinate.
 Qed.
-*)
+
 (** * Correctness of the CompCert compiler *)
 
 (** Combining the results above, we obtain semantic preservation for two
@@ -555,36 +556,13 @@ Proof.
 Qed.
 
 
-(*
-(** Here is the separate compilation case.  Consider a nonempty list [c_units]
-  of C source files (compilation units), [C1 ,,, Cn].  Assume that every
-  C compilation unit [Ci] is successfully compiled by CompCert, obtaining
-  an Asm compilation unit [Ai].  Let [asm_unit] be the nonempty list
-  [A1 ... An].  Further assume that the C units [C1 ... Cn] can be linked
-  together to produce a whole C program [c_program].  Then, the generated
-  Asm units can be linked together, producing a whole Asm program
-  [asm_program].  Moreover, [asm_program] preserves the semantics of
-  [c_program], in the sense that there exists a backward simulation of
-  the dynamic semantics of [asm_program] by the dynamic semantics of [c_program].
-*)
-
-Theorem separate_transf_c_program_correct:
-  forall c_units asm_units c_program,
-  nlist_forall2 (fun cu tcu => transf_clight_program cu = OK tcu) c_units asm_units ->
-  link_list c_units = Some c_program ->
-  exists asm_program,
-      link_list asm_units = Some asm_program
-   /\ backward_simulation cc_compcert cc_compcert (Clight.semantics1 c_program) (Asm.semantics asm_program).
+Theorem transf_c_program_correct:
+  forall p tp,
+  transf_c_program p = OK tp ->
+  GS.backward_simulation cc_compcert (Csem.semantics p) (Asm.semantics tp).
 Proof.
-  intros.
-  assert (nlist_forall2 match_prog c_units asm_units).
-  { eapply nlist_forall2_imply. eauto. simpl; intros. apply transf_clight_program_match; auto. }
-  assert (exists asm_program, link_list asm_units = Some asm_program /\ match_prog c_program asm_program).
-  { eapply link_list_compose_passes; eauto. }
-  destruct H2 as (asm_program & P & Q).
-  exists asm_program; split; auto. apply clight_semantic_preservation; auto.
+  intros. apply c_semantic_preservation. apply transf_c_program_match; auto.
 Qed.
-*)
 
 (** An example of how the correctness theorem, horizontal composition,
   and assembly linking proofs can be used together. *)
@@ -602,10 +580,11 @@ Lemma asm_linking : forall p1 p2 p,
          (erase_program p)) (Asm.semantics p).
 Proof.
   intros.
-  apply NEWSIM. apply AsmLinking.asm_linking. auto.
+  apply forward_simulation_trans.
+  apply AsmLinking.asm_linking. auto.
 Qed.
       
-Lemma compose_transf_c_program_correct:
+Lemma compose_transf_clight_program_correct:
   forall p1 p2 spec tp1 tp2 tp,
     compose (Clight.semantics1 p1) (Clight.semantics1 p2) = Some spec ->
     transf_clight_program p1 = OK tp1 ->
@@ -625,4 +604,133 @@ Proof.
   unfold compose. cbn.
   apply link_erase_program in H2. rewrite H2. cbn. f_equal. f_equal.
   apply Axioms.functional_extensionality. intros [|]; auto.
+Qed.
+
+
+Lemma match_c_prog_defmap_exists : forall i p tp f,
+    match_c_prog p tp ->
+    Maps.PTree.get i (prog_defmap (Ctypes.program_of_program p)) = Some (Gfun (Ctypes.Internal f)) ->
+    exists tf,
+      Maps.PTree.get i (prog_defmap tp) = Some (Gfun (Internal tf)).
+Proof.
+  intros i p tp f M. unfold match_c_prog, pass_match in M; simpl in M.
+  repeat DestructM. subst tp.
+  intro Hfp0. rename p1 into p2. rename p0 into p1. rename p into p0.
+
+  inv M0. eapply match_program_defmap in H. setoid_rewrite Hfp0 in H. inv H. inv H3. inv H4.
+  rename H2 into Hfp1. symmetry in Hfp1. 
+  inv M. eapply match_program_defmap in H. setoid_rewrite Hfp1 in H. inv H. inv H6.
+  inv H7. monadInv H6. rename H5 into Hfp2. symmetry in Hfp2.
+  eapply match_program_defmap in M1. setoid_rewrite Hfp2 in M1. inv M1. inv H6. inv H8.
+  rename H5 into Hfp3. symmetry in Hfp3.
+  eapply match_program_defmap in M2. setoid_rewrite Hfp3 in M2. inv M2. inv H8. inv H10.
+  monadInv H8. rename H5 into Hfp4. symmetry in Hfp4.
+  eapply match_program_defmap in M3. setoid_rewrite Hfp4 in M3. inv M3. inv H8. destruct H11 as [A [B C]].
+  inv C. monadInv H8. rename H5 into Hfp5. symmetry in Hfp5.
+  eapply match_program_defmap in M4. setoid_rewrite Hfp5 in M4. inv M4. inv H8. inv H12.
+  monadInv H8. rename H5 into Hfp6. symmetry in Hfp6.
+  assert (Hfp7: exists f7, Maps.PTree.get i (prog_defmap p7) = Some (Gfun (Internal f7))).
+  { unfold match_if in M5. destr_in M5.
+    2: { subst. eauto. } 
+    eapply match_program_defmap in M5. setoid_rewrite Hfp6 in M5. inv M5. inv H8.
+    eexists. f_equal. f_equal. reflexivity.
+  } destruct Hfp7 as [f7 Hfp7].
+  eapply match_program_defmap in M6. setoid_rewrite Hfp7 in M6. inv M6. inv H8. inv H13.
+  monadInv H8. rename H5 into Hfp8. symmetry in Hfp8.
+  eapply match_program_defmap in M7. setoid_rewrite Hfp8 in M7. inv M7. inv H8. simpl in H5.
+  rename H5 into Hfp9. symmetry in Hfp9.
+  assert (Hfp10: exists f10, Maps.PTree.get i (prog_defmap p10) = Some (Gfun (Internal f10))).
+  { unfold match_if in M8. destr_in M8.
+    2: { subst. eauto. } 
+    eapply match_program_defmap in M8. setoid_rewrite Hfp9 in M8. inv M8. inv H8.
+    simpl. eauto.
+  } destruct Hfp10 as [f10 Hfp10].
+  assert (Hfp11: exists f11, Maps.PTree.get i (prog_defmap p11) = Some (Gfun (Internal f11))).
+  { unfold match_if in M9. destr_in M9.
+    2: { subst. eauto. } 
+    eapply match_program_defmap in M9. setoid_rewrite Hfp10 in M9. inv M9. inv H8.
+    simpl. eauto.
+  } destruct Hfp11 as [f11 Hfp11].
+  assert (Hfp12: exists f12, Maps.PTree.get i (prog_defmap p12) = Some (Gfun (Internal f12))).
+  { unfold match_if in M10. destr_in M10.
+    2: { subst. eauto. } 
+    eapply match_program_defmap in M10. setoid_rewrite Hfp11 in M10. inv M10. inv H8.
+    simpl in H15. monadInv H15.
+    simpl. eauto.
+  } destruct Hfp12 as [f12 Hfp12].
+  assert (Hfp13: exists f13, Maps.PTree.get i (prog_defmap p13) = Some (Gfun (Internal f13))).
+  { unfold match_if in M11. destr_in M11.
+    2: { subst. eauto. } 
+    eapply match_program_defmap in M11. setoid_rewrite Hfp12 in M11. inv M11. inv H8.
+    inv H15. monadInv H8.
+    simpl. eauto.
+  } destruct Hfp13 as [f13 Hfp13].
+  eapply match_program_defmap in M12. setoid_rewrite Hfp13 in M12. inv M12. inv H8. inv H15.
+  monadInv H8. rename H5 into Hfp15. symmetry in Hfp15.
+  eapply match_program_defmap in M13. setoid_rewrite Hfp15 in M13. inv M13. inv H8. simpl in H5.
+  rename H5 into Hfp16. symmetry in Hfp16.
+  eapply match_program_defmap in M14. setoid_rewrite Hfp16 in M14. inv M14. inv H8. inv H17.
+  monadInv H8. rename H5 into Hfp17. symmetry in Hfp17.
+  eapply match_program_defmap in M15. setoid_rewrite Hfp17 in M15. inv M15. inv H8. simpl in H5.
+  rename H5 into Hfp18. symmetry in Hfp18.
+  assert (Hfp19: exists f18, Maps.PTree.get i (prog_defmap p18) = Some (Gfun (Internal f18))).
+  { unfold match_if in M16. destr_in M16.
+    2: { subst. eauto. } 
+    eapply match_program_defmap in M16. setoid_rewrite Hfp18 in M16. inv M16. inv H8.
+    inv H19. monadInv H8.
+    simpl. eauto.
+  } destruct Hfp19 as [f19 Hfp19].
+  eapply match_program_defmap in M17. setoid_rewrite Hfp19 in M17. inv M17. inv H8. inv H19.
+  monadInv H8. rename H5 into Hfp20. symmetry in Hfp20.
+  eapply match_program_defmap in M18. setoid_rewrite Hfp20 in M18. inv M18. inv H8. inv H20.
+  monadInv H8. eauto.
+Qed.
+
+Lemma compose_transf_c_program_correct:
+  forall p1 p2 spec tp1 tp2 tp,
+    compose (Csem.semantics p1) (Csem.semantics p2) = Some spec ->
+    transf_c_program p1 = OK tp1 ->
+    transf_c_program p2 = OK tp2 ->
+    link tp1 tp2 = Some tp ->
+    GS.backward_simulation cc_compcert spec (Asm.semantics tp).
+Proof.
+  intros.
+  rewrite <- cctrans_id_2.
+  eapply st_bsim_vcomp.
+  2: { unfold compose in H.
+       destruct (@link (AST.program unit unit)) as [skel|] eqn:Hskel; try discriminate.
+       cbn in *. inv H.
+       eapply GS.forward_to_backward_simulation.
+       eapply asm_linking; eauto.
+       eapply semantics_receptive.
+       intros. destruct i; eapply Asm.semantics_receptive.
+       eapply Asm.semantics_determinate.
+  }
+  2: { intros. pose proof (Asm.semantics_receptive tp se3). apply H3. }
+  pose proof (transf_c_program_correct _ _ H0) as Bsim1.
+  pose proof (transf_c_program_correct _ _ H1) as Bsim2.
+  eapply compose_simulation. 6: eauto. all: eauto using Csem_determinate_big.
+  - intros. intros [A B].
+    (* unfold compose in H. unfold option_map in H. destr_in H.
+    inv H. *)
+    inv A. inv B.
+    unfold Genv.is_internal in *. destr_in H4. destr_in H5.
+    destruct f; inv H4.
+    destruct f0; inv H5.
+    unfold Genv.find_funct in *. repeat destr_in Heqo.
+    rewrite Genv.find_funct_ptr_iff,Genv.find_def_spec in Heqo0.
+    rewrite Genv.find_funct_ptr_iff,Genv.find_def_spec in H4.
+    destr_in Heqo0.
+    eapply transf_c_program_match in H0.
+    eapply transf_c_program_match in H1.
+    exploit match_c_prog_defmap_exists. apply H0. apply H4.
+    intros [tf0 A].
+    exploit match_c_prog_defmap_exists. apply H1. apply Heqo0.
+    intros [tf B].
+    destruct (link_prog_inv _ _ _ H2) as (_ & X & _).
+    exploit X; eauto. intros (_ & _ & [gd Y]).
+    inv Y.
+  - unfold compose. cbn.
+    apply link_erase_program in H2. rewrite H2. cbn.
+    f_equal. f_equal. apply Axioms.functional_extensionality. intros [|]; auto.
 Qed.
