@@ -568,7 +568,7 @@ Qed.
   and assembly linking proofs can be used together. *)
 
 Require Import SmallstepLinking.
-Require Import HCompBig.
+Require Import HCompBig HCompBack.
 Require Import AsmLinking.
 
 
@@ -598,7 +598,7 @@ Proof.
        destruct (@link (AST.program unit unit)) as [skel|] eqn:Hskel; try discriminate.
        cbn in *. inv H.
        eapply asm_linking; eauto. }
-  eapply compose_simulation; eauto.
+  eapply HCompBig.compose_simulation; eauto.
   eapply clight_semantic_preservation; eauto using transf_clight_program_match.
   eapply clight_semantic_preservation; eauto using transf_clight_program_match.
   unfold compose. cbn.
@@ -684,6 +684,27 @@ Proof.
   monadInv H8. rename H5 into Hfp20. symmetry in Hfp20.
   eapply match_program_defmap in M18. setoid_rewrite Hfp20 in M18. inv M18. inv H8. inv H20.
   monadInv H8. eauto.
+Qed.
+
+
+Lemma Csem_determinate_big: forall p, determinate_big (Csem.semantics p).
+Proof.
+  intros p se. constructor.
+  - intros. inv H. inv H0. congruence.
+  - (*initial_nostep*)
+    intros. red. intros. intro. inv H. inv H0. inv H. inv H.
+    setoid_rewrite H1 in FIND. inv FIND.
+    setoid_rewrite H1 in FIND. inv FIND. inv H7.
+  - (*ext_determ*)
+    intros. inv H. inv H0. setoid_rewrite H1 in H6. inv H6. reflexivity.
+  - (*after_determ*)
+    intros. inv H. inv H0. reflexivity.
+  - (*final_nostep*)
+    intros. red. intros. intro. inv H. inv H0. inv H. inv H.
+  - (*final_noext*)
+    intros. inv H. inv H0.
+  - (*final_determ*)
+    intros. inv H. inv H0. reflexivity.
 Qed.
 
 Lemma compose_transf_c_program_correct:

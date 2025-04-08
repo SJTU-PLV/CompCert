@@ -448,28 +448,28 @@ Section ASM_LINKING.
         constructor; eauto.
       + (* push *)
         destruct s' as [nb' [rs' m' live1']], H1 as [? ?]. subst.
-        inv H. inv H1. inv H6.
+        inv H. inv H1. inv H7.
         eexists (_, _), (nb, _). repeat apply conj; auto.
         right. intuition auto.
         * eapply star_refl.
-        * red. cbn. rewrite H10, H7. extlia.
+        * red. cbn. rewrite H11, H8. extlia.
         * constructor; cbn; eauto using match_liveness_refl, Mem.sup_include_refl.
           econstructor; eauto.
       + (* pop *)
         destruct sk as [bk sk], s' as [b s'], H0 as [H0 Hb].
-        inv H. inv H0. inv H4.
+        inv H. inv H0. inv H5.
         eexists (_, _), (_, _). intuition auto.
         {
           right. split; auto using star_refl. red. cbn.
           clear. destruct Genv.find_funct as [[|]|], live; extlia.
         }
-        inv H5.
+        inv H6.
         * constructor; eauto using Mem.sup_include_trans.
           exploit (match_inner_sp nb bk (rs RSP)); eauto using match_stack_support. intro.
-          destruct H; inv H9. inv H8. destruct y; congruence.
+          destruct H; inv H10. inv H9. destruct y; congruence.
         * constructor; eauto using Mem.sup_include_trans.
           exploit (match_inner_sp nb bk (rs RSP)); eauto using match_stack_support. intro.
-          destruct H; inv H9. destruct H1; congruence.
+          destruct H; inv H10. destruct H2; congruence.
     - apply well_founded_ltof.
   Qed.
 End ASM_LINKING.

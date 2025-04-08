@@ -37,10 +37,12 @@ Section LINK.
           Smallstep.at_external (L i se) s q ->
           valid_query (L j se) q = true ->
           Smallstep.initial_state (L j se) q s' ->
+          i <> j ->
           step (st i s :: k) E0 (st j s' :: st i s :: k)
       | step_pop i j s sk r s' k :
           Smallstep.final_state (L i se) s r ->
           Smallstep.after_external (L j se) sk r s' ->
+          i <> j ->
           step (st i s :: st j sk :: k) E0 (st j s' :: k).
 
     Inductive initial_state (q: query li): state -> Prop :=
@@ -111,6 +113,13 @@ Section LINK.
     destruct 1; econstructor; eauto using step_internal, star_internal.
   Qed.
 
+  Definition safe se s : Prop :=
+    forall s',
+      star (fun _ => step se) tt s E0 s' ->
+      (exists r, final_state se s' r)
+      \/ (exists q, at_external se s' q)
+      \/ (exists t, exists s'', step se s' t s'').
+
   (** * Receptiveness and determinacy *)
 
       
@@ -145,7 +154,6 @@ Section LINK.
     - destruct 1. inversion 1; subst_dep.
       + eapply sd_big_at_external_nostep; eauto.
       + edestruct (sd_big_at_external_determ (HL i se) s q q0); eauto.
-        specialize (H0 j). congruence.
       + eapply sd_big_final_noext; eauto.
     - destruct 1. inversion 1; subst_dep.
       eapply sd_big_at_external_determ; eauto.
@@ -189,7 +197,6 @@ Section LINK.
     - destruct 1. inversion 1; subst_dep.
       + eapply sd_at_external_nostep; eauto.
       + edestruct (sd_at_external_determ (HL i se) s q q0); eauto.
-        specialize (H0 j). congruence.
       + eapply sd_final_noext; eauto.
     - destruct 1. inversion 1; subst_dep.
       eapply sd_at_external_determ; eauto.
@@ -281,7 +288,7 @@ Section FSIM.
       * econstructor; eauto.
         econstructor; eauto. 
     - (* cross-component call *)
-      inv H4; subst_dep. clear idx0.
+      inv H5; subst_dep. clear idx0.
       edestruct @GS.fsim_match_external as (wx & qx2 & Hqx2 & ACC & Hqx & Hsex & Hrx); eauto using GS.fsim_lts.
       pose proof (GS.fsim_lts (HL j) _ _ Hsex (Hse1 j)).
       edestruct @GS.fsim_match_initial_states as (idx' & s2' & Hs2' & Hs'); eauto.
@@ -296,11 +303,11 @@ Section FSIM.
            intros r1 r2 s1' gw'' [ACC1 MR] AF.
            exploit Hrx; eauto.
     - (* cross-component return *)
-      inv H3; subst_dep. clear idx0.
-      pose proof (GS.fsim_lts (HL i) _ _ H4 H9).
+      inv H4; subst_dep. clear idx0.
+      pose proof (GS.fsim_lts (HL i) _ _ H5 H10).
       edestruct @GS.fsim_match_final_states as (r2 & gwf & Hr2 & ACCIF & ACCO & Hr); eauto.
-      inv H8. inv H7; subst_dep.
-      edestruct H10 as (idx' & s2' & Hs2' & Hs'); eauto.
+      inv H9. inv H8; subst_dep.
+      edestruct H11 as (idx' & s2' & Hs2' & Hs'); eauto.
       eexists (existT _ j idx'), _. split.
       + left. apply plus_one. eapply step_pop; eauto.
       + econstructor. 2: instantiate (1:= gwf).

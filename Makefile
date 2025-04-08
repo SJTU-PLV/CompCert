@@ -193,7 +193,7 @@ CLOSE=SmallstepClosed.v
 # Concurrent semantics
 
 CONCUR=CallconvBig.v \
-       HCompBig.v CallConvAlgebra.v VCompBig.v \
+       HCompBig.v HCompBack.v CallConvAlgebra.v VCompBig.v \
        Injp.v Ext.v \
        SimplLocalsproofC.v CminorgenproofC.v InliningproofC.v \
        InvariantC.v StackingproofC.v \
