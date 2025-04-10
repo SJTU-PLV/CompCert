@@ -340,6 +340,12 @@ Proof.
   eapply PathsMap.eq_refl. eapply PathsMap.eq_refl.
 Qed.  
 
+Lemma move_place_eq_universe1: forall own p,
+    own_universe own = own_universe (move_place own p).
+Proof.
+  reflexivity.
+Qed.
+
 
 (* (* ownership transfer of an expression *) *)
 (* Definition own_transfer_expr (own: own_env) (e: expr) : own_env := *)
@@ -465,6 +471,17 @@ Defined.
 
 Definition init_place_list (own: own_env) (l: list place) : own_env :=
   fold_left init_place l own.
+
+Lemma init_place_eq_universe1: forall own p,
+    own_universe own = own_universe (init_place own p).
+Proof.
+  reflexivity.
+Qed.
+
+Ltac repeat_rewrite_eq_universe:=
+  repeat (try erewrite <- move_place_eq_universe1; 
+   try erewrite <- init_place_eq_universe1).
+
 
 (* Definition own_check_assign (own: own_env) (p: place) : bool := *)
 (*   (* check that the dominator of p is owned (initialized) because we *)
