@@ -51,3 +51,13 @@ interpreter) as follows:
 	% make test
 	
 The generated [documentation](doc/index.html) is provided by CompCertO.
+
+## Current status
+
+Todos: 
+
+Injp Composition : InjectFootprint.v <- high priority
+leaving passes : SSAsmproof, RealAsmproof, PseudoInstructionsproof.
+semantics: RealAsm, PseudoInstruction.
+Some CKLR 'rel' files : Clightrel, RTLrel, Asmrel, AsmLinking.
+Final Composition : CA.v Compiler.v
