@@ -2,11 +2,14 @@ Require Import Coqlib Errors.
 Require Import Integers Floats AST Linking.
 Require Import Values Memory Events Globalenvs Smallstep.
 Require Import Asm AsmFacts AsmRegs Asmgen Asmgenproof0.
+Require Import LanguageInterface CKLR Extends Inject.
 Require Import SSAsm.
+
+Definition program := Asm.program.
 
 Definition transf_program (p: Asm.program) : Asm.program := p.
 
-Definition match_prog (p :program) (tp:program):= p = tp.
+Definition match_prog (p tp : program) := p = tp.
 
 Lemma transf_program_match:
   forall p, match_prog p (transf_program p).
@@ -14,59 +17,184 @@ Proof.
   intros. reflexivity.
 Qed.
 
-Definition max_stacksize' := max_stacksize + align (size_chunk Mptr) 8.
-
 Section PRESERVATION.
 
-Variable prog: Asm.program.
+Variable prog tprog: Asm.program.
 Variable instr_size : instruction -> Z.
 Hypothesis instr_size_bound : forall i, 0 < instr_size i <= Ptrofs.max_unsigned.
 
-Let ge := Genv.globalenv prog.
+Variable w: CKLR.world inj.
+Variable se tse: Genv.symtbl.
+Let ge := Genv.globalenv se prog.
+Let tge := Genv.globalenv tse prog.
+
+Hypothesis GE: CKLR.match_stbls inj w se tse.
+Hypothesis VALID: Genv.valid_for (erase_program prog) se.
 
 (** this hypothesis can be promised by asmgen *)
 
-Hypothesis prog_unchange_rsp: asm_prog_unchange_rsp instr_size ge.
+Hypothesis prog_unchange_rsp_l: asm_prog_unchange_rsp instr_size (injw_sup_l w) ge.
+Hypothesis prog_unchange_rsp_r: asm_prog_unchange_rsp instr_size (injw_sup_r w) tge.
 
 (** Memory Injection Lemmas *)
 Record meminj_preserves_globals (j: meminj) : Prop := {
-  defs_inject: forall b gd,
-    Genv.find_def ge b = Some gd -> j b = Some (b, 0);
-  defs_rev_inject: forall b b' delta gd,
-    j b = Some(b', delta) -> Genv.find_def ge b' = Some gd ->
-    b = b' /\ delta = 0;
-  symbol_inject: forall id b,
-    Genv.find_symbol ge id = Some b -> j b = Some(b, 0);
+  match_stbls :> Genv.match_stbls j se tse;
+  global_inject :> meminj_global j;
 }.
+
+Remark defs_inject:
+  forall j b b' delta gd,
+    meminj_global j ->
+    j b = Some (b', delta) ->
+    Genv.find_def ge b = Some gd ->
+    b = b' /\ delta = 0.
+Proof.
+  intros. apply Genv.genv_defs_range, Genv.genv_sup_glob in H1 as [id ?]. subst.
+  exploit H. eauto. intros [ ]. auto.
+Qed.
+
+Remark defs_rev_inject:
+  forall j b b' delta gd,
+    meminj_preserves_globals j ->
+    j b = Some (b', delta) ->
+    Genv.find_def tge b' = Some gd ->
+    b = b' /\ delta = 0.
+Proof.
+  intros.
+  apply Genv.genv_defs_range in H1. erewrite <- Genv.mge_separated in H1; eauto. 2:apply H.
+  apply Genv.genv_sup_glob in H1 as [id ?]. subst.
+  exploit global_inject; eauto. intros [ ]. auto.
+Qed.
+
+Remark info_inject:
+  forall j b b' delta gd,
+    meminj_global j ->
+    j b = Some (b', delta) ->
+    Genv.find_var_info se b = Some gd ->
+    b = b' /\ delta = 0.
+Proof.
+  intros. apply Genv.find_var_info_iff, Genv.genv_info_range, Genv.genv_sup_glob in H1 as [id ?]. subst.
+  exploit H. eauto. intros [ ]. auto.
+Qed.
+
+Remark info_rev_inject:
+  forall j b b' delta gd,
+    meminj_preserves_globals j ->
+    j b = Some (b', delta) ->
+    Genv.find_var_info tse b' = Some gd ->
+    b = b' /\ delta = 0.
+Proof.
+  intros. erewrite Genv.find_var_info_iff in H1.
+  unfold Genv.find_info in H1. erewrite <- Genv.mge_info in H1; eauto. 2:apply H.
+  apply Genv.genv_info_range, Genv.genv_sup_glob in H1 as [id ?]. subst.
+  exploit global_inject; eauto. intros [ ]. auto.
+Qed.
+
+Lemma functions_translated (j: meminj):
+  meminj_preserves_globals j ->
+  forall v tv f,
+  Val.inject j v tv -> Genv.find_funct ge v = Some f ->
+  Genv.find_funct tge tv = Some f.
+Proof.
+  intros.
+  unfold Genv.find_funct in *. do 2 destr_in H1. subst. inv H0.
+  apply Genv.find_funct_ptr_iff in H1.
+  eapply defs_inject in H1 as ?; eauto. 2:apply H. destruct H0 as [ ]. subst.
+  rewrite Ptrofs.add_zero. destr. rewrite Genv.find_funct_ptr_iff.
+  exploit @Genv.globalenvs_match. red. intuition idtac.
+    instantiate (1 := prog). instantiate (2 := fun x y => x = y). instantiate (2 := fun x y z => y = z).
+    generalize (prog_defs prog). induction l; constructor; auto.
+    red. split. auto. destruct (snd a); econstructor; auto. reflexivity.
+    destruct v. constructor. auto. apply H. instantiate (1 := tt).
+  intros MGE. pose proof Genv.mge_defs MGE _ H4.
+  unfold Genv.find_def, ge, tge in *. simpl in *. inv H0. congruence.
+  inv H5; congruence.
+Qed.
+
+Lemma functions_only_translated (j: meminj):
+  meminj_preserves_globals j ->
+  forall v tv f (PTR: v <> Vundef),
+  Val.inject j v tv -> Genv.find_funct tge tv = Some f ->
+  Genv.find_funct ge v = Some f.
+Proof.
+  intros.
+  unfold Genv.find_funct in *. do 2 destr_in H1. subst. inv H0. 2:congruence.
+  apply Genv.find_funct_ptr_iff in H1.
+  eapply defs_rev_inject in H1 as ?; eauto. destruct H0 as [ ]. subst.
+  rewrite Ptrofs.add_zero in H6. subst. destr. rewrite Genv.find_funct_ptr_iff.
+  exploit @Genv.globalenvs_match. red. intuition idtac.
+    instantiate (1 := prog). instantiate (2 := fun x y => x = y). instantiate (2 := fun x y z => y = z).
+    generalize (prog_defs prog). induction l; constructor; auto.
+    red. split. auto. destruct (snd a); econstructor; auto. reflexivity.
+    destruct v. constructor. auto. apply H. instantiate (1 := tt).
+  intros MGE. pose proof Genv.mge_defs MGE _ H5.
+  unfold Genv.find_def, ge, tge in *. simpl in *. inv H0. congruence.
+  inv H4; congruence.
+Qed.
+
+Lemma functions_transl:
+  forall j fb tfb f delta,
+  meminj_preserves_globals j ->
+  Genv.find_funct_ptr ge fb = Some f ->
+  j fb = Some (tfb, delta) ->
+  Genv.find_funct_ptr tge tfb = Some f.
+Proof.
+  intros. cut (delta = 0). intros. subst.
+  exploit (functions_translated _ H (Vptr fb Ptrofs.zero)); eauto.
+  rewrite Genv.find_funct_ptr_iff in H0. eapply defs_inject in H0 as [ ]; eauto. apply H.
+Qed.
+
+Lemma functions_only_transl:
+  forall j fb tfb f delta,
+  meminj_preserves_globals j ->
+  Genv.find_funct_ptr tge tfb = Some f ->
+  j fb = Some (tfb, delta) ->
+  Genv.find_funct_ptr ge fb = Some f.
+Proof.
+  intros. cut (delta = 0). intros. subst.
+  exploit (functions_only_translated _ H (Vptr fb Ptrofs.zero)); eauto. congruence.
+  rewrite Genv.find_funct_ptr_iff in H0. eapply defs_rev_inject in H0 as [ ]; eauto.
+Qed.
+
+Remark symbol_inject:
+  forall j id b,
+    meminj_preserves_globals j ->
+    Genv.find_symbol se id = Some b ->
+    j b = Some (b, 0).
+Proof.
+  intros.
+  apply Genv.genv_symb_range in H0. edestruct Genv.mge_dom as [b2 J]; eauto. apply H.
+  apply Genv.genv_sup_glob in H0 as [id' ?]. subst.
+  exploit global_inject; eauto. intros [ ]. subst. auto.
+Qed.
 
 Lemma globals_symbols_inject:
   forall j, meminj_preserves_globals j ->
-  symbols_inject j ge ge.
+  symbols_inject j se tse.
 Proof.
   intros j GLOB_INJ.
   repeat split; intros.
+  + apply GE.
   + simpl in H0. exploit symbol_inject; eauto. intro INJ. rewrite H in INJ. inv INJ. auto.
-  + simpl in H0. exploit symbol_inject; eauto. intro INJ. rewrite H in INJ. inv INJ. auto.
-  + simpl in H0. exploit symbol_inject; eauto.
+  + simpl in H0. exploit symbol_inject; eauto. intro INJ. rewrite H in INJ. inv INJ.
+    unfold Genv.find_symbol. erewrite <- Genv.mge_symb; eauto. apply GLOB_INJ.
+  + simpl in H0. exploit symbol_inject; eauto. intros. eexists. split. eauto.
+    unfold Genv.find_symbol. erewrite <- Genv.mge_symb; eauto. apply GLOB_INJ.
   + simpl. unfold Genv.block_is_volatile.
-    destruct (Genv.find_var_info ge b1) as [gv|] eqn:V1.
-    rewrite Genv.find_var_info_iff in V1.
-    exploit defs_inject; eauto. intros A. rewrite H in A. inv A.
-    rewrite <- Genv.find_var_info_iff in V1. rewrite V1; auto.
-    destruct (Genv.find_var_info ge b2) as [gv|] eqn:V2; auto.
-    rewrite Genv.find_var_info_iff in V2.
-    exploit defs_rev_inject; eauto. intros (A & B). subst.
-    rewrite <- Genv.find_var_info_iff in V2. congruence.
+    erewrite <- Genv.mge_info; eauto. apply GLOB_INJ.
 Qed.
 
 Lemma globinj_to_funinj:
   forall (j: meminj),
-    meminj_preserves_globals j ->
-    forall b f, Genv.find_funct_ptr ge b = Some f -> j b = Some (b,0).
+    meminj_global j ->
+    forall b b' f ofs,
+      Genv.find_funct_ptr ge b = Some f ->
+      j b = Some (b', ofs) ->
+      b' = b /\ ofs = 0.
 Proof.
-  intros j MINJ b f FF. unfold Genv.find_funct_ptr in FF.
-  exploit (defs_inject j MINJ b (Gfun f)); eauto.
-  repeat destr_in FF.
+  intros j MINJ b b' f ofs FF JB.
+  unfold Genv.find_funct_ptr in FF. do 2 destr_in FF. inv FF.
+  apply Genv.genv_defs_range, Genv.genv_sup_glob in Heqo as (id & ?). subst b. auto.
 Qed.
 
 (** Regset Injection Lemmas *)
@@ -195,38 +323,66 @@ Definition stack_inject_lowbound j m stklb:=
     Mem.perm m b ofs k p ->
     stklb <= ofs + delta /\ (current_in_stack b m).
 
-Inductive inject_stack (j:meminj) (P:perm_type): stackadt -> Prop :=
-  |inject_stack_nil :
-     j (stkblock) = Some (stkblock,max_stacksize') ->
-     inject_stack j P nil
-  |inject_stack_cons : forall b astk size
-      (IS_REC: inject_stack j P astk),
-      j b = Some (stkblock, max_stacksize' - stack_size astk - frame_size_a (mk_frame b size)) ->
-     (forall o k p, 0 <= o < size <-> P b o k p) ->
-     inject_stack j P (((mk_frame b size)::nil)::astk).
+Definition stkcin m : Prop :=
+  forall b,
+    current_in_stack b m ->
+    is_stack b /\ sup_In b (Mem.support m).
+Definition stkcin' sup : Prop :=
+  forall b,
+    current_in_stack' b (Mem.astack sup) ->
+    is_stack b /\ sup_In b sup.
 
-Lemma inject_stack_initinj:
-  forall j P l, inject_stack j P l ->  j (stkblock) = Some (stkblock,max_stacksize').
-Proof.
-  intros. induction H; auto.
-Qed.
+Inductive inject_stack (j:meminj) (P:perm_type): stackadt -> stackadt -> Prop :=
+  | inject_stack_nil : forall hd t tl hd' t' tl'
+      (INIT_STKCIN_L: stkcin' (injw_sup_l w))
+      (INIT_STKCIN_R: stkcin' (injw_sup_r w))
+      (INIT_PARENT_L: Mem.astack (injw_sup_l w) = nil :: (hd :: t) :: tl)
+      (INIT_PARENT_R: Mem.astack (injw_sup_r w) = nil :: (hd' :: t') :: tl')
+      (INIT_SIZE: stack_size (Mem.astack (injw_sup_l w)) >= stack_size (Mem.astack (injw_sup_r w)))
+      (INIT_INJECT: j (frame_block hd) = Some (stkblock, max_stacksize' - stack_size (Mem.astack (injw_sup_r w))))
+      (INIT_INNER:
+        forall b,
+        current_in_stack' b (Mem.astack (injw_sup_l w)) ->
+        (forall o k p, P b o k p -> 0 <= o) /\
+        exists ofs,
+        j b = Some (stkblock, ofs) /\ ofs >= max_stacksize' - stack_size (Mem.astack (injw_sup_r w))),
+      inject_stack j P (Mem.astack (injw_sup_l w)) (Mem.astack (injw_sup_r w))
+  | inject_stack_cons : forall b astk astk' size
+       (IS_REC: inject_stack j P astk astk')
+       (FRESH: ~ sup_In b (injw_sup_l w)),
+       j b = Some (stkblock, max_stacksize' - stack_size astk' - frame_size_a (mk_frame b size)) ->
+       (forall o k p, 0 <= o < size <-> P b o k p) ->
+       inject_stack j P (((mk_frame b size)::nil)::astk) (((mk_frame stkblock size)::nil)::astk').
+
+Remark init_stkcin_l:
+  forall j P a a',
+    inject_stack j P a a' -> stkcin' (injw_sup_l w).
+Proof. induction 1; auto. Qed.
+
+Remark init_stkcin_r:
+  forall j P a a',
+    inject_stack j P a a' -> stkcin' (injw_sup_l w).
+Proof. induction 1; auto. Qed.
 
 Lemma inject_stack_incr:
   forall j j' P (INCR: inject_incr j j')
-    l (IS: inject_stack j P l),
-    inject_stack j' P l.
+    l l' (IS: inject_stack j P l l'),
+    inject_stack j' P l l'.
 Proof.
   induction 2; econstructor; eauto.
+  intros. edestruct INIT_INNER as (PERM & ofs & INJ & GE'); eauto.
 Qed.
 
 
 Lemma inject_stack_inv:
   forall j (P P': perm_type)
-    l (IS: inject_stack j P l)
+    l l' (IS: inject_stack j P l l')
     (INCR: forall b o k p, current_in_stack' b l -> (P b o k p <-> P' b o k p)),
-    inject_stack j P' l.
+    inject_stack j P' l l'.
 Proof.
   induction 1; econstructor; eauto.
+  - intros. edestruct INIT_INNER as (PERM & EX). eauto. split; auto.
+    intros. exploit INCR; eauto. intros RW. rewrite <- RW in H0. eapply PERM; eauto.
   - eapply IHIS; eauto. intros; eapply INCR; eauto. simpl.
     right. simpl in H1. apply H1.
   - intros. etransitivity. 2: eapply INCR; eauto. eauto. simpl.
@@ -237,34 +393,34 @@ Qed.
 Inductive match_states: meminj -> state -> state -> Prop :=
 | match_states_intro:
     forall (j: meminj)
-      (rs: regset) (m: mem) (rs': regset) (m': mem)
+      (rs: regset) (m: mem) (rs': regset) (m': mem) (live: bool)
    (** Memory Injection *)
       (MINJ: Mem.inject j m m')
       (GLOBINJ: meminj_preserves_globals j)
-      (ENVSUP: Mem.sup_include (Genv.genv_sup ge) (Mem.support m))
-      (ENVSUP': Mem.sup_include (Genv.genv_sup ge) (Mem.support m'))
+      (ENVSUP: Mem.sup_include (injw_sup_l w) (Mem.support m))
+      (ENVSUP': Mem.sup_include (injw_sup_r w) (Mem.support m'))
    (** Regset Injection *)
-      (RSPzero: forall b i, rs # RSP = Vptr b i -> i = Ptrofs.zero )
+      (RSPzero: forall b i, rs # RSP = Vptr b i -> i = Ptrofs.zero)
+      (RSPblock: forall b i, rs # RSP = Vptr b i -> hd_error (sp_of_astack (Mem.astack (Mem.support m))) = Some b)
       (RINJ: forall r, Val.inject j (rs # r) (rs' # r))
    (** Stack Properties **)
       (STKLIMIT: stack_size (Mem.astack (Mem.support m)) <= max_stacksize)
       (STKNOREPET: list_norepet (sp_of_astack (Mem.astack (Mem.support m))))
-      (STKCIN: forall b, current_in_stack b m -> is_stack b /\ sup_In b (Mem.support m))
+      (STKCIN: stkcin m)
       (STKVB: Mem.valid_block m stkblock)
       (STKPERMOFS: forall ofs k p, ~ Mem.perm m stkblock ofs k p)
       (STKVB': Mem.valid_block m' stkblock)
       (STKPERMOFS': single_stack_perm_ofs m')
    (** Stack Injection *)
-      (RSPINJ: inject_stack j (Mem.perm m)
-                            (Mem.astack (Mem.support m))) (*record the mapping of each active sp*)
-      (RSPINJ': exists stkofs,
-          (Ptrofs.unsigned stkofs =
+      (*record the mapping of each active sp*)
+      (RSPINJ: inject_stack j (Mem.perm m) (Mem.astack (Mem.support m)) (Mem.astack (Mem.support m')))
+      (RSPINJ': rs'#RSP = Vptr stkblock (Ptrofs.repr (max_stacksize' - stack_size (Mem.astack (Mem.support m')))))
+          (* (Ptrofs.unsigned stkofs =
            max_stacksize' -
            stack_size (Mem.astack (Mem.support m)))
-          /\ (rs'#RSP) = Vptr stkblock stkofs)
-      (STKINJLWBD: stack_inject_lowbound j m
-     (max_stacksize' - stack_size (Mem.astack (Mem.support m)))),
-      match_states j (State rs m) (State rs' m').
+          /\ (rs'#RSP) = Vptr stkblock stkofs) *)
+      (STKINJLWBD: stack_inject_lowbound j m (max_stacksize' - stack_size (Mem.astack (Mem.support m')))),
+      match_states j (State rs m live) (State rs' m' live).
 
 (** injection in exec_instr *)
 Section VAL_INJ_OPS.
@@ -924,10 +1080,11 @@ End VAL_INJ_OPS.
 Lemma symbol_address_inject:
   forall j id ofs,
     meminj_preserves_globals j ->
-    Val.inject j (Genv.symbol_address ge id ofs) (Genv.symbol_address ge id ofs).
+    Val.inject j (Genv.symbol_address se id ofs) (Genv.symbol_address tse id ofs).
 Proof.
   intros j id i0 MPG.
-  destruct MPG. unfold Genv.symbol_address. simpl in symbol_inject0. destr; auto. apply symbol_inject0 in Heqo.
+  unfold Genv.symbol_address. destr; auto. eapply symbol_inject in Heqo as INJ; eauto.
+  unfold Genv.find_symbol in *. erewrite Genv.mge_symb in Heqo; eauto. 2:apply MPG. erewrite Heqo.
   econstructor; eauto.
   rewrite Ptrofs.add_zero. auto.
 Qed.
@@ -936,7 +1093,7 @@ Lemma eval_addrmode32_inject:
   forall a rs rs' j,
     meminj_preserves_globals j ->
     (forall r, Val.inject j (rs r) (rs' r)) ->
-    Val.inject j (eval_addrmode32 ge a rs) (eval_addrmode32 ge a rs').
+    Val.inject j (eval_addrmode32 ge a rs) (eval_addrmode32 tge a rs').
 Proof.
   unfold eval_addrmode32. intros.
   destruct a.
@@ -949,7 +1106,7 @@ Lemma eval_addrmode64_inject:
   forall a rs rs' j,
     meminj_preserves_globals j ->
     (forall r, Val.inject j (rs r) (rs' r)) ->
-    Val.inject j (eval_addrmode64 ge a rs) (eval_addrmode64 ge a rs').
+    Val.inject j (eval_addrmode64 ge a rs) (eval_addrmode64 tge a rs').
 Proof.
   unfold eval_addrmode64. intros.
   destruct a.
@@ -962,7 +1119,7 @@ Lemma eval_addrmode_inject:
   forall a rs rs' j,
     meminj_preserves_globals j ->
     (forall r, Val.inject j (rs r) (rs' r)) ->
-    Val.inject j (eval_addrmode ge a rs) (eval_addrmode ge a rs').
+    Val.inject j (eval_addrmode ge a rs) (eval_addrmode tge a rs').
 Proof.
   unfold eval_addrmode.
   intros.
@@ -970,18 +1127,18 @@ Proof.
 Qed.
 
 Lemma exec_load_inject:
-  forall κ m1 a rs1 rd rs1' m1' rs2 m2 j sz,
+  forall κ m1 a rs1 rd rs1' m1' rs2 m2 j sz live,
     meminj_preserves_globals j ->
     Mem.inject j m1 m2 ->
     (forall r, Val.inject j (rs1 r) (rs2 r)) ->
-    exec_load ge sz κ m1 a rs1 rd = Next rs1' m1' ->
+    exec_load ge sz κ m1 a rs1 rd = Next' rs1' m1' live ->
     exists rs2' m2',
-      exec_load ge sz κ m2 a rs2 rd = Next rs2' m2' /\
+      exec_load tge sz κ m2 a rs2 rd = Next' rs2' m2' live /\
       Mem.inject j m1' m2' /\
       forall r, Val.inject j (rs1' r) (rs2' r).
 Proof.
   unfold exec_load.
-  intros κ m1 a rs1 rd rs1' m1' rs2 m2 j sz MPG MINJ RINJ EL.
+  intros κ m1 a rs1 rd rs1' m1' rs2 m2 j sz live MPG MINJ RINJ EL.
   destr_in EL. inv EL.
   edestruct Mem.loadv_inject as (v2 & LD & VINJ); eauto.
   apply eval_addrmode_inject; auto.
@@ -991,17 +1148,17 @@ Proof.
 Qed.
 
 Lemma exec_store_inject:
-  forall κ m1 a rs1 rd rs1' m1' rs2 m2 j destroyed sz,
+  forall κ m1 a rs1 rd rs1' m1' rs2 m2 j destroyed sz live,
     meminj_preserves_globals j ->
     Mem.inject j m1 m2 ->
     (forall r, Val.inject j (rs1 r) (rs2 r)) ->
-    exec_store ge sz κ m1 a rs1 rd destroyed = Next rs1' m1' ->
+    exec_store ge sz κ m1 a rs1 rd destroyed = Next' rs1' m1' live ->
     exists rs2' m2',
-      exec_store ge sz κ m2 a rs2 rd destroyed = Next rs2' m2' /\
+      exec_store tge sz κ m2 a rs2 rd destroyed = Next' rs2' m2' live /\
       Mem.inject j m1' m2' /\
       forall r, Val.inject j (rs1' r) (rs2' r).
 Proof.
-  unfold exec_store. intros κ m1 a rs1 rd rs1' m1' rs2 m2 j sz destroyed MPG MINJ RINJ ES.
+  unfold exec_store. intros κ m1 a rs1 rd rs1' m1' rs2 m2 j destroyed sz live MPG MINJ RINJ ES.
   destr_in ES. inv ES.
   edestruct Mem.storev_mapped_inject as (m2' & ST & MINJ'); eauto.
   apply eval_addrmode_inject; auto.
@@ -1150,33 +1307,34 @@ Proof.
 Qed.
 
 Lemma goto_label_inject:
-  forall j rs1 rs2 m1 m2
+  forall j rs1 rs2 m1 m2 live
     (MINJ: Mem.inject j m1 m2)
-    (GLOBFUN_INJ: forall b f, Genv.find_funct_ptr ge b = Some f -> j b = Some (b,0))
+    (GLOBINJ: meminj_preserves_globals j)
     (RINJ : forall r : PregEq.t, Val.inject j (rs1 r) (rs2 r))
     l f rs1' m1',
-    Asm.goto_label instr_size ge f l rs1 m1 = Next rs1' m1' ->
+    Asm.goto_label instr_size ge f l rs1 m1 = Next' rs1' m1' live ->
     exists rs2' m2',
-      Asm.goto_label instr_size ge f l rs2 m2 = Next rs2' m2' /\
+      Asm.goto_label instr_size tge f l rs2 m2 = Next' rs2' m2' live /\
       Mem.inject j m1' m2' /\
       forall r, Val.inject j (rs1' r) (rs2' r).
 Proof.
   unfold goto_label. intros. repeat destr_in H.
   generalize (RINJ PC); rewrite Heqv. intro A; inv A.
-  erewrite GLOBFUN_INJ in H2; eauto. inv H2. rewrite Heqo0.
+  exploit globinj_to_funinj; eauto. apply GLOBINJ. intros [ ]. subst.
+  erewrite functions_transl; eauto.
   do 2 eexists; split; eauto. split; eauto.
   repeat simpl_inject. econstructor; eauto. rewrite Ptrofs.add_zero. auto.
 Qed.
 
 Lemma exec_instr_inject_normal:
-  forall j m1 m2 rs1 rs2 f i rs1' m1'
+  forall j m1 m2 rs1 rs2 f i rs1' m1' live
     (MINJ: Mem.inject j m1 m2)
     (GLOBINJ: meminj_preserves_globals j)
     (RINJ: forall r, Val.inject j (rs1 # r) (rs2 # r))
     (NOTSTKINSTR: stk_unrelated_instr i = true)
-    (EI: Asm.exec_instr instr_size ge f i rs1 m1 = Next rs1' m1'),
+    (EI: Asm.exec_instr instr_size (injw_sup_l w) ge f i rs1 m1 = Next' rs1' m1' live),
   exists rs2' m2',
-    Asm.exec_instr instr_size ge f i rs2 m2 = Next rs2' m2'
+    Asm.exec_instr instr_size (injw_sup_r w) tge f i rs2 m2 = Next' rs2' m2' live
     /\ Mem.inject j m1' m2'
     /\ (forall r, Val.inject j (rs1' # r) (rs2' # r)).
 Proof.
@@ -1185,7 +1343,7 @@ Proof.
                try congruence;
 
                match goal with
-               | |- exists _ _, Next _ _ = Next _ _ /\ _ /\ _ =>
+               | |- exists _ _, Next' _ _ _ = Next' _ _ _ /\ _ /\ _ =>
                  try (do 2 eexists; split; [now eauto |
                                             split; [
                                               eauto with mem
@@ -1226,22 +1384,22 @@ Proof.
   + eapply compare_floats_inject; auto.
   + eapply compare_floats32_inject; auto.
   + eapply goto_label_inject; eauto.
-    eapply globinj_to_funinj. auto.
-  + generalize (RINJ r). intro. unfold Genv.find_funct in *.
+  + exploit functions_translated. 3:eauto. eauto. apply symbol_address_inject. auto.
+    intros FF'. rewrite FF'. do 2 eexists. split; eauto. split. eauto with mem. repeat simpl_inject.
+  + generalize (RINJ r). intro.
+    exploit functions_translated; eauto. intros FF'. rewrite FF'.
     destruct (rs1 r); simpl in Heqo; inv Heqo. inv H.
     destr_in H1. subst.
-    exploit globinj_to_funinj; eauto.
-    intro. rewrite H4 in H. inv H.
-    do 2 eexists; split; eauto. rewrite pred_dec_true by auto.
-    rewrite H1. eauto. split; eauto. repeat simpl_inject.
+    exploit globinj_to_funinj; eauto. apply GLOBINJ. intros [ ]. subst.
+    do 2 eexists; split; eauto. split; eauto. repeat simpl_inject.
     econstructor; eauto.
   + erewrite eval_testcond_inject; eauto. simpl.
-    eapply goto_label_inject; eauto. eapply globinj_to_funinj. auto.
+    eapply goto_label_inject; eauto.
   + erewrite eval_testcond_inject; eauto. simpl.
     do 2 eexists; split; eauto. split; eauto. repeat simpl_inject.
   + erewrite eval_testcond_inject; eauto. simpl.
     erewrite eval_testcond_inject; eauto. simpl.
-    eapply goto_label_inject; eauto. eapply globinj_to_funinj. auto.
+    eapply goto_label_inject; eauto.
   + erewrite eval_testcond_inject; eauto. simpl.
     erewrite eval_testcond_inject; eauto. simpl.
     do 2 eexists; split; eauto. split; eauto. repeat simpl_inject.
@@ -1250,7 +1408,7 @@ Proof.
     do 2 eexists; split; eauto. split; eauto. repeat simpl_inject.
   + generalize (RINJ r); rewrite Heqv; intro A; inv A.
     rewrite Heqo.
-    eapply goto_label_inject; eauto. eapply globinj_to_funinj. auto.
+    eapply goto_label_inject; eauto.
     repeat simpl_inject.
   + generalize (RINJ rd). intro A.
     generalize (RINJ r2). intro B.
@@ -1260,9 +1418,33 @@ Proof.
     unfold Op.minf. repeat destr; try congruence; try inv A; try inv B; constructor.
 Qed.
 
+Lemma inject_stack_size:
+  forall j P a a',
+    inject_stack j P a a' ->
+    stack_size a >= stack_size (Mem.astack (injw_sup_l w)).
+Proof.
+  intros * RSPINJ. induction RSPINJ. lia.
+  simpl. pose proof frame_size_a_pos (mk_frame b size). lia.
+Qed.
+
+Lemma inject_stack_size_incr:
+  forall j P a a',
+    inject_stack j P a a' ->
+    stack_size a >= stack_size a'.
+Proof. induction 1. auto. simpl. unfold frame_size_a. simpl. lia. Qed.
+
+Lemma max_stacksize_aligned : (8 | max_stacksize).
+Proof. unfold max_stacksize. exists 512. lia. Qed.
+
+Lemma max_stacksize_range : 0 <= max_stacksize <= Ptrofs.max_unsigned.
+Proof. unfold max_stacksize. vm_compute. split; congruence. Qed.
+
+Lemma max_stacksize'_range : 0 <= max_stacksize' <= Ptrofs.max_unsigned.
+Proof. unfold max_stacksize. vm_compute. split; congruence. Qed.
+
 Lemma allocframe_inject:
-  forall j stkb m m1 m2 m3 m4 m' rs rs' sz ofs_ra ofs_link isz
-    (MS: match_states j (State rs m) (State rs' m'))
+  forall j stkb m m1 m2 m3 m4 m' live live' rs rs' sz ofs_ra ofs_link isz
+    (MS: match_states j (State rs m live) (State rs' m' live))
     (SZPOS: sz>=0)
     (ALLOC: Mem.alloc m 0 sz = (m1, stkb))
     (RECORDFR: Mem.record_frame (Mem.push_stage m1) (Memory.mk_frame stkb sz) = Some m2)
@@ -1273,13 +1455,15 @@ Lemma allocframe_inject:
     let rs1 := (nextinstr_nf isz (rs # RAX <- (rs RSP)) # RSP <- (Vptr stkb Ptrofs.zero)) in
     let rs1' := (nextinstr_nf isz (rs' # RAX <- (rs' RSP)) # RSP <- (Val.offset_ptr (rs' RSP) (Ptrofs.neg (Ptrofs.repr (align sz 8))))) in
     exists j', inject_incr j j' /\
-    exists m1', Mem.storev Mptr m' (Val.offset_ptr (Val.offset_ptr (rs' RSP) (Ptrofs.neg (Ptrofs.repr (align sz 8)))) (Ptrofs.repr ofs_ra)) (rs' RA)= Some m1' /\
-    exists m2', Mem.storev Mptr m1' (Val.offset_ptr (Val.offset_ptr (rs' RSP) (Ptrofs.neg (Ptrofs.repr (align sz 8)))) (Ptrofs.repr ofs_link)) (rs' RSP) = Some m2' /\
-    match_states j' (State rs1 m4) (State rs1' m2').
+    exists m1', Mem.record_frame (Mem.push_stage m') (mk_frame stkblock sz) = Some m1' /\
+    exists m2', Mem.storev Mptr m1' (Val.offset_ptr (Val.offset_ptr (rs' RSP) (Ptrofs.neg (Ptrofs.repr (align sz 8)))) (Ptrofs.repr ofs_ra)) (rs' RA)= Some m2' /\
+    exists m3', Mem.storev Mptr m2' (Val.offset_ptr (Val.offset_ptr (rs' RSP) (Ptrofs.neg (Ptrofs.repr (align sz 8)))) (Ptrofs.repr ofs_link)) (rs' RSP) = Some m3' /\
+    match_states j' (State rs1 m4 live') (State rs1' m3' live').
 Proof.
   intros.
-  inv MS. destruct RSPINJ' as [stkofs [Heqstkofs RSPINJ']].
-  remember (Ptrofs.unsigned stkofs) as stksize.
+  inv MS.
+  remember (max_stacksize' - stack_size (Mem.astack (Mem.support m'))) as stksize.
+  remember (Ptrofs.repr stksize) as stkofs.
   remember (align sz 8) as aligned_sz.
   remember (stksize - aligned_sz) as stksize'.
   (* reuse alloc_inject lemmas in memory *)
@@ -1291,7 +1475,7 @@ Proof.
   assert (OLDSTKSIZE: aligned_sz <= stksize <= Ptrofs.max_unsigned).
   {
     split.
-    - rewrite Heqstkofs. apply Z.le_add_le_sub_r.
+    - rewrite Heqstksize. apply Z.le_add_le_sub_r.
       rewrite Heqaligned_sz. rewrite FRSZ.
       remember (Mem.push_stage m1) as m1'.
       generalize (Mem.record_frame_size1 m1' m2 fr RECORDFR). intros.
@@ -1299,10 +1483,11 @@ Proof.
       apply Heqm1'. intros SUPPUSH. rewrite SUPPUSH in H.
       simpl in H. unfold frame_size_a in H.
       exploit Mem.astack_alloc. apply ALLOC. intros ALLOCSTK.
-      rewrite <- ALLOCSTK. unfold max_stacksize'.
+      pose proof inject_stack_size_incr _ _ _ _ RSPINJ as SIZEGE.
+      rewrite <- ALLOCSTK in SIZEGE. unfold max_stacksize'.
       unfold Mptr. destr; simpl;
       unfold max_stacksize in H; lia.
-    - rewrite Heqstksize. apply Ptrofs.unsigned_range_2.
+    - rewrite Heqstksize. pose proof max_stacksize'_range. pose proof stack_size_pos (Mem.astack (Mem.support m')). lia.
   }
   assert (NEWSTKSIZE: 0 <= stksize' <= Ptrofs.max_unsigned).
   {
@@ -1320,8 +1505,8 @@ Proof.
     split. rewrite Heqstksize'. lia.
     rewrite Heqstksize'. rewrite Heqstksize.
     eapply Z.lt_le_trans with stksize. lia.
-    rewrite Heqstkofs.
-    generalize (Memory.stack_size_pos (Mem.astack (Mem.support m))).
+    rewrite Heqstksize.
+    generalize (Memory.stack_size_pos (Mem.astack (Mem.support m'))).
     intros STKSZPOS.
     lia.
   }
@@ -1334,11 +1519,10 @@ Proof.
       try (exists 2; reflexivity);
       try (exists 1; reflexivity).
     apply Z.divide_sub_r.
-    generalize (stack_size_aligned (Mem.astack (Mem.support m))).
+    generalize (stack_size_aligned (Mem.astack (Mem.support m'))).
     intro ALI1.
     assert (ALI2: (8 | max_stacksize')). unfold max_stacksize'. red. exists 513.
     unfold max_stacksize. unfold Mptr. destr.
-    rewrite Heqstkofs.
     apply Z.divide_sub_r; auto.
     apply align_divides. lia.
   }
@@ -1347,21 +1531,26 @@ Proof.
     intros b0 delta' ofs k p JB PERM OVERLAP.
     subst. simpl in OVERLAP.
     inv OVERLAP.
-    generalize (STKINJLWBD _ _ _ _ _ JB PERM).
-    rewrite <- Heqstkofs. lia.
+    generalize (STKINJLWBD _ _ _ _ _ JB PERM). lia.
   }
   destruct A as (f1 & MINJ1 & INCR & EQ1 & EQ2).
   exists f1. split. auto.
-  generalize (Mem.push_stage_left_inject _ _ _ MINJ1). intros MINJ2.
-  generalize (Mem.record_frame_left_inject _ _ _ _ _ MINJ2 RECORDFR). intros MINJ3.
+  generalize (Mem.push_stage_inject _ _ _ MINJ1). intros MINJ2.
+  edestruct Mem.record_frame_parallel_inject as (m1' & RECORDFR' & MINJ3); eauto.
+    rewrite Heqfr in RECORDFR. eauto.
+    simpl. congruence.
+    apply inject_stack_size_incr in RSPINJ. apply Mem.astack_alloc in ALLOC. simpl. rewrite ALLOC. lia.
+    instantiate (1 := stkblock) in RECORDFR'.
   (* store ra *)
   assert (ALIGNED_SZ: 0 <= aligned_sz <= Ptrofs.max_unsigned). lia.
   exploit Mem.store_mapped_inject.
   apply MINJ3. apply STORERA. apply EQ1.
   eapply val_inject_incr; eauto.
   intros (m3' & STORERA' & MINJ1').
+  exists m1'. split. auto.
   exists m3'. split. subst.
   rewrite RSPINJ'. simpl.
+  remember (Ptrofs.repr (max_stacksize' - stack_size (Mem.astack (Mem.support m')))) as stkofs.
   assert ((Ptrofs.add stkofs (Ptrofs.neg (Ptrofs.repr (align sz 8)))) = Ptrofs.repr (Ptrofs.unsigned stkofs - align sz 8)).
   {
     rewrite <- Ptrofs.sub_add_opp. unfold Ptrofs.sub.
@@ -1373,14 +1562,17 @@ Proof.
   assert (Ptrofs.unsigned (Ptrofs.add OFS (Ptrofs.repr STKSIZE)) =
           Ptrofs.unsigned OFS + STKSIZE) as EQ'.
   {
-    eapply Mem.address_inject; eauto.
+    rewrite Heqstkofs in HeqSTKSIZE. rewrite Ptrofs.unsigned_repr in HeqSTKSIZE.
+    2:{ pose proof max_stacksize'_range. pose proof stack_size_pos. lia. }
+    eapply Mem.address_inject; eauto. 2:rewrite HeqSTKSIZE; eauto.
     exploit Mem.store_valid_access_3. exact STORERA.
     intro VA; eapply Mem.store_valid_access_1 in VA; eauto.
     destruct VA. eapply H0.
     rewrite HeqOFS. rewrite Ptrofs.unsigned_repr; generalize (size_chunk_pos Mptr); lia.
   }
   rewrite EQ'. rewrite HeqOFS.
-  rewrite (Ptrofs.unsigned_repr _ RAPOS). auto.
+  rewrite (Ptrofs.unsigned_repr _ RAPOS). subst. rewrite Ptrofs.unsigned_repr. auto.
+  pose proof max_stacksize'_range. pose proof stack_size_pos. lia.
   (* store link *)
   exploit Mem.store_mapped_inject.
   apply MINJ1'. apply STORELINK. apply EQ1.
@@ -1388,6 +1580,7 @@ Proof.
   intros (m4' & STORELINK' & MINJ4).
   exists m4'. split. subst.
   rewrite RSPINJ'. simpl.
+  remember (Ptrofs.repr (max_stacksize' - stack_size (Mem.astack (Mem.support m')))) as stkofs.
   assert ((Ptrofs.add stkofs (Ptrofs.neg (Ptrofs.repr (align sz 8)))) = Ptrofs.repr (Ptrofs.unsigned stkofs - align sz 8)).
   {
     rewrite <- Ptrofs.sub_add_opp. unfold Ptrofs.sub.
@@ -1399,14 +1592,17 @@ Proof.
   assert (Ptrofs.unsigned (Ptrofs.add OFS (Ptrofs.repr STKSIZE)) =
           Ptrofs.unsigned OFS + STKSIZE) as EQ'.
   {
-    eapply Mem.address_inject; eauto.
+    rewrite Heqstkofs in HeqSTKSIZE. rewrite Ptrofs.unsigned_repr in HeqSTKSIZE.
+    2:{ pose proof max_stacksize'_range. pose proof stack_size_pos. lia. }
+    eapply Mem.address_inject; eauto. 2:subst; eauto.
     exploit Mem.store_valid_access_3. exact STORELINK.
     intro VA; eapply Mem.store_valid_access_1 in VA; eauto.
     destruct VA. eapply H0.
     rewrite HeqOFS. rewrite Ptrofs.unsigned_repr; generalize (size_chunk_pos Mptr); lia.
   }
   rewrite EQ'. rewrite HeqOFS.
-  rewrite (Ptrofs.unsigned_repr _ LINKPOS). rewrite <- RSPINJ'. auto.
+  rewrite (Ptrofs.unsigned_repr _ LINKPOS). rewrite <- RSPINJ'. subst. rewrite Ptrofs.unsigned_repr. auto.
+  pose proof max_stacksize'_range. pose proof stack_size_pos. lia.
   (* match state *)
   assert (SUPINCALL: Mem.sup_include (Mem.support m) (Mem.support m4)).
   {
@@ -1425,9 +1621,11 @@ Proof.
 
   assert (SUPINCALL': Mem.sup_include (Mem.support m') (Mem.support m4')).
   {
+    generalize (Mem.support_push_stage_1 m' _ ltac:(eauto)).
+    generalize (Mem.support_record_frame_1 _ _ _ RECORDFR').
     generalize (Mem.support_store _ _ _ _ _ _ STORERA').
     generalize (Mem.support_store _ _ _ _ _ _ STORELINK').
-    intros. rewrite H,H0. apply Mem.sup_include_refl.
+    red. intros. rewrite H, H0, <- H1, <- H2. auto.
   }
   assert (PERMNEQ: forall b k ofs p, b <> stkb -> Mem.perm m b ofs k p <-> Mem.perm m4 b ofs k p).
   {
@@ -1442,55 +1640,44 @@ Proof.
     intro. exploit Mem.perm_alloc_inv; eauto. rewrite pred_dec_false. auto. auto.
     reflexivity.
   }
-  remember (Ptrofs.repr stksize') as stkofs'.
-  assert(STKOFS': Ptrofs.unsigned stkofs' = max_stacksize' - Memory.stack_size (Mem.astack (Mem.support m4))).
+  assert (STKOFS': max_stacksize' - align (Z.max 0 sz) 8 - stack_size (Mem.astack (Mem.support m')) = max_stacksize' - stack_size (Mem.astack (Mem.support m4'))).
   {
-    generalize (Mem.support_store _ _ _ _ _ _ STORERA).
+    generalize (Mem.support_store _ _ _ _ _ _ STORERA').
     intro SUPSTRA.
-    generalize (Mem.support_store _ _ _ _ _ _ STORELINK).
+    generalize (Mem.support_store _ _ _ _ _ _ STORELINK').
     intro SUPSTLINK.
     rewrite SUPSTLINK,SUPSTRA.
     remember (Mem.push_stage m1) as m1x.
-    generalize (Mem.astack_record_frame _ _ _ RECORDFR).
+    generalize (Mem.astack_record_frame _ _ _ RECORDFR').
     intro SUPRDFR. destruct SUPRDFR as (hd & tl & (H1 & H2)).
-    symmetry in Heqm1x.
-    generalize (Mem.support_push_stage _ _ Heqm1x).
-    intro SUPPHST.
-    rewrite SUPPHST in H1. simpl in H1.
-    inversion H1. subst hd. clear H1.
-    generalize (Mem.astack_alloc _ _ _ _ _ ALLOC).
-    intro SUPAL. rewrite SUPAL in H3. simpl in H3.
+    simpl in H1. inversion H1. subst hd. clear H1.
     rewrite <- H3 in H2.
     rewrite H2.
-    assert (Memory.stack_size ((fr :: nil) :: Mem.astack (Mem.support m)) = (Memory.frame_size_a fr)+ Memory.stack_size (Mem.astack (Mem.support m))).
-    simpl. lia.
-    rewrite H. rewrite Heqstkofs'.
-    rewrite (Ptrofs.unsigned_repr _ NEWSTKSIZE).
-    rewrite Heqstksize'. rewrite Heqstkofs.
-    subst aligned_sz. unfold frame_size_a.
-    rewrite FRSZ. lia.
+    simpl. unfold frame_size_a. simpl. lia.
   }
   econstructor; eauto.
   (* Memory Injection *)
   - constructor; eauto.
-    ++ intros. exploit defs_inject; eauto.
-    ++ intros *. intros JB' FD.
-       destruct (j b) eqn:JB1. destruct p.
-       exploit INCR; eauto. rewrite JB'; intro X. inv X.
-       exploit defs_rev_inject; eauto.
-       destruct (eq_block b stkb).
-       +++ subst. rewrite EQ1 in JB'. inv JB'.
-           apply Genv.genv_defs_range in FD. unfold stkblock in FD.
-           apply Genv.genv_sup_glob in FD. destruct FD. inv H.
-       +++ apply EQ2 in n. rewrite <- n in JB1.
-           rewrite JB1 in JB'. congruence.
-    ++ intros. exploit symbol_inject; eauto.
-  - eapply Mem.sup_include_trans. apply ENVSUP. auto.
-  - eapply Mem.sup_include_trans. apply ENVSUP'. auto.
+    ++ eapply Genv.match_stbls_incr; eauto. apply GLOBINJ. intros.
+       destruct (eq_block b1 stkb).
+       subst b1. rewrite EQ1 in H0. inversion H0.
+       clear - ALLOC. apply Mem.alloc_result_stack in ALLOC. red in ALLOC. destr_in ALLOC. unfold stkblock.
+       split; intros SUP; apply Genv.genv_sup_glob in SUP as [ ]; congruence.
+       specialize (EQ2 _ n). congruence.
+    ++ red. intros. exploit Mem.alloc_result_stack; eauto. intros STK.
+       exploit (EQ2 (Global id)). intro. subst. simpl in STK. auto.
+       intros EQ. rewrite EQ in H. inv GLOBINJ. exploit global_inject0; eauto.
   (* Regset Injection *)
   - unfold rs1. intros.
     rewrite nextinstr_nf_rsp in H.
     rewrite Pregmap.gss in H. congruence.
+  - unfold rs1, nextinstr_nf, nextinstr, undef_regs.
+    repeat rewrite Pregmap.gso by congruence. rewrite Pregmap.gss.
+    intros * EQ. inv EQ. clear - ALLOC RECORDFR STORERA STORELINK.
+    apply Mem.support_store in STORELINK. apply Mem.support_store in STORERA.
+    rewrite STORELINK, STORERA.
+    apply Mem.astack_record_frame in RECORDFR as (hd & tl & EQ1 & EQ2). simpl in EQ1. inv EQ1.
+    rewrite EQ2. simpl. auto.
   - intros. unfold rs1, rs1'.
     apply val_inject_nextinstr_nf; auto.
     apply val_inject_set; auto.
@@ -1501,7 +1688,8 @@ Proof.
     subst.
     rewrite Ptrofs.add_zero_l.
     rewrite <- Ptrofs.sub_add_opp. unfold Ptrofs.sub.
-    rewrite Ptrofs.unsigned_repr; auto.
+    rewrite ! Ptrofs.unsigned_repr; auto.
+    pose proof max_stacksize'_range. pose proof stack_size_pos. lia.
   (* Stack Injection *)
   - erewrite Mem.support_store. 2: eauto. erewrite Mem.support_store. 2: eauto.
     apply Mem.record_frame_size in RECORDFR. lia.
@@ -1513,7 +1701,7 @@ Proof.
     erewrite Mem.astack_alloc. 2: eauto.
     simpl. constructor. intro. exploit STKCIN; eauto.
     intros [R S]. apply Mem.fresh_block_alloc in ALLOC. apply ALLOC. auto. auto.
-  - unfold current_in_stack. erewrite Mem.support_store. 2: eauto.
+  - unfold stkcin, current_in_stack. erewrite Mem.support_store. 2: eauto.
     erewrite Mem.support_store. 2: eauto.
     apply Mem.astack_record_frame in RECORDFR as ARE.
     destruct ARE as [hd [tl [X Y]]].
@@ -1540,15 +1728,21 @@ Proof.
     intros ofs k p PERM.
     apply (Mem.perm_store_2 _ _ _ _ _ _ STORELINK') in PERM.
     apply (Mem.perm_store_2 _ _ _ _ _ _ STORERA') in PERM.
+    eapply Mem.perm_record_frame, Mem.perm_push_stage in PERM; eauto.
     apply STKPERMOFS' in PERM. auto.
     intros ofs k p PERM.
     apply (Mem.perm_store_1 _ _ _ _ _ _ STORELINK').
     eapply (Mem.perm_store_1 _ _ _ _ _ _ STORERA').
+    erewrite <- Mem.perm_record_frame, <- Mem.perm_push_stage; eauto.
     apply STKPERMOFS'. auto.
   - erewrite Mem.support_store; eauto. erewrite Mem.support_store; eauto.
     apply Mem.astack_record_frame in RECORDFR as ARE.
     destruct ARE as (hd & tl & X & Y).
     simpl in X. inv X. rewrite Y.
+    apply Mem.support_store in STORERA'. apply Mem.support_store in STORELINK'.
+    apply Mem.astack_record_frame in RECORDFR' as ARE'.
+    destruct ARE' as (hd' & tl' & X' & Y').
+    simpl in X'. inv X'. rewrite STORELINK', STORERA', Y'.
     econstructor; eauto.
     + 
     eapply inject_stack_incr; eauto.
@@ -1559,10 +1753,11 @@ Proof.
     subst. exfalso. exploit STKCIN. apply H. intros [R S].
     apply Mem.fresh_block_alloc in ALLOC. apply ALLOC. auto.
     eapply PERMNEQ; eauto.
+    +
+    red. intros SUP. apply ENVSUP in SUP.
+    apply Mem.alloc_result in ALLOC. subst. apply freshness in SUP. auto.
     + 
-    rewrite EQ1. rewrite Heqstkofs; eauto. unfold frame_size_a.
-    erewrite <- Mem.astack_alloc; eauto.
-    rewrite <- FRSZ. auto.
+    rewrite EQ1. unfold frame_size_a. rewrite <- FRSZ. auto.
     +
     intros. etransitivity. instantiate (1:= Mem.perm m2 stkb o k p).
     erewrite <- Mem.perm_record_frame; eauto. erewrite <- Mem.perm_push_stage; eauto.
@@ -1571,19 +1766,12 @@ Proof.
     eapply Mem.perm_alloc_3; eauto.
     etransitivity. split. eapply Mem.perm_store_1; eauto. eapply Mem.perm_store_2; eauto.
     split. eapply Mem.perm_store_1; eauto. eapply Mem.perm_store_2; eauto.
-  - exists stkofs'.
-    split. auto.
-    unfold rs1'. rewrite nextinstr_nf_rsp. rewrite Pregmap.gss.
+  - unfold rs1'. rewrite nextinstr_nf_rsp. rewrite Pregmap.gss.
     rewrite RSPINJ'. simpl.
-    assert (stkofs' =  (Ptrofs.add stkofs (Ptrofs.neg (Ptrofs.repr aligned_sz)))).
-    {
-      rewrite <- Ptrofs.sub_add_opp.
-      unfold Ptrofs.sub.
-      rewrite Heqstkofs'.
-      subst stksize'. subst stksize. subst aligned_sz.
-      rewrite (Ptrofs.unsigned_repr _ ALIGNED_SZ). reflexivity.
-    }
-    rewrite H. auto.
+    rewrite <- Ptrofs.sub_add_opp. unfold Ptrofs.sub. subst stksize stkofs aligned_sz.
+    rewrite ! Ptrofs.unsigned_repr; auto. rewrite <- STKOFS'. replace (Z.max 0 sz) with sz by lia.
+    f_equal. f_equal. lia.
+    pose proof max_stacksize'_range. pose proof stack_size_pos. lia.
   - red. intros b0 delta o k p JB PERM.
     apply (Mem.perm_store_2 _ _ _ _ _ _ STORELINK) in PERM.
     apply (Mem.perm_store_2 _ _ _ _ _ _ STORERA) in PERM.
@@ -1595,25 +1783,24 @@ Proof.
     destruct eq_block.
     * subst b0. rewrite EQ1 in JB.
       inversion JB. subst delta. clear JB.
-      rewrite <- STKOFS'. rewrite Heqstkofs'.
-      rewrite (Ptrofs.unsigned_repr _ NEWSTKSIZE). split. lia.
+      rewrite <- STKOFS'. subst stksize' stksize aligned_sz.
+      replace (Z.max 0 sz) with sz by lia. split. lia.
       unfold current_in_stack.
       erewrite Mem.support_store; eauto. erewrite Mem.support_store; eauto.
       apply Mem.astack_record_frame in RECORDFR. destruct RECORDFR as [hd [tl [X Y]]].
       simpl in X. inv X. rewrite Y. simpl. left. auto.
     * split. rewrite <- STKOFS'.
       transitivity (Ptrofs.unsigned stkofs).
-      ** rewrite Heqstkofs'.
-         rewrite <- Heqstksize.
-         rewrite (Ptrofs.unsigned_repr _ NEWSTKSIZE). lia.
+      ** subst stkofs stksize. rewrite Ptrofs.unsigned_repr.
+         replace (Z.max 0 sz) with sz by lia. lia.
+         pose proof max_stacksize'_range. pose proof stack_size_pos. lia.
       ** rewrite EQ2 in JB; auto.
          unfold stack_inject_lowbound in STKINJLWBD.
-         rewrite <- Heqstkofs in STKINJLWBD.
-         rewrite Heqstksize in STKINJLWBD.
+         subst stksize stkofs. rewrite Ptrofs.unsigned_repr.
          eapply STKINJLWBD; eauto.
+         pose proof max_stacksize'_range. pose proof stack_size_pos. lia.
       ** unfold stack_inject_lowbound in STKINJLWBD.
-         rewrite <- Heqstkofs in STKINJLWBD.
-         rewrite Heqstksize in STKINJLWBD.
+         subst stksize stkofs.
          exploit STKINJLWBD; eauto. rewrite EQ2 in JB. eauto. auto.
          intros [A B].
          unfold current_in_stack in *.
@@ -1633,57 +1820,189 @@ Proof.
   unfold max_stacksize'. unfold max_stacksize. unfold Mptr. destr; simpl; lia.
 Qed.
 
-Lemma cis_perm : forall b0 m delta ofs k p j astk,
-    inject_stack j (Mem.perm m) astk ->
-    current_in_stack' b0 astk->
-    j b0  = Some (stkblock,delta) ->
+Lemma cis_perm : forall b0 m delta ofs k p j astk astk',
+    inject_stack j (Mem.perm m) astk astk' ->
+    current_in_stack' b0 astk ->
+    j b0 = Some (stkblock, delta) ->
     Mem.perm m b0 ofs k p ->
-    delta >= (max_stacksize' - stack_size astk) /\
+    delta >= (max_stacksize' - stack_size astk') /\
     0 <= ofs.
 Proof.
   induction 1; intros.
-  + unfold current_in_stack' in H0. destr_in H0.
-  + assert (ASTK:stack_size (((mk_frame b size)::nil)::astk) = frame_size_a (mk_frame b size) + stack_size astk). simpl. lia.
+  + edestruct INIT_INNER as (PERM & ofs' & INJ & GE'); eauto.
+    rewrite H0 in INJ. inv INJ. split. lia. eapply PERM. eauto.
+  + assert (ASTK:stack_size (((mk_frame b size)::nil)::astk') = frame_size_a (mk_frame b size) + stack_size astk'). simpl. lia.
     destruct (eq_block b b0).
     ++ subst. rewrite H0 in H3.
-       assert (delta = max_stacksize' - stack_size astk - frame_size_a (mk_frame b0 size)). congruence.
-       rewrite H5. split. lia.
+       assert (delta = max_stacksize' - stack_size astk' - frame_size_a (mk_frame b0 size)). congruence.
+       rewrite H5. split. simpl. unfold frame_size_a. simpl. lia.
        apply H1 in H4. lia.
     ++ exploit IHinject_stack; eauto. destruct H2. simpl in H2. congruence. auto.
-       intros [X Y]. split. rewrite ASTK. generalize (frame_size_a_pos (mk_frame b size)). intro. lia. lia.
+       intros [X Y]. split.
+       simpl. simpl in ASTK. unfold frame_size_a in *. simpl. simpl in ASTK.
+       rewrite ASTK. remember (Z.max 0 size) as sz'. assert (sz' >= 0) by lia.
+       assert (align sz' 8 >= 0).
+         pose proof align_le sz' 8 ltac:(lia). lia.
+       lia. lia.
 Qed.
 
 Lemma ra_after_call_inj:
-  forall j rs1 m1 rs2 m2,
-    match_states j (State rs1 m1) (State rs2 m2) ->
+  forall j rs1 m1 rs2 m2 live,
+    match_states j (State rs1 m1 live) (State rs2 m2 live) ->
     ra_after_call instr_size ge (rs1 RA) ->
-    ra_after_call instr_size ge (rs2 RA).
+    ra_after_call instr_size tge (rs2 RA).
 Proof.
-  red. intros j rs1 m1 rs2 m2 MS (RAU & IAC). inv MS.
+  red. intros j rs1 m1 rs2 m2 live MS (RAU & IAC). inv MS.
   generalize (RINJ RA). intro RAINJ.
   split. inv RAINJ; try congruence.
   intros b o RA2 f0 FFP.
   rewrite RA2 in RAINJ. inv RAINJ; try congruence.
   inversion GLOBINJ.
-  apply Genv.find_funct_ptr_iff in FFP as FFP'. eapply defs_rev_inject0 in H2; eauto.
-  inv H2.
-  specialize (IAC _ _ (eq_sym H) _ FFP).
+  apply Genv.find_funct_ptr_iff in FFP as FFP'. eapply defs_rev_inject in H2 as T; eauto. inv T.
+  exploit functions_only_transl; eauto. intros FFP''.
+  specialize (IAC _ _ (eq_sym H) _ FFP'').
   rewrite Ptrofs.add_zero. auto.
 Qed.
 
+Lemma inject_stack_app:
+  forall j P a1 a2,
+    inject_stack j P a1 a2 ->
+    exists a1' a2',
+      a1 = a1' ++ Mem.astack (injw_sup_l w) /\
+      a2 = a2' ++ Mem.astack (injw_sup_r w) /\
+      length a1' = length a2'.
+Proof.
+  induction 1. exists nil, nil. auto.
+  destruct IHinject_stack as (a1' & a2' & EQ1 & EQ2 & LEN). subst.
+  rewrite ! app_comm_cons. do 2 eexists. intuition. simpl. auto.
+Qed.
+
+Lemma inject_stack_init':
+  forall j P a1 a2,
+    inject_stack j P a1 a2 ->
+    length a2 = length (Mem.astack (injw_sup_r w)) ->
+    a1 = Mem.astack (injw_sup_l w) /\ a2 = Mem.astack (injw_sup_r w).
+Proof.
+  induction 1. split; auto.
+  edestruct inject_stack_app as (a1' & a2' & EQ1 & EQ2 & LEN); eauto. subst.
+  intros. exfalso. clear - H2. simpl in H2.
+  rewrite app_length in H2. lia.
+Qed.
+
+Lemma inner_sp_inj:
+  forall j rs1 m1 rs2 m2 live b b',
+    match_states j (State rs1 m1 live) (State rs2 m2 live) ->
+    Asm.inner_sp (injw_sup_l w) (rs1 RSP) = Some b -> 
+    SSAsm.inner_sp (injw_sup_r w) rs2 m2 = Some b' ->
+    b = b'.
+Proof.
+  unfold inner_sp. intros * MS EQ1 EQ2. inv MS.
+  generalize (RINJ RSP). intros Hrsp'. rewrite RSPINJ' in Hrsp'.
+  inv Hrsp'; simpl in *. 2: rewrite <- H0 in EQ1; simpl in EQ1; congruence.
+  rewrite <- H in EQ1. simpl in EQ1. inv EQ1. inv EQ2.
+  exploit RSPzero; eauto. intros. subst. rewrite Ptrofs.add_zero_l in *.
+  exploit RSPblock; eauto. intros Hhd.
+  unfold hd_error in Hhd. destr_in Hhd. inv Hhd.
+  destr; destr; exfalso.
+  - destruct RSPINJ. unfold SSAsm.init_astack, init_astack in n. congruence.
+    inv Heql. congruence.
+  - exploit inject_stack_init'; eauto. intros (EQ1 & EQ2).
+    exploit init_stkcin_l. eauto. instantiate (1 := b1). red. rewrite <- EQ1, Heql. left. auto. tauto.
+Qed.
+
+Lemma support_free':
+  forall m b x y m',
+    free' m b x y = Some m' ->
+    Mem.support m = Mem.support m'.
+Proof.
+  unfold free'. intros. destr_in H. erewrite <- Mem.support_free; eauto.
+Qed.
+
+Lemma free'_left_inject:
+  forall (f : meminj) (m1 m2 : mem) (b : block) (lo hi : Z) (m1' : mem),
+    Mem.inject f m1 m2 ->
+    free' m1 b lo hi = Some m1' -> Mem.inject f m1' m2.
+Proof.
+  unfold free'. intros. destr_in H0. eapply Mem.free_left_inject; eauto.
+Qed.
+
+Lemma stk_unrelated_instr_nosup:
+  forall s s' ge f i rs m,
+    stk_unrelated_instr i = true ->
+    Asm.exec_instr instr_size s ge f i rs m =
+    Asm.exec_instr instr_size s' ge f i rs m.
+Proof.
+  intros * B. destruct i; simpl in B; simpl; congruence.
+Qed.
+
+Lemma asm_instr_unchange_rsp_nosup:
+  forall s s' i,
+    asm_instr_unchange_rsp instr_size s i ->
+    asm_instr_unchange_rsp instr_size s' i.
+Proof.
+  unfold asm_instr_unchange_rsp. intros.
+  erewrite stk_unrelated_instr_nosup in H1; eauto.
+Qed.
+
+Lemma asm_instr_unchange_sup_nosup:
+  forall s s' i,
+    asm_instr_unchange_sup instr_size s i ->
+    asm_instr_unchange_sup instr_size s' i.
+Proof.
+  unfold asm_instr_unchange_sup. intros.
+  erewrite stk_unrelated_instr_nosup in H1; eauto.
+Qed.
+
+Remark not_ltb_not_lt:
+  forall a b,
+    (a <? b = false)%nat <-> (a >= b)%nat.
+Proof.
+  split; intros.
+  cut (~ (a < b)%nat). lia.
+  red. intros. apply Nat.ltb_lt in H0. congruence.
+  cut ((a <? b)%nat <> true). intros.
+  destruct Nat.ltb. congruence. auto.
+  red. intros. apply Nat.ltb_lt in H0. lia.
+Qed.
+
+Ltac simpl_ltb :=
+  repeat match goal with
+  | H: true = Nat.ltb ?a ?b |- _ => symmetry in H
+  | H: false = Nat.ltb ?a ?b |- _ => symmetry in H
+  | H: Nat.ltb ?a ?b = true |- _ => apply Nat.ltb_lt in H
+  | H: Nat.ltb ?a ?b = false |- _ => apply not_ltb_not_lt in H
+  | |- Nat.ltb ?a ?b = true => apply Nat.ltb_lt
+  | |- Nat.ltb ?a ?b = false => apply not_ltb_not_lt
+  end.
+
+Lemma inner_match:
+  forall j P a a',
+    inject_stack j P a a' ->
+    (length (Mem.astack (injw_sup_l w)) <? length a)%nat =
+    (length (Mem.astack (injw_sup_r w)) <? length a')%nat.
+Proof.
+  intros. edestruct inject_stack_app as (a1 & a1' & EQ1 & EQ2 & LEN). eauto. subst.
+  rewrite ! app_length.
+  destruct Nat.ltb eqn:?;
+  match goal with | |- _ = Nat.ltb ?a ?b => destruct (Nat.ltb a b) eqn:? end;
+  [auto|exfalso|exfalso|auto]; simpl_ltb; lia.
+Qed.
+
 Lemma exec_instr_inject:
-  forall j m m' rs rs' f i m1 rs1
-    (EI: Asm.exec_instr instr_size ge f i rs m = Next rs1 m1)
-    (MS: match_states j (State rs m) (State rs' m'))
-    (AINR: asm_instr_unchange_rsp instr_size i)
-    (AINS: asm_instr_unchange_sup instr_size i),
+  forall j m m' rs rs' f i m1 rs1 live
+    (EI: Asm.exec_instr instr_size (injw_sup_l w) ge f i rs m = Next' rs1 m1 live)
+    (MS: match_states j (State rs m true) (State rs' m' true))
+    (AINR: asm_instr_unchange_rsp instr_size (injw_sup_l w) i)
+    (AINS: asm_instr_unchange_sup instr_size (injw_sup_l w) i),
   exists j' m1' rs1',
-    exec_instr instr_size ge f i rs' m' = Next rs1' m1'
-    /\ match_states j' (State rs1 m1) (State rs1' m1')
+    exec_instr instr_size (injw_sup_r w) tge f i rs' m' = Next' rs1' m1' live
+    /\ match_states j' (State rs1 m1 live) (State rs1' m1' live)
     /\ inject_incr j j'.
 Proof.
   intros.
   destruct (stk_unrelated_instr i) eqn:NOTSTKINSTR.
+  eapply asm_instr_unchange_rsp_nosup with (s' := injw_sup_r w) in AINR as AINR'.
+  eapply asm_instr_unchange_sup_nosup with (s' := injw_sup_r w) in AINS as AINS'.
   (* Normal Instructions *)
   -
     inversion MS.
@@ -1691,22 +2010,20 @@ Proof.
     exists j, m1', rs1'; split; [|split]; eauto.
     destruct i; simpl in *; eauto; try congruence.
     subst.
-    generalize (asm_prog_unchange_support instr_size i). intro AIUS. red in AIUS.
-    edestruct (AINS NOTSTKINSTR _ _ _ _ _ _ EI) as (SUPEQ & STKPERMEQ).
-    edestruct (AINS NOTSTKINSTR _ _ _ _ _ _ EI') as (SUPEQ' & STKPERMEQ').
+    generalize (asm_prog_unchange_support instr_size (injw_sup_l w) i). intro AIUS. red in AIUS.
+    generalize (asm_prog_unchange_support instr_size (injw_sup_r w) i). intro AIUS'. red in AIUS'.
+    edestruct (AINS NOTSTKINSTR _ _ _ _ _ _ _ EI) as (SUPEQ & STKPERMEQ).
+    edestruct (AINS' NOTSTKINSTR _ _ _ _ _ _ _ EI') as (SUPEQ' & STKPERMEQ').
     eapply match_states_intro; eauto.
-     + apply AIUS in EI.
-      eapply Mem.sup_include_trans. apply ENVSUP. auto.
-     + apply AIUS in EI'.
-       eapply Mem.sup_include_trans. apply ENVSUP'. auto.
-     + rewrite (AINR _ _ _ _ _ _ NOTSTKINSTR EI) in RSPzero. auto.
+     + rewrite (AINR _ _ _ _ _ _ _ NOTSTKINSTR EI) in RSPzero. auto.
+     + rewrite (AINR _ _ _ _ _ _ _ NOTSTKINSTR EI) in RSPblock. rewrite <- SUPEQ. auto.
      + rewrite <- SUPEQ. auto.
      + unfold current_in_stack in *. rewrite <- SUPEQ. auto.
-     + unfold current_in_stack in *. rewrite <- SUPEQ. auto.
+     + unfold stkcin, current_in_stack in *. rewrite <- SUPEQ. auto.
      + apply AIUS in EI.
        unfold Mem.valid_block. apply EI. auto.
      + intros. intro. eapply STKPERMOFS. eapply STKPERMEQ; eauto.
-     + apply AIUS in EI'.
+     + apply AIUS' in EI'.
        unfold Mem.valid_block. apply EI'. auto.
      + constructor.
        ++ intros ofs k p PERM.
@@ -1715,53 +2032,62 @@ Proof.
        ++ intros ofs k p OFS.
           apply STKPERMEQ'.
           apply STKPERMOFS'. auto.
-     + rewrite <- SUPEQ.
+     + rewrite <- SUPEQ, <- SUPEQ'.
        eapply inject_stack_inv with (P:= Mem.perm m); eauto.
-     + rewrite (AINR _ _ _ _ _ _ NOTSTKINSTR EI') in RSPINJ'.
-       rewrite <- SUPEQ. auto.
-     + rewrite <- SUPEQ.
-      red. intros. apply STKPERMEQ in H0.
-      exploit STKINJLWBD; eauto. intros (X & Y).
-      split. lia. unfold current_in_stack in *. rewrite <- SUPEQ. auto.
+     + rewrite (AINR' _ _ _ _ _ _ _ NOTSTKINSTR EI') in RSPINJ'. congruence.
+     + red. intros. apply STKPERMEQ in H0.
+       exploit STKINJLWBD; eauto. intros (X & Y).
+       split.
+       rewrite <- SUPEQ'. auto.
+       unfold current_in_stack in *. rewrite <- SUPEQ. auto.
   (* Specail Cases *)
   - destruct i; simpl in *; try congruence.
     (* Pcall_s *)
     + destr_in EI. inv EI. inv MS.
-      do 3 eexists. split. eauto. split. econstructor; eauto.
+      exploit functions_translated.
+        3:eauto. eauto. eapply symbol_address_inject. auto.
+      intros FF'. rewrite FF'.
+      do 4 eexists. split. eauto. split. econstructor; eauto.
       * intros. apply val_inject_set.
         intros. apply val_inject_set. auto.
         apply Val.offset_ptr_inject. auto.
-        destruct Genv.symbol_address eqn: SYMBBLOCK; eauto.
-        unfold Genv.symbol_address in SYMBBLOCK.
-        destruct Genv.find_symbol eqn: FS in SYMBBLOCK; inv SYMBBLOCK.
-        exploit symbol_inject. apply GLOBINJ. apply FS. intros.
-        apply (Val.inject_ptr j b Ptrofs.zero b Ptrofs.zero 0); eauto.
+        eapply symbol_address_inject. auto.
       * red. auto.
     (* Pcall_r *)
-    + destr_in EI. inv EI. inv MS. generalize (RINJ r). unfold Genv.find_funct in Heqo.
+    + destr_in EI. inv EI. inv MS. generalize (RINJ r).
+      exploit functions_translated. 3:eauto. all:eauto. intros FF'. rewrite FF'.
+      unfold Genv.find_funct in Heqo.
       destr_in Heqo. inversion 1. subst. simpl. destr_in Heqo. inv e.
       inversion GLOBINJ. apply Genv.find_funct_ptr_iff in Heqo as H4.
-      apply defs_inject0 in H4. rewrite H4 in H3. inv H3.
-      rewrite pred_dec_true. rewrite Heqo. 2: reflexivity.
-      do 3 eexists. split. eauto. split. econstructor; eauto.
+      eapply defs_inject in H4 as [ ]; eauto. subst.
+      do 4 eexists. split. eauto. split. econstructor; eauto.
       * intros. apply val_inject_set. auto.
         intros. apply val_inject_set. auto.
         apply Val.offset_ptr_inject. auto.
         eauto.
       * red. auto.
     (* Pret *)
-    + destr_in EI. inv EI.
-      exploit ra_after_call_inj; eauto. intro.
-      inv MS. rewrite pred_dec_true.
-      do 3 eexists. split. eauto. split. econstructor; eauto.
-      * intros. apply val_inject_set. apply val_inject_set; auto.
-        intros. auto.
-      * red. auto.
-      * auto.
+    + destr_in EI. exploit inner_sp_inj; unfold inner_sp; eauto. intros. subst b.
+      do 2 destr_in EI.
+      * inv EI.
+        exploit ra_after_call_inj; eauto. intro.
+        inv MS. rewrite (pred_dec_true (check_ra_after_call _ _ _)) by auto.
+        remember (if Nat.eq_dec _ _ then false else true) as inner eqn:INNER.
+        replace (if inner then _ else _)
+        with (Next' (rs' # PC <- (rs' RA)) # RA <- Vundef m' inner) by destr.
+        do 4 eexists. split. eauto. split. econstructor; eauto.
+        -- intros. apply val_inject_set. apply val_inject_set; auto.
+           intros. auto.
+        -- red. auto.
+      * inv MS.
+        do 4 eexists. split. eauto. split. econstructor; eauto.
+        -- intros. apply val_inject_set. apply val_inject_set; auto.
+           intros. auto.
+        -- red. auto.
     (* Pallocframe *)
     + repeat destr_in EI.
       inversion MS. subst.
-      edestruct allocframe_inject as (j' & INCR & m1' & STORERA & m2' & STORELINK & MS') ; eauto.
+      edestruct allocframe_inject as (j' & INCR & m1' & RECORDFR & m2' & STORERA & m3' & STORELINK & MS') ; eauto.
       lia.
       apply Ptrofs.unsigned_range_2.
       apply Ptrofs.unsigned_range_2.
@@ -1773,6 +2099,7 @@ Proof.
       unfold Val.offset_ptr in Heqv0. destr_in Heqv0. inv Heqv0.
       destr_in Heqv1. inv Heqv1.
       eexists j',_,_; split; eauto.
+      rewrite RECORDFR.
       unfold Val.offset_ptr. simpl. rewrite STORERA.
       unfold Val.offset_ptr in STORELINK. simpl in STORELINK.
       rewrite STORELINK. auto.
@@ -1783,6 +2110,8 @@ Proof.
       rename Heqo0 into LOADLINK.
       rename Heqo1 into FREE.
       rename Heqo2 into POP.
+      rename Heqb0 into INNER.
+      rename Heqb1 into CTF.
       rename e0 into RSPTOP.
       inv MS.
       clear NOTSTKINSTR.
@@ -1793,78 +2122,106 @@ Proof.
       assert (v = val_ra). destr_in LOADRA. subst.
       assert (RA':val_ra' <> Vundef). destruct val_ra; inv INJRA; try congruence.
       erewrite loadv_loadvv; eauto.
+      apply support_free' in FREE as SF.
+      edestruct Mem.nonempty_pop_stage as (m2 & ?). rewrite SF. eapply Mem.pop_stage_nonempty. eauto.
+      assert (NONEMPTY: Mem.astack (Mem.support m') <> nil).
+        clear - RSPINJ. induction RSPINJ; congruence.
+      exploit free'_left_inject. 2:eauto. eauto. intros FREEINJ.
+      edestruct Mem.pop_stage_parallel_inject as (m'' & POP' & POPINJ); eauto. rewrite POP'.
+      erewrite <- inner_match; eauto. rewrite INNER.
       exploit Mem.loadv_inject. apply MINJ. apply LOADLINK.
       apply Val.offset_ptr_inject. rewrite <- RSRSP. auto.
       intros (val_link' & LOADLINK' & INJLINK).
-      exists j; eexists; eexists; split; [|split]; eauto.
+      exists j. do 2 eexists. split; [|split]; eauto.
       apply Mem.astack_pop_stage in POP as POPASTK.
       destruct POPASTK as [top ASP].
-      apply Mem.support_free in FREE as SF.
-      unfold check_topframe in Heqb0.
-      repeat destr_in Heqb0. rewrite <- SF in Heqs. rewrite ASP in Heqs.
+      unfold check_topframe in CTF.
+      repeat destr_in CTF. rewrite SF in Heqs. rewrite ASP in Heqs.
       inv Heqs.
-      destruct RSPINJ' as [offset [X Y]].
       assert (max_stacksize' - (stack_size ((f0::nil)::Mem.astack (Mem.support m1))) =
               max_stacksize' - frame_size_a f0 - stack_size (Mem.astack (Mem.support m1))).
       assert (stack_size ((f0::nil)::Mem.astack(Mem.support m1)) = frame_size_a f0 + stack_size (Mem.astack (Mem.support m1))). simpl. lia. rewrite H. lia.
       constructor; eauto.
       (* Memory Injection *)
-      * eapply Mem.pop_stage_left_inject. 2: eauto.
-        eapply Mem.free_left_inject; eauto.
-      * apply Mem.support_free in FREE.
-        apply Mem.sup_include_pop_stage in POP.
+      * apply Mem.sup_include_pop_stage in POP.
+        unfold free' in FREE. destr_in FREE.
+        apply Mem.support_free in FREE.
         rewrite <- FREE in ENVSUP.
         eapply Mem.sup_include_trans. apply ENVSUP. eauto.
+        inv FREE.
+        eapply Mem.sup_include_trans. apply ENVSUP. eauto.
+      * apply Mem.sup_include_pop_stage in POP'.
+        eapply Mem.sup_include_trans. apply ENVSUP'. auto.
       * rewrite nextinstr_rsp. intros.
         rewrite Pregmap.gso in H0.
         rewrite Pregmap.gss in H0.
         unfold parent_sp_stack in H0. repeat destr_in H0.
         destr_in H2.
         congruence.
+      * rewrite nextinstr_rsp. intros.
+        rewrite Pregmap.gso in H0.
+        rewrite Pregmap.gss in H0.
+        unfold parent_sp_stack in H0. repeat destr_in H0.
+        destr_in H2. inv H2. auto. congruence.
       (* Regset Injection *)
       * intros; apply val_inject_nextinstr.
         intros; apply val_inject_set; auto.
         intros; apply val_inject_set; auto.
-        inv RSPINJ.
+        inv RSPINJ; simpl. rewrite <- ASP in *.
+          clear - INNER H1. unfold init_astack in H1. rewrite H1, Nat.ltb_lt in INNER. lia.
         assert (FSZ:0 <= frame_size_a (mk_frame b0 size) <= Ptrofs.max_unsigned).
-        split. generalize frame_size_a_pos (mk_frame b0 size). intro. auto.
-        generalize (Ptrofs.unsigned_range_2 offset). intro.
-        rewrite X in H0. setoid_rewrite H in H0.
-        generalize (stack_size_pos (Mem.astack (Mem.support m1))). intro.
-        generalize max_stacksize'_lt_max. intro. lia.
+          split. generalize frame_size_a_pos (mk_frame b0 size). intro. auto.
+          unfold frame_size_a. simpl.
+          simpl in STKLIMIT. unfold frame_size_a in STKLIMIT. simpl in STKLIMIT.
+          pose proof max_stacksize_range. pose proof stack_size_pos (Mem.astack (Mem.support m1)). clear - STKLIMIT H0 H1. lia.
         inv IS_REC.
-        -- unfold parent_sp_stack. simpl. rewrite Y.
-           simpl. econstructor. eauto.
+        -- rewrite INIT_PARENT_L. unfold parent_sp_stack. simpl.
+           rewrite RSPINJ'. simpl. eauto.
+           (* econstructor. eauto.
            rewrite Ptrofs.add_unsigned.
-           rewrite X. rewrite <- H0. simpl. rewrite Ptrofs.add_zero_l.
-           f_equal. unfold frame_size_a. simpl.
-           rewrite Ptrofs.unsigned_repr. lia. auto.
-        -- rewrite Y. simpl. unfold parent_sp_stack. simpl.
-           econstructor. eauto. simpl.
-           rewrite Ptrofs.add_unsigned. rewrite X. rewrite <- H0.
+           rewrite <- H2. rewrite ! Ptrofs.unsigned_repr. rewrite Ptrofs.add_zero_l.
            simpl.
-           rewrite Ptrofs.unsigned_repr. rewrite Ptrofs.add_zero_l.
            apply f_equal. unfold frame_size_a. simpl. lia. auto.
+           split. admit.
+           pose proof max_stacksize'_range. pose proof stack_size_pos ((mk_frame stkblock size :: nil) :: Mem.astack (injw_sup_r w)). lia. *)
+        -- unfold parent_sp_stack. rewrite RSPINJ'. simpl.
+           econstructor. eauto.
+           rewrite Ptrofs.add_unsigned. rewrite ! Ptrofs.unsigned_repr, Ptrofs.add_zero_l.
+           rewrite <- H2. simpl.
+           apply f_equal. unfold frame_size_a. simpl. lia. auto.
+           admit.
       * assert ((stack_size ((f0::nil):: Mem.astack(Mem.support m1))) =
             (frame_size_a f0 + stack_size (Mem.astack(Mem.support m1)))). simpl. lia.
         setoid_rewrite H0 in STKLIMIT.
         generalize (frame_size_a_pos f0). lia.
       * inv STKNOREPET. auto.
-      * inv RSPINJ. unfold current_in_stack. intros.
-        unfold current_in_stack in STKCIN. rewrite <- SF, ASP in STKCIN.
+      * inv RSPINJ.
+          rewrite <- ASP in *. clear - INNER H1. unfold init_astack in H1. rewrite H1, Nat.ltb_lt in INNER. lia.
+        unfold stkcin, current_in_stack. intros.
+        unfold stkcin, current_in_stack in STKCIN. rewrite SF, ASP in STKCIN.
         exploit STKCIN. right. apply H0. intros [R S].
         split. auto.
         eapply Mem.support_pop_stage_1 in POP. apply POP. auto.
       * eapply Mem.support_pop_stage_1 in POP. apply POP.
+        unfold free' in FREE. destr_in FREE.
         erewrite Mem.support_free. 2: eauto. auto.
+        inv FREE. auto.
       * intros. erewrite <- Mem.perm_pop_stage. 2: eauto.
-        intro. eapply STKPERMOFS. eapply Mem.perm_free_3; eauto.
+        intro. eapply STKPERMOFS.
+        unfold free' in FREE. destr_in FREE.
+        eapply Mem.perm_free_3; eauto.
+        inv FREE. auto.
+      * red. erewrite <- Mem.support_pop_stage_1; eauto.
+      * inv STKPERMOFS'. constructor; intros; erewrite <- Mem.perm_pop_stage in *; eauto.
       * inv RSPINJ.
+          rewrite <- ASP in *. clear - INNER H1. unfold init_astack in H1. rewrite H1, Nat.ltb_lt in INNER. lia.
+        apply Mem.astack_pop_stage in POP' as (hd' & POP'). rewrite POP' in H2. inv H2.
         eapply inject_stack_inv; eauto.
         {(*cin_perm*)
           intros. unfold top_sp_stack in RSPTOP. simpl in RSPTOP. inv RSPTOP.
           assert (b0 <> b1). intro. subst. inv STKNOREPET. apply H5. auto.
           transitivity (Mem.perm m0 b1 o k p).
+          unfold free' in FREE. destr_in FREE.
           split. intro. eapply Mem.perm_free_1; eauto.
           eapply Mem.perm_free_3; eauto.
           erewrite Mem.perm_pop_stage; eauto. reflexivity.
@@ -1873,7 +2230,13 @@ Proof.
       * rewrite nextinstr_rsp.
         rewrite Pregmap.gso by congruence.
         rewrite Pregmap.gss.
-        setoid_rewrite H in STKINJLWBD. setoid_rewrite H in X.
+        rewrite RSPINJ'. simpl. f_equal.
+        edestruct Mem.astack_pop_stage as [hd EQ]. exact POP'.
+        inv RSPINJ.
+        rewrite INIT_PARENT_R. rewrite H2, EQ in INIT_PARENT_R. inv INIT_PARENT_R. simpl.
+        rewrite H1 in INIT_PARENT_L. inv INIT_PARENT_L.
+        rewrite EQ in H2. inv H2. simpl. unfold frame_size_a. simpl. admit.
+        (* setoid_rewrite H in STKINJLWBD. setoid_rewrite H in X.
         exists (Ptrofs.repr((Ptrofs.unsigned offset) + frame_size_a f0)).
         split.
         ++
@@ -1891,30 +2254,39 @@ Proof.
         split. apply frame_size_a_pos.
         generalize (Ptrofs.unsigned_range_2 offset). intro.
         rewrite X in H0. generalize (stack_size_pos (Mem.astack (Mem.support m1))). intro.
-        generalize max_stacksize'_lt_max. intro. unfold frame_size_a in *. lia.
+        generalize max_stacksize'_lt_max. intro. unfold frame_size_a in *. lia. *)
       * unfold stack_inject_lowbound in STKINJLWBD.
         intro. intros.
         generalize (RINJ RSP). intro.
         apply RSPzero in RSRSP as Z. subst.
-        rewrite RSRSP in H2. rewrite Y in H2. inv H2.
+        rewrite RSRSP in H2. inv H2.
         inv RSPINJ.
+          rewrite <- ASP in *. clear - INNER H3. unfold init_astack in H3. rewrite H3, Nat.ltb_lt in INNER. lia.
         unfold top_sp_stack in RSPTOP. simpl in RSPTOP. inv RSPTOP.
         erewrite <- Mem.perm_pop_stage in H1; eauto.
-        eapply Mem.perm_free_3 in H1 as H9; eauto. rename b1 into b.
+        assert (H9: Mem.perm m b0 ofs k p). {
+          unfold free' in FREE. destr_in FREE.
+          eapply Mem.perm_free_3; eauto.
+        }
+        rename b1 into b.
         destruct (eq_block b0 b).
-        ++ subst b0. rewrite H0 in H6.
-           apply H5 in H9 as H10.
-           exploit Mem.perm_free_2; eauto. simpl. lia.
+        ++ subst b0. rewrite H0 in H6. inv H6.
+           apply H8 in H9 as H10.
+           unfold free' in FREE. destr_in FREE.
+           exploit Mem.perm_free_2; eauto. simpl. rewrite Ptrofs.unsigned_zero. lia.
            intro. inv H2.
+           rewrite Ptrofs.unsigned_zero in g. simpl in *. lia.
         ++ exploit STKINJLWBD. apply H0. eauto.
            intros [SIZE CIN].
            assert (current_in_stack b0 m1).
            { unfold current_in_stack in *.
-             rewrite <- SF, ASP in CIN. destruct CIN. simpl in H2. congruence.
+             rewrite SF, ASP in CIN. destruct CIN. simpl in H2. congruence.
              auto. }
            split. 2: auto.
-           exploit cis_perm; eauto. intros [R S]. lia.
-Qed.
+           exploit cis_perm; eauto. intros [R S].
+           edestruct Mem.astack_pop_stage as [hd EQ]. exact POP'.
+           rewrite EQ in H4. inv H4. lia.
+Admitted.
 
 (* injection in builtin *)
 Lemma eval_builtin_arg_inject:
@@ -1924,7 +2296,7 @@ Lemma eval_builtin_arg_inject:
     (MINJ: Mem.inject j m m')
     (GLOBINJ: meminj_preserves_globals j),
     eval_builtin_arg ge (fun r => rs#r) sp m a v ->
-    exists v', eval_builtin_arg ge (fun r => rs'#r) sp' m' a v' /\ Val.inject j v v'.
+    exists v', eval_builtin_arg tge (fun r => rs'#r) sp' m' a v' /\ Val.inject j v v'.
 Proof.
   intros until 4.
   induction 1.
@@ -1937,17 +2309,23 @@ Proof.
   intros (v' & P & Q). exists v'; eauto with barg.
 - econstructor; split; eauto with barg.
   apply Val.offset_ptr_inject; eauto.
-- assert (Val.inject j (Senv.symbol_address ge id ofs) (Senv.symbol_address ge id ofs)).
-  { unfold Senv.symbol_address; simpl; unfold Genv.symbol_address.
+- assert (Val.inject j (Genv.symbol_address ge id ofs) (Genv.symbol_address tge id ofs)).
+  { unfold Genv.symbol_address.
     destruct (Genv.find_symbol ge id) as [b|] eqn:FS; auto.
     exploit symbol_inject; eauto. intros.
+    eapply Genv.find_symbol_transf in FS as (b' & INJ & FS'). 2:apply GLOBINJ.
+    rewrite FS'.
+    instantiate (1 := prog) in FS'.
     econstructor; eauto. rewrite Ptrofs.add_zero; auto. }
   exploit Mem.loadv_inject; eauto.
   intros (v' & A & B). exists v'; auto with barg.
 - econstructor; split; eauto with barg.
-  unfold Senv.symbol_address; simpl; unfold Genv.symbol_address.
+  unfold Genv.symbol_address.
   destruct (Genv.find_symbol ge id) as [b|] eqn:FS; auto.
   exploit symbol_inject; eauto. intros.
+  eapply Genv.find_symbol_transf in FS as (b' & INJ & FS'). 2:apply GLOBINJ.
+  rewrite FS'.
+  instantiate (1 := prog) in FS'.
   econstructor; eauto. rewrite Ptrofs.add_zero; auto.
 - destruct IHeval_builtin_arg1 as (v1' & A1 & B1); eauto using in_or_app.
   destruct IHeval_builtin_arg2 as (v2' & A2 & B2); eauto using in_or_app.
@@ -1966,7 +2344,7 @@ Lemma eval_builtin_args_inject:
     (MINJ: Mem.inject j m m')
     (GLOBINJ: meminj_preserves_globals j),
     eval_builtin_args ge rs sp m al vl ->
-    exists vl', eval_builtin_args ge rs' sp' m' al vl' /\  Val.inject_list j vl vl'.
+    exists vl', eval_builtin_args tge rs' sp' m' al vl' /\  Val.inject_list j vl vl'.
 Proof.
   intros until 4.
   induction 1; intros.
@@ -2035,57 +2413,38 @@ Proof.
   eexists; split; econstructor; eauto.
 Qed.
 
-Lemma max_stacksize_aligned : (8 | max_stacksize).
-Proof. unfold max_stacksize. exists 512. lia. Qed.
-
-Lemma max_stacksize_range : 0 <= max_stacksize <= Ptrofs.max_unsigned.
-Proof. unfold max_stacksize. vm_compute. split; congruence. Qed.
-
-Lemma max_stacksize'_range : 0 <= max_stacksize' <= Ptrofs.max_unsigned.
-Proof. unfold max_stacksize. vm_compute. split; congruence. Qed.
-
 (** Step Simulation *)
 Theorem step_simulation:
   forall S1 t S2,
-    Asm.step instr_size ge S1 t S2 ->
+    Asm.step instr_size (injw_sup_l w) ge S1 t S2 ->
     forall j S1' (MS: match_states j S1 S1'),
     exists j' S2',
-      step instr_size ge S1' t S2' /\
+      step instr_size (injw_sup_r w) tge S1' t S2' /\
       match_states j' S2 S2'.
 Proof.
   destruct 1; intros; inversion MS; subst.
   - (* internal step *)
     generalize (RINJ PC); rewrite H. inversion 1; subst.
-    generalize (globinj_to_funinj j GLOBINJ). intros GLOBFUN_INJ.
-    assert (j b = Some (b,0)) as JB.
+    exploit (globinj_to_funinj j GLOBINJ); eauto. intros [ ]. subst.
+    assert (asm_instr_unchange_rsp instr_size (injw_sup_l w) i).
     {
-      eapply GLOBFUN_INJ. eauto.
+      eapply prog_unchange_rsp_l; eauto.
     }
-    rewrite JB in H7; inv H7.
-    assert (asm_instr_unchange_rsp instr_size i).
-    {
-      eapply prog_unchange_rsp; eauto.
-    }
-    destruct (exec_instr_inject _ _ _ _ _ _ _ _ _ H2 MS H4 (asm_prog_unchange_sup instr_size i)) as ( j' & rs2' & m2' & EI' & MS' & INCR).
+    destruct (exec_instr_inject _ _ _ _ _ _ _ _ _ _ EXEC MS H1 (asm_prog_unchange_sup instr_size (injw_sup_l w) i)) as (j' & rs2' & m2' & EI' & MS' & INCR).
     do 2 eexists; split.
     eapply exec_step_internal; eauto.
+    eapply functions_transl; eauto.
     rewrite Ptrofs.add_zero. eauto.
     eauto.
   - (* builtin step *)
     edestruct (eval_builtin_args_inject) as (vargs' & Hargs & Hargsinj); eauto.
-    edestruct (external_call_mem_inject_gen ef)
-      as (j' & vres' & m2' & EC & RESinj & MemInj & Unch1 & Unch2 & INCR & SEP); try eauto. apply globals_symbols_inject. eauto.
-    exploit (external_call_astack ef). apply H3. intros STKEQ.
-    exploit (external_call_astack ef). apply EC. intros STKEQ0.
-    generalize (globinj_to_funinj j GLOBINJ). intros GLOBFUN_INJ.
-    assert (j b = Some (b,0)) as JB.
-    {
-      eapply GLOBFUN_INJ. eauto.
-    }
+    edestruct (external_call_mem_inject_gen' ef)
+      as (j' & vres' & m2' & EC & RESinj & MemInj & Unch1 & Unch2 & STKEQ & STKEQ0 & INCR & GLOB & SEP); try eauto. apply globals_symbols_inject. eauto.
     generalize (RINJ PC); rewrite H. inversion 1; subst.
-    rewrite JB in H9; inv H9.
+    exploit (globinj_to_funinj j GLOBINJ); eauto. intros [ ]. subst.
     do 2 eexists; split.
     eapply exec_step_builtin; eauto.
+    eapply functions_transl; eauto.
     rewrite Ptrofs.add_zero; eauto.
     generalize (Mem.unchanged_on_support (loc_unmapped j) m m' Unch1).
     intro SUPINCMEM.
@@ -2094,24 +2453,21 @@ Proof.
     econstructor; eauto.
     (* Memory Injection *)
     + constructor.
-      ++ intros. exploit defs_inject; eauto.
-      ++ intros *. intros JB' FD.
-         destruct (j b) eqn:JB1. destruct p.
-         exploit INCR; eauto. rewrite JB'; intro X. inv X.
-         exploit defs_rev_inject; eauto.
-         exploit SEP; eauto.
-         unfold Mem.valid_block.
-         intros (NV1 & NV2).
-         exploit Genv.genv_defs_range. apply FD. intros.
-         apply ENVSUP' in H6. congruence.
-      ++ intros. exploit symbol_inject; eauto.
-    + eapply Mem.sup_include_trans. apply ENVSUP. auto.
-    + eapply Mem.sup_include_trans. apply ENVSUP'. auto.
+      ++ eapply Genv.match_stbls_incr; eauto. apply GLOBINJ. intros.
+         exploit GLOB; eauto. unfold is_stack. intros [STK STK']. destr_in STK. destr_in STK'. clear.
+         split; intros SUP; apply Genv.genv_sup_glob in SUP as [ ]; congruence.
+      ++ inv GLOBINJ. eapply meminj_global_incr; eauto.
     + remember (nextinstr_nf  (Ptrofs.repr (instr_size (Pbuiltin ef args res)))
                   (set_res res vres (undef_regs (map preg_of (Machregs.destroyed_by_builtin ef)) rs))) as rs'.
-      destruct prog_unchange_rsp as (INT & BUILTIN & EXTCALL).
+      destruct prog_unchange_rsp_l as (INT & BUILTIN & EXTCALL).
       red in BUILTIN.
-      destruct (BUILTIN b2 (Ptrofs.unsigned ofs) f ef args res rs m vargs t vres rs' m'); eauto.
+      destruct (BUILTIN b (Ptrofs.unsigned ofs) f ef args res rs m vargs t vres rs' m'); eauto.
+    + remember (nextinstr_nf  (Ptrofs.repr (instr_size (Pbuiltin ef args res)))
+                  (set_res res vres (undef_regs (map preg_of (Machregs.destroyed_by_builtin ef)) rs))) as rs'.
+      destruct prog_unchange_rsp_l as (INT & BUILTIN & EXTCALL).
+      red in BUILTIN.
+      rewrite <- STKEQ.
+      destruct (BUILTIN b (Ptrofs.unsigned ofs) f ef args res rs m vargs t vres rs' m'); eauto.
     (* Regset Injection *)
     + intros. apply val_inject_nextinstr_nf.
       apply val_inject_set_res; auto.
@@ -2120,41 +2476,42 @@ Proof.
     (* Stack Injection *)
     + erewrite <- external_call_astack; eauto.
     + erewrite <- external_call_astack; eauto.
-    + unfold current_in_stack in *. erewrite <- external_call_astack; eauto.
+    + red. unfold current_in_stack in *. erewrite <- external_call_astack; eauto.
       intros. exploit STKCIN; eauto. intros [A B]. split. auto. apply SUPINCMEM.
       auto.
     + unfold Mem.valid_block. apply SUPINCMEM. auto.
-    + intros. exploit external_perm_stack. apply H3. instantiate (1:= stkblock).
-      simpl. auto. auto. intro. intro. eapply STKPERMOFS. apply H6,H7.
+    + intros. exploit external_perm_stack. apply CALL. instantiate (1:= stkblock).
+      simpl. auto. auto. intro. intro. eapply STKPERMOFS. apply H2,H3.
     + unfold Mem.valid_block. apply SUPINCMEM1. auto.
     + inv STKPERMOFS'. constructor.
       ++ intros ofs0 k p PERM. eapply stack_perm_offset0.
          exploit external_perm_stack. apply EC. instantiate (1:= stkblock). eauto.
-         simpl. auto. auto. intro. eapply H6. eauto.
+         simpl. auto. auto. intro. eapply H2. eauto.
       ++ intros. exploit stack_offset_perm0; eauto.
          intro. exploit external_perm_stack; eauto.
-         simpl. auto. intro. apply H9,H7.
-    + eapply inject_stack_incr; eauto. erewrite <- external_call_astack; eauto.
+         simpl. auto. intro. apply H6,H3.
+    + eapply inject_stack_incr; eauto. erewrite <- external_call_astack; eauto. rewrite <- STKEQ0.
       eapply inject_stack_inv; eauto. intros. symmetry.
       exploit STKCIN; eauto. intros [A B].
       eapply external_perm_stack; eauto.
     + remember (nextinstr_nf (Ptrofs.repr (instr_size (Pbuiltin ef args res)))
                   (set_res res vres' (undef_regs (map preg_of (Machregs.destroyed_by_builtin ef)) rs'0))) as rs'.
-      destruct prog_unchange_rsp as (INT & BUILTIN & EXTCALL).
+      destruct prog_unchange_rsp_r as (INT & BUILTIN & EXTCALL).
       red in BUILTIN.
-      destruct (BUILTIN b2 (Ptrofs.unsigned ofs) f ef args res rs'0 m'0 vargs' t vres' rs' m2'); eauto.
-      rewrite <- STKEQ. auto.
-    + red. intros b delta o k p JB1' PERM.
-      assert (JB1: j b = Some (stkblock, delta)).
+      destruct (BUILTIN b (Ptrofs.unsigned ofs) f ef args res rs'0 m'0 vargs' t vres' rs' m2'); eauto.
+      eapply functions_transl; eauto.
+      rewrite <- STKEQ0. auto.
+    + red. intros b0 delta o k p JB1' PERM.
+      assert (JB1: j b0 = Some (stkblock, delta)).
       {
-        destruct (j b) eqn:JB1. destruct p0.
+        destruct (j b0) eqn:JB1. destruct p0.
         - apply INCR in JB1. rewrite JB1 in JB1'. auto.
         - exploit SEP. apply JB1. apply JB1'.
           intros (NVB1 & NVB2). congruence.
       }
-      rewrite <- STKEQ.
+      rewrite <- STKEQ0.
       red in STKINJLWBD. unfold current_in_stack in *.
-      erewrite <- (external_call_astack _ _ _ _ _ _ _ H3); eauto.
+      rewrite <- STKEQ.
       eapply STKINJLWBD.
       red in INCR.
       apply JB1.
@@ -2162,17 +2519,18 @@ Proof.
       eapply external_call_max_perm; eauto.
       eapply Mem.valid_block_inject_1; eauto.
   - (* external call *)
-    destruct RSPINJ' as (offset & X  & Y).
+    remember (Ptrofs.repr (max_stacksize' - stack_size (Mem.astack (Mem.support m'0)))) as offset eqn:X.
     edestruct (Mem.valid_access_store m'0 Mptr stkblock (Ptrofs.unsigned (Ptrofs.add (offset)
               (Ptrofs.neg (Ptrofs.repr (size_chunk Mptr)))))) as (m'2 & STORERA).
     {
       red. repeat apply conj.
       red; intros. apply STKPERMOFS'.
-      split. generalize (Ptrofs.unsigned_range (Ptrofs.add offset (Ptrofs.neg (Ptrofs.repr (size_chunk Mptr))))); lia. eapply Z.lt_le_trans. apply H5.
+      split. generalize (Ptrofs.unsigned_range (Ptrofs.add offset (Ptrofs.neg (Ptrofs.repr (size_chunk Mptr))))); lia. eapply Z.lt_le_trans. apply H2.
       rewrite <- Ptrofs.sub_add_opp. unfold Ptrofs.sub.
       rewrite (Ptrofs.unsigned_repr (size_chunk Mptr)).
       2: vm_compute; intuition congruence.
-      rewrite Ptrofs.unsigned_repr. rewrite X. generalize (stack_size_pos (Mem.astack (Mem.support m))). lia.
+      rewrite Ptrofs.unsigned_repr. rewrite X. generalize (stack_size_pos (Mem.astack (Mem.support m'0))). rewrite Ptrofs.unsigned_repr. lia.
+      admit. admit.
       rewrite X.
       generalize (stack_size_pos (Mem.astack (Mem.support m))).
       generalize (size_chunk_pos Mptr).
@@ -2233,51 +2591,44 @@ Proof.
       }
       intro StoreInj.
     edestruct (extcall_arguments_inject) as (vargs' & Hargs & Hargsinj). eauto. eauto. eapply StoreInj.
-    edestruct (external_call_mem_inject_gen ef) as (j' & vres' & m2' & EC & RESinj & MemInj & Unch1 & Unch2 & INCR & SEP); try eauto. apply globals_symbols_inject. eauto.
-    exploit (external_call_astack ef). apply H2. intros STKEQ.
-    exploit (external_call_astack ef). apply EC. intros STKEQ0.
+    edestruct (external_call_mem_inject_gen' ef) as (j' & vres' & m2' & EC & RESinj & MemInj & Unch1 & Unch2 & STKEQ & STKEQ0 & INCR & GLOB & SEP); try eauto. apply globals_symbols_inject. eauto.
     generalize (RINJ PC); rewrite H.
-    intro VINJ; inv VINJ. rename H8 into JB2. rename H7 into EQofs.
-    generalize (globinj_to_funinj j GLOBINJ). intros GLOBFUN_INJ.
-    assert (j b = Some (b,0)) as JB.
-    {
-      eapply GLOBFUN_INJ. eauto.
-    }
-    rewrite JB in JB2; inv JB2.
+    intro VINJ; inv VINJ. rename H5 into JB2. rename H4 into EQofs.
+    exploit (globinj_to_funinj j GLOBINJ); eauto. intros [ ]. subst.
     do 2 eexists; split.
     eapply exec_step_external; eauto. rewrite Y. simpl. eauto.
     rewrite Y. apply Val.Vptr_has_type.
     generalize (RINJ RA). destruct (rs RA); simpl in *; inversion 1; subst; try congruence; easy.
     congruence.
     generalize (RINJ RA). destruct (rs RA); simpl in *; inversion 1; subst; try congruence; easy.
+    unfold inner_sp. eauto.
+    exploit inner_sp_inj; eauto. unfold inner_sp. eauto. intros Heqlive LIVE. subst.
+    rewrite LIVE in ISP. trim H1. auto.
     eapply ra_after_call_inj; eauto.
     generalize (Mem.unchanged_on_support (loc_unmapped j) m m' Unch1).
     intro SUPINCMEM.
     generalize (Mem.unchanged_on_support (loc_out_of_reach j m) m'2 m2' Unch2).
     intro SUPINCMEM1.
     apply Mem.support_store in STORERA as SUP.
+    exploit inner_sp_inj; eauto. unfold inner_sp. eauto. intros Heqlive. rewrite <- Heqlive.
     econstructor; eauto.
     (* Memory Injection *)
     + constructor.
-      ++ intros. exploit defs_inject; eauto.
-      ++ intros *. intros JB' FD.
-         destruct (j b) eqn:JB1. destruct p.
-         exploit INCR; eauto. rewrite JB'; intro X'. inv X'.
-         exploit defs_rev_inject; eauto.
-         exploit SEP; eauto.
-         unfold Mem.valid_block.
-         intros (NV1 & NV2).
-         exploit Genv.genv_defs_range. apply FD. intros.
-         apply ENVSUP' in H5.
-         congruence.
-      ++ intros. exploit symbol_inject; eauto.
-    + eapply Mem.sup_include_trans. apply ENVSUP. auto.
+      ++ eapply Genv.match_stbls_incr; eauto. apply GLOBINJ. intros.
+         exploit GLOB; eauto. unfold is_stack. intros [STK STK']. destr_in STK. destr_in STK'. clear.
+         split; intros SUP; apply Genv.genv_sup_glob in SUP as [ ]; congruence.
+      ++ inv GLOBINJ. eapply meminj_global_incr; eauto.
     + eapply Mem.sup_include_trans. apply ENVSUP'. rewrite <- SUP. auto.
     (* Regset Injection *)
     + remember (((set_pair (loc_external_result (ef_sig ef)) res (undef_caller_save_regs rs)) # PC <- (rs RA)) # RA <- Vundef) as rs'.
       destruct prog_unchange_rsp as (INT & BUILTIN & EXTCALL).
       red in EXTCALL.
-      destruct (EXTCALL b2 ef args res rs m t rs' m'); eauto.
+      destruct (EXTCALL b ef args res rs m t rs' m'); eauto.
+    + remember (((set_pair (loc_external_result (ef_sig ef)) res (undef_caller_save_regs rs)) # PC <- (rs RA)) # RA <- Vundef) as rs'.
+      destruct prog_unchange_rsp as (INT & BUILTIN & EXTCALL).
+      red in EXTCALL.
+      rewrite <- STKEQ.
+      destruct (EXTCALL b ef args res rs m t rs' m'); eauto.
     + intros; apply val_inject_set; auto.
       intros; apply val_inject_set; auto.
       intros; apply val_inject_set_pair; auto.
@@ -2291,8 +2642,8 @@ Proof.
       intros. exploit STKCIN; eauto. intros [A B]. split. auto.
       apply SUPINCMEM. auto.
     + unfold Mem.valid_block. apply SUPINCMEM. auto.
-    + intros. exploit external_perm_stack. apply H2. instantiate (1:= stkblock).
-      simpl. auto. auto. intro. intro. eapply STKPERMOFS. apply H5,H6.
+    + intros. exploit external_perm_stack. apply CALL. instantiate (1:= stkblock).
+      simpl. auto. auto. intro. intro. eapply STKPERMOFS. apply H2,H3.
     + unfold Mem.valid_block. apply SUPINCMEM1. rewrite SUP. auto.
     + inv STKPERMOFS'. constructor.
       ++ intros ofs0 k p PERM.
@@ -2300,15 +2651,16 @@ Proof.
       unfold Mem.valid_block in STKVB'. rewrite <- SUP in STKVB'.
          exploit external_perm_stack; eauto.
          unfold stkblock. simpl. auto.
-         intro. eapply H5. eauto.
+         intro. eapply H2. eauto.
       ++ intros. exploit stack_offset_perm0; eauto.
-         intro. eapply Mem.perm_store_1 in H6.  2: eauto.
+         intro. eapply Mem.perm_store_1 in H3.  2: eauto.
          unfold Mem.valid_block in STKVB'. rewrite <- SUP in STKVB'.
          exploit external_perm_stack; eauto.
          unfold stkblock. simpl. auto.
-         intro. apply H7,H6.
+         intro. apply H4,H3.
     + eapply inject_stack_incr; eauto.
       erewrite <- external_call_astack; eauto.
+      rewrite <- STKEQ0, SUP.
       eapply inject_stack_inv; eauto. intros. symmetry.
       exploit STKCIN; eauto. intros [A B].
       eapply external_perm_stack; eauto.
@@ -2316,19 +2668,19 @@ Proof.
      (undef_caller_save_regs rs'0)) # PC <- (rs'0 RA))# RA <- Vundef) as rs'.
       destruct prog_unchange_rsp as (INT & BUILTIN & EXTCALL).
       red in EXTCALL.
-      destruct (EXTCALL b2 ef vargs' vres' rs'0 m'2 t rs' m2'); eauto.
+      destruct (EXTCALL b ef vargs' vres' rs'0 m'2 t rs' m2'); eauto.
       rewrite <- STKEQ. eauto.
-    + red. intros b delta o k p JB1' PERM.
-      assert (JB1: j b = Some (stkblock, delta)).
+    + red. intros b0 delta o k p JB1' PERM.
+      assert (JB1: j b0 = Some (stkblock, delta)).
       {
-        destruct (j b) eqn:JB1. destruct p0.
+        destruct (j b0) eqn:JB1. destruct p0.
         - apply INCR in JB1. rewrite JB1 in JB1'. auto.
         - exploit SEP. apply JB1. apply JB1'.
           intros (NVB1 & NVB2). unfold Mem.valid_block in *. rewrite SUP in NVB2. congruence.
       }
       rewrite <- STKEQ.
       red in STKINJLWBD.  unfold current_in_stack in *.
-      erewrite <- (external_call_astack _ _ _ _ _ _ _ H2); eauto.
+      erewrite <- (external_call_astack _ _ _ _ _ _ _ CALL); eauto.
       eapply STKINJLWBD.
       red in INCR.
       apply JB1.
@@ -2336,6 +2688,33 @@ Proof.
       eapply external_call_max_perm; eauto.
       eapply Mem.valid_block_inject_1; eauto.
 Qed.
+
+End WITH_WORLD.
+
+Let cc : callconv li_asm li_asm := cc_ssasm inj.
+
+Lemma transf_initial_states:
+  forall j s1 s2 q1 q2 st1, match_query cc (injw j s1 s2) q1 q2 -> Asm.initial_state ge q1 st1 ->
+  Genv.match_stbls j se se ->
+  exists st2, SSAsm.initial_state ge q2 st2 /\ match_states s1 j st1 st2.
+Proof.
+  intros * MQ INIT GE. inv MQ. inv MEM. inv INIT. simpl in *.
+  econstructor; split.
+
+  econstructor; eauto.
+  pose proof RSINJ Asm.PC.
+  unfold Genv.find_funct, Genv.find_funct_ptr in *. do 4 destr_in H2.
+  inv H0; try congruence.
+  apply Genv.genv_defs_range in Heqo as SUP. apply Genv.genv_sup_glob in SUP as (id & ?). subst b.
+  exploit INJG. eauto. intros [ ]. subst. rewrite Heqo, Ptrofs.add_zero.
+  destr. inv H2. eauto.
+  pose proof RSINJ RSP. inv H0; try congruence.
+  pose proof RSINJ RA. inv H0; try congruence.
+
+  constructor; eauto.
+
+- constructor; auto.
+-
 
 Lemma transf_initial_states:
   forall st1, Asm.initial_state prog st1 ->

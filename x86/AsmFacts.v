@@ -39,9 +39,9 @@ Variable init_sup: sup.
 Hypothesis instr_size_bound : forall i, 0 < instr_size i <= Ptrofs.max_unsigned.
 
 Definition asm_instr_unchange_rsp (i : instruction) : Prop :=
-  forall ge f rs m rs' m',
+  forall ge f rs m rs' m' live,
     stk_unrelated_instr i = true ->
-    Asm.exec_instr instr_size init_sup ge f i rs m = Next rs' m' ->
+    Asm.exec_instr instr_size init_sup ge f i rs m = Next' rs' m' live ->
     rs # RSP = rs' # RSP.
 
  Lemma find_instr_eq:
@@ -295,13 +295,13 @@ Definition written_regs i : list preg :=
           | idtac ].
 
   Lemma exec_load_rsp:
-    forall(ge: genv) sz K m1 am rs1 f0 rs2 m2,
-      exec_load ge sz K m1 am rs1 f0 = Next rs2 m2 ->
+    forall(ge: genv) sz K m1 am rs1 f0 rs2 m2 live,
+      exec_load ge sz K m1 am rs1 f0 = Next' rs2 m2 live ->
       forall r,
         ~ In  r (PC :: RA :: CR ZF :: CR CF :: CR PF :: CR SF :: CR OF :: f0 :: nil) ->
       rs2 r = rs1 r.
   Proof.
-    intros ge' sz K m1 am rs1 f0 rs2 m2 LOAD.
+    intros ge' sz K m1 am rs1 f0 rs2 m2 live LOAD.
     unfold exec_load in LOAD. destr_in LOAD. inv LOAD.
     simpl.
     unfold nextinstr_nf.
@@ -311,13 +311,13 @@ Definition written_regs i : list preg :=
   Qed.
 
   Lemma exec_store_rsp:
-    forall  (ge:genv) sz K m1 am rs1 f0 rs2 m2 (l: list preg),
-      exec_store ge sz K m1 am rs1 f0 l = Next rs2 m2 ->
+    forall  (ge:genv) sz K m1 am rs1 f0 rs2 m2 (l: list preg) live,
+      exec_store ge sz K m1 am rs1 f0 l = Next' rs2 m2 live ->
       forall r,
         ~ In  r (PC :: RA :: CR ZF :: CR CF :: CR PF :: CR SF :: CR OF :: l) ->
       rs2 r = rs1 r.
   Proof.
-    intros ge' sz K m1 am rs1 f0 rs2 m2 l  STORE.
+    intros ge' sz K m1 am rs1 f0 rs2 m2 l live STORE.
     unfold exec_store in STORE. repeat destr_in STORE.
     simpl.
     unfold nextinstr_nf.
@@ -328,12 +328,12 @@ Definition written_regs i : list preg :=
   Qed.
   
   Lemma exec_instr_only_written_regs:
-    forall (ge: Genv.t Asm.fundef unit) rs1 m1 rs2 m2 f i r,
-      Asm.exec_instr instr_size init_sup ge f i rs1 m1 = Next rs2 m2 ->
+    forall (ge: Genv.t Asm.fundef unit) rs1 m1 rs2 m2 f i r live,
+      Asm.exec_instr instr_size init_sup ge f i rs1 m1 = Next' rs2 m2 live ->
       ~ In  r (PC :: RA :: CR ZF :: CR CF :: CR PF :: CR SF :: CR OF :: written_regs i) ->
       rs2 # r = rs1 # r.
   Proof.
-    intros ge rs1 m1 rs2 m2 f i  r EI NIN.
+    intros ge rs1 m1 rs2 m2 f i r live EI NIN.
     simpl in NIN.
     simpl_not_in NIN. rename H7 into NIN.
     destruct i; simpl in *; repeat destr_in EI;
@@ -835,18 +835,18 @@ Proof.
 (** modify abstract stack *)
 Definition asm_instr_unchange_sup (i : instruction) : Prop :=
   stk_unrelated_instr i = true ->
-  forall ge rs m rs' m' f,
-    Asm.exec_instr instr_size init_sup ge f i rs m = Next rs' m' ->
+  forall ge rs m rs' m' f live,
+    Asm.exec_instr instr_size init_sup ge f i rs m = Next' rs' m' live ->
     Mem.support m = Mem.support m' /\
     (forall b o k p, Mem.perm m b o k p <-> Mem.perm m' b o k p).
 
 
 Lemma exec_store_support:
-    forall (ge: Genv.t Asm.fundef unit) sz k m1 a rs1 rs l rs2 m2,
-      exec_store ge sz k m2 a rs1 rs l = Next rs2 m1 ->
+    forall (ge: Genv.t Asm.fundef unit) sz k m1 a rs1 rs l rs2 m2 live,
+      exec_store ge sz k m2 a rs1 rs l = Next' rs2 m1 live ->
       Mem.support m2 = Mem.support m1 /\ (forall b o k p, Mem.perm m2 b o k p <-> Mem.perm m1 b o k p).
 Proof.
-    intros ge sz k m1 a rs1 rs l rs2 m2  STORE.
+    intros ge sz k m1 a rs1 rs l rs2 m2 live STORE.
     unfold exec_store in STORE; repeat destr_in STORE.
     unfold Mem.storev in Heqo; destr_in Heqo; inv Heqo.
     erewrite <- Mem.support_store. 2: eauto.
@@ -857,21 +857,21 @@ Proof.
 Qed.
 
 Lemma exec_load_support:
-    forall (ge: Genv.t Asm.fundef unit) sz k m1 a rs1 rs rs2 m2,
-      exec_load ge sz k m2 a rs1 rs = Next rs2 m1 ->
+    forall (ge: Genv.t Asm.fundef unit) sz k m1 a rs1 rs rs2 m2 live,
+      exec_load ge sz k m2 a rs1 rs = Next' rs2 m1 live ->
       Mem.support m2 = Mem.support m1 /\ (forall b o k p, Mem.perm m2 b o k p <-> Mem.perm m1 b o k p).
 Proof.
-    intros ge sz k m1 a rs1 rs rs2 m2 LOAD.
+    intros ge sz k m1 a rs1 rs rs2 m2 live LOAD.
     unfold exec_load in LOAD; destr_in LOAD.
 Qed.
 
 Lemma goto_label_support:
-  forall (ge: Genv.t Asm.fundef unit) f l m1 rs1 rs2 m2,
-    goto_label instr_size ge f l rs1 m2 = Next rs2 m1 ->
+  forall (ge: Genv.t Asm.fundef unit) f l m1 rs1 rs2 m2 live,
+    goto_label instr_size ge f l rs1 m2 = Next' rs2 m1 live ->
     Mem.support m2 = Mem.support m1 /\
     (forall b o k p, Mem.perm m2 b o k p <-> Mem.perm m1 b o k p).
 Proof.
-    intros ge f l m1 rs1 rs2 m2 GOTO.
+    intros ge f l m1 rs1 rs2 m2 live GOTO.
     unfold goto_label in GOTO; repeat destr_in GOTO.
 Qed.
 
@@ -879,7 +879,7 @@ Lemma asm_prog_unchange_sup (i : instruction) :
   asm_instr_unchange_sup i.
 Proof.
   intro.
-    intros ge0 rs1 m1 rs2 m2 f EI.
+    intros ge0 rs1 m1 rs2 m2 f live EI.
       destruct i; simpl in H; try discriminate;
         unfold exec_instr in EI; simpl in EI; repeat destr_in EI;
           first [ split;[reflexivity|tauto]
@@ -893,28 +893,28 @@ Qed.
 
 (** modify memory *)
 Lemma exec_store_unchange_support:
-  forall ge sz k a rs m r l rs' m',
-    Asm.exec_store ge sz k m a rs r l = Next rs' m' ->
+  forall ge sz k a rs m r l rs' m' live,
+    Asm.exec_store ge sz k m a rs r l = Next' rs' m' live ->
     Mem.sup_include (Mem.support m) (Mem.support m').
 Proof.
-  intros ge sz k a rs m r l rs' m' STORE.
+  intros ge sz k a rs m r l rs' m' live STORE.
   unfold exec_store in STORE. repeat destr_in STORE.
   apply Mem.support_storev in Heqo.
   rewrite Heqo. apply Mem.sup_include_refl.
 Qed.
 
 Lemma exec_load_unchange_support:
-  forall ge sz k a m rs rd rs' m',
-    exec_load ge sz k m a rs rd = Next rs' m' ->
+  forall ge sz k a m rs rd rs' m' live,
+    exec_load ge sz k m a rs rd = Next' rs' m' live ->
     Mem.sup_include (Mem.support m) (Mem.support m').
 Proof.
-  intros ge sz k a m rs rd rs' m' LOAD.
+  intros ge sz k a m rs rd rs' m' live LOAD.
   unfold exec_load in LOAD. destr_in LOAD.
 Qed.
 
 Definition asm_instr_unchange_support (i : instruction) : Prop :=
-  forall ge rs m rs' m' f,
-    Asm.exec_instr instr_size init_sup ge f i rs m = Next rs' m' ->
+  forall ge rs m rs' m' f live,
+    Asm.exec_instr instr_size init_sup ge f i rs m = Next' rs' m' live ->
     Mem.sup_include (Mem.support m) (Mem.support m').
 
 Lemma asm_prog_unchange_support (i : instruction) :

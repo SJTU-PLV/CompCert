@@ -1,6 +1,7 @@
 Require Import Coqlib Maps.
 Require Import AST Integers Floats Values Memory Events Globalenvs Smallstep.
 Require Import Locations Conventions.
+Require Import LanguageInterface CallconvAlgebra CKLR CKLRAlgebra.
 Require Import Asm.
 
 Definition stkblock := Stack 1%positive.
@@ -11,19 +12,29 @@ Variable instr_size : instruction -> Z.
 
 Section SSASM.
 
+Variable init_sup : sup.
 Variable ge: genv.
+
+Definition init_astack := Mem.astack init_sup.
+
+Definition inner_sp (rs: regset) m :=
+  Some (if Nat.eq_dec (length init_astack) (length (Mem.astack (Mem.support m))) then false else true).
 
 Definition exec_instr (f: function) (i: instruction) (rs: regset) (m: mem) : outcome :=
   match i with
   | Pallocframe sz ofs_ra ofs_link =>
     let aligned_sz := align sz 8 in
     let sp := Val.offset_ptr (rs#RSP) (Ptrofs.neg (Ptrofs.repr aligned_sz)) in
-    match Mem.storev Mptr m (Val.offset_ptr sp ofs_ra) (rs#RA) with
+    match Mem.record_frame (Mem.push_stage m) (mk_frame stkblock sz) with
     | None => Stuck
     | Some m1 =>
-      match Mem.storev Mptr m1 (Val.offset_ptr sp ofs_link) rs#RSP with
+      match Mem.storev Mptr m1 (Val.offset_ptr sp ofs_ra) (rs#RA) with
       | None => Stuck
-      | Some m2 => Next (nextinstr_nf (Ptrofs.repr (instr_size i)) (rs #RAX <- (rs#RSP) #RSP <- sp)) m2
+      | Some m2 =>
+        match Mem.storev Mptr m2 (Val.offset_ptr sp ofs_link) rs#RSP with
+        | None => Stuck
+        | Some m3 => Next (nextinstr_nf (Ptrofs.repr (instr_size i)) (rs #RAX <- (rs#RSP) #RSP <- sp)) m3
+        end
       end
     end
   | Pfreeframe sz ofs_ra ofs_link =>
@@ -31,19 +42,34 @@ Definition exec_instr (f: function) (i: instruction) (rs: regset) (m: mem) : out
     let sp := Val.offset_ptr rs#RSP (Ptrofs.repr aligned_sz) in
     match loadvv Mptr m (Val.offset_ptr rs#RSP ofs_ra) with
     | None => Stuck
-    | Some ra => Next (nextinstr  (Ptrofs.repr (instr_size i)) (rs#RSP <- sp #RA <- ra)) m
+    | Some ra =>
+      match Mem.pop_stage m with
+      | None => Stuck
+      | Some m' =>
+        if (length init_astack <? length (Mem.astack (Mem.support m)))%nat then
+        Next (nextinstr (Ptrofs.repr (instr_size i)) (rs#RSP <- sp #RA <- ra)) m'
+        else Stuck
+      end
     end
-  | _ => Asm.exec_instr instr_size ge f i rs m
+  | Pret =>
+    match inner_sp rs m with
+    | Some true =>
+      if check_ra_after_call instr_size ge (rs#RA) then Next' (rs#PC <- (rs#RA) #RA <- Vundef) m true else Stuck
+    | Some false =>
+      Next' (rs#PC <- (rs#RA) #RA <- Vundef) m false
+    | None => Stuck
+    end
+  | _ => Asm.exec_instr' instr_size ge inner_sp init_sup f i rs m
   end.
 
-Inductive step  : state -> trace -> state -> Prop :=
+Inductive step : state -> trace -> state -> Prop :=
 | exec_step_internal:
-    forall b ofs f i rs m rs' m',
+    forall b ofs f i rs m rs' m' live,
       rs PC = Vptr b ofs ->
       Genv.find_funct_ptr ge b = Some (Internal f) ->
       find_instr instr_size (Ptrofs.unsigned ofs) (fn_code f) = Some i ->
-      exec_instr f i rs m = Next rs' m' ->
-      step (State rs m) E0 (State rs' m')
+      exec_instr f i rs m = Next' rs' m' live ->
+      step (State rs m true) E0 (State rs' m' live)
 | exec_step_builtin:
     forall b ofs f ef args res rs m vargs t vres rs' m',
       rs PC = Vptr b ofs ->
@@ -54,9 +80,9 @@ Inductive step  : state -> trace -> state -> Prop :=
       rs' = nextinstr_nf (Ptrofs.repr (instr_size (Pbuiltin ef args res)))
               (set_res res vres
                        (undef_regs (map preg_of (destroyed_by_builtin ef)) rs)) ->
-      step (State rs m) t (State rs' m')
+      step (State rs m true) t (State rs' m' true)
 | exec_step_external:
-    forall b ef args res rs m t rs' m' m1,
+    forall b ef args res rs m t rs' m' m1 live,
       rs PC = Vptr b Ptrofs.zero ->
       Genv.find_funct_ptr ge b = Some (External ef) ->
       Mem.storev Mptr m (Val.offset_ptr (rs RSP) (Ptrofs.neg (Ptrofs.repr (size_chunk Mptr))))
@@ -67,35 +93,99 @@ Inductive step  : state -> trace -> state -> Prop :=
         (SP_NOT_VUNDEF: rs RSP <> Vundef)
         (RA_NOT_VUNDEF: rs RA <> Vundef),
       external_call ef ge args m1 t res m' ->
-      ra_after_call instr_size ge (rs # RA) ->
+      forall ISP: inner_sp rs m = Some live,
+      (live = true -> ra_after_call instr_size ge (rs # RA)) ->
       rs' = (set_pair (loc_external_result (ef_sig ef)) res (undef_caller_save_regs rs))
               #PC <- (rs RA)
               #RA <- Vundef
       ->
-      step (State rs m) t (State rs' m').
+      step (State rs m true) t (State rs' m' live).
 
 End SSASM.
 
 (** Execution of whole programs. *)
 
-Inductive initial_state (p: program): state -> Prop :=
-  | initial_state_intro: forall m0 m1 stk bmain,
-      Genv.init_mem p = Some m0 ->
-      Mem.alloc m0 0 (max_stacksize + align(size_chunk Mptr) 8) = (m1, stk) ->
-      let ge := Genv.globalenv p in
-      Genv.find_symbol ge p.(prog_main) = Some bmain ->
-      let rs0 :=
-        (Pregmap.init Vundef)
-        # PC <- (Vptr bmain Ptrofs.zero)
-        # RA <- Vnullptr
-        # RSP <- (Vptr stkblock (Ptrofs.repr (max_stacksize + (align(size_chunk Mptr) 8)))) in
-      initial_state p (State rs0 m1).
+Inductive initial_state (ge: genv): query li_asm -> state -> Prop :=
+  | initial_state_intro rs m f:
+      Genv.find_funct ge rs#PC = Some (Internal f) ->
+      rs#SP <> Vundef ->
+      rs#RA <> Vundef ->
+      initial_state ge (rs, m) (State rs (Mem.push_stage m) true).
+
+Inductive at_external (ge: genv): state -> query li_asm -> Prop :=
+  | at_external_intro rs m id sg:
+      Genv.find_funct ge rs#PC = Some (External (EF_external id sg)) ->
+      at_external ge (State rs m true) (rs, m).
+
+Inductive after_external init_sup: state -> reply li_asm -> state -> Prop :=
+  | after_external_intro rs m (rs': regset) m' live:
+      Mem.sup_include (Mem.support m) (Mem.support m') ->
+      inner_sp init_sup rs' m' = Some live ->
+      after_external init_sup
+        (State rs m true)
+        (rs', m')
+        (State rs' m' live).
+
+Inductive final_state: state -> reply li_asm -> Prop :=
+  | final_state_intro rs m:
+      final_state (State rs m false) (rs, m).
 
 (** The same final_state as defined in the Asm.v *)
-Definition semantics (p: program) :=
-  Semantics step (initial_state p) final_state (Genv.globalenv p).
+Definition semantics (p: program) : Smallstep.semantics li_asm li_asm :=
+  {|
+    skel := erase_program p;
+    activate se :=
+      let ge := Genv.globalenv se p in
+      {|
+        Smallstep.step ge '(sup, s) t '(sup', s') := step sup ge s t s' /\ sup' = sup;
+        Smallstep.valid_query q := Genv.is_internal ge (entry q);
+        Smallstep.initial_state q '(sup, s) := initial_state ge q s /\ sup = Mem.support (snd q);
+        Smallstep.at_external '(sup, s) q := at_external ge s q;
+        Smallstep.after_external '(sup, s) r '(sup', s') := after_external sup s r s' /\ sup' = sup;
+        Smallstep.final_state '(sup, s) := final_state s;
+        Smallstep.globalenv := ge;
+      |}
+  |}.
 
 End INSTRSIZE.
+
+Definition regset_inject j (rs rs': regset) : Prop :=
+  forall r, Val.inject j (rs # r) (rs' # r).
+
+Definition max_stacksize' := max_stacksize + align (size_chunk Mptr) 8.
+
+Inductive ssasm_match_astack (j: meminj): stackadt -> stackadt -> Prop :=
+  | ssasm_match_astack_nil:
+      ssasm_match_astack j nil nil
+  | ssasm_match_astack_cons: forall hd hd' t t' tl tl' ofs
+      (IHstk: ssasm_match_astack j tl tl')
+      (INJ: j (frame_block hd) = Some (stkblock, ofs))
+      (SIZE: frame_size hd = frame_size hd'),
+      ssasm_match_astack j ((hd :: t) :: tl) ((hd' :: t') :: tl).
+
+Variant cc_ssasm_match R w : regset * mem -> regset * mem -> Prop :=
+  cc_ssasm_match_intro: forall rs1 m1 rs2 m2 hd t tl
+    (RSINJ: regset_inject (mi R w) rs1 rs2)
+    (MEM: match_mem R w m1 m2)
+    (STK: ssasm_match_astack (mi R w) (Mem.astack (Mem.support m1)) (Mem.astack (Mem.support m2)))
+    (STKCIN: forall b, In b (sp_of_astack (Mem.astack (Mem.support m1))) -> is_stack b /\ sup_In b (Mem.support m1))
+    (STKHD: Mem.astack (Mem.support m1) = (hd :: t) :: tl)
+    (STKINJ: (mi R w) (frame_block hd) = Some (stkblock, max_stacksize' - stack_size (Mem.astack (Mem.support m1))))
+    (PC: rs1#PC <> Vundef),
+    cc_ssasm_match R w (rs1, m1) (rs2, m2).
+
+Program Definition cc_ssasm R : callconv li_asm li_asm :=
+  {|
+    match_senv := match_stbls R;
+    match_query := cc_ssasm_match R;
+    match_reply := (<> cc_asm_match R)%klr;
+  |}.
+Next Obligation.
+  eapply match_stbls_proj in H. eapply Genv.mge_public; eauto.
+Qed.
+Next Obligation.
+  eapply match_stbls_proj in H. erewrite <- Genv.valid_for_match; eauto.
+Qed.
 
 Ltac rewrite_hyps :=
   repeat
@@ -118,6 +208,7 @@ Ltac Equalities :=
   end.
   intros; constructor; simpl; intros.
 - (* determ *)
+  destruct s as [sup s], s1 as [sup1 s1], s2 as [sup2 s2], H, H0. subst.
   inv H; inv H0; Equalities.
 + split. constructor. auto.
 + discriminate.
@@ -129,18 +220,34 @@ Ltac Equalities :=
   exploit external_call_determ. eexact H5. eexact H12. intros [A B].
   split. auto. intros. destruct B; auto. subst. auto.
 - (* trace length *)
-  red; intros; inv H; simpl.
+  red; cbn. intros [sup s] t [sup' s'] [H Hnb]. inv H; simpl.
   lia.
   eapply external_call_trace_length; eauto.
   eapply external_call_trace_length; eauto.
 - (* initial states *)
-  inv H; inv H0.
-  unfold ge, ge0, rs0, rs1 in *. rewrite_hyps. auto.
+  destruct s1 as [sup1 s1], s2 as [sup2 s2], H, H0.
+  inv H. inv H0. reflexivity.
 - (* final no step *)
-  assert (NOTNULL: forall b ofs, Vnullptr <> Vptr b ofs).
-  { intros; unfold Vnullptr; destruct Archi.ptr64; congruence. }
-  inv H. red; intros; red; intros. inv H; rewrite H0 in *; eelim NOTNULL; eauto.
+  destruct s as [sup s].
+  inv H. red; intros; red; intros.
+  destruct s' as [sup' s'], H as (H & Hsup). inv H.
+  + rewrite H3 in H0. cbn in H0. destruct Ptrofs.eq_dec; congruence.
+  + rewrite H3 in H0. cbn in H0. destruct Ptrofs.eq_dec; congruence.
+  + rewrite H3 in H0. cbn in H0. destruct Ptrofs.eq_dec; try congruence.
+    assert (ef = EF_external id sg) by congruence; subst. contradiction.
+- (* at_external determ *)
+  destruct s as [sup s].
+  inv H; inv H0; auto.
+- (* after_external determ *)
+  destruct s as [sup s], s1 as [sup1 s1], s2 as [sup2 s2], H, H0. subst.
+  inv H; inv H0; f_equal; f_equal. rewrite H2 in H8. inv H8; auto.
+- (* final no step *)
+  destruct s as [sup s].
+  inv H. red; intros; red; intros. destruct s', H, H0. inv H.
+- (* at_external no step *)
+  destruct s as [sup s].
+  inv H; inv H0.
 - (* final states *)
+  destruct s as [sup s].
   inv H; inv H0. congruence.
 Qed.
-

@@ -627,14 +627,9 @@ Qed.
     rather than a step.
 *)
 
-Variable init_sup: sup.
 Variable ge: genv.
 
-Definition inner_sp (sp: val) : option bool :=
-  match sp with
-    | Vptr sb _ => Some (if Mem.sup_dec sb init_sup then false else true)
-    | _ => None
-  end.
+Variable inner_sp : regset -> mem -> option bool.
 
 (** Evaluating an addressing mode *)
 
@@ -893,7 +888,7 @@ Proof.
   unfold loadvv. rewrite H. destruct v; eauto. congruence.
 Qed.
 
-Definition exec_instr (f: function) (i: instruction) (rs: regset) (m: mem) : outcome :=
+Definition exec_instr' init_sup (f: function) (i: instruction) (rs: regset) (m: mem) : outcome :=
   let sz := Ptrofs.repr (instr_size i) in
   let nextinstr := nextinstr sz in
   let nextinstr_nf := nextinstr_nf sz in
@@ -1243,7 +1238,7 @@ Definition exec_instr (f: function) (i: instruction) (rs: regset) (m: mem) : out
     | _ => Stuck
     end
   | Pret =>
-    match inner_sp rs#SP with
+    match inner_sp rs m with
     | Some true =>
       if check_ra_after_call ge (rs#RA) then Next' (rs#PC <- (rs#RA) #RA <- Vundef) m true else Stuck
     | Some false =>
@@ -1293,6 +1288,7 @@ Definition exec_instr (f: function) (i: instruction) (rs: regset) (m: mem) : out
           | Some sp =>
               match rs#RSP with
               | Vptr stk ofs =>
+                  if (length (Mem.astack init_sup) <? length (Mem.astack (Mem.support m)))%nat then
                   if check_topframe fsz (Mem.astack (Mem.support m)) then
                   if Val.eq sp (parent_sp_stack (Mem.astack (Mem.support m))) then
                   if Val.eq (Vptr stk ofs) (top_sp_stack (Mem.astack (Mem.support m))) then
@@ -1304,7 +1300,7 @@ Definition exec_instr (f: function) (i: instruction) (rs: regset) (m: mem) : out
                         | Some m''' =>
                         Next (nextinstr (rs#RSP <- sp #RA <- ra)) m'''
                       end
-                  end else Stuck else Stuck else Stuck
+                  end else Stuck else Stuck else Stuck else Stuck
               | _ => Stuck
               end
           end
@@ -1431,6 +1427,13 @@ Definition loc_external_result (sg: signature) : rpair preg :=
 
 End RELSEM.
 
+Definition inner_sp init_sup (sp: val) : option bool :=
+  match sp with
+    | Vptr sb _ => Some (if Mem.sup_dec sb init_sup then false else true)
+    | _ => None
+  end.
+
+Definition exec_instr init_sup ge := exec_instr' ge (fun rs m => inner_sp init_sup rs#SP) init_sup.
 Notation Next rs m := (Next' rs m true).
 
 (** Execution of the instruction at [rs#PC]. *)
@@ -1485,7 +1488,9 @@ Inductive step (init_sup: sup) (ge: genv): state -> trace -> state -> Prop :=
       forall ISP: inner_sp init_sup rs#SP = Some live,
       no_rsp_pair (loc_external_result (ef_sig ef)) ->
       (live = true -> ra_after_call ge (rs#RA)) ->
-      rs' = (set_pair (loc_external_result (ef_sig ef)) res (undef_caller_save_regs rs)) #PC <- (rs RA) ->
+      rs' = (set_pair (loc_external_result (ef_sig ef)) res (undef_caller_save_regs rs))
+              #PC <- (rs RA)
+              #RA <- Vundef ->
       step init_sup ge (State rs m true) t (State rs' m' live).
 (* =======
       Genv.find_funct_ptr ge b = Some (External ef) ->

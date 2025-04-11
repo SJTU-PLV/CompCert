@@ -419,6 +419,12 @@ Inductive size_consistency :  list (option Z) -> stackadt -> Prop :=
       size_consistency lsz astack ->
       size_consistency ((Some (frame_size fr))::lsz) ((fr::nil)::astack).
 
+Remark size_consistency_size:
+  forall lsz astack,
+    size_consistency lsz astack ->
+    (length astack >= length (Mem.astack init_sup))%nat.
+Proof. induction 1; simpl; auto. Qed.
+
 Definition sp_of_callstack (l:list stackframe) : list val :=
   (fun x:stackframe =>
      match x with
@@ -601,7 +607,7 @@ Proof.
   - subst. destruct zlt.
     + red. intros.
       erewrite <- Mem.support_pop_stage_1, Mem.support_free; eauto.
-    + inv H5. red. intros.
+    + inv H6. red. intros.
       erewrite <- Mem.support_pop_stage_1; eauto.
 Qed.
 
@@ -935,6 +941,10 @@ Opaque loadind.
   exploit Mem.pop_stage_extends; eauto. intros [m2''' [J K]].
   apply Mem.support_free in H4 as SF. apply Mem.support_free in E as SF'.
   apply Mem.astack_pop_stage in H5 as ASP. destruct ASP as (topfr & ASP).
+  assert (INNER: (length (Mem.astack init_sup) <? length (Mem.astack (Mem.support m'0)))%nat = true).
+    inv SC. apply size_consistency_size in H11.
+    inv F. rewrite <- SF', <- mext_sup, SF, <- H13. simpl.
+    rewrite Nat.ltb_lt. lia.
   assert (CTF:check_topframe (Mach.fn_stacksize f) (Mem.astack (Mem.support m'0)) = true).
    unfold check_topframe. inv SC.   inv MEXT. rewrite <- mext_sup. rewrite <- H13.
    rewrite pred_dec_true; auto. unfold frame_size_a. unfold aligned_fsz.
@@ -979,7 +989,7 @@ Opaque loadind.
     apply transf_function_stacksize_pos in H8 as H8'.
     destr. erewrite loadv_loadvv; eauto.
     rewrite A. rewrite <- (sp_val _ _ _ AG).
-    rewrite CTF. rewrite CSP. rewrite pred_dec_true.
+    rewrite INNER, CTF, CSP. rewrite pred_dec_true.
     rewrite (sp_val _ _ _ AG). rewrite pred_dec_true.
     unfold free'. rewrite zlt_false by lia.
     rewrite O. eauto. eauto. auto.
@@ -1015,7 +1025,7 @@ Opaque loadind.
     apply transf_function_stacksize_pos in H8 as H8'.
     destr. erewrite loadv_loadvv; eauto.
     rewrite A. rewrite <- (sp_val _ _ _ AG).
-    rewrite CTF. rewrite CSP. rewrite pred_dec_true.
+    rewrite INNER, CTF, CSP. rewrite pred_dec_true.
     rewrite (sp_val _ _ _ AG). rewrite pred_dec_true.
     unfold free'. rewrite zlt_true by lia. rewrite E, J. eauto. auto. auto.
     inv WFRA; simpl. inv STACKS. congruence. congruence.
@@ -1055,7 +1065,7 @@ Opaque loadind.
     simpl. replace (chunk_of_type Tptr) with Mptr in * by (unfold Tptr, Mptr; destruct Archi.ptr64; auto).
     apply transf_function_stacksize_pos in H8 as H8'. destr.
     erewrite loadv_loadvv; eauto.
-    rewrite A. rewrite <- (sp_val _ _ _ AG). rewrite CTF. rewrite pred_dec_true.
+    rewrite A. rewrite <- (sp_val _ _ _ AG). rewrite INNER, CTF. rewrite pred_dec_true.
     rewrite (sp_val _ _ _ AG). rewrite pred_dec_true.
     unfold free'. rewrite zlt_false by lia. rewrite O. eauto. auto. auto.
     inv WFRA; simpl. inv STACKS. congruence. congruence.
@@ -1085,7 +1095,7 @@ Opaque loadind.
     simpl. replace (chunk_of_type Tptr) with Mptr in * by (unfold Tptr, Mptr; destruct Archi.ptr64; auto).
     apply transf_function_stacksize_pos in H8 as H8'. destr.
     erewrite loadv_loadvv; eauto.
-    rewrite A. rewrite <- (sp_val _ _ _ AG). rewrite CTF. rewrite pred_dec_true.
+    rewrite A. rewrite <- (sp_val _ _ _ AG). rewrite INNER, CTF. rewrite pred_dec_true.
     rewrite (sp_val _ _ _ AG). rewrite pred_dec_true.
     unfold free'. rewrite zlt_true by lia. rewrite E, J. eauto. auto. auto.
     inv WFRA; simpl. inv STACKS. congruence. congruence.
@@ -1269,6 +1279,11 @@ Transparent destroyed_by_jumptable.
   exploit lessdef_parent_ra; eauto. intros. subst ra'. clear D.
   exploit Mem.free_parallel_extends; eauto. intros [m2' [E F]].
   exploit Mem.pop_stage_extends; eauto. intros [m2'''' [J K]].
+  assert (INNER: (length (Mem.astack init_sup) <? length (Mem.astack (Mem.support m'0)))%nat = true).
+    inv SC. apply size_consistency_size in H10.
+    apply Mem.support_free in E. apply Mem.support_free in H2. inv F.
+    rewrite <- E, <- mext_sup, H2, <- H12. simpl.
+    rewrite Nat.ltb_lt. lia.
   assert (CTF:check_topframe (Mach.fn_stacksize f) (Mem.astack (Mem.support m'0)) = true).
    unfold check_topframe. inv SC.   inv MEXT. rewrite <- mext_sup. rewrite <- H12.
    rewrite pred_dec_true; auto.
@@ -1301,7 +1316,7 @@ Transparent destroyed_by_jumptable.
     eapply functions_transl; eauto. eapply find_instr_tail; eauto.
     simpl. apply transf_function_stacksize_pos in H6 as H6'. destr.
     erewrite loadv_loadvv; eauto.
-    rewrite A. rewrite <- (sp_val _ _ _ AG). rewrite CTF. rewrite pred_dec_true.
+    rewrite A. rewrite <- (sp_val _ _ _ AG). rewrite INNER, CTF. rewrite pred_dec_true.
     rewrite (sp_val _ _ _ AG). rewrite pred_dec_true.
     unfold free'. rewrite zlt_false by lia. rewrite O. eauto. auto. auto.
     apply star_one. eapply exec_step_internal.
@@ -1333,7 +1348,7 @@ Transparent destroyed_by_jumptable.
     eapply functions_transl; eauto. eapply find_instr_tail; eauto.
     simpl. apply transf_function_stacksize_pos in H6 as H6'. destr.
     erewrite loadv_loadvv; eauto.
-    rewrite A. rewrite <- (sp_val _ _ _ AG). rewrite CTF. rewrite pred_dec_true.
+    rewrite A. rewrite <- (sp_val _ _ _ AG). rewrite INNER, CTF. rewrite pred_dec_true.
     rewrite (sp_val _ _ _ AG). rewrite pred_dec_true.
     unfold free'. rewrite zlt_true by lia. rewrite E, J. eauto. auto. auto.
     apply star_one. eapply exec_step_internal.
@@ -1465,7 +1480,7 @@ Transparent destroyed_at_function_entry.
     by eauto using Mem.unchanged_on_support.
   econstructor; eauto.
   eapply match_stack_incr_bound; eauto.
-  unfold loc_external_result. apply agree_set_other; auto. apply agree_set_pair; auto.
+  unfold loc_external_result. do 2 (apply agree_set_other; auto). apply agree_set_pair; auto.
   apply agree_undef_caller_save_regs; auto.
   erewrite <- external_call_astack; eauto.
   erewrite <- external_call_astack; eauto.
