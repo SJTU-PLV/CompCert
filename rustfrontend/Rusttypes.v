@@ -517,7 +517,7 @@ Qed.
 
 Fixpoint alignof_blockcopy (env: composite_env) (t: type) : Z :=
   match t with
-  | Tunit => 1
+  | Tunit => 4
   | Tint I8 _ => 1
   | Tint I16 _ => 2
   | Tint I32 _
@@ -581,7 +581,8 @@ Proof.
     rewrite two_power_nat_two_p. rewrite !Nat2Z.inj_succ. f_equal. lia.
     apply Z.divide_refl.
   }
-  induction ty; simpl. unfold Z.divide. exists 4. auto.
+  induction ty; simpl. 
+  apply Z.divide_refl.
   apply Z.divide_refl.
   apply Z.divide_refl.
   apply Z.divide_refl.
@@ -593,7 +594,28 @@ Proof.
   destruct (env!i). apply X. apply Z.divide_0_r.
 Qed.
 
-
+Lemma alignof_implies_alignof_blockcopy: forall env ty ofs,    
+    (alignof env ty | ofs) ->
+    (alignof_blockcopy env ty | ofs).
+Proof.
+  intros until ofs. intros AL.
+  assert (X: forall co, (co_alignof co | ofs) -> (Z.min 8 (co_alignof co) | ofs)).
+  { intros.
+    destruct (co_alignof_two_p co) as [n EQ]. rewrite EQ in *.
+    eapply Z.divide_trans; eauto.
+    destruct n. apply Z.divide_refl.
+    destruct n. apply Z.divide_refl.
+    destruct n. apply Z.divide_refl.
+    apply Z.min_case.
+    exists (two_p (Z.of_nat n)).        
+    rewrite two_power_nat_two_p. rewrite !Nat2Z.inj_succ.
+    change 8 with (two_p 3).    
+    rewrite <- two_p_is_exp by lia. f_equal. lia.    
+    apply Z.divide_refl. }
+  induction ty; simpl in *; auto.
+  - simpl in *. destruct (env!i) eqn: CO; auto.    
+  - simpl in *. destruct (env!i) eqn: CO; auto.
+Qed.
 
 
 (** ** Layout of struct fields *)

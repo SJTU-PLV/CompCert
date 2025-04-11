@@ -7412,15 +7412,6 @@ Proof.
     eapply IHal; eauto.
 Qed.    
     
-Lemma access_mode_by_copy: forall ty,
-    access_mode ty = Ctypes.By_copy ->
-    (exists orgs id, ty = Tstruct orgs id) \/ (exists orgs id, ty = Tvariant orgs id).
-Proof.
-  destruct ty; intros A; simpl in *; try (inv A; congruence); eauto.
-  destruct i; destruct s; try congruence.
-  destruct f; try congruence.
-Qed.
-
 Lemma assign_loc_no_mem_error: forall ty m b ofs v fp
     (ERR: assign_loc_mem_error ce ty m b ofs v)
     (AL: (alignof ce ty | Ptrofs.unsigned ofs))
@@ -7728,7 +7719,7 @@ Lemma step_no_mem_error: forall s,
 Proof.
   intros s SOUND WTST ERR; inv ERR.
   (* 1-3: step_assign *)
-  1-3: inv SOUND; inv WTST; inv STMT; inv WT1; simpl in TR; simpl_getIM IM;
+  1-4: inv SOUND; inv WTST; inv STMT; inv WT1; simpl in TR; simpl_getIM IM;
   destruct (move_check_expr ce mayinit mayuninit universe e) eqn: MOVE1; try congruence;
   unfold move_check_expr in MOVE1;  
   destruct (move_check_expr' ce mayinit mayuninit universe e) eqn: MOVECKE; try congruence;
@@ -7761,7 +7752,47 @@ Proof.
     eapply assign_loc_no_mem_error; eauto.
     eapply Mem.range_perm_implies; eauto.
     constructor. }
-
+  (* check_assign_copy case *)
+  { assert (WTP2: wt_place le (globalenv se prog) p2).
+    { destruct EXPREQ; subst; inv WT3; eauto.
+      inv WT1. auto. }
+    assert (TYEQ: typeof_place p = typeof_place p2).
+    { destruct EXPREQ; subst; inv WT3; eauto.
+      inv WT1. eauto. }
+    assert (DOM: dominators_is_init own p2 = true).
+    { eapply dominators_must_init_sound. eauto.
+      destruct EXPREQ; subst; simpl in MOVECKE.
+      - destruct place_eq in MOVECKE;  
+        rewrite !andb_true_iff in MOVECKE; intuition.
+      - destruct scalar_type in MOVECKE; try congruence.
+        rewrite !andb_true_iff in MOVECKE; intuition. }
+    assert (EVALEXPR: eval_expr ge le m ge e (Vptr b2 ofs2)).
+    { destruct EXPREQ; subst.
+      econstructor. econstructor. eauto.
+      eapply deref_loc_copy. eauto.
+      econstructor. econstructor. eauto.
+      eapply deref_loc_copy. eauto. }      
+    exploit eval_expr_sem_wt; eauto.
+    intros (vfp & fpm2 & WTVAL & WTFP & MM1 & WFENV1 & NOREP1 & EQUIV1 & WFOWN1).    
+    (** sound_own after moving the place in the expression *)
+    assert (SOWN1: sound_own (move_place_option own (moved_place e)) mayinit' mayuninit' universe).
+    { destruct (moved_place e) eqn: MP; simpl; inv MOVE1; auto.
+      eapply move_place_sound. auto. }    
+    exploit dominators_must_init_sound; eauto. intros DOM1.
+    eapply COPYERR. red.
+    rewrite TYEQ at 1 3.
+    exploit eval_place_sound. eapply EVALE. eapply MM. all: eauto.
+    intros (pfp & GFP & WTFP3 & PRAN & PERM & VALID).
+    exploit eval_place_sound. eapply EVALP. eapply MM1. all: eauto.
+    intros (pfp1 & GFP1 & WTFP4 & PRAN1 & PERM1 & VALID1).
+    exploit get_loc_footprint_map_align; eauto. intros ALIGN1.
+    exploit get_loc_footprint_map_align. eapply GFP. all: eauto. intros ALIGN2.
+    repeat apply conj.
+    eapply alignof_implies_alignof_blockcopy. eauto.
+    eapply alignof_implies_alignof_blockcopy. eauto.
+    (* loc_disjoint *)
+    (*** TODO  *)
+    
   (* 1-5: step_assign_variant *)
   1-5: inv SOUND; inv WTST; inv STMT; simpl in TR; simpl_getIM IM;
   destruct (move_check_expr ce mayinit mayuninit universe e) eqn: MOVE1; try congruence;

@@ -663,6 +663,21 @@ Inductive step_mem_error : state -> Prop :=
     sem_cast v (typeof e) (typeof_place p) = Some v1 ->
     assign_loc_mem_error ge (typeof_place p) m b ofs v1 ->
     step_mem_error (State f (Sassign p e) k le own m)
+(** Adhoc: this case of error is used to ensure assign_copy_ok when
+the RHS is a place with copy type (e.g., struct/ enum). Note that we
+do not consider the case when RHS is a composite expression which is
+evaluated to pointer as it is ill-formed. *)
+| step_assign_error4: forall f e p p2 k le m b1 ofs1 b2 ofs2 own
+    (EVALP: eval_place ge le m p b1 ofs1)
+    (EXPREQ: e = Emoveplace p2 (typeof_place p) \/ e = Epure (Eplace p2 (typeof_place p)))
+    (EVALE: eval_place ge le m p2 b2 ofs2)
+    (COPYTY: access_mode (typeof_place p) = By_copy)
+    (* (COPYTY2: access_mode (typeof_place p2) = By_copy) *)
+    (* we do not support ZST for now *)
+    (SZPOS: sizeof ge (typeof_place p) > 0)
+    (COPYERR: ~ assign_copy_ok ge (typeof_place p) b1 ofs1 b2 ofs2),
+    step_mem_error (State f (Sassign p e) k le own m)
+
 | step_assign_variant_error1: forall f e p k le m enum_id fid own,
     (* error in evaluating the expression *)
     eval_expr_mem_error ge le m e ->
@@ -709,6 +724,22 @@ Inductive step_mem_error : state -> Prop :=
     (* error in storing the tag *)
     (ERR: ~ Mem.valid_access m2 Mint32 b1 (Ptrofs.unsigned ofs1) Writable),
     step_mem_error (State f (Sassign_variant p enum_id fid e) k le own m1)
+(* (** Handle assign_copy similar to step_assign_error4 *) *)
+(* | step_assign_variant_error6: forall f e p ty k le m1 m2 b ofs b1 ofs1 v v1 co fid enum_id orgs own fofs tag *)
+(*     (TYP: typeof_place p = Tvariant orgs enum_id) *)
+(*     (CO: ge.(genv_cenv) ! enum_id = Some co) *)
+(*     (FTY: field_type fid co.(co_members) = OK ty) *)
+(*     (EVALP: eval_place ge le m p b1 ofs1) *)
+(*     (EXPREQ: e = Emoveplace p2 ty \/ e = Epure (Eplace p2 ty)) *)
+(*     (EVALE: eval_expr ge le m ge e v) *)
+(*     (CAST: sem_cast v (typeof e) (typeof_place p) = Some (Vptr b2 ofs2)) *)
+(*     (COPYTY: access_mode (typeof_place p) = By_copy) *)
+(*     (* we do not support ZST for now *) *)
+(*     (SZPOS: sizeof ge (typeof_place p) > 0) *)
+(*     (COPYERR: ~ assign_copy_ok ge (typeof_place p) b1 ofs1 b2 ofs2), *)
+(*     step_mem_error (State f (Sassign_variant p enum_id fid e) k le own m1) *)
+
+                   
 | step_box_error1: forall le e p k m1 m2 f b ty own,
     typeof_place p = Tbox ty ->
     Mem.alloc m1 (- size_chunk Mptr) (sizeof ge (typeof e)) = (m2, b) ->
@@ -1053,6 +1084,33 @@ Proof.
   eapply IHl; eauto.
 Qed.
 
+ 
+Lemma access_mode_by_copy: forall ty,
+    access_mode ty = Ctypes.By_copy ->
+    (exists orgs id, ty = Tstruct orgs id) \/ (exists orgs id, ty = Tvariant orgs id).
+Proof.
+  destruct ty; intros A; simpl in *; try (inv A; congruence); eauto.
+  destruct i; destruct s; try congruence.
+  destruct f; try congruence.
+Qed.
+
+Lemma sem_cast_by_copy_same: forall v1 ty1 ty2 v2,
+    sem_cast v1 ty1 ty2 = Some v2 ->
+    access_mode ty2 = By_copy ->
+    v1 = v2 /\ type_eq_except_origins ty1 ty2 = true.
+Proof. 
+  intros until v2. intros CAST MODE.
+  exploit access_mode_by_copy; eauto. intros [(orgs & id & TY) | (orgs & id & TY)]; subst.
+  - destruct ty1; inv CAST.
+    unfold sem_cast in H0. simpl in H0.
+    destruct ident_eq in H0; subst; destruct v1; inv H0; auto.
+    split; auto. simpl. eapply proj_sumbool_is_true. eauto.
+  - destruct ty1; inv CAST.
+    unfold sem_cast in H0. simpl in H0.
+    destruct ident_eq in H0; subst; destruct v1; inv H0; auto.
+    split; auto. simpl. eapply proj_sumbool_is_true. eauto.
+Qed.
+
 Lemma sound_mem_error: forall p,
     sound_err (semantics p) (mem_error p).
 Proof.
@@ -1061,6 +1119,20 @@ Proof.
   - intros. red. intros.
     intro STEP.
     inv STEP; inv H; simpl in *; NoErr.
+    + inv H3. congruence.
+      eapply COPYERR. 
+      exploit sem_cast_by_copy_same; eauto.
+      intros (VEQ & TYCOPY1). inv VEQ.
+      assert (EVALP2: eval_place (prog_comp_env p) le m1 p2 b' ofs').
+      { destruct EXPREQ; subst; inv H1. 
+        inv H11. inv H12; try congruence.
+        inv H9. inv H12; try congruence. }
+      exploit eval_place_det. eapply EVALP2. eapply EVALE. intros (A1 & A2).
+      subst.
+      red. repeat apply conj.      
+      eapply H4. eauto.
+      eapply H5. eauto.
+      eauto.    
     + eapply ERR. eapply Mem.store_valid_access_3; eauto.
     + eapply H17. eapply Mem.store_valid_access_3; eauto.
     + eapply step_dropplace_progress_no_mem_error; eauto.
