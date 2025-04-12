@@ -7710,7 +7710,89 @@ Proof.
   intro. subst. 
   eapply H3. eapply in_map_iff. exists (id1, (b, ty1)).  eauto.
 Qed.
+
+(* If the rank of source type is less or equal then the rank of target
+type and the paths are not nil, then there must be dereference in the
+paths which is used to reset the rank *)
+Lemma wt_path_less_rank_not_shallow_paths: forall phl ty1 ty2
+   (WTPH: wt_path ce ty1 phl ty2)
+   (RANK: (rank_type ce ty1 <= rank_type ce ty2)%nat)
+   (NOTNIL: phl <> nil),
+   not_shallow_prefix_paths phl.
+Proof.
+  intro phl. cut (exists n, length phl = n); eauto. intros (n & LEN).
+  generalize dependent phl.
+  induction n; intros.
+  - eapply length_zero_iff_nil in LEN. subst. congruence. 
+  - eapply length_S_inv in LEN. destruct LEN as (phl' & ph & APP & LEN).
+    subst.
+    destruct ph.
+    + red. eapply in_app. right. constructor. auto.
+    + eapply wt_path_field_inv in WTPH as (sid & orgs & co & WTPATH & CO & FTY & STR).
+      eapply in_app_iff. left.
+      exploit rank_struct_member; eauto.
+      eapply field_type_member. eauto. instantiate (1:= orgs). simpl. rewrite CO. intros. 
+      eapply IHn. eauto. eauto.
+      simpl. rewrite CO. lia.
+      intro. subst.
+      exploit wt_path_nil_inv; eauto. intros. subst.
+      simpl in RANK. rewrite CO in RANK. lia.
+    + eapply wt_path_downcast_inv in WTPH as (id1 & orgs1 & co & EQTY & WTPATH & CO & FTY & ENUM ). symmetry in EQTY. inv EQTY.
+      eapply in_app_iff. left.
+      exploit rank_union_member; eauto.
+      eapply field_type_member. eauto. instantiate (1:= orgs1). simpl. rewrite CO. intros. 
+      eapply IHn. eauto. eauto.
+      simpl. rewrite CO. lia.
+      intro. subst.
+      exploit wt_path_nil_inv; eauto. intros. subst.
+      simpl in RANK. rewrite CO in RANK. lia.
+Qed.
+      
+(* The memory location of two paths which have inclusion relation must
+   be disjoint if the types of these two paths are equal (i.e., their
+   rank_type are equal). It is used to prove the safety of memory copy
+   of assigning a composite to an other composite. This lemma rely on
+   the general lemma wt_path_less_rank_not_shallow_paths which does not
+   restrict the source and target types to be the same type *)
+Lemma get_loc_footprint_eq_type_different_loc: forall phl2 phl1 fp b ofs b1 ofs1 b2 ofs2 fp1 fp2 ty
+   (GFP1: get_loc_footprint phl1 fp b ofs = Some (b1, ofs1, fp1))
+   (GFP2: get_loc_footprint (phl1 ++ phl2) fp b ofs = Some (b2, ofs2, fp2))
+   (WTPH: wt_path ce ty phl2 ty)
+   (NOREP: list_norepet (footprint_flat fp))
+   (NIN: ~ In b (footprint_flat fp))
+   (NOTNIL: phl2 <> nil),
+    b2 <> b1.
+Proof.
+  intros.
+  exploit get_loc_footprint_app_inv. eauto.
+  intros (b3 & ofs3 & fp3 & A1 & A2).
+  rewrite GFP1 in A1. inv A1.  
+  exploit wt_path_less_rank_not_shallow_paths; eauto.
+  intros NOTSHA.
+  exploit get_loc_footprint_not_shallow_path; eauto.
+  intros IN.
+  exploit get_loc_footprint_norepet. eauto. eapply GFP1. eauto.
+  intros (B1 & B2).
+  intro. subst. congruence.
+Qed.
+          
+Lemma paths_contain_true_eq: forall l1 l2,
+    paths_contain l1 l2 = true ->
+    paths_contain l2 l1 = true ->
+    l1 = l2.
+Proof.
+  intros.
+  exploit paths_contain_app_inv; eauto. intros (l3 & APP1).
+  exploit paths_contain_app_inv. eapply H. intros (l4 & APP2). subst. 
+  rewrite <- (app_nil_r l2) in APP2 at 1.
+  rewrite <- app_assoc in APP2.
+  exploit app_inv_head. eauto.  intros.
+  symmetry in H1.
+  eapply app_eq_nil in H1. destruct H1. subst.
+  eapply app_nil_r.
+Qed.  
   
+
 Lemma step_no_mem_error: forall s,
     sound_state s ->
     wt_state s ->
@@ -7817,9 +7899,38 @@ Proof.
       inv FPM1. setoid_rewrite ETY1 in ETY2. inv ETY2.
       destruct (paths_contain phl1 phl2) eqn: PHCON1; destruct (paths_contain phl2 phl1) eqn: PHCON2.
       (* two paths are equal *)
-      + admit.
-      + admit.
-      + admit.
+      + exploit paths_contain_true_eq. eapply PHCON1. eapply PHCON2.
+        intros. subst.
+        rewrite GFP1' in GFP. inv GFP. right. left. auto.
+      + exploit paths_contain_app_inv; eauto. intros (phl3 & APP1).
+        destruct phl3. subst. rewrite app_nil_r in PHCON2.
+        rewrite paths_contain_refl in PHCON2. congruence.
+        subst.
+        exploit wt_path_app_inv. eapply WTPH2. intros (ty3 & WTPH3 & WTPH4).
+        exploit wt_path_det. eapply WTPH3. eapply WTPH1. intros. subst.
+        left. 
+        eapply get_loc_footprint_eq_type_different_loc; eauto.
+        rewrite TYEQ in WTPH4. eauto.
+        eapply norepet_flat_fp_map_element; eauto.
+        (* b2' not in f0 *)
+        intro. eapply N4. eapply in_footprint_of_env; eauto.
+        eapply in_footprint_flat_fp_map; eauto. auto.
+         congruence.
+      (* similar to the above case *)
+      + exploit paths_contain_app_inv; eauto. intros (phl3 & APP1).
+        destruct phl3. subst. rewrite app_nil_r in PHCON1.
+        rewrite paths_contain_refl in PHCON1. congruence.
+        subst.
+        exploit wt_path_app_inv. eapply WTPH1. intros (ty3 & WTPH3 & WTPH4).
+        exploit wt_path_det. eapply WTPH3. eapply WTPH2. intros. subst.
+        left. intro. 
+        eapply get_loc_footprint_eq_type_different_loc; eauto.
+        rewrite TYEQ in WTPH4. eauto.
+        eapply norepet_flat_fp_map_element; eauto.
+        (* b2' not in f0 *)
+        intro. eapply N4. eapply in_footprint_of_env; eauto.
+        eapply in_footprint_flat_fp_map; eauto. auto.
+        congruence.
       (* path_disjoint case *)
       + exploit paths_not_contain_disjoint. eapply PHCON1. eauto. intros PHDIS.
         exploit get_loc_footprint_disjoint_paths. eauto. eauto.
@@ -7832,28 +7943,9 @@ Proof.
         intro. eapply N4. eapply in_footprint_of_env; eauto.
         eapply in_footprint_flat_fp_map; eauto. auto.
         intros (A1 & A2 & A3 & A4). red in A1.
-        destruct A1 as [B1 | [B2 | B3]]; eauto.
-      
+        destruct A1 as [B1 | [B2 | B3]]; eauto.      
     - exploit get_loc_footprint_map_different_local; eauto.
-      intros (A1 & A2 & A3). auto.
-
-      
-    
-    
-    assert (WTPH: wt_path ce (typeof_place p0) phl (typeof_place p)).
-    { exploit wt_place_wt_local. eapply WTP.
-      intros (b1 & ty1 & ETY). rewrite local_of_paths_of_place in ETY.
-      rewrite POP in ETY. simpl in ETY.          
-      eapply wt_path_app.          
-      eapply wt_place_wt_path; eauto.
-      eapply wt_place_wt_path; eauto. }
-    
-    
-    wt_place_wt_path
-    
-    Lemma 
-
-    
+      intros (A1 & A2 & A3). auto. }    
        
   (* 1-5: step_assign_variant *)
   1-5: inv SOUND; inv WTST; inv STMT; simpl in TR; simpl_getIM IM;
