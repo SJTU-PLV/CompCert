@@ -1707,6 +1707,7 @@ Proof.
     eapply step_assign_error1; solve_eval.
     eapply step_assign_error2; solve_eval.
     eapply step_assign_error3; solve_eval.
+    eapply step_assign_error4; solve_eval.
     (* step_assign_variant_error *)
     eapply step_assign_variant_error1; solve_eval.
     eapply step_assign_variant_error2; solve_eval.

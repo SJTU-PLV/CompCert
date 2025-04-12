@@ -7790,9 +7790,71 @@ Proof.
     repeat apply conj.
     eapply alignof_implies_alignof_blockcopy. eauto.
     eapply alignof_implies_alignof_blockcopy. eauto.
-    (* loc_disjoint *)
-    (*** TODO  *)
+    (* Proof strategy: show that the paths of p and p2 must be one of
+    the following cases: 1. they are equal; 2. disjoint; 3. inclusion
+    but not shallow prefix paths *)
+    assert (GFP1' : get_loc_footprint_map le (path_of_place p) fpm =
+                      Some (b1, Ptrofs.unsigned ofs1, pfp1)).
+    admit.
+    destruct (path_of_place p) as (id1 & phl1) eqn: POP1.
+    destruct (path_of_place p2) as (id2 & phl2) eqn: POP2.        
+    exploit wt_place_wt_local. eapply WT0. rewrite local_of_paths_of_place, POP1.
+    intros (b1' & ty1 & ETY1).
+    exploit wt_place_wt_path. eapply WT0. eauto. eauto.
+    intros WTPH1.
+    exploit wt_place_wt_local. eapply WTP2. rewrite local_of_paths_of_place, POP2.
+    intros (b2' & ty2 & ETY2).
+    exploit wt_place_wt_path. eapply WTP2. eauto. eauto.
+    intros WTPH2.
+    exploit get_loc_footprint_map_norepet; eauto. intros (NP1 & NIN1).
+    exploit get_loc_footprint_map_norepet. 2: eapply GFP. all: eauto. intros (NP2 & NIN2).
+    destruct (ident_eq id1 id2).
+    - subst.
+      simpl in GFP1'. setoid_rewrite ETY1 in GFP1'.
+      destruct (fpm ! id2) eqn: FPM1; try congruence.
+      simpl in GFP. setoid_rewrite ETY2 in GFP.
+      destruct (fpm ! id2) eqn: FPM2; try congruence.
+      inv FPM1. setoid_rewrite ETY1 in ETY2. inv ETY2.
+      destruct (paths_contain phl1 phl2) eqn: PHCON1; destruct (paths_contain phl2 phl1) eqn: PHCON2.
+      (* two paths are equal *)
+      + admit.
+      + admit.
+      + admit.
+      (* path_disjoint case *)
+      + exploit paths_not_contain_disjoint. eapply PHCON1. eauto. intros PHDIS.
+        exploit get_loc_footprint_disjoint_paths. eauto. eauto.
+        3: eapply WTPH1. 3: eapply WTPH2.
+        3: eapply GFP1'. 3: eapply GFP.
+        eapply norepet_flat_fp_map_element; eauto.
+        exploit wf_env_footprint. eapply WFENV. eapply ETY1. intros (fp & A1 & A2).
+        simpl in A1. rewrite FPM2 in A1. inv A1. auto.
+        (* b2' not in f0 *)
+        intro. eapply N4. eapply in_footprint_of_env; eauto.
+        eapply in_footprint_flat_fp_map; eauto. auto.
+        intros (A1 & A2 & A3 & A4). red in A1.
+        destruct A1 as [B1 | [B2 | B3]]; eauto.
+      
+    - exploit get_loc_footprint_map_different_local; eauto.
+      intros (A1 & A2 & A3). auto.
+
+      
     
+    
+    assert (WTPH: wt_path ce (typeof_place p0) phl (typeof_place p)).
+    { exploit wt_place_wt_local. eapply WTP.
+      intros (b1 & ty1 & ETY). rewrite local_of_paths_of_place in ETY.
+      rewrite POP in ETY. simpl in ETY.          
+      eapply wt_path_app.          
+      eapply wt_place_wt_path; eauto.
+      eapply wt_place_wt_path; eauto. }
+    
+    
+    wt_place_wt_path
+    
+    Lemma 
+
+    
+       
   (* 1-5: step_assign_variant *)
   1-5: inv SOUND; inv WTST; inv STMT; simpl in TR; simpl_getIM IM;
   destruct (move_check_expr ce mayinit mayuninit universe e) eqn: MOVE1; try congruence;
@@ -8223,7 +8285,7 @@ Proof.
     destruct (move_check_pexpr mayinit mayuninit universe p) eqn: CK; try congruence.
     inv WT0.
     eapply eval_pexpr_no_mem_error; eauto. }
-Qed.
+Admitted.
 
 End MOVE_CHECK.
 

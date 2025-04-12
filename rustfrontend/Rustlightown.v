@@ -2211,6 +2211,18 @@ Inductive step_dropinsert_mem_error : state -> Prop :=
     sem_cast v (typeof e) (typeof_place p) = Some v1 ->
     assign_loc_mem_error ge (typeof_place p) m b ofs v1 ->
     step_dropinsert_mem_error (Dropinsert f drop_end (Dassign p e) k le own m)
+(* Used to prove check_assign_copy *)
+| step_dropinsert_assign_error4: forall f e p p2 k le m b1 ofs1 b2 ofs2 own
+    (EVALP: eval_place ge le m p b1 ofs1)
+    (EXPREQ: e = Emoveplace p2 (typeof_place p) \/ e = Epure (Eplace p2 (typeof_place p)))
+    (EVALE: eval_place ge le m p2 b2 ofs2)
+    (COPYTY: access_mode (typeof_place p) = By_copy)
+    (* (COPYTY2: access_mode (typeof_place p2) = By_copy) *)
+    (* we do not support ZST for now *)
+    (SZPOS: sizeof ge (typeof_place p) > 0)
+    (COPYERR: ~ assign_copy_ok ge (typeof_place p) b1 ofs1 b2 ofs2),
+    step_dropinsert_mem_error (Dropinsert f drop_end (Dassign p e) k le own m)
+                              
 | step_dropinsert_assign_variant_error1: forall f e p k le m enum_id fid own,
     (* error in evaluating the expression *)
     eval_expr_mem_error ge le m e ->

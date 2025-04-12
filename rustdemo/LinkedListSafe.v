@@ -1421,26 +1421,27 @@ Proof.
             destruct (Mem.range_perm_dec m' b3 0 (0 + 24) Cur Writable).
             * edestruct Mem.range_perm_storebytes with (bytes:= bys) as (?m & ?STOREBYTES).
               erewrite Mem.loadbytes_length; eauto. eauto.
-              left. red. do 2 right.
-              do 2 eexists. econstructor.
-              econstructor; eauto.
-              vm_compute. congruence.
-              econstructor. reflexivity.
-              econstructor. econstructor. econstructor.
-              eauto. reflexivity. reflexivity. eauto.
-              rewrite EQONE. reflexivity.
-              instantiate (1 := 8). reflexivity.
-              eapply deref_loc_copy. eauto.
-              simpl. reflexivity.
-              (* assign_loc_copy *)
-              eapply do_assign_loc_sound.
-              unfold do_assign_loc.
-              replace (sizeof (Smallstep.globalenv (linked_list_sem se))
-               (typeof_place (Plocal node Node_ty))) with 24 by reflexivity.
-              rewrite LOADBYTES.
-              rewrite Ptrofs.unsigned_zero. rewrite STOREBYTES.
-              destruct check_assign_copy.
-              -- reflexivity.
+              destruct (check_assign_copy (Smallstep.globalenv (linked_list_sem se)) (typeof_place (Plocal node Node_ty)) b3 Ptrofs.zero b7 (Ptrofs.add ofs (Ptrofs.repr 8))) eqn: CAC.
+              -- left. red. do 2 right.
+                 do 2 eexists. econstructor.
+                 econstructor; eauto.
+                 vm_compute. congruence.
+                 econstructor. reflexivity.
+                 econstructor. econstructor. econstructor.
+                 eauto. reflexivity. reflexivity. eauto.
+                 rewrite EQONE. reflexivity.
+                 instantiate (1 := 8). reflexivity.
+                 eapply deref_loc_copy. eauto.
+                 simpl. reflexivity.
+                 (* assign_loc_copy *)
+                 eapply do_assign_loc_sound.
+                 unfold do_assign_loc.
+                 replace (sizeof (Smallstep.globalenv (linked_list_sem se))
+                            (typeof_place (Plocal node Node_ty))) with 24 by reflexivity.
+                 rewrite LOADBYTES.
+                 rewrite Ptrofs.unsigned_zero. rewrite STOREBYTES.
+                 rewrite CAC.
+                 reflexivity.
               (** TODO: we can treat check_assign_copy failure as a
               kind of memory error which can be ruled out in move
               checking. The approach is that we add a case of memory
@@ -1450,7 +1451,15 @@ Proof.
               case analysis of (RHS = p') or (RHS <> p'), using the
               fact that different place must have different location
               *)
-              -- admit.
+              -- right. econstructor.
+                 eapply step_dropinsert_assign_error4.
+                 econstructor. reflexivity.
+                 econstructor. econstructor. econstructor.
+                 eauto. reflexivity. reflexivity. eauto.
+                 rewrite EQONE. reflexivity.
+                 instantiate (1 := 8). reflexivity.
+                 reflexivity. vm_compute. auto.
+                 auto.
             * right. econstructor.
               eapply step_dropinsert_assign_error3.
               econstructor. reflexivity.
