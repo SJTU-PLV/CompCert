@@ -724,21 +724,20 @@ evaluated to pointer as it is ill-formed. *)
     (* error in storing the tag *)
     (ERR: ~ Mem.valid_access m2 Mint32 b1 (Ptrofs.unsigned ofs1) Writable),
     step_mem_error (State f (Sassign_variant p enum_id fid e) k le own m1)
-(* (** Handle assign_copy similar to step_assign_error4 *) *)
-(* | step_assign_variant_error6: forall f e p ty k le m1 m2 b ofs b1 ofs1 v v1 co fid enum_id orgs own fofs tag *)
-(*     (TYP: typeof_place p = Tvariant orgs enum_id) *)
-(*     (CO: ge.(genv_cenv) ! enum_id = Some co) *)
-(*     (FTY: field_type fid co.(co_members) = OK ty) *)
-(*     (EVALP: eval_place ge le m p b1 ofs1) *)
-(*     (EXPREQ: e = Emoveplace p2 ty \/ e = Epure (Eplace p2 ty)) *)
-(*     (EVALE: eval_expr ge le m ge e v) *)
-(*     (CAST: sem_cast v (typeof e) (typeof_place p) = Some (Vptr b2 ofs2)) *)
-(*     (COPYTY: access_mode (typeof_place p) = By_copy) *)
-(*     (* we do not support ZST for now *) *)
-(*     (SZPOS: sizeof ge (typeof_place p) > 0) *)
-(*     (COPYERR: ~ assign_copy_ok ge (typeof_place p) b1 ofs1 b2 ofs2), *)
-(*     step_mem_error (State f (Sassign_variant p enum_id fid e) k le own m1) *)
-
+(** Handle assign_copy similar to step_assign_error4. *)
+| step_assign_variant_error6: forall f e p p2 ty k le m1 b1 ofs1 b2 ofs2 co fid enum_id orgs own fofs
+    (TYP: typeof_place p = Tvariant orgs enum_id)
+    (CO: ge.(genv_cenv) ! enum_id = Some co)
+    (FTY: field_type fid co.(co_members) = OK ty)
+    (PADDR: eval_place ge le m1 p b1 ofs1)
+    (EXPREQ: e = Emoveplace p2 ty \/ e = Epure (Eplace p2 ty))
+    (EVALE: eval_place ge le m1 p2 b2 ofs2)
+    (COPYTY: access_mode ty = By_copy)
+    (* we do not support ZST for now *)
+    (SZPOS: sizeof ge ty > 0)
+    (FOFS: variant_field_offset ge fid co.(co_members) = OK fofs)
+    (COPYERR: ~ assign_copy_ok ge ty b1 (Ptrofs.add ofs1 (Ptrofs.repr fofs)) b2 ofs2),
+    step_mem_error (State f (Sassign_variant p enum_id fid e) k le own m1)
                    
 | step_box_error1: forall le e p k m1 m2 f b ty own,
     typeof_place p = Tbox ty ->
@@ -1134,6 +1133,21 @@ Proof.
       eapply H5. eauto.
       eauto.    
     + eapply ERR. eapply Mem.store_valid_access_3; eauto.
+    (* step_assign_variant_error6 *)
+    + inv AS. congruence.
+      eapply COPYERR. 
+      exploit sem_cast_by_copy_same; eauto.
+      intros (VEQ & TYCOPY1). inv VEQ.
+      assert (EVALP2: eval_place (prog_comp_env p) le m1 p2 b' ofs').
+      { destruct EXPREQ; subst; inv EXPR.
+        inv H9. inv H11; try congruence.
+        inv H7. inv H11; try congruence. }
+      exploit eval_place_det. eapply EVALP2. eapply EVALE. intros (A1 & A2).
+      subst.
+      red. repeat apply conj.      
+      eapply H1. eauto.
+      eapply H2. eauto.
+      eauto.      
     + eapply H17. eapply Mem.store_valid_access_3; eauto.
     + eapply step_dropplace_progress_no_mem_error; eauto.
     + eapply step_drop_progress_no_mem_error; eauto.

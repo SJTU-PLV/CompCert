@@ -411,6 +411,27 @@ Proof.
       right. exists (a::A3). auto.
 Qed.
 
+Lemma app_not_nil_gen {A: Type}:  forall (l1 l2 l3: list A) (a b: A),
+    l1 ++ (a :: nil) = l3 ++ b :: l2 ->
+    (a = b /\ l1 = l3 /\ l2 = nil)
+    \/ (exists l1', l1 = l3 ++ b :: l1' /\ l2 = l1' ++ (a::nil)).
+Proof.
+(*   induction l1; simpl; intros. *)
+(*   - destruct l2; inv H. *)
+(*     destruct l3; inv H1. eauto. eapply app_n *)
+(*     auto. *)
+(*   - inv H. destruct l1. *)
+(*     + exploit (IHl1 nil a0 a0). auto. *)
+(*       intros [(A1 & A2 & A3)|(A3 & A4 & A5)]; subst. *)
+(*       * right. eauto. *)
+(*       * inv A4. *)
+(*     + exploit (IHl1 (l1 ++ [b]) b a). auto. *)
+(*       intros [(A1 & A2 & A3)|(A3 & A4 & A5)]; subst. *)
+(*       inv A2. inv A4. *)
+(*       right. exists (a::A3). auto. *)
+  (* Qed. *)
+Admitted.
+  
 (* The first element must be struct/variant/box, the rest of the list must be box *)
 Lemma drop_glue_children_types_wf: forall ty tys hty,
     drop_glue_children_types ty = hty :: tys ->

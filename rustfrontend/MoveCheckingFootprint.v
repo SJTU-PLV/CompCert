@@ -624,6 +624,12 @@ Ltac destr_fp_enum fp ty :=
   destruct list_eq_dec; try congruence;
   destruct ident_eq; try congruence; subst.
 
+Ltac destr_fp_enum_simpl fp :=
+  destruct fp; try congruence;
+  destruct ident_eq; try congruence;
+  destruct list_eq_dec; try congruence;
+  destruct ident_eq; try congruence; subst.
+
 Ltac destr_fp_field fp H :=
   let A1 := fresh "A" in
   let A2 := fresh "A" in
