@@ -439,19 +439,19 @@ Proof.
     try(destruct i; destruct (Archi.ptr64));
     try (destruct f0); TrivialInject. 
   - destruct t2; inv H0; simpl in *;
-    try(destruct i0; destruct (Archi.ptr64)); 
+    try(destruct i; destruct (Archi.ptr64)); 
     try (destruct f0); 
     try (destruct (ident_eq i i0~1); TrivialInject); 
     try (destruct (ident_eq i i0~0); TrivialInject); 
     try (inv H);
     try (eapply Val.inject_ptr; eauto). 
-    exists (Vptr b2 (Ptrofs.add ofs1 (Ptrofs.repr delta))).
+    (* exists (Vptr b2 (Ptrofs.add ofs1 (Ptrofs.repr delta))).
     destruct (ident_eq i 1). split. auto.  
     TrivialInject. eapply Val.inject_ptr; eauto. inv H2. 
     try (eapply Val.inject_ptr; eauto). 
     exists (Vptr b2 (Ptrofs.add ofs1 (Ptrofs.repr delta))).
     destruct (ident_eq i 1). split. auto.  
-    TrivialInject. eapply Val.inject_ptr; eauto. inv H2. 
+    TrivialInject. eapply Val.inject_ptr; eauto. inv H2.  *)
   - destruct t2; inv H0; simpl in *;
     try(destruct i0; destruct (Archi.ptr64)); 
     try (destruct f0); 
@@ -465,8 +465,22 @@ Proof.
     try (eapply Val.inject_ptr; eauto). 
     exists (Vptr b2 (Ptrofs.add ofs1 (Ptrofs.repr delta))).
     destruct (ident_eq i 1). split. auto.  
+    TrivialInject. eapply Val.inject_ptr; eauto. inv H2.
+  - destruct t2; inv H0; simpl in *;
+    try(destruct i0; destruct (Archi.ptr64)); 
+    try (destruct f0); 
+    try (destruct (ident_eq i i0~1); TrivialInject); 
+    try (destruct (ident_eq i i0~0); TrivialInject); 
+    try (inv H);
+    try (eapply Val.inject_ptr; eauto). 
+    exists (Vptr b2 (Ptrofs.add ofs1 (Ptrofs.repr delta))).
+    destruct (ident_eq i 1). split. auto.  
     TrivialInject. eapply Val.inject_ptr; eauto. inv H2. 
-  Qed. 
+    try (eapply Val.inject_ptr; eauto). 
+    exists (Vptr b2 (Ptrofs.add ofs1 (Ptrofs.repr delta))).
+    destruct (ident_eq i 1). split. auto.  
+    TrivialInject. eapply Val.inject_ptr; eauto. inv H2.
+Qed. 
 
 
 Lemma sem_cast_id: forall v1 v2 ty1 ty2 m,

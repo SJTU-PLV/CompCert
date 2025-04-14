@@ -278,3 +278,4 @@ Definition transl_fundef (f: Csharpminor.fundef): res fundef :=
 
 Definition transl_program (p: Csharpminor.program) : res program :=
   transform_partial_program transl_fundef p.
+

@@ -597,6 +597,7 @@ Proof.
   - inv H. eapply deref_loc_reference; eauto.
   - econstructor; simpl; eauto.
   - econstructor; simpl; eauto.
+  - econstructor; simpl; eauto.
   - inv H. eapply deref_loc_reference; eauto.
   - inv H. eapply deref_loc_copy; eauto.
   - inv H. eapply deref_loc_copy; eauto.

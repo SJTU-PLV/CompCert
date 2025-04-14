@@ -467,7 +467,6 @@ Fixpoint place_to_cexpr (p: place) : res Clight.expr :=
       end
   end.
   
-
 (* locals are used to check that global variables are disjoint with
 locals to match the eval_Evar_global semantics in Clight *)
 Fixpoint pexpr_to_cexpr (locals: list ident) (e: pexpr) : Errors.res Clight.expr :=

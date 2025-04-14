@@ -28,7 +28,8 @@ else
 ARCHDIRS=$(ARCH)_$(BITSIZE) $(ARCH)
 endif
 
-DIRS := lib common $(ARCHDIRS) backend cfrontend driver export cparser cklr rustfrontend rustparser
+DIRS := lib common $(ARCHDIRS) backend cfrontend driver export cparser cklr \
+rustfrontend rustparser clight2rustlight
 
 COQINCLUDES := $(foreach d, $(DIRS), -R $(d) compcert.$(d)) -R $(COQREL) coqrel
 
@@ -163,6 +164,9 @@ CFRONTEND=Ctypes.v Cop.v Csyntax.v Csem.v Ctyping.v Cstrategy.v \
 # Initializersproof.v
 # Cexec.v
 
+# c2rust-light
+CLIGHT2RUSTLIGHT=Clight2Rustlight.v
+
 # Rust front-end
 
 RUSTFRONTEND=Rusttypes.v Rustsyntax.v Rustlight.v RustIR.v\
@@ -210,8 +214,7 @@ EXPORTLIB= Ctypesdefs.v Clightdefs.v Csyntaxdefs.v
 # All source files
 
 FILES=$(VLIB) $(COMMON) $(CKLR) $(BACKEND) $(CFRONTEND) $(DRIVER) $(FLOCQ) \
-  $(MENHIRLIB) $(PARSER) $(EXPORTLIB) $(RUSTFRONTEND)
-
+  $(MENHIRLIB) $(PARSER) $(EXPORTLIB) $(RUSTFRONTEND) $(CLIGHT2RUSTLIGHT)
 # Generated source files
 
 GENERATED=\
