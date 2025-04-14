@@ -2329,47 +2329,132 @@ Proof.
                destruct (Mem.range_perm_dec m b (Ptrofs.unsigned (Ptrofs.add i (Ptrofs.repr 8))) (Ptrofs.unsigned (Ptrofs.add i (Ptrofs.repr 8)) + 24) Cur Writable).
                ++ edestruct Mem.range_perm_storebytes with (bytes:= bys) as (?m & ?STOREBYTES).
                   erewrite Mem.loadbytes_length; eauto. eauto.
-                  destruct (Mem.valid_access_dec m0 Mptr b1 0 Readable).
-                  ** exploit Mem.valid_access_load. eauto. intros (?v & ?LOAD).
-                     (* we should show thata v1 must be a pointer *)
-                     destruct (val_is_ptr v1) eqn: ?VPTR.
-                     --- destruct v1; simpl in VPTR0; try congruence.
-                         destruct (Mem.valid_access_dec m0 Mint32 b6 (Ptrofs.unsigned i0) Writable).
-                         +++ edestruct Mem.valid_access_store as (?m & ?STORE). eauto.
-                             left. red. do 2 right.
-                             do 2 eexists. econstructor. econstructor.
-                             1-5: reflexivity.
-                             econstructor. econstructor. econstructor.
-                             reflexivity. eapply deref_loc_copy. reflexivity.
-                             econstructor. econstructor. reflexivity.
-                             econstructor. reflexivity. eauto.
-                             instantiate (1:= 8). reflexivity.
-                             (* sem_cast *)
-                             simpl. reflexivity.
-                             (* memory copy *)
-                             eapply do_assign_loc_sound.
-                             unfold do_assign_loc.
-                             replace (sizeof (Smallstep.globalenv (linked_list_sem se))
-                                        (type_member (Member_plain Cons Node_ty))) with 24 by reflexivity.
-                             rewrite Ptrofs.unsigned_zero. rewrite LOADBYTES.
-                             rewrite STOREBYTES.
-                             destruct check_assign_copy.
-                             reflexivity.
-                             (** TODO: we can treat check_assign_copy failure as a kind of memory error *)
-                             admit.
-                             reflexivity.
-                             econstructor. econstructor. reflexivity.
-                             econstructor. reflexivity.
-                             eauto.
-                             simpl. eauto.
-                         (* All the following cases are memory error *)
+                  destruct (check_assign_copy (Smallstep.globalenv (linked_list_sem se)) (type_member (Member_plain Cons Node_ty)) b (Ptrofs.add i (Ptrofs.repr 8)) b3 Ptrofs.zero) eqn: CAC.
+                  ** destruct (Mem.valid_access_dec m0 Mptr b1 0 Readable).
+                     --- exploit Mem.valid_access_load. eauto. intros (?v & ?LOAD).
+                         (* we should show thata v1 must be a pointer *)
+                         destruct (val_is_ptr v1) eqn: ?VPTR.
+                         +++ destruct v1; simpl in VPTR0; try congruence.
+                             destruct (Mem.valid_access_dec m0 Mint32 b6 (Ptrofs.unsigned i0) Writable).
+                             *** edestruct Mem.valid_access_store with (v:= (Vint (Int.repr 1))) as (?m & ?STORE). eauto.
+                             
+                                 left. red. do 2 right.
+                                 do 2 eexists. econstructor. econstructor.
+                                 1-5: reflexivity.
+                                 econstructor. econstructor. econstructor.
+                                 reflexivity. eapply deref_loc_copy. reflexivity.
+                                 econstructor. econstructor. reflexivity.
+                                 econstructor. reflexivity. eauto.
+                                 instantiate (1:= 8). reflexivity.
+                                 (* sem_cast *)
+                                 simpl. reflexivity.
+                                 (* memory copy *)
+                                 eapply do_assign_loc_sound.
+                                 unfold do_assign_loc.
+                                 replace (sizeof (Smallstep.globalenv (linked_list_sem se))
+                                            (type_member (Member_plain Cons Node_ty))) with 24 by reflexivity.
+                                 rewrite Ptrofs.unsigned_zero. rewrite LOADBYTES.
+                                 rewrite STOREBYTES.
+                                 rewrite CAC. 
+                                 reflexivity.
+                                 reflexivity.
+                                 econstructor. econstructor. reflexivity.
+                                 econstructor. reflexivity.
+                                 eauto.
+                                 simpl. eauto.
+                             *** right. econstructor.
+                                 eapply step_dropinsert_assign_variant_error5.
+                                 1-3: reflexivity.
+                                 econstructor. econstructor. econstructor.
+                                 reflexivity. eapply deref_loc_copy. reflexivity.
+                                 econstructor. econstructor. reflexivity.
+                                 econstructor. reflexivity. eauto.
+                                 instantiate (1:= 8). reflexivity.
+                                 (* sem_cast *)
+                                 simpl. reflexivity.
+                                 (* memory copy *)
+                                 eapply do_assign_loc_sound.
+                                 unfold do_assign_loc.
+                                 replace (sizeof ge
+                                            (type_member (Member_plain Cons Node_ty))) with 24 by reflexivity.
+                                 rewrite Ptrofs.unsigned_zero. rewrite LOADBYTES.
+                                 rewrite STOREBYTES.
+                                 change ge with (Smallstep.globalenv (linked_list_sem se)).
+                                 rewrite CAC. 
+                                 reflexivity.
+                                 econstructor. econstructor. reflexivity.
+                                 econstructor. reflexivity.
+                                 eauto. reflexivity. eauto.
+
+                         (* TODO: not pointer *)
                          +++ admit.
-                     --- admit.
-                  ** admit.
-               ++ admit.
-            -- admit.
+                     --- right. econstructor.
+                         eapply step_dropinsert_assign_variant_error4.
+                         1-3: reflexivity.
+                         econstructor. econstructor. econstructor.
+                         reflexivity. eapply deref_loc_copy. reflexivity.
+                         econstructor. econstructor. reflexivity.
+                         econstructor. reflexivity. eauto.
+                         instantiate (1:= 8). reflexivity.
+                         (* sem_cast *)
+                         simpl. reflexivity.
+                         (* memory copy *)
+                         eapply do_assign_loc_sound.
+                         unfold do_assign_loc.
+                         replace (sizeof ge
+                                    (type_member (Member_plain Cons Node_ty))) with 24 by reflexivity.
+                         rewrite Ptrofs.unsigned_zero. rewrite LOADBYTES.
+                         rewrite STOREBYTES.
+                         change ge with (Smallstep.globalenv (linked_list_sem se)).
+                         rewrite CAC. 
+                         reflexivity.
+                         eapply eval_Pderef_error2. 
+                         econstructor. reflexivity.
+                         econstructor. reflexivity. eauto.
+                  (* check_assign_copy error *)
+                  ** right. econstructor.
+                     eapply step_dropinsert_assign_variant_error6; eauto.
+                     reflexivity. reflexivity. reflexivity.
+                     econstructor. econstructor. reflexivity.
+                     econstructor. reflexivity. eauto.
+                     econstructor. reflexivity. simpl. vm_compute. auto.
+                     reflexivity.
+               (* store_bytes error *)
+               ++ right. econstructor.
+                  eapply step_dropinsert_assign_variant_error3; eauto.
+                  reflexivity. reflexivity. reflexivity.
+                  econstructor. econstructor. 
+                  econstructor. reflexivity.
+                  eapply deref_loc_copy. reflexivity.
+                  econstructor. econstructor. reflexivity.                     
+                  econstructor. reflexivity. eauto.
+                  instantiate (1 := 8). reflexivity.
+                  reflexivity.
+                  eapply assign_loc_copy_mem_error2. reflexivity. 
+                  eauto.
+            (* load bytes error *)
+            -- right. econstructor.
+               eapply step_dropinsert_assign_variant_error3; eauto.
+               reflexivity. reflexivity. reflexivity.
+               econstructor. econstructor. 
+               econstructor. reflexivity.
+               eapply deref_loc_copy. reflexivity.
+               econstructor. econstructor. reflexivity.                     
+               econstructor. reflexivity. eauto.
+               instantiate (1 := 8). reflexivity.
+               reflexivity.
+               eapply assign_loc_copy_mem_error1. reflexivity. 
+               eauto.
+          (* TODO: not pointer *)
           * admit.
-        + admit.
+        (* eval_place error *)
+        + right. econstructor.
+          eapply step_dropinsert_assign_variant_error2; eauto.
+          econstructor. econstructor. econstructor. reflexivity.
+          eapply deref_loc_copy. reflexivity.
+          eapply eval_Pderef_error2.
+          econstructor. reflexivity.
+          econstructor. reflexivity. eauto.
       - intros. eapply find_state_internal4 with (n:=6%nat); eauto.
         eapply starNf_step_right; eauto. 
         1-2: inv H; inv SDROP; simpl; auto. lia. }
@@ -2458,6 +2543,7 @@ Proof.
                econstructor. econstructor. econstructor.
                reflexivity. econstructor. reflexivity. eauto.
                eauto. econstructor. reflexivity. eauto.
+          (* sem_cast error *)
           * admit.
         + right. econstructor.
           eapply step_dropinsert_assign_error1.

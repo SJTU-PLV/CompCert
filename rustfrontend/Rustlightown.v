@@ -2269,6 +2269,25 @@ Inductive step_dropinsert_mem_error : state -> Prop :=
     (* error in storing the tag *)
     (ERR: ~ Mem.valid_access m2 Mint32 b1 (Ptrofs.unsigned ofs1) Writable),
     step_dropinsert_mem_error (Dropinsert f drop_end (Dassign_variant p enum_id fid e) k le own m1)
+(** Handle assign_copy similar to step_assign_error4. *)
+| step_dropinsert_assign_variant_error6: forall f e p p2 ty k le m1 b1 ofs1 b2 ofs2 co fid enum_id orgs own fofs
+    (TYP: typeof_place p = Tvariant orgs enum_id)
+    (CO: ge.(genv_cenv) ! enum_id = Some co)
+    (FTY: field_type fid co.(co_members) = OK ty)
+    (PADDR: eval_place ge le m1 p b1 ofs1)
+    (EXPREQ: e = Emoveplace p2 ty \/ e = Epure (Eplace p2 ty))
+    (* The reason we do not support p2 to be downcast is written in
+    the proof of the absence of step_assign_variant_error6 in
+    MoveCheckingSafe.v *)
+    (NODOWN: forall ty fid, ~ In (ph_downcast ty fid) (snd (path_of_place p2)))
+    (EVALE: eval_place ge le m1 p2 b2 ofs2)
+    (COPYTY: access_mode ty = By_copy)
+    (* we do not support ZST for now *)
+    (SZPOS: sizeof ge ty > 0)
+    (FOFS: variant_field_offset ge fid co.(co_members) = OK fofs)
+    (COPYERR: ~ assign_copy_ok ge ty b1 (Ptrofs.add ofs1 (Ptrofs.repr fofs)) b2 ofs2),
+    step_dropinsert_mem_error (Dropinsert f drop_end (Dassign_variant p enum_id fid e) k le own m1)
+
 | step_dropinsert_box_error1: forall le e p k m1 m2 f b ty own,
     typeof_place p = Tbox ty ->
     Mem.alloc m1 (- size_chunk Mptr) (sizeof ge (typeof e)) = (m2, b) ->
