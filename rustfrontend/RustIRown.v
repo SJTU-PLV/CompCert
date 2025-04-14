@@ -731,6 +731,10 @@ evaluated to pointer as it is ill-formed. *)
     (FTY: field_type fid co.(co_members) = OK ty)
     (PADDR: eval_place ge le m1 p b1 ofs1)
     (EXPREQ: e = Emoveplace p2 ty \/ e = Epure (Eplace p2 ty))
+    (* The reason we do not support p2 to be downcast is written in
+    the proof of the absence of step_assign_variant_error6 in
+    MoveCheckingSafe.v *)
+    (NODOWN: forall ty fid, ~ In (ph_downcast ty fid) (snd (path_of_place p2)))
     (EVALE: eval_place ge le m1 p2 b2 ofs2)
     (COPYTY: access_mode ty = By_copy)
     (* we do not support ZST for now *)

@@ -446,6 +446,22 @@ Proof.
   eapply paths_contain_app_inv. eauto.
 Qed.
 
+Lemma paths_disjoint_app: forall l1 l2 l3,
+    paths_disjoint (l1 ++ l2) l3 ->
+    (exists l2', l3 = l1 ++ l2' /\ paths_disjoint l2 l2')
+    \/ paths_disjoint l1 l3.
+Proof.
+  induction l1; intros.
+  - left. exists l3. eauto.
+  - inv H.
+    + right. eapply phs_disjoint1. eauto.
+    + eapply IHl1 in H3.
+      destruct H3.
+      * destruct H as (l2' & A1 & A2). subst.
+        left. eexists. split; eauto.
+        reflexivity.
+      * right. eapply phs_disjoint2; eauto.
+Qed.
 
 (** * Functions and properties for updating the footprint *)
 

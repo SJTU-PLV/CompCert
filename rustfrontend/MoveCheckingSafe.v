@@ -8279,7 +8279,6 @@ Proof.
     intros (b1' & ty1 & ETY1).
     exploit wt_place_wt_path. eapply WT0. eauto. eauto.
     intros WTPH1.
-    (* assert (WTPH1': wt_path (genv_cenv ge) ty1 (phl1 ++ [ph_downcast (Tvariant orgs enum_id) fid]) (typeof_place p2)). admit.      *)
     exploit wt_place_wt_local. eapply WTP2. rewrite local_of_paths_of_place, POP2.
     intros (b2' & ty2 & ETY2).
     exploit wt_place_wt_path. eapply WTP2. eauto. eauto.
@@ -8294,7 +8293,8 @@ Proof.
       destruct (fpm ! id2) eqn: FPM2; try congruence.
       inv FPM1. setoid_rewrite ETY1 in ETY2. inv ETY2.
       set (phl1' := (phl1 ++ [ph_downcast (Tvariant orgs enum_id) fid])) in *.
-      assert (WTPH1': wt_path (genv_cenv ge) ty2 phl1' (typeof_place p2)). admit.
+      assert (WTPH1': wt_path (genv_cenv ge) ty2 phl1' (typeof_place p2)).
+      { rewrite TYP in *. econstructor; eauto. }
       destruct (paths_contain phl1' phl2) eqn: PHCON1; destruct (paths_contain phl2 phl1') eqn: PHCON2.
       (* two paths are equal *)
       + exploit paths_contain_true_eq. eapply PHCON1. eapply PHCON2.
@@ -8353,20 +8353,63 @@ Proof.
           congruence.
       (* path_disjoint case *)
       + exploit paths_not_contain_disjoint. eapply PHCON1. eauto. intros PHDIS.
+        (* Consider this example:
+           struct B { ... }
+           enum A { a(i32), b(i32, B), c(B) }
+           p : enum A := b(12, b);
+           p : enum A :=v c((p as b).1);
+
+           In this case, the location of ((p as b).1) is overlap with
+           the location pf (p as c), if the size of i32 is less then
+           the size of B and we do not consider the alignment. To rule
+           out this case, we just enforce that p2 must not contain
+           downcast. We place this enforcment in step_mem_error and
+           leave it to be proved by the prover. *)
+        
         (* we should show that paths_disjoint phl1' phl2 implies
         paths_disjoint phl1 phl2 or phl1 is nil *)
-        
-        exploit get_loc_footprint_disjoint_paths. eauto. eauto.
-        3: eapply WTPH1'. 3: eapply WTPH2.
-        3: eapply GFP1''. 3: eapply GFP.
-        eapply norepet_flat_fp_map_element; eauto.
-        exploit wf_env_footprint. eapply WFENV. eapply ETY1. intros (fp & A1 & A2).
-        simpl in A1. rewrite FPM2 in A1. inv A1. auto.
-        (* b2' not in f0 *)
-        intro. eapply N4. eapply in_footprint_of_env; eauto.
-        eapply in_footprint_flat_fp_map; eauto. auto.
-        intros (A1 & A2 & A3 & A4). red in A1.
-        destruct A1 as [B1 | [B2 | B3]]; eauto.      
+        assert (CASE: (exists phl2', phl2 = phl1 ++ phl2' /\ paths_disjoint [ph_downcast (Tvariant orgs enum_id) fid] phl2')
+                               \/ paths_disjoint phl1 phl2).
+        { eapply paths_disjoint_app; eauto. }
+        destruct CASE as [(phl2' & C1 & C2)| C1].
+        * subst. inv C2.
+          2: { inv H2. }
+          rewrite cons_app in WTPH2.
+          exploit wt_path_app_inv. eapply WTPH2.
+          intros (ty3 & A1 & A2).
+          exploit wt_path_det. eapply WTPH1. eapply A1. intros. subst.
+          exploit wt_path_app_inv. eapply A2.
+          intros (ty3 & C1 & C2).
+          (* show that p0 must be downcast *)
+          rewrite TYP in *. destruct p0.
+          -- exploit wt_path_deref_inv.
+             erewrite app_nil_l. eauto.
+             intros (ty1' & B1 & B2).
+             eapply wt_path_nil_inv in B1. subst. inv B2.
+          -- exploit wt_path_field_inv.
+             erewrite app_nil_l. eauto.
+             intros (id & orgs' & co & B1 & B2 & B3 & B4).
+             eapply wt_path_nil_inv in B1. inv B1.
+          (* ph_downcast impossible *)
+          -- exfalso. eapply NODOWN.
+             eapply in_app. right.
+             simpl. eauto.
+        * exploit get_loc_footprint_disjoint_paths. eauto. eauto.
+          3: eapply WTPH1. 3: eapply WTPH2.
+          3: eapply GFP1'. 3: eapply GFP.
+          eapply norepet_flat_fp_map_element; eauto.
+          exploit wf_env_footprint. eapply WFENV. eapply ETY1. intros (fp & A1 & A2).
+          simpl in A1. rewrite FPM2 in A1. inv A1. auto.
+          (* b2' not in f0 *)
+          intro. eapply N4. eapply in_footprint_of_env; eauto.
+          eapply in_footprint_flat_fp_map; eauto. auto.
+          intros (A1 & A2 & A3 & A4). red in A1.
+          exploit variant_field_offset_in_range_complete; eauto.
+          intros (P1 & P2). unfold ce in *. rewrite TYP in *. simpl. simpl in *.
+          unfold ce in A1. rewrite CO in A1.
+          destruct A1 as [B1 | [B2 | B3]]; eauto.
+          right. right. left. lia.
+          right. right. right. lia.
     - exploit get_loc_footprint_map_different_local; eauto.
       intros (A1 & A2 & A3). auto. }    
 
