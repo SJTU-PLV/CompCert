@@ -132,7 +132,6 @@ Section MEMORY.
       | _ => Error (msg "Unsupported rvalue expression")
       end.
 
-    (* 辅助函数：递归转换表达式列表 *)
     Fixpoint transl_expr_list (el: list Clight.expr) : res (list Rustlight.pexpr) :=
       match el with
       | nil => OK nil
@@ -170,10 +169,10 @@ Section MEMORY.
           do p <- cexpr_to_place e1;
           do pe <- cexpr_to_pexpr e2;
           OK (Rustlight.Sassign p (Rustlight.Epure pe))
-      | Clight.Sset id e => 
+      (* | Clight.Sset id e => 
           do pe <- cexpr_to_pexpr e;
           OK (Rustlight.Sassign (Rustlight.Plocal id (to_rusttype (Clight.typeof e))) 
-                (Rustlight.Epure pe))
+                (Rustlight.Epure pe)) *)
       | Clight.Scall optid e args =>
           do pe <- cexpr_to_pexpr e;
           do pargs <- transl_expr_list args;
@@ -227,7 +226,8 @@ Section MEMORY.
            Rustlight.fn_drop_glue := None;
            Rustlight.fn_return := to_rusttype (Clight.fn_return f);
            Rustlight.fn_callconv := (Clight.fn_callconv f);
-           Rustlight.fn_vars := List.map (fun '(id, ty) => (id, to_rusttype ty)) (Clight.fn_vars f);
+           (* save temp variable in clight in stack(fn_vars) *)
+           Rustlight.fn_vars := List.map (fun '(id, ty) => (id, to_rusttype ty)) (Clight.fn_vars f ++ Clight.fn_temps f);
            Rustlight.fn_params := List.map (fun '(id, ty) => (id, to_rusttype ty)) (Clight.fn_params f);
            Rustlight.fn_body := body
          |}.
