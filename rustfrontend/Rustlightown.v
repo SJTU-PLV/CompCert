@@ -760,7 +760,14 @@ Proof.
     rewrite H10 in H15. inv H15.
     rewrite H11 in H16. inv H16. auto.
 Qed.
-    
+
+Definition val_is_ptr (v: val) : bool :=
+  match v with
+  | Vptr _ _ => true
+  | _ => false
+  end.
+
+
 Inductive eval_place_mem_error : place -> Prop :=
 | eval_Pfield_error: forall p ty i,
     eval_place_mem_error p ->
@@ -778,6 +785,12 @@ Inductive eval_place_mem_error : place -> Prop :=
 | eval_Pderef_error2: forall p l ofs ty,
     eval_place p l ofs ->
     deref_loc_mem_error (typeof_place p) m l ofs ->
+    eval_place_mem_error (Pderef p ty)
+(* The value is not a pointer *)
+| eval_Pderef_error3: forall p l ofs ty v
+    (EVALP: eval_place p l ofs)
+    (DEF: deref_loc (typeof_place p) m l ofs v)
+    (PTR: val_is_ptr v = false),
     eval_place_mem_error (Pderef p ty)
 .
 
@@ -804,6 +817,10 @@ Proof.
   - exploit eval_place_det. eapply H1. eauto. intros (A1 & A2).
     subst.
     eapply deref_loc_progress_no_mem_error; eauto.
+  - exploit eval_place_det. eapply H1. eauto. intros (A1 & A2).
+    subst.
+    exploit deref_loc_det. eapply H4. eapply DEF. intros. subst.
+    simpl in PTR. congruence.
   - exploit eval_place_det. eapply H2. eauto. intros (A1 & A2).
     subst.
     eapply H7. eapply Mem.load_valid_access; eauto.
@@ -865,11 +882,13 @@ Inductive eval_pexpr (se: Genv.symtbl) : pexpr -> val ->  Prop :=
     (* load the tag *) 
     (LOADTAG: Mem.loadv Mint32 m (Vptr b ofs) = Some (Vint tag))
     (PTY: typeof_place p = Tvariant orgs id)
-    (CO: ce ! id = Some co)                 
+    (CO: ce ! id = Some co)
     (FTAG: field_tag fid co.(co_members) = Some tagz)
     (* adhoc: the range checking in the semantics is used to make sure
     that if the execution passes this check, the downcast evalution in
-    the match arms must be successful *)
+    the last match arms must be successful. Note that the last match
+    arm is in the else statement. This checking is required for the
+    soundness of eval_pexpr_error_sound *)   
     (RANGE: Int.unsigned tag < list_length_z co.(co_members)),
     eval_pexpr se (Ecktag p fid) (Val.of_bool (Int.eq tag (Int.repr tagz)))
 | eval_Eref: forall p b ofs mut ty org,
@@ -974,10 +993,23 @@ Inductive eval_pexpr_mem_error : pexpr ->  Prop :=
 | eval_Ecktag_error1: forall p fid,
     eval_place_mem_error p ->
     eval_pexpr_mem_error (Ecktag p fid)
-| eval_Ecktag_error2: forall p b ofs fid, 
-    eval_place p b ofs ->
-    (* tag is not readable *)
-    ~ Mem.valid_access m Mint32 b (Ptrofs.unsigned ofs) Readable ->
+| eval_Ecktag_error2: forall p b ofs fid
+    (EVALP: eval_place p b ofs)
+    (* tag is not readable. We strength the condition to that the
+    value being loaded must be a int value *)
+    (LOAD: forall tag, ~ Mem.load Mint32 m b (Ptrofs.unsigned ofs) = Some (Vint tag)),
+        (* Mem.valid_access m Mint32 b (Ptrofs.unsigned ofs) Readable -> *)
+    eval_pexpr_mem_error (Ecktag p fid)
+(* ensure that the tag is in the range of the enum *)
+| eval_Ecktag_error3: forall p b ofs tag tagz id fid co orgs
+    (EVALP: eval_place p b ofs)
+    (* load the tag *) 
+    (LOADTAG: Mem.loadv Mint32 m (Vptr b ofs) = Some (Vint tag))
+    (PTY: typeof_place p = Tvariant orgs id)
+    (CO: ce ! id = Some co)
+    (FTAG: field_tag fid co.(co_members) = Some tagz)
+    (* tag is out of the range *)
+    (RANGE: ~ Int.unsigned tag < list_length_z co.(co_members)),
     eval_pexpr_mem_error (Ecktag p fid)
 | eval_Eref_error: forall p org mut ty,
     eval_place_mem_error p ->
@@ -1015,9 +1047,13 @@ Proof.
     eapply deref_loc_progress_no_mem_error; eauto.
   - eapply eval_place_progress_no_mem_error; eauto.
   - exploit eval_place_det. eapply EVALP. eauto. intros (B1 & B2).
-    subst. eapply H2.
-    eapply Mem.load_valid_access; eauto.
-  - eapply eval_place_progress_no_mem_error; eauto.
+    subst. eapply LOAD. eauto.
+    (* eapply Mem.load_valid_access; eauto. *)
+  - exploit eval_place_det. eapply EVALP. eauto. intros (B1 & B2).
+    subst. rewrite LOADTAG in LOADTAG0. inv LOADTAG0.
+    eapply RANGE0. rewrite PTY in PTY0. inv PTY0.
+    rewrite CO in CO0. inv CO0. eauto.
+  - eapply eval_place_progress_no_mem_error; eauto.   
   - destruct H0; eauto.
 Qed.
 

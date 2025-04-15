@@ -402,13 +402,6 @@ Admitted.
 (* Compute (variant_field_offset (proj1_sig build_ce_ok) Nil [Member_plain Nil Tunit; Member_plain Cons Node_ty]). *)
 
 
-Definition val_is_ptr (v: val) : bool :=
-  match v with
-  | Vptr _ _ => true
-  | _ => false
-  end.
-
-
 Definition val_is_int (v: val) : bool :=
   match v with
   | Vint _ => true
@@ -969,8 +962,7 @@ Proof.
     inv STAR0.
     (* stop here: evaluate the if statement *)
     { split.
-      - left. red.
-        (** decide whether there would be memory error  *)
+      - (** decide whether there would be memory error  *)
         destruct (Mem.valid_access_dec m' Mptr b1 0 Readable) eqn: VA1.
         + exploit Mem.valid_access_load. eapply v. intros (v1 & LOAD1).
           (* we should show thata v1 must be a pointer *)
@@ -980,30 +972,54 @@ Proof.
             -- exploit Mem.valid_access_load. eapply v0. intros (v2 & LOAD2).
                destruct (val_is_int v2) eqn: VINT.
                ++ destruct v2; simpl in VINT; try congruence.
-                  right. right.                  
-                  do 2 eexists.
-                  (* evaluate if then else *)
-                  econstructor. econstructor. econstructor.
-                  econstructor.
-                  econstructor.
-                  reflexivity. 
-                  econstructor. reflexivity.
-                  eauto. eauto. 1-3: reflexivity. 
-                  (** TODO: range check. Make it a memory error state *)
-                  simpl. unfold list_length_z. simpl.
-                  admit.
-                  reflexivity. 
-                  simpl.
-                  instantiate (1 := Int.eq i0 (Int.repr 0)).
-                  destruct (Int.eq i0 (Int.repr 0)) eqn: EQZ; reflexivity.
+                  destruct (Z.lt_decidable (Int.unsigned i0) 2).
+                  ** left. red.
+                     right. right.                  
+                     do 2 eexists.
+                     (* evaluate if then else *)
+                     econstructor. econstructor. econstructor.
+                     econstructor.
+                     econstructor.
+                     reflexivity. 
+                     econstructor. reflexivity.
+                     eauto. eauto. 1-3: reflexivity. 
+                     (** TODO: range check. Make it a memory error state *)
+                     simpl. unfold list_length_z. simpl. auto.
+                     reflexivity. 
+                     simpl.
+                     instantiate (1 := Int.eq i0 (Int.repr 0)).
+                     destruct (Int.eq i0 (Int.repr 0)) eqn: EQZ; reflexivity.
+                  (* range check error *)
+                  ** right.
+                     eapply step_ifthenelse_error. econstructor.
+                     eapply eval_Ecktag_error3.
+                     econstructor. econstructor. reflexivity.
+                     econstructor. reflexivity. eauto. eauto. reflexivity.
+                     reflexivity. reflexivity. eauto.
                (* The tag is not an Int value *)
-               ++ admit.
+               ++ right. eapply step_ifthenelse_error.
+               econstructor. eapply eval_Ecktag_error2.
+               econstructor. econstructor. reflexivity.
+               econstructor. reflexivity. eauto. intros.
+               intro. rewrite LOAD2 in H. inv H. simpl in *. congruence.               
             (* The memory location of tag is not loadable *)
-            -- admit.
+            -- right. eapply step_ifthenelse_error.
+               econstructor. eapply eval_Ecktag_error2.
+               econstructor. econstructor. reflexivity.
+               econstructor. reflexivity. eauto.
+               intro. intro. eapply n.
+               eapply Mem.load_valid_access. eauto.
           (* The value loaded from the place is not a pointer *)
-          * admit.
+          * right. apply step_ifthenelse_error.
+            econstructor. eapply eval_Ecktag_error1.
+            eapply eval_Pderef_error3. econstructor. reflexivity.
+            econstructor. reflexivity. eauto. auto.
         (* The block of l is not loadable *)
-        + admit.
+        + right. eapply step_ifthenelse_error.
+          econstructor. eapply eval_Ecktag_error1.
+          eapply eval_Pderef_error2.
+          econstructor. reflexivity.
+          econstructor. reflexivity. eauto.          
       (* Invariant preservation *)
       - intros. eapply find_state_internal1 with (n:=2%nat); eauto.
         eapply starNf_step_right; eauto.
@@ -2386,8 +2402,30 @@ Proof.
                                  econstructor. reflexivity.
                                  eauto. reflexivity. eauto.
 
-                         (* TODO: not pointer *)
-                         +++ admit.
+                         (*  not pointer *)
+                         +++ right. econstructor.
+                             eapply step_dropinsert_assign_variant_error4.
+                             1-3: reflexivity.
+                             econstructor. econstructor. econstructor.
+                             reflexivity. eapply deref_loc_copy. reflexivity.
+                             econstructor. econstructor. reflexivity.
+                             econstructor. reflexivity. eauto.
+                             instantiate (1:= 8). reflexivity.
+                             (* sem_cast *)
+                             simpl. reflexivity.
+                             (* memory copy *)
+                             eapply do_assign_loc_sound.
+                             unfold do_assign_loc.
+                             replace (sizeof ge
+                                        (type_member (Member_plain Cons Node_ty))) with 24 by reflexivity.
+                             rewrite Ptrofs.unsigned_zero. rewrite LOADBYTES.
+                             rewrite STOREBYTES.
+                             change ge with (Smallstep.globalenv (linked_list_sem se)).
+                             rewrite CAC. 
+                             reflexivity.
+                             eapply eval_Pderef_error3. 
+                             econstructor. reflexivity.
+                             econstructor. reflexivity. eauto. auto.
                      --- right. econstructor.
                          eapply step_dropinsert_assign_variant_error4.
                          1-3: reflexivity.
@@ -2445,8 +2483,14 @@ Proof.
                reflexivity.
                eapply assign_loc_copy_mem_error1. reflexivity. 
                eauto.
-          (* TODO: not pointer *)
-          * admit.
+          (* not pointer *)
+          * right. econstructor.
+            eapply step_dropinsert_assign_variant_error2; eauto.
+            econstructor. econstructor. econstructor. reflexivity.
+            eapply deref_loc_copy. reflexivity.
+            eapply eval_Pderef_error3.
+            econstructor. reflexivity.
+            econstructor. reflexivity. eauto. auto.
         (* eval_place error *)
         + right. econstructor.
           eapply step_dropinsert_assign_variant_error2; eauto.

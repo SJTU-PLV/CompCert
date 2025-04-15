@@ -689,6 +689,26 @@ Proof.
   lia.
 Qed.
 
+Lemma field_tag_range': forall ms id n pos,
+    field_tag' id ms pos = Some n ->
+    n < pos + list_length_z ms.
+Proof.
+  induction ms; intros.
+  inv H.
+  rewrite list_length_z_cons.
+  generalize (list_length_z_pos ms). intros.
+  simpl in H. destruct a.
+  destruct (id =? id0)%positive in H.
+  inv H. lia.
+  exploit IHms; eauto. intros. lia.
+Qed.
+
+Lemma field_tag_range: forall ms id n,
+    field_tag id ms = Some n ->
+    n < list_length_z ms.
+Proof.
+  intros. exploit field_tag_range'; eauto.
+Qed.
 
     
 Fixpoint type_tag' (ty: type) (ms: members) (pos: Z) {struct ms} : option (ident * Z) :=

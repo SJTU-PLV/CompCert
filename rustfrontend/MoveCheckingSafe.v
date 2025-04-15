@@ -7376,6 +7376,19 @@ Proof.
     eapply dominators_is_init_deref2; eauto.
     intros (BM & FULL).
     eapply deref_loc_no_mem_error; eauto.
+  (* val_is_ptr = false *)
+  - exploit dominators_is_init_deref1; eauto. intros DOM.
+    exploit eval_place_sound; eauto.
+    intros (fp & A1 & A2 & A3).
+    (* show that the location (l, ofs) is bmatch so
+    deref_loc_mem_error is impossible *)
+    exploit MM. eauto.
+    eapply dominators_is_init_deref2; eauto.
+    intros (BM & FULL).
+    destruct (typeof_place p) eqn: PTY; simpl in WT2; try congruence. inv WT2.
+    inv DEF; inv H.
+    inv A2; inv BM. simpl in WF. congruence.
+    setoid_rewrite H0 in LOAD. inv LOAD. simpl in PTR. congruence.
   - exploit dominators_is_init_downcast; eauto.
   - exploit dominators_is_init_downcast; eauto. intros DOM.
     exploit eval_place_sound; eauto.
@@ -7428,6 +7441,7 @@ Proof.
     assert (INIT: dominators_is_init own p = true).
     { eapply dominators_must_init_sound; eauto. }
     eapply eval_place_no_mem_error; eauto.
+  (* the tag is not loadable or is not int *)
   - destruct (typeof_place p) eqn: PTY; try congruence.
     eapply andb_true_iff in POWN as (B1 & B2).
     assert (INIT: dominators_is_init own p = true).
@@ -7439,8 +7453,27 @@ Proof.
     intros (BM & FULL).
     rewrite PTY in *. inv WTP1.
     inv A2; inv BM. simpl in MODE. try congruence.
-    eapply H2.
-    eapply Mem.load_valid_access. eauto.
+    eapply LOAD. eauto.
+  (* eval_Ecktag_error3: range checking *)
+  - eapply RANGE.
+    rewrite PTY in POWN.
+    eapply andb_true_iff in POWN as (B1 & B2).
+    assert (INIT: dominators_is_init own p = true).
+    { eapply dominators_must_init_sound; eauto. }
+    exploit eval_place_sound; eauto.
+    intros (fp & A1 & A2 & A3).
+    exploit MM. eauto.
+    eapply must_init_sound. eauto. eauto.
+    intros (BM & FULL).
+    rewrite PTY in *. inv WTP1.
+    inv A2; inv BM. simpl in MODE. try congruence.
+    simpl in LOADTAG.
+    rewrite LOADTAG in TAG0. inv TAG0.
+    rewrite CO in CO0. inv CO0.
+    exploit list_nth_z_range. eauto.
+    intros.
+    generalize (COMP_LEN _ _ CO). intros R1.
+    rewrite Int.unsigned_repr. lia. lia.    
   - eapply IHpe; eauto.
   - eapply andb_true_iff in POWN as (A1 & A2).
     destruct H0.
@@ -7678,6 +7711,15 @@ Proof.
     exploit A2. eauto. intros B5. inv B5.
     inv H2. simpl in *. inv H. exfalso.
     eapply H0. eapply Mem.load_valid_access; eauto.
+  + exploit sound_split_fully_own_place_type_inv; eauto.
+    intros TYA. rewrite TYA in *.
+    exploit sound_split_fully_own_place_eval_place; eauto.
+    intros (b3 & ofs3 & A1 & A2).
+    exploit eval_place_get_loc_footprint_map_equal; eauto.
+    intros (B1 & B2 & B3 & B4). subst.
+    exploit A2. eauto. intros B5. inv B5.
+    inv DEF; inv H.
+    setoid_rewrite LOAD in H0. inv H0. simpl in PTR. congruence.
 Qed.
 
 (* It is not easy to directly prove that step_drop is total safe
