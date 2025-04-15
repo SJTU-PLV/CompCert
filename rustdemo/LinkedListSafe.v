@@ -1127,7 +1127,12 @@ Proof.
                     eapply assign_loc_value_mem_error. reflexivity.
                     eauto.
               (* v0 cannot be casted *)
-              -- admit.
+              -- right. econstructor.
+                 eapply step_dropinsert_assign_error5.
+                 econstructor. reflexivity.
+                 econstructor. econstructor. econstructor. reflexivity.
+                 econstructor. reflexivity. eauto. reflexivity.
+                 eauto.
           (* The argument l is not loadable *)
           + right. econstructor.
             eapply step_dropinsert_assign_error1.
@@ -1265,7 +1270,11 @@ Proof.
               -- right. econstructor.
                  eapply step_dropinsert_return_error2; eauto.
             (* sem_cast fails *)
-            * admit.
+            * right. econstructor.
+              eapply step_dropinsert_return_error3.
+              econstructor. econstructor. econstructor. reflexivity.
+              econstructor. reflexivity. eauto. reflexivity.
+              eauto.
           + right. econstructor.
             eapply step_dropinsert_return_error1; eauto.
             econstructor. eapply eval_Eplace_error2.
@@ -1289,7 +1298,7 @@ Proof.
           + left. red. left.
             eexists. econstructor.
           + intros. inv H.
-        (** TODO: ck1 is Kcall. Fill this code after finishing calling
+        (** ck1 is Kcall. Fill this code after finishing calling
         find *)
         - split.
           + destruct (val_casted_dec v2 List_box).
@@ -1304,9 +1313,10 @@ Proof.
                  reflexivity.
                  econstructor. reflexivity. 
                  econstructor. reflexivity. eauto.
-            (** TODO: The return value is not val_casted. Treat it as
-            a kind of memory error *)
-            * admit.
+            (** The return value is not val_casted. Treat it as
+            a kind of error which is proved move checking *)
+            * right. eapply step_returnstate_error3. reflexivity.
+              econstructor. reflexivity. eauto.
           + intros.
             eapply find_state_internal3 with (n:=0%nat).
             2: eauto.
@@ -1524,16 +1534,16 @@ Proof.
         - destruct (Mem.valid_access_dec m7 Mint32 b0 0 Readable).
           + exploit Mem.valid_access_load. eauto.
             intros (?v & ?LOAD).
-            destruct (sem_cast v2 type_int32s type_int32s) eqn: ?CAST.
-            * destruct (Mem.valid_access_dec m7 Mint32 b3 0 Readable).
-              -- exploit Mem.valid_access_load. eauto.
-                 intros (?v & ?LOAD).
-                 destruct (sem_cast v5 type_int32s type_int32s) eqn: ?CAST.
-                 ++ exploit cast_val_is_casted. eapply CAST. intros ?CASTED.
-                    exploit cast_val_is_casted. eapply CAST0. intros ?CASTED.
+            destruct (Mem.valid_access_dec m7 Mint32 b3 0 Readable).
+            * exploit Mem.valid_access_load. eauto.
+              intros (?v & ?LOAD).
+              destruct (Cop.sem_cast v2 Ctypes.type_int32s Ctypes.type_int32s m7) eqn: ?CAST.
+              -- destruct (Cop.sem_cast v4 Ctypes.type_int32s Ctypes.type_int32s m7) eqn: ?CAST.
+                 ++ exploit Cop.cast_val_is_casted. eapply CAST. intros ?CASTED.
+                    exploit Cop.cast_val_is_casted. eapply CAST0. intros ?CASTED.
                     inv CASTED. inv CASTED0.
-                    exploit sem_cast_id. eapply CAST. intros ?CCAST.
-                    exploit sem_cast_id. eapply CAST0. intros ?CCAST.
+                    (* exploit sem_cast_id. eapply CAST. intros ?CCAST. *)
+                    (* exploit sem_cast_id. eapply CAST0. intros ?CCAST. *)
                     left. red. do 2 right.
                     do 2 eexists. econstructor.
                     (* evaluate the binary equal *)
@@ -1546,22 +1556,49 @@ Proof.
                     econstructor. reflexivity. eauto.
                     reflexivity. reflexivity.
                     simpl. unfold sem_cmp, sem_binarith. simpl.
-                    erewrite CCAST. rewrite CCAST0.
-                    reflexivity. reflexivity. simpl.
+                    setoid_rewrite CAST. setoid_rewrite CAST0.
+                    reflexivity. reflexivity. simpl.                    
                     instantiate (1 := Int.eq n n1). 
                     destruct (Int.eq n n1) eqn: ?IEQ; reflexivity.
+                    (* FIXME: For now, we just use the fact that
+                    Archi.ptr = true to prove these two cases. In
+                    fact, we should consider to use rust sem_cast in
+                    eval_Ebinop_error2. But for now we cannot prove
+                    eval_pexpr_progress_no_mem_error as the semantics
+                    of eval_Ebinop is too waek. It uses
+                    sem_binary_operation_rust which operates on C
+                    types.  *)
+                    inv H2. inv H1.
                  (* cast fails *)
-                 ++ admit.
-              (* load fails *)
-              -- right.
-                 eapply step_ifthenelse_error.
-                 econstructor. econstructor.
-                 right. eapply eval_Eplace_error2.
-                 econstructor. econstructor. reflexivity. reflexivity.
-                 econstructor. reflexivity.
-                 econstructor. reflexivity. eauto.
-            (* cast fails *)
-            *  admit.
+                 ++ right.
+                    eapply step_ifthenelse_error.
+                    econstructor. eapply eval_Ebinop_error2.
+                    econstructor. econstructor. reflexivity.
+                    econstructor. reflexivity. eauto.
+                    econstructor. econstructor. econstructor. reflexivity. reflexivity.
+                    reflexivity. reflexivity.
+                    econstructor. reflexivity. eauto.
+                    all: try reflexivity.
+                    simpl. setoid_rewrite CAST0. auto.
+              (* cast fails *)
+              --  right.
+                  eapply step_ifthenelse_error.
+                  econstructor. eapply eval_Ebinop_error2.
+                  econstructor. econstructor. reflexivity.
+                  econstructor. reflexivity. eauto.
+                  econstructor. econstructor. econstructor. reflexivity. reflexivity.
+                  reflexivity. reflexivity.
+                  econstructor. reflexivity. eauto.
+                  all: try reflexivity.
+                  simpl. setoid_rewrite CAST. auto.
+            (* load fails *)
+            * right.
+              eapply step_ifthenelse_error.
+              econstructor. econstructor.
+              right. eapply eval_Eplace_error2.
+              econstructor. econstructor. reflexivity. reflexivity.
+              econstructor. reflexivity.
+              econstructor. reflexivity. eauto.                                
           (* load fails *)
           + right.
             eapply step_ifthenelse_error.
@@ -1674,8 +1711,20 @@ Proof.
                 erewrite Genv.find_invert_symbol; eauto.
                 reflexivity. reflexivity.
                 simpl. auto.
-              (* sem_cast fails *)
-              * admit.
+              (* eval_exprlist sem_cast fails *)
+              * generalize (wf_senv process). intros FINDPRO.
+                simpl in FINDPRO. destruct FINDPRO as (?b & FINDPRO).
+                right. econstructor.
+                eapply step_dropinsert_call_error2.
+                econstructor. econstructor. eauto.
+                eapply deref_loc_reference. reflexivity. reflexivity.
+                (* evaluate the arguments *)
+                eapply eval_Econs_mem_error3.
+                econstructor.
+                econstructor. econstructor. econstructor.
+                reflexivity. reflexivity. reflexivity.
+                reflexivity. econstructor. reflexivity.
+                eauto. eauto.
             (* load fails *)
             + right.
               generalize (wf_senv process). intros FINDPRO.
@@ -1813,7 +1862,22 @@ Proof.
                       reflexivity. reflexivity.
                       simpl. auto.
                    (* sem_cast fails *)
-                   ++ admit.
+                   ++ right. econstructor. eapply step_dropinsert_call_error2.
+                      econstructor. econstructor. eauto.
+                      eapply deref_loc_reference. reflexivity. reflexivity.
+                      (* evaluate the arguments *)
+                      eapply eval_Econs_mem_error2.
+                      econstructor.
+                      econstructor. econstructor. econstructor.
+                      reflexivity. reflexivity. reflexivity.
+                      reflexivity. econstructor. reflexivity.
+                      eauto. 
+                      eapply eval_Econs_mem_error3.
+                      econstructor.
+                      econstructor. econstructor. reflexivity.
+                      econstructor. reflexivity. eauto.
+                      eauto.
+                (* load errors *)
                 -- right. econstructor.
                    eapply step_dropinsert_call_error2.
                    econstructor. econstructor. eauto.
@@ -1829,7 +1893,16 @@ Proof.
                    econstructor. econstructor. econstructor.
                    reflexivity. eauto.
               (* sem_cast fails *)
-              * admit.
+              * right. econstructor. eapply step_dropinsert_call_error2.
+                econstructor. econstructor. eauto.
+                eapply deref_loc_reference. reflexivity. reflexivity.
+                (* evaluate the arguments *)
+                eapply eval_Econs_mem_error3.
+                econstructor.
+                econstructor. econstructor. econstructor.
+                reflexivity. reflexivity. reflexivity.
+                reflexivity. econstructor. reflexivity.
+                eauto. eauto.
             + right. econstructor.
               eapply step_dropinsert_call_error2.
               econstructor. econstructor. eauto.
@@ -1881,7 +1954,8 @@ Proof.
            econstructor. econstructor. 
            econstructor. reflexivity. eauto.
       (* val is not val_casted in returnstate *)
-      * admit.
+      * right. eapply step_returnstate_error3; eauto.
+        econstructor. reflexivity.
     + intros. eapply find_state_internal2 with (n:=0%nat).
       2: eauto.
       econstructor. auto.
@@ -1980,7 +2054,12 @@ Proof.
                   eapply assign_loc_value_mem_error. reflexivity.
                   eauto.
             (* v0 cannot be casted *)
-            -- admit.
+            -- right.
+               econstructor. eapply step_dropinsert_assign_error5.
+               econstructor. econstructor. reflexivity. reflexivity. reflexivity.
+               reflexivity. econstructor. econstructor. econstructor.
+               reflexivity. econstructor. reflexivity. eauto. reflexivity.
+               eauto.
         (* tmpv is not loadable *)
         + right. econstructor.
           eapply step_dropinsert_assign_error1.
@@ -2171,7 +2250,11 @@ Proof.
                   eapply assign_loc_value_mem_error. reflexivity.
                   eauto.
             (* v0 cannot be casted *)
-            -- admit.
+            -- right. econstructor. eapply step_dropinsert_assign_error5.
+               econstructor. econstructor. reflexivity. reflexivity. reflexivity.
+               reflexivity. econstructor. econstructor. econstructor.
+               reflexivity. econstructor. reflexivity. eauto. reflexivity.
+               eauto.
         (* tmpv is not loadable *)
         + right. econstructor.
           eapply step_dropinsert_assign_error1.
@@ -2588,7 +2671,11 @@ Proof.
                reflexivity. econstructor. reflexivity. eauto.
                eauto. econstructor. reflexivity. eauto.
           (* sem_cast error *)
-          * admit.
+          * right. econstructor. eapply step_dropinsert_assign_error5.
+            econstructor. reflexivity. 
+            econstructor. econstructor. econstructor.
+            reflexivity. econstructor. reflexivity. eauto. reflexivity.
+            eauto.
         + right. econstructor.
           eapply step_dropinsert_assign_error1.
           econstructor. eapply eval_Eplace_error2.
@@ -2788,7 +2875,11 @@ Proof.
               -- right. econstructor.
                  eapply step_dropinsert_return_error2; eauto.
             (* sem_cast fails *)
-            * admit.
+            * right. econstructor.
+              eapply step_dropinsert_return_error3.
+              econstructor. econstructor. econstructor. reflexivity.
+              econstructor. reflexivity. eauto. reflexivity.
+              eauto.
           + right. econstructor.
             eapply step_dropinsert_return_error1; eauto.
             econstructor. eapply eval_Eplace_error2.
@@ -2813,7 +2904,7 @@ Proof.
           + left. red. left.
             eexists. econstructor.
           + intros. inv H.
-        (** TODO: ck1 is Kcall. Fill this code after finishing calling
+        (** ck1 is Kcall. Fill this code after finishing calling
         find *)
         - split.
           + destruct (val_casted_dec v4 List_box).
@@ -2828,9 +2919,12 @@ Proof.
                  reflexivity.
                  econstructor. reflexivity. 
                  econstructor. reflexivity. eauto.
-            (** TODO: The return value is not val_casted. Treat it as
+            (** The return value is not val_casted. Treat it as
             a kind of memory error *)
-            * admit.
+            * right. 
+              eapply step_returnstate_error3.
+              reflexivity.
+              econstructor. reflexivity. eauto.
           + intros.
             eapply find_state_internal3 with (n:=0%nat); eauto.
             econstructor. econstructor. eauto. eauto.
@@ -2864,17 +2958,19 @@ Proof.
               reflexivity.
               econstructor. reflexivity. 
               econstructor. reflexivity. eauto.
-      (** TODO: The return value is not val_casted. Treat it as
+      (** The return value is not val_casted. Treat it as
             a kind of memory error *)
-        -- admit.
+        -- right. 
+           eapply step_returnstate_error3.
+           reflexivity.
+           econstructor. reflexivity. eauto.
       * intros.
         eapply find_state_internal3 with (n:=0%nat); eauto.
         2: eauto.
         econstructor. econstructor. eauto. eauto.
         econstructor. 
         inv H; simpl; eauto. lia. 
-
-Admitted.
+Qed.
 
 End SOUNDNESS.
 

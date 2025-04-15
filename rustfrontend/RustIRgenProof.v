@@ -1701,6 +1701,16 @@ Proof.
         eapply star_step.
         eapply RustIRown.step_skip_seq. eapply star_refl. eauto.
         eapply RustIRown.step_return_error2; solve_eval.
+    (* step_dropinsert_return_error2 *)
+    + inv STMT1. inv MST.
+      * inv MDCONT. eexists. split.
+        eapply star_step.
+        eapply RustIRown.step_skip_seq. eapply star_refl. eauto.
+        eapply RustIRown.step_return_error3; solve_eval.
+      * inv MRET. eexists. split.
+        eapply star_step.
+        eapply RustIRown.step_skip_seq. eapply star_refl. eauto.
+        eapply RustIRown.step_return_error3; solve_eval.
   - inv H0; try congruence.
     all: inv STMT2; eexists; split; [eapply star_refl|].
     (* step_assign_error *)
@@ -1708,6 +1718,7 @@ Proof.
     eapply step_assign_error2; solve_eval.
     eapply step_assign_error3; solve_eval.
     eapply step_assign_error4; solve_eval.
+    eapply step_assign_error5; solve_eval.
     (* step_assign_variant_error *)
     eapply step_assign_variant_error1; solve_eval.
     eapply step_assign_variant_error2; solve_eval.
@@ -1715,12 +1726,14 @@ Proof.
     eapply step_assign_variant_error4; solve_eval.
     eapply step_assign_variant_error5; solve_eval.
     eapply step_assign_variant_error6; solve_eval.
+    eapply step_assign_variant_error7; solve_eval.
     (* step_box_error *)
     eapply step_box_error1; solve_eval.
     eapply step_box_error2; solve_eval.
     eapply step_box_error3; solve_eval.
     eapply step_box_error4; solve_eval.
     eapply step_box_error5; solve_eval.
+    eapply step_box_error6; solve_eval.
     (* step_call_error *)
     eapply step_call_error1; solve_eval.
     eapply step_call_error2; solve_eval.
@@ -1766,6 +1779,11 @@ Proof.
     eapply star_refl.
     specialize (MCONT nil). inv MCONT.
     eapply RustIRown.step_returnstate_error2 ; solve_eval.
+  (* step_returnstate_error3 *)
+  - eexists. split.
+    eapply star_refl.
+    specialize (MCONT nil). inv MCONT.
+    eapply RustIRown.step_returnstate_error3 ; solve_eval.    
 Qed.  
 
 End PRESERVATION.

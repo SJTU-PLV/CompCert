@@ -651,7 +651,7 @@ Inductive function_entry_mem_error (f: function) (vargs: list val) (m: mem) (e: 
 
 Inductive step_mem_error : state -> Prop :=
 | step_assign_error1: forall f e p k le m own,    
-    eval_expr_mem_error ge le m e ->
+    eval_expr_mem_error ge le m ge e ->
     step_mem_error (State f (Sassign p e) k le own m)
 | step_assign_error2: forall f e p k le m own v,
     eval_expr ge le m ge e v ->
@@ -677,10 +677,20 @@ evaluated to pointer as it is ill-formed. *)
     (SZPOS: sizeof ge (typeof_place p) > 0)
     (COPYERR: ~ assign_copy_ok ge (typeof_place p) b1 ofs1 b2 ofs2),
     step_mem_error (State f (Sassign p e) k le own m)
-
+(* sem_cast error *)
+| step_assign_error5: forall f e p k le m b ofs v own,
+    eval_place ge le m p b ofs ->
+    eval_expr ge le m ge e v ->
+    (* It is difficult to prove the safety of sem_cast for arbitary
+    types of lhs and rhs, so we require that they are the same type *)
+    typeof e = typeof_place p ->
+    sem_cast v (typeof_place p) (typeof_place p) = None ->
+    step_mem_error (State f (Sassign p e) k le own m)
+    
+                   
 | step_assign_variant_error1: forall f e p k le m enum_id fid own,
     (* error in evaluating the expression *)
-    eval_expr_mem_error ge le m e ->
+    eval_expr_mem_error ge le m ge e ->
     step_mem_error (State f (Sassign_variant p enum_id fid e) k le own m)
 | step_assign_variant_error2: forall f e p k le v m enum_id fid own,
     eval_expr ge le m ge e v ->
@@ -742,6 +752,17 @@ evaluated to pointer as it is ill-formed. *)
     (FOFS: variant_field_offset ge fid co.(co_members) = OK fofs)
     (COPYERR: ~ assign_copy_ok ge ty b1 (Ptrofs.add ofs1 (Ptrofs.repr fofs)) b2 ofs2),
     step_mem_error (State f (Sassign_variant p enum_id fid e) k le own m1)
+(* sem_cast error *)
+| step_assign_variant_error7: forall f e p ty k le m1 b ofs v co fid enum_id orgs own fofs
+    (TYP: typeof_place p = Tvariant orgs enum_id)
+    (CO: ge.(genv_cenv) ! enum_id = Some co)
+    (FTY: field_type fid co.(co_members) = OK ty)
+    (EXPR: eval_expr ge le m1 ge e v)
+    (PADDR1: eval_place ge le m1 p b ofs)
+    (FOFS: variant_field_offset ge fid co.(co_members) = OK fofs)
+    (TYEQ: typeof e = ty)
+    (CAST: sem_cast v ty ty = None),
+    step_mem_error (State f (Sassign_variant p enum_id fid e) k le own m1)
                    
 | step_box_error1: forall le e p k m1 m2 f b ty own,
     typeof_place p = Tbox ty ->
@@ -754,7 +775,7 @@ evaluated to pointer as it is ill-formed. *)
     Mem.alloc m1 (- size_chunk Mptr) (sizeof ge (typeof e)) = (m2, b) ->
     Mem.store Mptr m2 b (- size_chunk Mptr) (Vptrofs (Ptrofs.repr (sizeof ge (typeof e)))) = Some m3 ->
     (* error in evaluating the rhs *)
-    eval_expr_mem_error ge le m3 e ->
+    eval_expr_mem_error ge le m3 ge e ->
     step_mem_error (State f (Sbox p e) k le own m1)
 | step_box_error3: forall le e p k m1 m2 m3 f b ty v v1 own,
     typeof_place p = Tbox ty ->
@@ -786,6 +807,16 @@ evaluated to pointer as it is ill-formed. *)
     (* error in assigning the allocated block to the lhs *)
     assign_loc_mem_error ge (typeof_place p) m4 pb pofs (Vptr b Ptrofs.zero) ->
     step_mem_error (State f (Sbox p e) k le own m1)
+(* sem_cast error *)
+| step_box_error6: forall le e p k m1 m2 m3 f b ty v own,
+    typeof_place p = Tbox ty ->
+    Mem.alloc m1 (- size_chunk Mptr) (sizeof ge (typeof e)) = (m2, b) ->
+    Mem.store Mptr m2 b (- size_chunk Mptr) (Vptrofs (Ptrofs.repr (sizeof ge (typeof e)))) = Some m3 ->
+    eval_expr ge le m3 ge e v ->
+    typeof e = ty ->
+    sem_cast v ty ty = None ->
+    step_mem_error (State f (Sbox p e) k le own m1)
+                   
 | step_dropplace_error: forall f st ps k le own m,
     step_dropplace_mem_error (Dropplace f st ps k le own m) ->
     step_mem_error (Dropplace f st ps k le own m)
@@ -796,7 +827,7 @@ evaluated to pointer as it is ill-formed. *)
 
 | step_call_error1: forall f a al k le m p own,
     (* error in evaluating the function pointer *)
-    eval_expr_mem_error ge le m a ->
+    eval_expr_mem_error ge le m ge a ->
     step_mem_error (State f (Scall p a al) k le own m)
 | step_call_error2: forall f a al k le m  tyargs vf p own tyres cconv,
     classify_fun (typeof a) = fun_case_f tyargs tyres cconv ->
@@ -814,10 +845,17 @@ evaluated to pointer as it is ill-formed. *)
 (*     Mem.free_list m (blocks_of_env ge le) = None -> *)
 (*     step_mem_error (State f (Sreturn p) k le own m) *)
 | step_return_error1: forall f p k le m own,
-    eval_expr_mem_error ge le m (Epure (Eplace p (typeof_place p)))->
+    eval_expr_mem_error ge le m ge (Epure (Eplace p (typeof_place p)))->
     step_mem_error (State f (Sreturn p) k le own m)
 | step_return_error2: forall f p k le m own,
     Mem.free_list m (blocks_of_env ge le) = None ->
+    step_mem_error (State f (Sreturn p) k le own m)
+(* sem_cast error *)
+| step_return_error3: forall f p k le m own v
+    (EVAL: eval_expr ge le m ge (Epure (Eplace p (typeof_place p))) v)
+    (* sem_cast to the return type *)
+    (TYEQ: typeof_place p = f.(fn_return))
+    (CAST: sem_cast v (typeof_place p) (typeof_place p) = None),      
     step_mem_error (State f (Sreturn p) k le own m)
 | step_returnstate_error1: forall p v m f k e own,
     eval_place_mem_error ge e m p ->
@@ -827,9 +865,23 @@ evaluated to pointer as it is ill-formed. *)
     eval_place ge e m p b ofs ->
     assign_loc_mem_error ge ty m b ofs v ->
     step_mem_error (Returnstate v (Kcall p f e own k) m)
-| step_ifthenelse_error:  forall f a s1 s2 k e m own,
-    eval_expr_mem_error ge e m a ->
+(* return value is not val_cast *)
+| step_returnstate_error3: forall p v m f k e b ofs ty own,
+    ty = typeof_place p ->
+    eval_place ge e m p b ofs ->
+    ~ val_casted v ty ->
+    step_mem_error (Returnstate v (Kcall p f e own k) m)
+| step_ifthenelse_error1:  forall f a s1 s2 k e m own,
+    eval_expr_mem_error ge e m ge a ->
     step_mem_error (State f (Sifthenelse a s1 s2) k e own m)
+(* no required: sem_cast error: it is used to simplify the proofs of the sem_cast
+in semantics binary operation *)
+(* | step_ifthenelse_error2:  forall f a s1 s2 k e m v1 own, *)
+(*     (* there is no receiver for the moved place, so it must be None *) *)
+(*     eval_expr ge e m ge a v1 -> *)
+(*     typeof a = Tint IBool Signed -> *)
+(*     Cop.sem_cast v1 (to_ctype (typeof a)) (to_ctype (typeof a)) m = None -> *)
+(*     step_mem_error (State f (Sifthenelse a s1 s2) k e own m) *)
 .
          
 
@@ -979,7 +1031,7 @@ Ltac NoErr :=
   let EQ := fresh "EQ" in
   Determ;
   match goal with
-  | [ H1: eval_expr _ _ ?m _ ?a ?v1, H2: eval_expr_mem_error _ _ ?m ?a |- False ] =>
+  | [ H1: eval_expr _ _ ?m _ ?a ?v1, H2: eval_expr_mem_error _ _ ?m _ ?a |- False ] =>
       eapply eval_expr_progress_no_mem_error; eauto  
   | [ H1: eval_place _ _ ?m ?p _ _, H2: eval_place_mem_error _ _ ?m ?p |- False ] =>
       eapply eval_place_progress_no_mem_error; eauto
@@ -1162,6 +1214,9 @@ Proof.
       exploit alloc_variables_det. eapply H0. eauto.
       intros (A1 & A2). subst.
       eapply bind_parameters_progress_no_mem_error; eauto.
+    (* no required ifthenelse cast error *)
+    (* + exploit cast_bool_bool_val. rewrite H2. rewrite H11 in *. simpl. *)
+    (*   unfold Cop.sem_cast, sem_cast in *. simpl in *. destruct v0; try congruence. *)
   - intros. inv H; inv H0.
   - intros. inv H; inv H0.
     rewrite H1 in FIND. inv FIND.

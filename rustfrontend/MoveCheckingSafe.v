@@ -7409,7 +7409,7 @@ Qed.
 
 Lemma eval_pexpr_no_mem_error: forall pe m le own init uninit universe fpm
     (MM: mmatch fpm ce m le own)
-    (ERR: eval_pexpr_mem_error ce le m pe)
+    (ERR: eval_pexpr_mem_error ce le m ge pe)
     (WFOWN: wf_env fpm ce m le)
     (WT: wt_pexpr (env_to_tenv le) ce pe)
     (SOWN: sound_own own init uninit universe)
@@ -7479,11 +7479,23 @@ Proof.
     destruct H0.
     eapply IHpe1; eauto.
     eapply IHpe2; eauto.
+  (* sem_cast fails in binary operation *)
+  - eapply andb_true_iff in POWN as (A1 & A2).
+    exploit eval_pexpr_sem_wt; eauto. intros WT2.
+    exploit eval_pexpr_sem_wt. 2: eapply H3. all: eauto. intros WT1.
+    exploit sem_cast_sem_wt_exists. eapply WT1. econstructor. eauto.
+    intros (v1' & CAST1).
+    exploit sem_cast_sem_wt_exists. eapply WT2. econstructor. eauto.
+    intros (v2' & CAST2).
+    exploit sem_cast_id. eapply CAST1. intros CAST1'.
+    exploit sem_cast_id. eapply CAST2. intros CAST2'.
+    rewrite CAST1' in H11. rewrite H6 in CAST2'. rewrite CAST2' in H11.
+    destruct H11; congruence.
 Qed.
 
 Lemma eval_expr_no_mem_error: forall e m le own init uninit universe fpm
     (MM: mmatch fpm ce m le own)
-    (ERR: eval_expr_mem_error ce le m e)
+    (ERR: eval_expr_mem_error ce le m ge e)
     (WFOWN: wf_env fpm ce m le)
     (WT: wt_expr (env_to_tenv le) ce e)
     (SOWN: sound_own own init uninit universe)
@@ -7569,6 +7581,20 @@ Proof.
       eapply DIS. eauto.
       eapply EQUIV1. eapply in_app; auto. }
     eapply IHal; eauto.
+  (* sem_cast fails *)
+  - inv WT. simpl in CHECK.
+    destruct (move_check_expr ce init uninit universe a) eqn: CK1; try congruence.
+    destruct p as (init2 & uninit2).
+    unfold move_check_expr in CK1.
+    destruct (move_check_expr' ce init uninit universe a) eqn: CK2; try congruence.
+    (** sound_own after moving the place in the expression *)
+    assert (SOWN1: sound_own (move_place_option own1 (moved_place a)) init2 uninit2 universe).
+    { destruct (moved_place a) eqn: MP; simpl; inv CK1; auto.
+      eapply move_place_sound. auto. }
+    exploit eval_expr_sem_wt; eauto.
+    intros (fp2 & fpm2 & WTVAL1 & WTFP1 & MM1 & WFENV1 & NOREP1 & EQUIV1 & WFOWN1 & FPMREL).
+    exploit sem_cast_sem_wt_exists; eauto.
+    intros (v2 & CAST1). congruence.
 Qed.    
     
 Lemma assign_loc_no_mem_error: forall ty m b ofs v fp
@@ -7972,8 +7998,8 @@ Lemma step_no_mem_error: forall s,
     False.
 Proof.
   intros s SOUND WTST ERR; inv ERR.
-  (* 1-3: step_assign *)
-  1-4: inv SOUND; inv WTST; inv STMT; inv WT1; simpl in TR; simpl_getIM IM;
+  (* 1-5: step_assign *)
+  1-5: inv SOUND; inv WTST; inv STMT; inv WT1; simpl in TR; simpl_getIM IM;
   destruct (move_check_expr ce mayinit mayuninit universe e) eqn: MOVE1; try congruence;
   unfold move_check_expr in MOVE1;  
   destruct (move_check_expr' ce mayinit mayuninit universe e) eqn: MOVECKE; try congruence;
@@ -8121,9 +8147,21 @@ Proof.
         destruct A1 as [B1 | [B2 | B3]]; eauto.      
     - exploit get_loc_footprint_map_different_local; eauto.
       intros (A1 & A2 & A3). auto. }    
-       
-  (* 1-5: step_assign_variant *)
-  1-6: inv SOUND; inv WTST; inv STMT; simpl in TR; simpl_getIM IM;
+   { exploit eval_expr_sem_wt; eauto.
+     intros (vfp & fpm2 & WTVAL & WTFP & MM1 & WFENV1 & NOREP1 & EQUIV1 & WFOWN1 & FPMREL).
+     (** sound_own after moving the place in the expression *)
+     assert (SOWN1: sound_own (move_place_option own (moved_place e)) mayinit' mayuninit' universe).
+     { destruct (moved_place e) eqn: MP; simpl; inv MOVE1; auto.
+       eapply move_place_sound. auto. }    
+     exploit dominators_must_init_sound; eauto. intros DOM.
+     exploit eval_place_sound; eauto.
+     intros (pfp & GFP & WTFP3 & PRAN & PERM & VALID).
+     exploit get_loc_footprint_map_align; eauto. intros ALIGN.
+     rewrite H1 in *.
+     exploit sem_cast_sem_wt_exists; eauto. intros (v2 & CAST1). congruence. }
+    
+  (* 1-7: step_assign_variant *)
+  1-7: inv SOUND; inv WTST; inv STMT; simpl in TR; simpl_getIM IM;
   destruct (move_check_expr ce mayinit mayuninit universe e) eqn: MOVE1; try congruence;
   unfold move_check_expr in MOVE1;
   destruct (move_check_expr' ce mayinit mayuninit universe e) eqn: MOVECKE; try congruence;
@@ -8454,10 +8492,21 @@ Proof.
           right. right. right. lia.
     - exploit get_loc_footprint_map_different_local; eauto.
       intros (A1 & A2 & A3). auto. }    
-
-  
-  (* 1-5: step_box_error *)
-  1-5: inv SOUND; inv WTST; inv STMT; simpl in TR; simpl_getIM IM;
+  (* error7, sem_cast fails *)
+  { exploit eval_expr_sem_wt; eauto.
+    intros (vfp & fpm2 & WTVAL & WTFP & MM1 & WFENV1 & NOREP1 & EQUIV1 & WFOWN1 & FPMREL).
+    (** sound_own after moving the place in the expression *)
+    assert (SOWN1: sound_own (move_place_option own (moved_place e)) mayinit' mayuninit' universe).
+    { destruct (moved_place e) eqn: MP; simpl; inv MOVE1; auto.
+      eapply move_place_sound. auto. }    
+    exploit dominators_must_init_sound; eauto. intros DOM.
+    exploit eval_place_sound; eauto.
+    intros (pfp & GFP & WTFP3 & PRAN & PERM & VALID).
+    exploit get_loc_footprint_map_align; eauto. intros ALIGN.
+    exploit sem_cast_sem_wt_exists; eauto. intros (v2 & CAST1). congruence. }
+    
+  (* 1-6: step_box_error *)
+  1-6: inv SOUND; inv WTST; inv STMT; simpl in TR; simpl_getIM IM;
   destruct (move_check_expr ce mayinit mayuninit universe e) eqn: MOVE1; try congruence;
   unfold move_check_expr in MOVE1;
   destruct (move_check_expr' ce mayinit mayuninit universe e) eqn: MOVECKE; try congruence;
@@ -8477,7 +8526,7 @@ Proof.
     constructor. }
   (* 1-4: prove mmatch in m3 (using lots of automatic tactic to reduce
   the size of code *)
-  1-4 :
+  1-4,5 :
     assert (BNIN: ~ In b (flat_fp_frame (fpf_func le fpm fpf))) by
     (intro; eapply Mem.fresh_block_alloc; eauto; eapply Hm; auto);
     (* show that m1 -> m3 unchanges the blocks in le and fpm *)
@@ -8578,7 +8627,11 @@ Proof.
     inv H7. eapply H8. red.
     split; auto.
     eapply Mem.range_perm_implies; eauto. constructor. }
-  
+  (* error6: sem_cast error *)
+  { exploit eval_expr_sem_wt. eapply MM1. all: eauto.
+    intros (vfp & fpm2 & WTVAL & WTFP & MM2 & WFENV2 & NOREP1 & EQUIV1 & WFOWN1).
+    exploit sem_cast_sem_wt_exists; eauto. intros (v2 & CAST1). congruence. }
+    
   (* step_dropplace_mem_error *)
   { eapply step_dropplace_no_mem_error; eauto. }
 
@@ -8709,7 +8762,7 @@ Proof.
       econstructor. auto. }
     assert (TYEQ: typeof e = typeof_place p).
     { unfold e. destruct (scalar_type (typeof_place p)) eqn: PTY; auto. }
-    assert (NOERR: ~ eval_expr_mem_error ge le m e).
+    assert (NOERR: ~ eval_expr_mem_error ge le m ge e).
     { intro.
       eapply eval_expr_no_mem_error; eauto. }
     apply NOERR. unfold e.
@@ -8731,7 +8784,33 @@ Proof.
         unfold footprint_of_env in N1.
         eapply footprint_norepet_implies_freelist_no_overlap; eauto. }
     destruct X. congruence. }
-
+  (* sem_cast fails in return (copy the code from step_preservation *)
+  { inv SOUND. inv STMT. unfold move_check_stmt in TR.
+    unfold get_init_info in TR.
+    simpl_getIM IM.
+    set (e:= (if scalar_type (typeof_place p)
+            then Epure (Eplace p (typeof_place p))
+            else Emoveplace p (typeof_place p))) in *.
+    destruct (move_check_expr' ce mayinit mayuninit universe e) eqn: MOVE1; try congruence.
+    (* inversion of wt_state *)
+    inv WTST. inv WT1.
+    (* destruct list_norepet *)
+    simpl in NOREP.
+    generalize NOREP as NOREP'. intros.
+    eapply list_norepet3_fpm_changed in NOREP as (N1 & N2 & N3 & N4 & N5 & DIS1).
+    (* eval_expr *)
+    assert (EVAL1: eval_expr (globalenv se prog) le m (globalenv se prog) e v).
+    { unfold e. destruct (scalar_type (typeof_place p)); auto.
+      inv EVAL. inv H0. econstructor. econstructor; eauto. }
+    assert (WTE: wt_expr le ce e).
+    { unfold e. destruct (scalar_type (typeof_place p)) eqn: PTY; econstructor; auto.
+      econstructor. auto. }
+    assert (TYEQ1: typeof e = typeof_place p).
+    { unfold e. destruct (scalar_type (typeof_place p)) eqn: PTY; auto. }
+    exploit eval_expr_sem_wt; eauto.
+    intros (fp & fpm1 & WTVAL1 & WTFP1 & MM1 & WFENV1 & NOREP1 & EQUIV1 & WFOWN1 & FPMREL).
+    exploit sem_cast_sem_wt_exists; eauto. intros (v2 & CAST1). congruence. }
+        
   (* step_returnstate_error1 *)
   { inv SOUND. inv WTST. inv STK. inv WT1.
     eapply eval_place_no_mem_error; eauto. }
@@ -8744,7 +8823,8 @@ Proof.
     (* assign no error *)
     eapply assign_loc_no_mem_error; eauto.
     eapply Mem.range_perm_implies; eauto. constructor. }
-
+  (* step_returnstate_error3: the return value is not casted *)
+  { inv SOUND. simpl in CAST. congruence. }
   (* step_ifthenelse_error *)
   { inv SOUND. inv WTST. inv STMT. inv WT1. simpl in CHECK.
     simpl_getIM IM. destruct a; try congruence.

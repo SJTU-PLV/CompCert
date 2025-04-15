@@ -976,30 +976,44 @@ Qed.
 (** Memory error in evaluation of expression  *)
 
 
-Inductive eval_pexpr_mem_error : pexpr ->  Prop :=
+Inductive eval_pexpr_mem_error se : pexpr ->  Prop :=  
 | eval_Eunop_error:  forall op a ty,
-    eval_pexpr_mem_error a ->
-    eval_pexpr_mem_error (Eunop op a ty)
-| eval_Ebinop_error: forall op a1 a2 ty,
-    (eval_pexpr_mem_error a1 \/ eval_pexpr_mem_error a2) ->
-    eval_pexpr_mem_error (Ebinop op a1 a2 ty)
+    eval_pexpr_mem_error se a ->
+    eval_pexpr_mem_error se (Eunop op a ty)
+| eval_Ebinop_error1: forall op a1 a2 ty,
+    (eval_pexpr_mem_error se a1 \/ eval_pexpr_mem_error se a2) ->
+    eval_pexpr_mem_error se (Ebinop op a1 a2 ty)
+(* ensure that if the evaluation is equivalent to sem_binarith, we
+need to ensure that sem_cast can succeed! *)
+| eval_Ebinop_error2: forall op a1 a2 v1 v2 ty0 ty op1 op2 op3 op4,
+    eval_pexpr se a1 v1 ->
+    eval_pexpr se a2 v2 ->
+    to_ctype (typeof_pexpr a1) = ty ->
+    to_ctype (typeof_pexpr a2) = ty ->
+    sem_binary_operation_rust op v1 ty v2 ty m = sem_binarith op1 op2 op3 op4 v1 ty v2 ty m ->
+    (* we cannot handle casting v1/v2 to an unknown type produced by binarith_type *)
+    ty = binarith_type (Cop.classify_binarith ty ty) ->
+    scalar_type (typeof_pexpr a1) = true ->
+    scalar_type (typeof_pexpr a2) = true ->
+    (Cop.sem_cast v1 ty ty m = None \/ Cop.sem_cast v2 ty ty m = None) ->
+    eval_pexpr_mem_error se (Ebinop op a1 a2 ty0)
 | eval_Eplace_error1: forall p ty,
     eval_place_mem_error p ->
-    eval_pexpr_mem_error (Eplace p ty)
+    eval_pexpr_mem_error se (Eplace p ty)
 | eval_Eplace_error2: forall p b ofs ty,
     eval_place p b ofs->
     deref_loc_mem_error ty m b ofs ->
-    eval_pexpr_mem_error (Eplace p ty)
+    eval_pexpr_mem_error se (Eplace p ty)
 | eval_Ecktag_error1: forall p fid,
     eval_place_mem_error p ->
-    eval_pexpr_mem_error (Ecktag p fid)
+    eval_pexpr_mem_error se (Ecktag p fid)
 | eval_Ecktag_error2: forall p b ofs fid
     (EVALP: eval_place p b ofs)
     (* tag is not readable. We strength the condition to that the
     value being loaded must be a int value *)
     (LOAD: forall tag, ~ Mem.load Mint32 m b (Ptrofs.unsigned ofs) = Some (Vint tag)),
         (* Mem.valid_access m Mint32 b (Ptrofs.unsigned ofs) Readable -> *)
-    eval_pexpr_mem_error (Ecktag p fid)
+    eval_pexpr_mem_error se (Ecktag p fid)
 (* ensure that the tag is in the range of the enum *)
 | eval_Ecktag_error3: forall p b ofs tag tagz id fid co orgs
     (EVALP: eval_place p b ofs)
@@ -1010,34 +1024,39 @@ Inductive eval_pexpr_mem_error : pexpr ->  Prop :=
     (FTAG: field_tag fid co.(co_members) = Some tagz)
     (* tag is out of the range *)
     (RANGE: ~ Int.unsigned tag < list_length_z co.(co_members)),
-    eval_pexpr_mem_error (Ecktag p fid)
+    eval_pexpr_mem_error se (Ecktag p fid)
 | eval_Eref_error: forall p org mut ty,
     eval_place_mem_error p ->
-    eval_pexpr_mem_error (Eref org mut p ty).
+    eval_pexpr_mem_error se (Eref org mut p ty).
 
-Inductive eval_expr_mem_error : expr -> Prop :=
+Inductive eval_expr_mem_error se : expr -> Prop :=
 | eval_Emoveplace_error: forall p ty,
-    eval_pexpr_mem_error (Eplace p ty) ->
-    eval_expr_mem_error (Emoveplace p ty)
+    eval_pexpr_mem_error se (Eplace p ty) ->
+    eval_expr_mem_error se (Emoveplace p ty)
 | eval_Epure_mem_error: forall pe,
-    eval_pexpr_mem_error pe ->
-    eval_expr_mem_error (Epure pe).
+    eval_pexpr_mem_error se pe ->
+    eval_expr_mem_error se (Epure pe).
 
 Inductive eval_exprlist_mem_error se: list expr -> typelist -> Prop :=
 | eval_Econs_mem_error1: forall a bl ty tyl,
-    eval_expr_mem_error a ->
+    eval_expr_mem_error se a ->
     eval_exprlist_mem_error se (a :: bl) (Tcons ty tyl)
 | eval_Econs_mem_error2: forall a bl ty tyl v1,
     eval_expr se a v1 ->
     eval_exprlist_mem_error se bl tyl ->
     eval_exprlist_mem_error se (a :: bl) (Tcons ty tyl)
+(* sem_cast error *)
+| eval_Econs_mem_error3: forall a bl  tyl v1,
+    eval_expr se a v1 ->    
+    sem_cast v1 (typeof a) (typeof a) = None ->
+    eval_exprlist_mem_error se (a :: bl) (Tcons (typeof a) tyl)
 .
 
 (* If eval_expr succeeds, then eval_expr has no memory error *)
 
 Lemma eval_pexpr_progress_no_mem_error se: forall pe v,
     eval_pexpr se pe v ->
-    eval_pexpr_mem_error pe ->
+    eval_pexpr_mem_error se pe ->
      False.
 Proof.
   induction pe; intros v A1 A2; inv A1; inv A2; try congruence; eauto.
@@ -1055,11 +1074,21 @@ Proof.
     rewrite CO in CO0. inv CO0. eauto.
   - eapply eval_place_progress_no_mem_error; eauto.   
   - destruct H0; eauto.
+  (* Adhoc. binary operation: sem_cast fails *)
+  - exploit eval_pexpr_det. eapply H3. eauto. 
+    exploit eval_pexpr_det. eapply H4. eauto. intros. subst.
+    rewrite H9 in *.
+    rewrite H8 in H10.
+    unfold sem_binarith in H10.
+    destruct Cop.sem_cast eqn: CAST1 in H10.
+    rewrite <- H11 in CAST1. rewrite CAST1 in H14. destruct H14; try congruence.
+    destruct Cop.sem_cast eqn: CAST2 in H10; try congruence.
+    congruence.    
 Qed.
 
 Lemma eval_expr_progress_no_mem_error se: forall a v,
     eval_expr se a v ->
-    eval_expr_mem_error a ->
+    eval_expr_mem_error se a ->
      False.
 Proof.
   intros. inv H; inv H0.
@@ -1074,7 +1103,8 @@ Lemma eval_exprlist_progress_no_mem_error se: forall al tl vl,
 Proof.
   induction al; intros until vl; intros E1 E2; inv E1; inv E2; try congruence; eauto.
   eapply eval_expr_progress_no_mem_error; eauto.
-Qed.
+  exploit eval_expr_det. eapply H1. eauto. intros. subst. congruence.
+Qed. 
 
   
 End EXPR.
@@ -2235,7 +2265,7 @@ Inductive step_dropinsert : state -> trace -> state -> Prop :=
 
 Inductive step_dropinsert_mem_error : state -> Prop :=
 | step_dropinsert_assign_error1: forall f e p k le m own,    
-    eval_expr_mem_error ge le m e ->
+    eval_expr_mem_error ge le m ge e ->
     step_dropinsert_mem_error (Dropinsert f drop_end (Dassign p e) k le own m)
 | step_dropinsert_assign_error2: forall f e p k le m own v,
     eval_expr ge le m ge e v ->
@@ -2258,10 +2288,18 @@ Inductive step_dropinsert_mem_error : state -> Prop :=
     (SZPOS: sizeof ge (typeof_place p) > 0)
     (COPYERR: ~ assign_copy_ok ge (typeof_place p) b1 ofs1 b2 ofs2),
     step_dropinsert_mem_error (Dropinsert f drop_end (Dassign p e) k le own m)
+| step_dropinsert_assign_error5: forall f e p k le m b ofs v own,
+    eval_place ge le m p b ofs ->
+    eval_expr ge le m ge e v ->
+    (* It is difficult to prove the safety of sem_cast for arbitary
+    types of lhs and rhs, so we require that they are the same type *)
+    typeof e = typeof_place p ->
+    sem_cast v (typeof_place p) (typeof_place p) = None ->
+    step_dropinsert_mem_error (Dropinsert f drop_end (Dassign p e) k le own m)
                               
 | step_dropinsert_assign_variant_error1: forall f e p k le m enum_id fid own,
     (* error in evaluating the expression *)
-    eval_expr_mem_error ge le m e ->
+    eval_expr_mem_error ge le m ge e ->
     step_dropinsert_mem_error (Dropinsert f drop_end (Dassign_variant p enum_id fid e) k le own m)
 | step_dropinsert_assign_variant_error2: forall f e p k le v m enum_id fid own,
     eval_expr ge le m ge e v ->
@@ -2323,6 +2361,16 @@ Inductive step_dropinsert_mem_error : state -> Prop :=
     (FOFS: variant_field_offset ge fid co.(co_members) = OK fofs)
     (COPYERR: ~ assign_copy_ok ge ty b1 (Ptrofs.add ofs1 (Ptrofs.repr fofs)) b2 ofs2),
     step_dropinsert_mem_error (Dropinsert f drop_end (Dassign_variant p enum_id fid e) k le own m1)
+| step_dropinsert_assign_variant_error7: forall f e p ty k le m1 b ofs v co fid enum_id orgs own fofs
+    (TYP: typeof_place p = Tvariant orgs enum_id)
+    (CO: ge.(genv_cenv) ! enum_id = Some co)
+    (FTY: field_type fid co.(co_members) = OK ty)
+    (EXPR: eval_expr ge le m1 ge e v)
+    (PADDR1: eval_place ge le m1 p b ofs)
+    (FOFS: variant_field_offset ge fid co.(co_members) = OK fofs)
+    (TYEQ: typeof e = ty)
+    (CAST: sem_cast v ty ty = None),
+    step_dropinsert_mem_error (Dropinsert f drop_end (Dassign_variant p enum_id fid e) k le own m1)
 
 | step_dropinsert_box_error1: forall le e p k m1 m2 f b ty own,
     typeof_place p = Tbox ty ->
@@ -2335,7 +2383,7 @@ Inductive step_dropinsert_mem_error : state -> Prop :=
     Mem.alloc m1 (- size_chunk Mptr) (sizeof ge (typeof e)) = (m2, b) ->
     Mem.store Mptr m2 b (- size_chunk Mptr) (Vptrofs (Ptrofs.repr (sizeof ge (typeof e)))) = Some m3 ->
     (* error in evaluating the rhs *)
-    eval_expr_mem_error ge le m3 e ->
+    eval_expr_mem_error ge le m3 ge e ->
     step_dropinsert_mem_error (Dropinsert f drop_end (Dbox p e) k le own m1)
 | step_dropinsert_box_error3: forall le e p k m1 m2 m3 f b ty v v1 own,
     typeof_place p = Tbox ty ->
@@ -2367,9 +2415,19 @@ Inductive step_dropinsert_mem_error : state -> Prop :=
     (* error in assigning the allocated block to the lhs *)
     assign_loc_mem_error ge (typeof_place p) m4 pb pofs (Vptr b Ptrofs.zero) ->
     step_dropinsert_mem_error (Dropinsert f drop_end (Dbox p e) k le own m1)
+(* sem_cast error *)
+| step_dropinsert_box_error6: forall le e p k m1 m2 m3 f b ty v own,
+    typeof_place p = Tbox ty ->
+    Mem.alloc m1 (- size_chunk Mptr) (sizeof ge (typeof e)) = (m2, b) ->
+    Mem.store Mptr m2 b (- size_chunk Mptr) (Vptrofs (Ptrofs.repr (sizeof ge (typeof e)))) = Some m3 ->
+    eval_expr ge le m3 ge e v ->
+    typeof e = ty ->
+    sem_cast v ty ty = None ->
+    step_dropinsert_mem_error (Dropinsert f drop_end (Dbox p e) k le own m1)
+
 | step_dropinsert_call_error1: forall f a al k le m p own,
     (* error in evaluating the function pointer *)
-    eval_expr_mem_error ge le m a ->
+    eval_expr_mem_error ge le m ge a ->
     step_dropinsert_mem_error (Dropinsert f drop_end (Dcall p a al) k le own m)
 | step_dropinsert_call_error2: forall f a al k le m  tyargs vf p own tyres cconv,
     eval_expr ge le m ge a vf ->
@@ -2378,12 +2436,18 @@ Inductive step_dropinsert_mem_error : state -> Prop :=
     eval_exprlist_mem_error ge le m ge al tyargs ->
     step_dropinsert_mem_error (Dropinsert f drop_end (Dcall p a al) k le own m)
 | step_dropinsert_return_error1: forall f p k le m own,
-    eval_expr_mem_error ge le m (Epure (Eplace p (typeof_place p)))->
+    eval_expr_mem_error ge le m ge (Epure (Eplace p (typeof_place p)))->
     step_dropinsert_mem_error (Dropinsert f (drop_return []) (Dreturn p) k le own m)
 | step_dropinsert_return_error2: forall f p k le m own,
     Mem.free_list m (blocks_of_env ge le) = None ->
     step_dropinsert_mem_error (Dropinsert f (drop_return []) (Dreturn p) k le own m)
-
+(* sem_cast error *)
+| step_dropinsert_return_error3: forall f p k le m own v
+    (EVAL: eval_expr ge le m ge (Epure (Eplace p (typeof_place p))) v)
+    (* sem_cast to the return type *)
+    (TYEQ: typeof_place p = f.(fn_return))
+    (CAST: sem_cast v (typeof_place p) (typeof_place p) = None),      
+    step_dropinsert_mem_error (Dropinsert f (drop_return []) (Dreturn p) k le own m)
 .
 
 
@@ -2555,8 +2619,14 @@ Inductive step_mem_error : state -> Prop :=
     eval_place ge e m p b ofs ->
     assign_loc_mem_error ge ty m b ofs v ->
     step_mem_error (Returnstate v (Kcall p f e own k) m)
+(* return value is not val_cast *)
+| step_returnstate_error3: forall p v m f k e b ofs ty own,
+    ty = typeof_place p ->
+    eval_place ge e m p b ofs ->
+    ~ val_casted v ty ->
+    step_mem_error (Returnstate v (Kcall p f e own k) m)
 | step_ifthenelse_error:  forall f a s1 s2 k e m own,
-    eval_expr_mem_error ge e m a ->
+    eval_expr_mem_error ge e m ge a ->
     step_mem_error (State f (Sifthenelse a s1 s2) k e own m)
 .
 
