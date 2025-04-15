@@ -43,7 +43,6 @@ Definition typeof_place p :=
 
 
 (** ** Expression *)
-
 Inductive pexpr : Type :=
 | Eunit                                 (**r unit value  *)
 | Econst_int: int -> type -> pexpr       (**r integer literal *)

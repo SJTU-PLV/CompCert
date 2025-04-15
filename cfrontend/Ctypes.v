@@ -1521,7 +1521,6 @@ Global Instance clight_fundef_is_internal : FundefIsInternal fundef :=
 - a list of definitions for structure and union names
 - the corresponding composite environment
 - a proof that this environment is consistent with the definitions. *)
-
 Record program : Type := {
   prog_defs: list (ident * globdef fundef type);
   prog_public: list ident;
