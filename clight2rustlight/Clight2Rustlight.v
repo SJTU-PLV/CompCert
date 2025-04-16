@@ -39,7 +39,8 @@ Fixpoint to_rusttype (ty: Ctypes.type): Rusttypes.type :=
   | Ctypes.Tfloat fz _ => Rusttypes.Tfloat fz
   | Ctypes.Tstruct id _ => Rusttypes.Tstruct nil id
   | Ctypes.Tunion id _ => Rusttypes.Tvariant nil id
-  | Ctypes.Tpointer ty _ => Rusttypes.Traw_pointer Mutable (to_rusttype ty)
+  (* FIXME: 1%positive *)
+  | Ctypes.Tpointer ty _ => Rusttypes.Treference 1%positive Mutable (to_rusttype ty)
   (*todo*)
   | Ctypes.Tarray ty' sz _ => Rusttypes.Tarray (to_rusttype ty') sz
   | Ctypes.Tfunction tyl ty' cc => 
@@ -71,6 +72,7 @@ Section MEMORY.
   Definition call_free (arg: Clight.expr) : Clight.statement :=
     Clight.Scall None free_fun_expr (arg :: nil).
 
+End MEMORY.
 
   Section TRANSL.
 
@@ -308,4 +310,5 @@ Section MEMORY.
            end) (eq_refl tce)
       | _ =>Error (msg "error in transl_composites (clight2rustlight)")
       end.
-    
+  
+    End TRANSL.

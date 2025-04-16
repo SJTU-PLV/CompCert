@@ -48,7 +48,7 @@ Inductive type : Type :=
 | Tfunction: list origin -> list origin_rel -> typelist -> type -> calling_convention -> type    (**r function types *)
 | Tbox: type -> type                                         (**r unique pointer  *)
 | Treference: origin -> mutkind -> type -> type (**r reference type  *)
-| Traw_pointer :  mutkind -> type -> type (**r raw pointer type  *)
+(* | Traw_pointer :  mutkind -> type -> type ( **r raw pointer type  *)
 | Tarray: type -> Z -> type                    (**r array type, just used for constant string for now *)
 | Tstruct: list origin -> ident -> type                              (**r struct types  *)
 | Tvariant: list origin -> ident -> type                             (**r tagged variant types *)
@@ -87,7 +87,7 @@ Proof.
   decide equality.
   decide equality.
   decide equality.
-  decide equality.
+  (* decide equality. *)
   decide equality.
   decide equality.
 Defined.
@@ -168,7 +168,7 @@ Definition access_mode (ty: type) : mode :=
   | Tfunction _ _ _ _ _ => By_reference
   | Tbox _ => By_value Mptr
   | Treference _ _ _ => By_value Mptr
-  | Traw_pointer _ _ => By_value Mptr
+  (* | Traw_pointer _ _ => By_value Mptr *)
   | Tarray _ _ => By_reference
   | Tstruct _ _ => By_copy
   | Tvariant _ _ => By_copy
@@ -184,7 +184,7 @@ Definition scalar_type (ty: type) : bool :=
   | Tfunction _ _ _ _ _
   | Tarray _ _
   | Treference _ _ _ => true
-  | Traw_pointer _ _ => true
+  (* | Traw_pointer _ _ => true *)
   | _ => false
   end.
 
@@ -192,7 +192,7 @@ Definition scalar_type (ty: type) : bool :=
 (** To C types *)
 
 (* What Tbox corresponds to? *)
-(** TODO: Tbox -> None. reference -> None,
+(** TODO: Tbox -> None. reference -> None, raw poinetr -> C pointer,
 Option<reference> -> C pointer *)
 Fixpoint to_ctype (ty: type) : Ctypes.type :=
   match ty with
@@ -205,7 +205,7 @@ Fixpoint to_ctype (ty: type) : Ctypes.type :=
   (* variant = Struct {tag: .. ; f: union} *)
   | Tvariant _ id => Ctypes.Tstruct id noattr
   | Treference _ _ ty
-  | Traw_pointer _ ty
+  (* | Traw_pointer _ ty *)
   | Tbox ty => Tpointer (to_ctype ty) noattr
       (* match (to_ctype ty) with *)
       (* | Some ty' =>  *)
@@ -301,7 +301,7 @@ Fixpoint complete_type (env: composite_env) (t: type) : bool :=
   | Tfunction _ _ _ _ _ => false
   | Tbox _ => true
   | Treference _ _ _ => true
-  | Traw_pointer _ _ => true
+  (* | Traw_pointer _ _ => true *)
   | Tarray t' _ => complete_type env t'
   | Tstruct _ id | Tvariant _ id =>
       match env!id with Some co => true | None => false end
@@ -333,7 +333,7 @@ Fixpoint alignof (env: composite_env) (t: type) : Z :=
     | Tfloat F64 => Archi.align_float64
     | Tfunction _ _ _ _ _ => 1
     | Treference _ _ _
-    | Traw_pointer _ _
+    (* | Traw_pointer _ _ *)
     | Tbox _ => if Archi.ptr64 then 8 else 4
     | Tarray t' _ => alignof env t'
       | Tstruct _ id | Tvariant _ id =>
@@ -358,7 +358,7 @@ Proof.
     exists 0%nat; auto.
     destruct Archi.ptr64; ((exists 2%nat; reflexivity) || (exists 3%nat; reflexivity)).
     destruct Archi.ptr64; ((exists 2%nat; reflexivity) || (exists 3%nat; reflexivity)).
-    destruct Archi.ptr64; ((exists 2%nat; reflexivity) || (exists 3%nat; reflexivity)).
+    (* destruct Archi.ptr64; ((exists 2%nat; reflexivity) || (exists 3%nat; reflexivity)). *)
     apply IHt.
     destruct (env!i). apply co_alignof_two_p. exists 0%nat; auto.
     destruct (env!i). apply co_alignof_two_p. exists 0%nat; auto.
@@ -498,7 +498,7 @@ Fixpoint sizeof (env: composite_env) (t: type) : Z :=
   | Tfloat F64 => 8
   | Tfunction _ _ _ _ _ => 1
   | Treference _ _ _
-  | Traw_pointer _ _
+  (* | Traw_pointer _ _ *)
   | Tbox _ => if Archi.ptr64 then 8 else 4
   | Tarray t' n => sizeof env t' * Z.max 0 n
   | Tstruct _ id
@@ -519,7 +519,7 @@ Proof.
 - destruct f; lia.
 - destruct Archi.ptr64; lia.
 - destruct Archi.ptr64; lia.
-- destruct Archi.ptr64; lia.
+(* - destruct Archi.ptr64; lia. *)
 - destruct Archi.ptr64; lia.
 - change 0 with (0 * Z.max 0 z) at 2. apply Zmult_ge_compat_r. auto. lia.
 - destruct (env!i). apply co_sizeof_pos. lia.
@@ -538,7 +538,7 @@ Fixpoint alignof_blockcopy (env: composite_env) (t: type) : Z :=
   | Tint IBool _ => 1
   | Tfunction _ _ _ _ _ => 1
   | Treference _ _ _
-  | Traw_pointer _ _
+  (* | Traw_pointer _ _ *)
   | Tbox _ => if Archi.ptr64 then 8 else 4
   | Tarray t' _ => alignof_blockcopy env t'
   | Tstruct _ id 
@@ -571,7 +571,7 @@ Proof.
   destruct Archi.ptr64; auto.
   destruct Archi.ptr64; auto.
   destruct Archi.ptr64; auto.
-  destruct Archi.ptr64; auto.
+  (* destruct Archi.ptr64; auto. *)
   apply IHty.
   destruct (env!i); auto.
   destruct (env!i); auto.
@@ -601,7 +601,7 @@ Proof.
   apply Z.divide_refl.
   apply Z.divide_refl.
   destruct Archi.ptr64; apply Z.divide_refl.
-  destruct Archi.ptr64; apply Z.divide_refl.
+  (* destruct Archi.ptr64; apply Z.divide_refl. *)
   apply Z.divide_mul_l. auto.
   destruct (env!i). apply X. apply Z.divide_0_r.
   destruct (env!i). apply X. apply Z.divide_0_r.
@@ -957,7 +957,7 @@ Definition typ_of_type (t: type) : AST.typ :=
   | Tfloat F64 => AST.Tfloat
   | Tfunction _ _ _ _ _ 
   | Treference _ _ _ 
-  | Traw_pointer _ _ 
+  (* | Traw_pointer _ _  *)
   | Tbox _ 
   | Tarray _ _ 
   | Tstruct _ _ 
@@ -977,8 +977,7 @@ Definition rettype_of_type (t: type) : AST.rettype :=
   | Tfloat F32 => AST.Tsingle
   | Tfloat F64 => AST.Tfloat
   | Tbox _ 
-  | Treference _ _ _ 
-  | Traw_pointer _ _ => Tptr
+  | Treference _ _ _ (* | Traw_pointer _ _ *) => Tptr 
   | Tarray _ _ | Tfunction _ _ _ _ _ | Tstruct _ _ | Tvariant _ _ => AST.Tvoid
   end.
 
