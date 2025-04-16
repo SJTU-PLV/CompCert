@@ -350,6 +350,15 @@ Proof.
   auto.
 Qed.
 
+Lemma hash_args_params_norepet:
+  list_norepet
+    (var_names (fn_params hash_func) ++ var_names (fn_vars hash_func)).
+Proof.
+  eapply proj_sumbool_true.
+  instantiate (1 := list_norepet_dec ident_eq (var_names (fn_params hash_func) ++ var_names (fn_vars hash_func))).
+  auto.
+Qed.
+
 
 Lemma init_own_env_find_progress:
   exists own, init_own_env (Smallstep.globalenv (linked_list_sem se)) find_func = OK own.        
@@ -385,18 +394,121 @@ Qed.
 
 Lemma init_own_env_hash_progress:
   exists own, init_own_env (Smallstep.globalenv (linked_list_sem se)) hash_func = OK own.
-Admitted.
+Proof.
+ unfold init_own_env.
+ destruct collect_func eqn: A. cbn [bind].
 
+ set (empty_map := (PTree.map
+                      (fun (_ : positive) (_ : InitDomain.LPaths.t) =>
+                         InitDomain.Paths.empty) t)) in *.
+ set (initParams:= (InitDomain.add_place_list t
+                      (places_of_locals (fn_params hash_func ++ fn_vars hash_func))
+                      empty_map)) in *.
+ set (flag := check_own_env_consistency empty_map empty_map initParams t) in *.
+ generalize (eq_refl flag).
+ generalize flag at 1 3.
+ intros flag0 E. destruct flag0; try congruence.
+ eexists; eauto.
+ unfold flag in E. unfold initParams, empty_map in *.  
+ replace t with ((collect_stmt (Smallstep.globalenv (linked_list_sem se))
+                    (fn_body hash_func)
+                    (fold_right
+                       (InitDomain.collect_place
+                          (Smallstep.globalenv (linked_list_sem se)))
+                       (PTree.empty InitDomain.LPaths.t)
+                       (map
+                          (fun elt : ident * type => Plocal (fst elt) (snd elt))
+                          (fn_params hash_func ++ fn_vars hash_func))))) in *.
+ vm_compute in E. congruence.
+ unfold collect_func in A. congruence.
+ unfold collect_func in A. congruence.
+Qed.
 
-Lemma function_entry_find_progress: forall vl m1,
+Local Open Scope sep_scope.
+
+Lemma function_entry_find_progress: forall vl m,
     length_of_args find = length vl ->
-  exists e m2, function_entry ge find_func vl m1 e m2.
-Admitted.
+  exists e m2, function_entry ge find_func vl m e m2.
+Proof.
+  intros. destruct vl; inv H. destruct vl; inv H1. destruct vl; inv H0.
+  destruct (Mem.alloc m 0 (sizeof ge List_box)) as (m1 & b1) eqn: A1.
+  destruct (Mem.alloc m1 0 (sizeof ge type_int32s)) as (m2 & b2) eqn: A2.
+  destruct (Mem.alloc m2 0 (sizeof ge List_box)) as (m3 & b3) eqn: A3.
+  destruct (Mem.alloc m3 0 (sizeof ge Node_ty)) as (m4 & b4) eqn: A4.
+  destruct (Mem.alloc m4 0 (sizeof ge List_box)) as (m5 & b5) eqn: A5.
+  destruct (Mem.alloc m5 0 (sizeof ge Tbox_int)) as (m6 & b6) eqn: A6.
+  exploit alloc_rule. eapply A1. lia. vm_compute. congruence.
+  instantiate (1 := Separation.pure True). simpl. auto.
+  intros PM1.
+  exploit alloc_rule. eapply A2. lia. vm_compute. congruence.
+  eapply PM1. intros PM2.
+  exploit alloc_rule. eapply A3. lia. vm_compute. congruence.
+  eapply PM2. intros PM3.
+  exploit alloc_rule. eapply A4. lia. vm_compute. congruence.
+  eapply PM3. intros PM4.
+  exploit alloc_rule. eapply A5. lia. vm_compute. congruence.
+  eapply PM4. intros PM5.
+  exploit alloc_rule. eapply A6. lia. vm_compute. congruence.
+  eapply PM5. intros PM6.
+  (* store the first param *)
+  exploit (storev_rule Mptr m6 b1 0 v (fun _ => True) (eq (Val.load_result Mptr v))).
+  do 4 eapply sep_drop in PM6.
+  eapply sep_swap12 in PM6.
+  eapply range_contains with (ofs := 0).  rewrite Z.add_0_l. eapply PM6.
+  eapply Z.divide_0_r. eauto.
+  intros (m7 & STORE1 & PM7).
+  (* store the second param *)
+  exploit (storev_rule Mint32 m7 b2 0 v0 (fun _ => True) (eq (Val.load_result Mint32 v0))).
+  eapply range_contains with (ofs := 0).  rewrite Z.add_0_l. eapply PM7.
+  eapply Z.divide_0_r. eauto.
+  intros (m8 & STORE2 & PM8).
+  do 2 eexists.
+  econstructor. eapply find_args_params_norepet.
+  - repeat (econstructor; eauto).
+  - econstructor. reflexivity.
+    econstructor. reflexivity. eauto.
+    econstructor. reflexivity.
+    econstructor. reflexivity. eauto.
+    econstructor.
+Qed.
 
-Lemma function_entry_hash_progress: forall vl m1,
+Lemma function_entry_hash_progress: forall vl m,
     length_of_args hash = length vl ->
-  exists e m2, function_entry ge hash_func vl m1 e m2.
-Admitted.
+  exists e m2, function_entry ge hash_func vl m e m2.
+Proof.
+  intros. destruct vl; inv H. destruct vl; inv H1. destruct vl; inv H0.
+  destruct (Mem.alloc m 0 (sizeof ge type_int32s)) as (m1 & b1) eqn: A1.
+  destruct (Mem.alloc m1 0 (sizeof ge type_int32u)) as (m2 & b2) eqn: A2.
+  destruct (Mem.alloc m2 0 (sizeof ge type_int32u)) as (m3 & b3) eqn: A3.
+  exploit alloc_rule. eapply A1. lia. vm_compute. congruence.
+  instantiate (1 := Separation.pure True). simpl. auto.
+  intros PM1.
+  exploit alloc_rule. eapply A2. lia. vm_compute. congruence.
+  eapply PM1. intros PM2.
+  exploit alloc_rule. eapply A3. lia. vm_compute. congruence.
+  eapply PM2. intros PM3.
+  (* store the first param *)
+  exploit (storev_rule Mint32 m3 b1 0 v (fun _ => True) (eq (Val.load_result Mint32 v))).
+  do 1 eapply sep_drop in PM3.
+  eapply sep_swap12 in PM3.
+  eapply range_contains with (ofs := 0).  rewrite Z.add_0_l. eapply PM3.
+  eapply Z.divide_0_r. eauto.
+  intros (m4 & STORE1 & PM4).
+  (* store the second param *)
+  exploit (storev_rule Mint32 m4 b2 0 v0 (fun _ => True) (eq (Val.load_result Mint32 v0))).
+  eapply range_contains with (ofs := 0).  rewrite Z.add_0_l. eapply PM4.
+  eapply Z.divide_0_r. eauto.
+  intros (m5 & STORE2 & PM5).
+  do 2 eexists.
+  econstructor. eapply hash_args_params_norepet.
+  - repeat (econstructor; eauto).
+  - econstructor. reflexivity.
+    econstructor. reflexivity. eauto.
+    econstructor. reflexivity.
+    econstructor. reflexivity. eauto.
+    econstructor.
+Qed.
+  
 
 
 (* Compute (variant_field_offset (proj1_sig build_ce_ok) Nil [Member_plain Nil Tunit; Member_plain Cons Node_ty]). *)
@@ -494,8 +606,18 @@ Lemma sound_call_cont: forall f k,
     (* Actually ck is the same as k *)
     exists ck, call_cont k = Some ck
           /\ sound_cont f ck.
-Admitted.
-
+Proof.
+  intros. unfold sound_cont in H.
+  destruct ident_eq in H; subst.
+  - inv H.
+    + eexists. split; eauto.
+      reflexivity. vm_compute. eapply sound_find_Kstop.
+    + simpl. eexists. split; eauto.
+      econstructor; eauto.
+  - destruct ident_eq in H; subst; try contradiction.
+    + inv H. eexists. split; eauto. reflexivity. econstructor.
+Qed.
+    
 Lemma call_cont_num_frames_eq: forall k1 k2,
     call_cont k1 = Some k2 ->
     num_frames_cont k1 = num_frames_cont k2.
@@ -538,11 +660,9 @@ Proof.
     (* call drop_in_place_List (contradiction) *)
     + inv H. simpl in H11. congruence.
     (* (* call remove function (not supported for now) *) *)
-    (* + admit. *)
     (* call process_ext (contradiction) *)    
     + inv H.
     (* (* call empty_list function (not supported for now) *) *)
-    (* + admit. *)
     (* call free (contradiction) *)
     + inv H.
     (*  call drop_in_place_Node (contradiction) *)
@@ -553,7 +673,6 @@ Proof.
     (* call malloc (contradiction) *)
     + inv H.
     (* (* call insert (not suppored) *) *)
-    (* + admit. *)
     + inv FINDF.
   - simpl in VQ. simpl in NFLINK. rewrite hmap_senv_eq in NFLINK. congruence.
 Qed.
