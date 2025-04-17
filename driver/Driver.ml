@@ -20,6 +20,8 @@ open Frontend
 open Assembler
 open Linker
 open Diagnostics
+open Compiler
+open PrintRustlight
 
 (* Name used for version string etc. *)
 let tool_name = "C verified compiler"
@@ -46,6 +48,7 @@ let compile_c_file sourcename ifile ofile =
   set_dest Cprint.destination option_dparse ".parsed.c";
   set_dest PrintCsyntax.destination option_dcmedium ".compcert.c";
   set_dest PrintClight.destination option_dclight ".light.c";
+  set_dest PrintRustlight.destination option_drustlight ".rustlight.c";
   set_dest PrintCminor.destination option_dcminor ".cm";
   set_dest PrintRTL.destination option_drtl ".rtl";
   set_dest Regalloc.destination_alloctrace option_dalloctrace ".alloctrace";
@@ -327,6 +330,7 @@ let cmdline_actions =
   Exact "-dparse", Set option_dparse;
   Exact "-dc", Set option_dcmedium;
   Exact "-dclight", Set option_dclight;
+  Exact "-drustlight", Set option_drustlight;
   Exact "-dcminor", Set option_dcminor;
   Exact "-drtl", Set option_drtl;
   Exact "-dltl", Set option_dltl;
@@ -338,6 +342,7 @@ let cmdline_actions =
     option_dparse := true;
     option_dcmedium := true;
     option_dclight := true;
+    option_drustlight := true;
     option_dcminor := true;
     option_drtl := true;
     option_dltl := true;
