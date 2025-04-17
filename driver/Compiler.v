@@ -113,6 +113,9 @@ Require ElaborateDropProof.
 Require Import MoveCheckingDomain.
 Require MoveCheckingSafe.
 
+(** clight2rust **)
+Require Clight2Rustlight.
+
 (** Open safety *)
 Require Import SmallstepSafe SmallstepLinkingSafe.
 Require Import InvariantAlgebra.
@@ -248,6 +251,11 @@ Definition transf_rust_program (p: Rustsyntax.program) : res Asm.program :=
   @@@ time "Generate Clight and insert drop glue" Clightgen.transl_program
   @@@ transf_clight_program.
 
+(** c2rust-light **)
+Definition transf_clight2rustlight_program (p : Clight.program) : res Rustlight.program :=
+  OK p 
+  @@@ time "clight to rustlight" Clight2Rustlight.transl_program.
+  
 (* For ownership language, we just consider Rustlight as the source
 language and remove the borrow checking passes. This compilation is
 verified. *)

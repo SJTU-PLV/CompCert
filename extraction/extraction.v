@@ -182,6 +182,8 @@ Cd "extraction".
 
 Separate Extraction
    Compiler.transf_c_program Compiler.transf_cminor_program
+   (* clight2rustlight *)
+   Compiler.transf_clight2rustlight_program
    (* rust *)
    Compiler.transf_rust_program MoveChecking.move_check_program
    (* Some functions are needed in Ocaml side *)
