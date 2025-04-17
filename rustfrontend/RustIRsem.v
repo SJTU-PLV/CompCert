@@ -429,7 +429,7 @@ Inductive step_mem_error : state -> Prop :=
     step_mem_error (State f (Sassign p e) k le m)
 | step_assign_error2: forall f e p k le m b ofs,
     eval_place ge le m p b ofs ->
-    eval_expr_mem_error ge le m e ->
+    eval_expr_mem_error ge le m ge e ->
     step_mem_error (State f (Sassign p e) k le m)
 | step_assign_error3: forall f e p k le m b ofs v v1 ty,
     eval_place ge le m p b ofs ->
@@ -453,7 +453,7 @@ Inductive step_mem_error : state -> Prop :=
     field_tag fid (co_members co) = Some tag ->
     Mem.storev Mint32 m (Vptr b ofs) (Vint (Int.repr tag)) = Some m' ->    
     (* error in evaluating the rhs *)
-    eval_expr_mem_error ge le m' e ->
+    eval_expr_mem_error ge le m' ge e ->
     step_mem_error (State f (Sassign_variant p enum_id fid e) k le m)
 | step_assign_variant_error4: forall f e p k le m1 m2 b ofs enum_id fid v v1 ty co tag orgs,
     typeof_place p = Tvariant orgs enum_id ->
@@ -492,7 +492,7 @@ Inductive step_mem_error : state -> Prop :=
     Mem.alloc m1 (- size_chunk Mptr) (sizeof ge (typeof e)) = (m2, b) ->
     Mem.store Mptr m2 b (- size_chunk Mptr) (Vptrofs (Ptrofs.repr (sizeof ge (typeof e)))) = Some m3 ->
     (* error in evaluating the rhs *)
-    eval_expr_mem_error ge le m3 e ->
+    eval_expr_mem_error ge le m3 ge e ->
     step_mem_error (State f (Sbox p e) k le m1)
 | step_box_error3: forall le e p k m1 m2 m3 f b ty v v1,
     typeof_place p = Tbox ty ->
@@ -573,7 +573,7 @@ Inductive step_mem_error : state -> Prop :=
 (*     Mem.free_list m (blocks_of_env ge le) = None -> *)
 (*     step_mem_error (State f (Sreturn None) k le m) *)
 | step_return_1_error1: forall f p k le m,
-    eval_expr_mem_error ge le m (Epure (Eplace p (typeof_place p))) ->
+    eval_expr_mem_error ge le m ge (Epure (Eplace p (typeof_place p))) ->
     step_mem_error (State f (Sreturn p) k le m)
 | step_return_2_error2: forall f p k le m v,
     eval_expr ge le m ge (Epure (Eplace p (typeof_place p))) v ->
@@ -592,7 +592,7 @@ Inductive step_mem_error : state -> Prop :=
     assign_loc_mem_error ge ty m b ofs v ->
     step_mem_error (Returnstate v (Kcall (Some p) f e k) m)
 | step_ifthenelse_error:  forall f a s1 s2 k e m,
-    eval_expr_mem_error ge e m a ->
+    eval_expr_mem_error ge e m ge a ->
     step_mem_error (State f (Sifthenelse a s1 s2) k e m)
 .
          

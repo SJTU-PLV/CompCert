@@ -120,6 +120,8 @@ Rust side. Other functions in the C module are static. *)
     (SYM: Genv.invert_symbol w.(hmap_senv) b = Some fid)
     (** we only permit process function be called from Rust *)
     (ONLYPROCESS: fid = process)
+    (TARGSEQ: targs = (Tcons (Tbox type_int32s) Tnil))
+    (TRESEQ: tres = Tbox type_int32s)
     (PRECOND: linked_list_args_pre_conds w.(hmap_hash_range) fid vargs)
     (FIDEQ: w.(hmap_callee) = inr fid)
     (LEN: length_of_args fid = length vargs),

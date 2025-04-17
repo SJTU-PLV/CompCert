@@ -14,6 +14,7 @@ Require Import Clight HashMap LinkedList HashMapCommon.
 Require Import Separation.
 Require Import MoveCheckingFootprint MoveCheckingDomain.
 Require Import MoveCheckingSafe LanguageInterface.
+Require Import Clightgenproof.
 
 Local Open Scope error_monad_scope.
 Local Open Scope sep_scope.
@@ -110,6 +111,15 @@ Definition bucket_val_pred m fp v :=
   else
     bucket_val_spec m fp v.
 
+(* similar definition for parameter of process *)
+Inductive process_val_spec m fp : Values.val -> Prop :=
+| process_val_spec_intro: forall v
+    (WTVAL: sem_wt_val ll_ce m fp v)
+    (WTFP: wt_footprint ll_ce Tbox_int fp)
+    (NOREP: list_norepet (footprint_flat fp))
+    (CASTED: RustOp.val_casted v Tbox_int),
+    process_val_spec m fp v.
+
 
   
 Remark sizeof_List_ty: Rusttypes.sizeof ll_ce List_ty = 32.
@@ -131,7 +141,6 @@ Proof.
   destruct H; try contradiction; eauto.
 Qed.  
 
-
 Lemma bucket_val_pred_unchanged_on: forall m1 m2 fp v,
     Mem.unchanged_on (fun b _ => In b (footprint_flat fp)) m1 m2 ->
     bucket_val_pred m1 fp v ->
@@ -141,7 +150,24 @@ Proof.
   unfold bucket_val_pred in *. destruct Val.eq; auto.
   eapply bucket_val_spec_unchanged_on; eauto.
 Qed.
-  
+
+Lemma process_val_spec_unchanged_on: forall m1 m2 fp v,
+    Mem.unchanged_on (fun b _ => In b (footprint_flat fp)) m1 m2 ->
+    process_val_spec m1 fp v ->
+    process_val_spec m2 fp v.
+Proof.
+  intros until v. intros UNC PRED.  
+  inv PRED. econstructor; eauto.
+  eapply sem_wt_val_unchanged_blocks. eauto.
+  eapply Mem.unchanged_on_implies. eauto.
+  intros. simpl.
+  inv WTFP. inv WTVAL. simpl in WF. congruence.
+  inv WTVAL.
+  simpl in H. simpl. destruct H; try contradiction; eauto.
+  destruct H; try contradiction; eauto.
+Qed.  
+
+
 Program Definition bucket_pred (b: block) (pos: Z) (fp: footprint) : massert :=
   {| m_pred m := m |= contains Mptr b pos (bucket_val_pred m fp)
                    (* disjointness: it is necessary because the
@@ -176,6 +202,36 @@ Next Obligation.
       eapply sem_wt_val_footprint_valid_block with (ce := ll_ce) (v:=H3); eauto.
       eapply ll_ce_composite_members_norepet.
 Defined.
+
+Program Definition process_val_pred (b: block) (pos: Z) (fp: footprint) : massert :=
+  {| m_pred m := m |= contains Mptr b pos (process_val_spec m fp)
+                   /\ ~ In b (footprint_flat fp);
+    m_footprint b1 ofs1 := (b = b1 /\ pos <= ofs1 < pos + size_chunk Mptr)
+                           \/ In b1 (footprint_flat fp); |}.
+Next Obligation.
+  destruct H2.
+  repeat apply conj; auto.
+  - red. intros. erewrite <- Mem.unchanged_on_perm; eauto.
+    simpl. left. auto.
+    eapply Mem.perm_valid_block with (ofs := pos). eapply H2.
+    lia.
+  - exists H3. split.
+    + eapply Mem.load_unchanged_on; eauto.
+      intros. simpl. left; auto.
+    + eapply process_val_spec_unchanged_on.
+      eapply Mem.unchanged_on_implies. eauto.
+      intros. simpl. right. auto. auto.
+Defined.
+Next Obligation.
+  destruct H0.
+  - destruct H0; subst.
+    eapply Mem.valid_access_valid_block.
+    eapply Mem.valid_access_implies. eauto. constructor.
+  - inv H6.
+    eapply sem_wt_val_footprint_valid_block with (ce := ll_ce) (v:=H3); eauto.
+    eapply ll_ce_composite_members_norepet.
+Defined.
+
 
 Lemma bucket_val_spec_inv: forall m fp v,
     bucket_val_spec m fp v ->
@@ -232,12 +288,41 @@ Proof.
     simpl. right. eauto.
 Qed.
 
+(* This predicate is used to prove accessibility of rs_own for the
+guarantee condition. It describes the properties of the footprint
+owned by the environment. *)
+Program Definition rs_own_acc_pred (m: mem) (fp: footprint) (Hm: Mem.sup_include (footprint_flat fp) (Mem.support m)) : massert :=
+  {| m_pred m' := Mem.unchanged_on (fun b _ => ~ In b (footprint_flat fp)) m m';
+    m_footprint b ofs := In b (Mem.support m) /\ ~ In b (footprint_flat fp) |}.
+Next Obligation.
+  econstructor.
+  - eapply Mem.sup_include_trans. eapply H. eapply H0.
+  - intros. split.
+    + intros. eapply H in H3; eauto.
+      eapply H0. split; eauto.
+      eapply Mem.perm_valid_block. eauto. auto.
+    + intros. eapply H; eauto.
+      eapply H0; eauto. eapply Mem.unchanged_on_support. eauto. auto.
+  - intros.
+    etransitivity.
+    erewrite Mem.unchanged_on_contents; eauto.
+    simpl. split; auto. eapply Mem.perm_valid_block. eauto.
+    erewrite <- Mem.unchanged_on_perm; eauto. eapply Mem.perm_valid_block. eauto.
+    erewrite Mem.unchanged_on_contents; eauto.
+Defined.
+Next Obligation.
+  eapply H. eauto.
+Defined.
+
 Section SOUNDNESS.
 
 Variable N : nat.
 
 Context (se : Genv.symtbl).
-(* Context (w: hmap_world). *)
+Context (w: hmap_world).
+
+Context (rw: rs_own_world).
+
 
 Let ge := globalenv se hash_map_prog.
 
@@ -260,6 +345,17 @@ Lemma N_in_range:
 Proof.
   assert (10 < Int.max_unsigned) by reflexivity. lia.
 Qed.
+
+Definition rw_mem : mem :=
+  match rw with
+  | rsw _ _ m _ => m
+  end.
+
+Definition rw_fp : flat_footprint :=
+  match rw with
+  | rsw _ fp _ _ => fp
+  end.
+
 
 (** Combine it with the wf_senv in LinkedListSafe *)
 Hypothesis wf_senv: wf_senv se.
@@ -480,6 +576,31 @@ Inductive call_find_bucket: state -> Prop :=
  
 
 Inductive sound_state : state -> Prop :=
+(* callstate in process function *)
+| hmap_call_process: forall bf b 
+    (SYMB: Genv.invert_symbol se bf = Some process)
+    (WTVAL: sem_wt_val ll_ce rw_mem (fp_box b 4 (fp_scalar Rusttypes.type_int32s)) (Vptr b Ptrofs.zero))
+    (FPEQ: list_equiv rw_fp (footprint_flat (fp_box b 4 (fp_scalar Rusttypes.type_int32s))))
+    (FUNID: hmap_callee w = inr process),
+    sound_state (Callstate (Vptr bf Ptrofs.zero) [Vptr b Ptrofs.zero] Kstop rw_mem)
+| hmap_process_internal: forall b_val m e s t n fp Hm
+    (MPRED: m |= process_val_pred b_val 0 fp
+              ** rs_own_acc_pred rw_mem fp Hm)
+    (FPEQ: footprint_flat fp = rw_fp)
+    (STAR: starNf step1 num_frames ge n (State process_func (fn_body process_func) Kstop e (PTree.empty Values.val) m) t s)
+    (ENV: e = PTree.set val (b_val, tptr tint) empty_env)
+    (NOTCALLRET: not_call_return_state s)
+    (FUNID: hmap_callee w = inr process)
+    (RAN: (0 <= n <= 5)%nat),
+    sound_state s
+| hmap_return_process: forall b fp m Hm
+    (MPRED: m |= rs_own_acc_pred rw_mem fp Hm)
+    (WTVAL: sem_wt_val ll_ce rw_mem (fp_box b 4 (fp_scalar Rusttypes.type_int32s)) (Vptr b Ptrofs.zero))
+    (FPEQ: list_equiv rw_fp (footprint_flat (fp_box b 4 (fp_scalar Rusttypes.type_int32s))))
+    (FUNID: hmap_callee w = inr process),
+    sound_state (Returnstate (Vptr b Ptrofs.zero) Kstop m)
+
+(* We need to maintain an invariant that hmap_operate_on is an internal function *) 
 | hmap_operate_on_callstate: forall b1 b2 kv k m
     (CALL: call_hmap_operate_on (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m))
     (CONT: hmap_operate_on_cont k),
@@ -725,6 +846,12 @@ Lemma hash_map_external: forall s q,
 Proof.
   intros s q_c SINV ATEXT. inv ATEXT. unfold f in *.
   inv SINV; try simpl in NOTCALLRET; try contradiction.
+  - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal process_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYMB.
+      reflexivity. }
+    rewrite H in FIND. inv FIND.    
   - inv CALL. 
     assert (FIND: Genv.find_funct ge (Vptr b1 Ptrofs.zero) = Some (Internal hmap_operate_on_func)).
     { simpl. destruct Ptrofs.eq_dec; try congruence.
@@ -879,6 +1006,59 @@ Proof.
       intros. simpl. auto.
 Qed.
 
+  
+Lemma initial_preservation_progress: forall q_rs q_c,
+    valid_query (hash_map_sem se) q_c = true ->
+    hmap_senv w = se ->
+    cc_rust_c_mq q_rs q_c ->
+    rs_own_query rw q_rs ->
+    vq_hash_map w q_rs ->
+    exists s, initial_state ge q_c s
+         /\ (forall s, initial_state ge q_c s -> sound_state s).
+Proof.
+  intros until q_c. intros VQ SEEQ RC RQ HQ.
+  inv HQ.
+  Strategy opaque [linked_list_mod].
+  - inv RC. simpl in VQ. rewrite SEEQ in *.
+    setoid_rewrite VQ in NFHMAP. congruence.
+  - inv RC.
+    assert (MEQ: rw_mem = m).
+    { unfold rw_mem. inv RQ. auto. }    
+    inv RQ.
+    unfold signature_of_rust_signature. simpl.
+    assert (FIND: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some (Internal process_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec.
+      rewrite <- SEEQ.
+      rewrite SYM.
+      reflexivity. }
+    generalize FIND. intros FIND1.
+    simpl in FIND. rewrite dec_eq_true in FIND.
+    rewrite <- SEEQ in FIND.
+    setoid_rewrite FINDF in FIND. inv FIND.    
+    eexists. split.
+    + replace {| sig_args := [Tptr]; sig_res := Tptr; sig_cc := tcc |} with (signature_of_type (to_ctypelist (Rusttypes.Tcons (Tbox Rusttypes.type_int32s) Rusttypes.Tnil)) (to_ctype (Tbox Rusttypes.type_int32s)) tcc).
+      econstructor. eauto. eauto.
+      eapply RustOp.val_casted_list_to_ctype. eauto.
+      reflexivity.
+    + intros. inv H0.
+      rewrite FIND1 in H8. inv H8.
+      inv WTFP. inv H6.
+      inv SEMWT. inv H7. inv H4; simpl in *; try congruence.
+      inv H5.
+      inv H5.
+      inv WT. inv WTLOC.
+      inv WTLOC.
+      inv WT. inv MODE.
+      eapply hmap_call_process; eauto.
+      rewrite <- SEEQ. eauto.
+      econstructor. econstructor. reflexivity. eauto.
+      econstructor. eauto. eauto. auto.
+      unfold rw_fp. rewrite <- H.
+      simpl in EQ. 
+      simpl. auto.
+Qed.      
 
 Lemma firstn_app_3 {A: Type}: forall (l1 l2 : list A),
     firstn (Datatypes.length l1) (l1 ++ l2) = l1.
@@ -888,7 +1068,6 @@ Proof.
   eapply app_nil_r.
 Qed.
 
-  
 
 Lemma step_preservation_progress: forall s,
     sound_state s ->
@@ -897,6 +1076,13 @@ Lemma step_preservation_progress: forall s,
                sound_state s').
 Proof.
   intros s INV. inv INV.
+  (* call process *)
+  - admit.
+  (* process internal *)
+  - admit.
+  (* return process *)
+  - admit.
+  
   (* call hmap_process *)
   - inv CALL.
     assert (FIND: Genv.find_funct ge (Vptr b1 Ptrofs.zero) = Some (Internal hmap_operate_on_func)).
@@ -1508,8 +1694,8 @@ Proof.
       2: econstructor. reflexivity.
       eauto. eauto. lia. auto. simpl. auto. lia.
 
+Admitted.
 
-Qed.
       
 End SOUNDNESS.
 
@@ -1521,7 +1707,7 @@ Lemma hash_map_module_safe:
 Proof.
   red. econstructor.
   (* cannot specify msafek_invariant for unknown reason *)
-  eapply (Module_type_safe_components li_c li_c hash_map_sem ((hmap_inv @@ rs_own) @! cc_rust_c) ((hmap_inv @@ rs_own) @! cc_rust_c) SIF (fun se w => sound_state 10%nat se)).
+  eapply (Module_type_safe_components li_c li_c hash_map_sem ((hmap_inv @@ rs_own) @! cc_rust_c) ((hmap_inv @@ rs_own) @! cc_rust_c) SIF (fun se '((w, (se', rw)), _) s => sound_state 10%nat se w rw s)).
   intros se ((w_hm, (?, w_rs)) & ?) SYMB VSE.
   inv SYMB. destruct H. inv H0. inv H.
   inv H0. inv H1. rename H2 into SYM1.
@@ -1531,7 +1717,8 @@ Proof.
   (* progress *)
   - intros. left. eapply step_preservation_progress; eauto.
   (* initial safe *)
-  - admit.
+  - intros. inv H0. inv H1. inv H0.
+    eapply initial_preservation_progress; eauto.
   (* external safe *)
   - intros.
     exploit hash_map_external. reflexivity.
@@ -1551,5 +1738,11 @@ Proof.
     + intros. inv H1. inv H2. inv H1. inv H4. inv H1.
       eapply A5; eauto.
   (* final state *)
-  - admit.
-Admitted.
+  - intros. inv H0. inv H;try (simpl in NOTCALLRET; contradiction).
+    + admit.
+    + inv CONT.
+    (** How to prevent returning from hmap_operate_on  *)
+    + admit.
+    + inv CONT.
+    + inv CONT. inv CONT0.
+Admitted.    
