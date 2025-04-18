@@ -96,7 +96,7 @@ Definition process_func := {|
   fn_temps := nil;
   fn_body := Ssequence
                (Sassign (Ederef (Evar val (tptr tint)) tint)
-                  (Ebinop Oxor (Ederef (Evar val (tptr tint)) tint) (Econst_int (Int.repr 42) tint) (tptr tint)))
+                  (Ebinop Oxor (Ederef (Evar val (tptr tint)) tint) (Econst_int (Int.repr 42) tint) tint))
                (Sreturn (Some (Evar val (tptr tint))));
 |}.
 

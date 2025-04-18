@@ -586,7 +586,7 @@ Inductive sound_state : state -> Prop :=
 | hmap_process_internal: forall b_val m e s t n fp Hm
     (MPRED: m |= process_val_pred b_val 0 fp
               ** rs_own_acc_pred rw_mem fp Hm)
-    (FPEQ: footprint_flat fp = rw_fp)
+    (FPEQ: list_equiv rw_fp (footprint_flat fp))
     (STAR: starNf step1 num_frames ge n (State process_func (fn_body process_func) Kstop e (PTree.empty Values.val) m) t s)
     (ENV: e = PTree.set val (b_val, tptr tint) empty_env)
     (NOTCALLRET: not_call_return_state s)
@@ -595,8 +595,8 @@ Inductive sound_state : state -> Prop :=
     sound_state s
 | hmap_return_process: forall b fp m Hm
     (MPRED: m |= rs_own_acc_pred rw_mem fp Hm)
-    (WTVAL: sem_wt_val ll_ce rw_mem (fp_box b 4 (fp_scalar Rusttypes.type_int32s)) (Vptr b Ptrofs.zero))
-    (FPEQ: list_equiv rw_fp (footprint_flat (fp_box b 4 (fp_scalar Rusttypes.type_int32s))))
+    (WTVAL: sem_wt_val ll_ce m fp (Vptr b Ptrofs.zero))
+    (FPEQ: list_equiv rw_fp (footprint_flat fp))
     (FUNID: hmap_callee w = inr process),
     sound_state (Returnstate (Vptr b Ptrofs.zero) Kstop m)
 
@@ -819,6 +819,52 @@ Proof.
   auto.
 Qed.  
 
+
+Lemma function_entry_process: forall m b ofs fp Hm,
+    process_val_spec m fp (Vptr b ofs) ->
+    exists b1 m', 
+      function_entry1 ge process_func [Vptr b ofs] m (PTree.set LinkedList.val (b1, tptr tint) empty_env) (PTree.empty Values.val) m'
+      /\ m' |= process_val_pred b1 0 fp ** rs_own_acc_pred m fp Hm.
+Proof.
+  intros until Hm. intros WTVAL.
+  destruct (Mem.alloc m 0 (size_chunk Mptr)) eqn: ALLOC1.
+  exploit alloc_rule. eapply ALLOC1. lia. vm_compute. congruence.
+  instantiate (1 := rs_own_acc_pred m fp Hm). simpl. eapply Mem.unchanged_on_refl.
+  intros MP1.
+  exploit process_val_spec_unchanged_on.
+  eapply Mem.alloc_unchanged_on. eauto. eauto. intros SPEC1.
+  exploit storev_rule. eapply range_contains with (ofs:=0) (chunk:= Mptr). eauto.
+  eapply Z.divide_0_r.  
+  instantiate (1 := Vptr b ofs). instantiate (1 := eq (Vptr b ofs)).
+  reflexivity.
+  intros (m2 & STORE1 & MP3).
+  exists p, m2. split.
+  - econstructor.
+    + eapply proj_sumbool_true with (a:= list_norepet_dec ident_eq [LinkedList.val]); eauto.
+    + econstructor. eauto. simpl. 
+      econstructor.
+    + econstructor. reflexivity.
+      econstructor. reflexivity. eauto.
+      econstructor.
+    + reflexivity.
+  - simpl. simpl in MP3.
+    destruct MP3 as ((A1 & A2 & (v & A3 & A4)) & A5 & A6).
+    subst.
+    assert (NIN: ~ In p (footprint_flat fp)).
+    { intro. eapply Mem.fresh_block_alloc. eauto.
+      eapply Hm. eauto. }    
+    repeat apply conj; eauto. lia. lia.
+    eapply A2. apply Z.divide_0_r.
+    exists (Vptr b ofs). split; auto.
+    (* process_val_spec *)
+    eapply process_val_spec_unchanged_on; eauto.
+    eapply Mem.store_unchanged_on. eauto. 
+    intros. auto.
+    red in A6. simpl in A6.
+    red. simpl. intros. destruct H.
+    + destruct H; subst. eapply A6; eauto.
+    + destruct H0. congruence.
+Qed.
 
 (* Soundness of at_external, using (I @@ rs_own @! cc_rust_c) as the interface *)
 
@@ -1077,11 +1123,197 @@ Lemma step_preservation_progress: forall s,
 Proof.
   intros s INV. inv INV.
   (* call process *)
-  - admit.
+  - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal process_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYMB.
+      auto. }
+    assert (Hm': Mem.sup_include (footprint_flat (fp_box b 4 (fp_scalar Rusttypes.type_int32s))) (Mem.support rw_mem)).
+    { unfold rw_mem, rw_fp in *. destruct rw.      
+      eapply Mem.sup_include_trans. 2: eauto. red. intros.
+      inv H. 
+      eapply FPEQ. simpl. eauto. inv H0. }
+    exploit function_entry_process.
+    econstructor; eauto. econstructor. econstructor. reflexivity.
+    econstructor. intro. inv H. econstructor.
+    econstructor.
+    instantiate (1 := Hm').
+    intros (b_val & m1 & ENTRY & MPRED1).
+    split.
+    + red. do 2 right.
+      do 2 eexists. econstructor; eauto.
+    + intros. inv H; rewrite FIND in FIND0; inv FIND0.
+      exploit function_entry1_det. eauto. eapply ENTRY.
+      intros (A1 & A2 & A3). subst.
+      eapply hmap_process_internal.
+      eauto. eauto. econstructor.
+      reflexivity. reflexivity. eauto.
+      lia.
+      
   (* process internal *)
-  - admit.
+  - generalize MPRED as MPRED1. intros.
+    generalize STAR as STAR1. intros.
+    inv STAR1.
+    (* evaluate Ssequence *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+      + intros. eapply hmap_process_internal with (n:=1%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    exploit loadv_rule. eapply MPRED1.      
+    intros (v & LOAD1 & SPEC1). inv SPEC1.
+    inv WTFP. inv WTVAL. simpl in WF; try congruence.
+    inv WTVAL.
+    inv WT. inv WTLOC.
+    inv WTLOC. inv MODE. inv WT.
+    (** store xor value to *val. For now, we just prove it here and
+      does not write a separate lemma. *)
+    edestruct Mem.valid_access_store with (chunk:= Mint32) (v:= (Vint (Int.xor n (Int.repr 42)))) as (m2 & STORE1). eapply Mem.valid_access_implies.
+    split. rewrite Z.add_0_l.
+    red. intros. eapply VALID. rewrite size_chunk_Mptr in *.
+    simpl in H.
+    destruct Archi.ptr64; lia. eapply Z.divide_0_r. econstructor.
+    (* use sep_preserved *)
+    exploit (sep_preserved m m2). eapply MPRED1.
+    { simpl. intros ((A1 & A2 & (v1 & A3 & A4)) & A5).
+      (* unchanged on *)
+      exploit Mem.store_unchanged_on. eauto.
+      instantiate (1 := fun b _ => b = b_val).
+      intros. intro. eapply A5. auto. intros UNC.
+      assert (VB1: Mem.valid_block m b_val).
+      { eapply Mem.valid_access_valid_block.
+        eapply Mem.valid_access_implies. eauto. constructor. }
+      assert (VB2: Mem.valid_block m b).
+      { eapply Mem.valid_access_valid_block.          
+        eapply Mem.valid_access_implies.
+        eapply Mem.load_valid_access; eauto. constructor. }
+      repeat apply conj; auto. lia. lia.
+      red. intros. erewrite <- Mem.unchanged_on_perm.
+      eapply A2. auto. eauto. reflexivity. auto.
+      eapply Z.divide_0_r.
+      (* load and sem_wt_val *)
+      exists (Vptr b Ptrofs.zero). split.
+      erewrite Mem.load_unchanged_on_1; eauto.
+      reflexivity.
+      econstructor; eauto.
+      econstructor. econstructor. reflexivity.
+      eapply Mem.load_store_same; eauto.
+      econstructor; eauto.
+      red. intros. eapply Mem.perm_store_1; eauto.
+      erewrite Mem.load_unchanged_on_1. eauto.
+      eapply Mem.store_unchanged_on. eauto.
+      instantiate (1 := fun b1 ofs1 => b1 <> b \/ ofs1 < 0).
+      red. intros. destruct H0; try congruence. lia.
+      auto. 
+      simpl. intros. lia. auto.
+      econstructor. econstructor. reflexivity. }
+    { intros MP. eapply m_invar. eapply MP.
+      simpl. eapply Mem.store_unchanged_on. eauto.
+      simpl. intros. intro. destruct H0. eapply H1. auto. }
+    intros MPRED2.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.  
+    (* evaluate Sassign *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+        econstructor. econstructor. econstructor. reflexivity.
+        econstructor. reflexivity. eauto.
+        econstructor. econstructor. econstructor. econstructor.
+        econstructor. reflexivity. econstructor. reflexivity.
+        eauto. econstructor. reflexivity.
+        eauto.
+        econstructor. reflexivity. reflexivity.
+        econstructor. reflexivity.
+        replace (Vint (cast_int_int I32 Signed (Int.xor (cast_int_int I32 Signed n) (cast_int_int I32 Signed (Int.repr 42))))) with (Vint (Int.xor n (Int.repr 42))).
+        eauto. reflexivity.
+      + intros. eapply hmap_process_internal with (n:=2%nat). eapply MPRED1. eauto.
+        2: eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. eauto. lia. }
+    inv STEP.
+    (* inversion of assignment *)
+    inv H8. inv H4. inv H.
+    2: { inv H3. }
+    inv H6. inv H0; try inv H2. inv H.
+    setoid_rewrite LOAD1 in H1. inv H1.
+    inv H9.
+    2: { inv H. }
+    inv H4. inv H. inv H0; inv H.
+    inv H8. inv H.
+    2: { inv H4. }
+    inv H9. inv H0; try inv H3. inv H.
+    setoid_rewrite LOAD1 in H2. inv H2.
+    setoid_rewrite LOAD in H1. inv H1.
+    inv H5.
+    2: { inv H. }
+    inv H6.
+    assert (XOREQ: (sem_xor (Vint n) tint (Vint (Int.repr 42)) tint m) = (Some (Vint (Int.xor n (Int.repr 42))))) by reflexivity.
+    rewrite XOREQ in *.
+    inv H10. 
+    inv H11. inv H. setoid_rewrite STORE1 in H0. inv H0.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate skip_seq *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+      + intros. eapply hmap_process_internal with (n:=3%nat). eapply MPRED1. all: eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    2: { simpl in H6. contradiction. }
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* free_list and return *)
+    exploit loadv_rule. eapply MPRED2. intros (v2 & LOAD2 & SPEC2).
+    inv SPEC2.
+    inv WTFP. inv WTVAL. 
+    inv WT. inv WTLOC.
+    inv MODE. inv WT.
+    exploit (free_rule Mptr m' loc2 0).    
+    eapply sep_imp. eapply MPRED2.
+    instantiate (1 := fun _ => True).
+    econstructor. intros. destruct H. eapply contains_imp. eauto. eauto.
+    intros. destruct H. econstructor. auto.
+    reflexivity.
+    intros (m3 & FREE1 & MPRED3).
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+        econstructor. econstructor. reflexivity.
+        econstructor. reflexivity. eauto.
+        simpl. reflexivity.
+        simpl. setoid_rewrite FREE1. eauto.
+      + intros. inv H.
+        (* inversion of return value *)
+        inv H8. inv H.
+        2: { inv H3. }
+        inv H6. inv H0; inv H.
+        setoid_rewrite LOAD2 in H1. inv H1. inv H9.
+        simpl in H10. setoid_rewrite FREE1 in H10. inv H10.        
+        eapply hmap_return_process; eauto.
+        (* prove sem_wt_val after free operation *)
+        eapply sem_wt_val_unchanged_blocks.
+        2: { eapply Mem.free_unchanged_on. eauto. 
+             simpl. intros. intro. destruct H0.
+             - destruct H0; try contradiction. subst.
+               simpl in MPRED2.
+               destruct MPRED2 as (((A1 & A2 & A3) & A4) & A5).
+               eapply A4. auto.
+             - destruct H0; try contradiction. subst.
+               simpl in MPRED2.
+               destruct MPRED2 as (((A1 & A2 & A3) & A4) & A5).
+               eapply A4. auto. }
+        econstructor. econstructor. reflexivity.
+        eauto. econstructor. eauto. eauto. auto. }
+    inv STEP.
+    inv STAR1. inv NOTCALLRET.
+    inv STEP.
+    
   (* return process *)
-  - admit.
+  - split.
+    + left. eexists. econstructor.
+    + intros. inv H.
   
   (* call hmap_process *)
   - inv CALL.
@@ -1694,8 +1926,7 @@ Proof.
       2: econstructor. reflexivity.
       eauto. eauto. lia. auto. simpl. auto. lia.
 
-Admitted.
-
+Qed.
       
 End SOUNDNESS.
 
