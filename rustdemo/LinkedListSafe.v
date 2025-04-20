@@ -49,14 +49,14 @@ Definition linked_list_sem := semantics linked_list_mod.
 Section SOUNDNESS.
 
 Context (se : Genv.symtbl).
-Context (w: hmap_world).
+Context (w: hmap_world_ext).
 
 Let ge := globalenv se linked_list_mod.
 
 (* The following hypothese are derived from symtbl_inv *)
 Hypothesis wf_senv: wf_senv se.
     
-Hypothesis hmap_senv_eq: w.(hmap_senv) = se.
+Hypothesis hmap_senv_eq: w.(hmap_senv_ext) = se.
 
 (** Local state of find function *)
 
@@ -265,30 +265,30 @@ Inductive sound_state : state -> Prop :=
     difficult if there are lots of mutual call in the current module,
     where we should record the called function ident in the
     continuation predicate *)
-    (FIDEQ: w.(hmap_callee) = inl hash)
-    (PRE: hash_pre_cond_args w.(hmap_hash_range) al),
+    (FIDEQ: w.(hmap_callee_ext) = hash)
+    (PRE: hash_pre_cond_args w.(hmap_hash_range_ext) al),
     sound_state (Callstate v al k m)
 | hash_state_internal: forall v al k m t s1 n
     (CALL: call_func hash (Callstate v al k m))
-    (FIDEQ: w.(hmap_callee) = inl hash)
+    (FIDEQ: w.(hmap_callee_ext) = hash)
     (STAR: starNf step num_frames ge n (Callstate v al k m) t s1)
-    (PRECOND: hash_pre_cond_args w.(hmap_hash_range) al)
+    (PRECOND: hash_pre_cond_args w.(hmap_hash_range_ext) al)
     (NOTCALL: not_call_return_state s1)
     (RAN: (1 <= n <= 11)%nat),
     sound_state s1
 | hash_returnstate: forall v k m
     (CONT: sound_cont hash k)
-    (FIDEQ: w.(hmap_callee) = inl hash)
-    (PRE: hash_post_cond_retv w.(hmap_hash_range) v),
+    (FIDEQ: w.(hmap_callee_ext) = hash)
+    (PRE: hash_post_cond_retv w.(hmap_hash_range_ext) v),
     sound_state (Returnstate v k m)
 
 | callstate_find: forall v al k m
     (CALL: call_func find (Callstate v al k m))
-    (FIDEQ: w.(hmap_callee) = inl find),
+    (FIDEQ: w.(hmap_callee_ext) = find),
     sound_state (Callstate v al k m)
 | find_state_internal1: forall s0 s1 t n
     (CALL: call_func find s0)
-    (FIDEQ: w.(hmap_callee) = inl find)
+    (FIDEQ: w.(hmap_callee_ext) = find)
     (STAR: starNf step num_frames ge n s0 t s1)
     (* used to prevent complicated reasoning in proving query/reply
     invariant in at_external state or final state *)
@@ -297,13 +297,13 @@ Inductive sound_state : state -> Prop :=
     sound_state s1
 | find_state_call_process: forall b v k m
     (PROC: Genv.invert_symbol se b = Some process)
-    (FIDEQ: w.(hmap_callee) = inl find)
+    (FIDEQ: w.(hmap_callee_ext) = find)
     (CASTED: val_casted v (Tbox type_int32s) )
     (CONT: find_cont_ret_process k),
     sound_state (Callstate (Vptr b Ptrofs.zero) [v] k m)
 | find_state_return_process: forall v k m
     (CONT: find_cont_ret_process k)
-    (FIDEQ: w.(hmap_callee) = inl find),
+    (FIDEQ: w.(hmap_callee_ext) = find),
     sound_state (Returnstate v k m)
 (* state comes from return process *)
 | find_state_internal2: forall s0 s1 s2 t1 t2 n
@@ -312,7 +312,7 @@ Inductive sound_state : state -> Prop :=
     (STEP: step ge s0 t1 s1)
     (STAR: starNf step num_frames ge n s1 t2 s2)
     (NOTCALL: not_call_return_state s2)
-    (FIDEQ: w.(hmap_callee) = inl find)
+    (FIDEQ: w.(hmap_callee_ext) = find)
     (RAN: (0 <= n <= 12)%nat),
     sound_state s2          
 (* state comes from return find *)
@@ -322,7 +322,7 @@ Inductive sound_state : state -> Prop :=
     (STEP: step ge s0 t1 s1)
     (STAR: starNf step num_frames ge n s1 t2 s2)
     (NOTCALL: not_call_return_state s2)
-    (FIDEQ: w.(hmap_callee) = inl find)
+    (FIDEQ: w.(hmap_callee_ext) = find)
     (RAN: (0 <= n <= 12)%nat),
     sound_state s2
 (* merge point of the pattern match in find function *)
@@ -330,14 +330,14 @@ Inductive sound_state : state -> Prop :=
     (RET: find_merge_pattern_match s1)
     (STAR: starNf step num_frames ge n s1 t2 s2)
     (NOTCALL: not_call_return_state s2)
-    (FIDEQ: w.(hmap_callee) = inl find)
+    (FIDEQ: w.(hmap_callee_ext) = find)
     (RAN: (0 <= n <= 28)%nat),
     sound_state s2
 (* This state can be return from the current find function or return
 from the last find function *)
 | find_returnstate: forall v k m
     (CONT: sound_find_cont k)
-      (FIDEQ: w.(hmap_callee) = inl find),
+      (FIDEQ: w.(hmap_callee_ext) = find),
     sound_state (Returnstate v k m)
 .
 
@@ -628,77 +628,66 @@ Qed.
 
 Lemma initial_preservation_progress: forall q,
     valid_query (linked_list_sem se) q = true ->
-    vq_hash_map w q ->
+    query_inv hmap_ext_inv w q ->
     exists s, initial_state ge q s
          /\ (forall s, initial_state ge q s -> sound_state s).
 Proof.
   intros q VQ QINV.
-  (* query_inv *)
-  destruct QINV. rewrite hmap_senv_eq in *.
-  (* unfold Genv.is_internal in VQ. *)
-  (* destruct Genv.find_funct eqn: FIND in VQ; try congruence. *)
-  generalize FINDF as FINDF1. intros.
-  (* unfold Genv.find_funct in FIND. destruct rsq_vf; try congruence. *)
-  (* destruct Ptrofs.eq_dec in FIND; try congruence; subst. *)
-  erewrite Genv.find_funct_ptr_iff in FINDF.
-  setoid_rewrite Genv.find_def_spec in FINDF.
-  rewrite SYM in FINDF.
-  (* destruct Genv.invert_symbol eqn: SYM in FIND; try congruence. *)
-  eapply PTree.elements_correct in FINDF.
- 
-  eexists (Callstate (Vptr b Ptrofs.zero) vargs Kstop m). split.
-  - econstructor; eauto.
-  - intros. inv H.
-    simpl in H9. rewrite dec_eq_true in H9.
-    setoid_rewrite FINDF1 in H9. inv H9.
-    rewrite TYF in H10. inv H10. inv H3.    
-    (* we should know what function is being called *)
-    repeat destruct FINDF as [|FINDF]. 
-    (* call hash function *)
-    + inv H. eapply hash_callstate; eauto. econstructor; eauto.
-      econstructor. 
-    (* call drop_in_place_List (contradiction) *)
-    + inv H. simpl in H11. congruence.
-    (* (* call remove function (not supported for now) *) *)
-    (* call process_ext (contradiction) *)    
-    + inv H.
-    (* (* call empty_list function (not supported for now) *) *)
-    (* call free (contradiction) *)
-    + inv H.
-    (*  call drop_in_place_Node (contradiction) *)
-    + inv H. simpl in H11. congruence.
-    (* call find *)
-    + inv H. eapply callstate_find; eauto.
-      econstructor; eauto. econstructor.
-    (* call malloc (contradiction) *)
-    + inv H.
-    (* (* call insert (not suppored) *) *)
-    + inv FINDF.
-  - simpl in VQ. simpl in NFLINK. rewrite hmap_senv_eq in NFLINK. congruence.
+  (* destruct query_inv *)
+  simpl in QINV. red in QINV.
+  destruct q. simpl in QINV. destruct rsq_vf; try contradiction.
+  destruct Ptrofs.eq_dec in QINV; try contradiction. subst.
+  destruct Genv.invert_symbol eqn: SYM in QINV; try contradiction.  
+  rewrite hmap_senv_eq in *.
+  exploit Genv.find_def_spec. erewrite SYM.
+  instantiate (1:= linked_list_mod).
+  intros FINDF.
+  red in QINV.
+  eexists (Callstate (Vptr b Ptrofs.zero) rsq_args Kstop rsq_mem).
+  (* two cases of i *)  
+  repeat destruct ident_eq in QINV; try contradiction; subst.
+  (* call find *)
+  - split.
+    + Strategy opaque [linked_list_mod].
+      inv QINV. econstructor; eauto.
+    + intros. inv H. inv QINV.
+      eapply callstate_find.
+      econstructor. eauto. econstructor.
+      eauto. auto.
+  (* call hash *)
+  - inv QINV. split.
+    + econstructor; eauto.
+      rewrite hmap_senv_eq in *. eauto.
+    + intros. inv H.
+      eapply hash_callstate; eauto.
+      econstructor; auto.
+      constructor. inv PRECOND. reflexivity.
 Qed.
 
 Lemma linked_list_final: forall s r,
     sound_state s ->
     final_state s r ->
-    vr_hash_map w r.
+    reply_inv hmap_ext_inv w r.
 Proof.
   intros s r SINV FINAL.
+  simpl.
   inv FINAL. inv SINV; try simpl in NOTCALL; try contradiction.
   (* return from hash *)
-  - econstructor; eauto.
+  - rewrite FIDEQ.
+    econstructor; eauto.
   (* call process (contradiction) *)
   - inv CONT.
   (* return from find *)
-  - econstructor; eauto.
-    red. simpl. auto.
+  - rewrite FIDEQ.
+    econstructor; eauto.
 Qed.
 
 Lemma linked_list_external: forall s q,
     sound_state s ->
     at_external ge s q ->
-    exists w', symtbl_inv hmap_inv w' se
-          /\ vq_hash_map w' q
-          /\ forall r, vr_hash_map w' r ->
+    exists w', symtbl_inv list_ext_inv w' se
+          /\ query_inv list_ext_inv w' q
+          /\ forall r, reply_inv list_ext_inv w' r ->
                  (exists s', after_external s r s'
                         /\ (forall s', after_external s r s' -> sound_state s')).
 Proof.
@@ -732,18 +721,18 @@ Proof.
       eapply Genv.find_funct_ptr_iff.
       rewrite Genv.find_def_spec. rewrite PROC.
       auto. }
-    exists (Build_hmap_world (inr process) se w.(hmap_hash_range)).
+    exists (Build_list_world_ext process se).
     repeat apply conj; auto.
     + replace (genv_cenv ge) with (prog_comp_env linked_list_mod) by auto.
-      eapply vq_hash_map_intro2.
-      eauto. simpl.
-      unfold Genv.is_internal. simpl in H.  setoid_rewrite H. reflexivity.
-      reflexivity.
-      econstructor. auto. econstructor. 
-      eauto. auto. simpl. econstructor.
-      auto. auto.
-    + intros. inv H0. inv FIDEQ0. inv FIDEQ0.
-      eexists. split.
+      simpl. red. simpl.
+      rewrite dec_eq_true. rewrite PROC.
+      red. rewrite dec_eq_true.
+      replace [Tbox type_int32s] with (type_list_of_typelist (Tcons (Tbox type_int32s) Tnil)) by reflexivity.
+      econstructor; eauto.
+      econstructor. auto. econstructor.
+    + intros. inv H0.
+      destruct r.
+      eexists. split. 
       econstructor.
       intros. inv H0.
       eapply find_state_return_process; eauto.
@@ -753,8 +742,8 @@ Local Open Scope sep_scope.
 
 Lemma step_hash_callstate_preservation_progress: forall v al k m
    (CALL: call_func hash (Callstate v al k m))
-   (FIDEQ : hmap_callee w = inl hash)
-   (PRE : hash_pre_cond_args (hmap_hash_range w) al),
+   (FIDEQ : hmap_callee_ext w = hash)
+   (PRE : hash_pre_cond_args (hmap_hash_range_ext w) al),
     (not_stuck (linked_list_sem se) (Callstate v al k m) \/
        step_mem_error ge (Callstate v al k m)) /\
       (forall (s' : state) (t : trace), step ge (Callstate v al k m) t s' -> sound_state s').
@@ -806,9 +795,9 @@ Qed.
 
 Lemma step_hash_state_internal_preservation_progress: forall s v al k m t n
   (CALL : call_func hash (Callstate v al k m))
-  (FIDEQ : hmap_callee w = inl hash)
+  (FIDEQ : hmap_callee_ext w = hash)
   (STAR : starNf step num_frames ge n (Callstate v al k m) t s)
-  (PRECOND : hash_pre_cond_args (hmap_hash_range w) al)
+  (PRECOND : hash_pre_cond_args (hmap_hash_range_ext w) al)
   (NOTCALL : not_call_return_state s)
   (RAN : (1 <= n <= 11)%nat),
     (not_stuck (linked_list_sem se) s \/ step_mem_error ge s) /\
@@ -907,7 +896,7 @@ Proof.
   rewrite <- sep_assoc, sep_comm in PM4.
   exploit storev_rule. eapply range_contains with  (ofs:=0) (chunk:= Mint32).
   eapply PM4. eapply Z.divide_0_r. 
-  instantiate (1 := Vint (hmap_hash_range w)). instantiate (1 := fun v => v = Vint (hmap_hash_range w)). simpl. auto.
+  instantiate (1 := Vint (hmap_hash_range_ext w)). instantiate (1 := fun v => v = Vint (hmap_hash_range_ext w)). simpl. auto.
   intros (m1'' & STORE2 & PM5).
   setoid_rewrite H1 in STORE2. inv STORE2.
   (* load k and range *)
@@ -917,8 +906,8 @@ Proof.
   intros (?v & LOAD2 & PV2). subst.
   (* show that the remainder operation can succeed *)
   assert (MOD: exists r, sem_mod (Vint k0) (Ctypes.Tint I32 Signed noattr)
-                      (Vint (hmap_hash_range w)) (Ctypes.Tint I32 Unsigned noattr) m1'' = Some (Vint r)
-                    /\ Int.ltu r (hmap_hash_range w) = true).
+                      (Vint (hmap_hash_range_ext w)) (Ctypes.Tint I32 Unsigned noattr) m1'' = Some (Vint r)
+                    /\ Int.ltu r (hmap_hash_range_ext w) = true).
   {  simpl. unfold sem_mod, sem_binarith. simpl.
      replace ((Ctypes.Tint I32 Signed noattr)) with (to_ctype type_int32s) by reflexivity.
      replace ((Ctypes.Tint I32 Unsigned noattr)) with (to_ctype type_int32u) by reflexivity.       
@@ -933,17 +922,17 @@ Proof.
      unfold Int.ltu. destruct zlt. auto.
      unfold Int.modu in g.
      rewrite Int.unsigned_repr in g.
-     exploit (Z.mod_bound_or (Int.unsigned (cast_int_int I32 Unsigned k0)) (Int.unsigned (hmap_hash_range w))). lia.
+     exploit (Z.mod_bound_or (Int.unsigned (cast_int_int I32 Unsigned k0)) (Int.unsigned (hmap_hash_range_ext w))). lia.
      intros [E1|E2]; lia. 
-     exploit (Z.mod_bound_or (Int.unsigned (cast_int_int I32 Unsigned k0)) (Int.unsigned (hmap_hash_range w))). lia.
-     generalize (Int.unsigned_range_2 (hmap_hash_range w)). intros R2.
+     exploit (Z.mod_bound_or (Int.unsigned (cast_int_int I32 Unsigned k0)) (Int.unsigned (hmap_hash_range_ext w))). lia.
+     generalize (Int.unsigned_range_2 (hmap_hash_range_ext w)). intros R2.
      intros [E1|E2]; lia.  }
   destruct MOD as (r & SEMOD & RSPEC).
   (* store the vaule to retv *)
   exploit storev_rule. eapply range_contains with  (ofs:=0) (chunk:= Mint32).
   eapply sep_comm.
   eapply PM5. eapply Z.divide_0_r. 
-  instantiate (1 := Vint r). instantiate (1 := fun v => v = Vint r /\ Int.ltu r (hmap_hash_range w) = true). simpl. auto.
+  instantiate (1 := Vint r). instantiate (1 := fun v => v = Vint r /\ Int.ltu r (hmap_hash_range_ext w) = true). simpl. auto.
   intros (m1''' & STORE3 & PM6).
   
   inv STAR; cbn [num_frames num_frames_cont] in *.
@@ -1071,7 +1060,7 @@ Qed.
 
 Lemma step_callstate_find_preservation_progress: forall v al k m
    (CALL : call_func find (Callstate v al k m))
-   (FIDEQ : hmap_callee w = inl find),
+   (FIDEQ : hmap_callee_ext w = find),
      (not_stuck (linked_list_sem se) (Callstate v al k m) \/
         step_mem_error ge (Callstate v al k m)) /\
        (forall (s' : state) (t : trace), step ge (Callstate v al k m) t s' -> sound_state s').
@@ -1101,7 +1090,7 @@ Qed.
 
 Lemma step_find_state_internal1_preservation_progress: forall s s0 t n
    (CALL : call_func find s0)
-   (FIDEQ : hmap_callee w = inl find)
+   (FIDEQ : hmap_callee_ext w = find)
    (STAR : starNf step num_frames ge n s0 t s)
    (NOTCALL : not_call_return_state s)
    (RAN : (1 <= n <= 20)%nat),
@@ -3187,11 +3176,11 @@ End SOUNDNESS.
 
 
 Lemma linked_list_module_safe:
-  module_type_safe hmap_inv hmap_inv linked_list_sem (mem_error linked_list_mod).
+  module_type_safe list_ext_inv hmap_ext_inv linked_list_sem (mem_error linked_list_mod).
 Proof.
   red. econstructor.
   (* cannot specify msafek_invariant for unknown reason *)
-  eapply (Module_type_safe_components li_rs li_rs linked_list_sem hmap_inv hmap_inv (mem_error linked_list_mod) (fun se w => sound_state se w)).
+  eapply (Module_type_safe_components li_rs li_rs linked_list_sem list_ext_inv hmap_ext_inv (mem_error linked_list_mod) (fun se w => sound_state se w)).
   intros se w_hm SYMB VSE.
   destruct SYMB.
   econstructor.
