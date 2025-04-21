@@ -12,9 +12,13 @@ Require Import Invariant Smallstep SmallstepLinkingSafe.
 Require Import HashMap.
 Require Import LinkedList RustOp Rusttypes Rustlight Rustlightown.
 Require Import LanguageInterface.
-Require Import MoveCheckingDomain.
+Require Import MoveCheckingDomain MoveCheckingFootprint.
+Require Import MoveCheckingSafe.
+Require Import Separation.
 
 Local Open Scope error_monad_scope.
+Local Open Scope inv_scope.
+
 Import ListNotations.
 
 
@@ -293,19 +297,22 @@ Record list_world_ext :=
     list_senv_ext: Genv.symtbl;
   }.
 
+Definition ll_ce := Rusttypes.prog_comp_env LinkedList.linked_list_mod.
 
+Definition process_sig : rust_signature :=
+  mksignature nil nil [(Tbox Rusttypes.type_int32s)] (Tbox Rusttypes.type_int32s) cc_default ll_ce.
 
 Inductive vq_process (w: list_world_ext) : rust_query -> Prop :=
-| vq_process_intro: forall vf targs tres tcc vargs m orgs rels
+| vq_process_intro: forall vf (* targs tres tcc *) vargs m (* orgs rels *)
     (* For safety of initial_state *)
     (FINDF: Genv.find_funct (Genv.globalenv w.(list_senv_ext) hash_map_prog) vf = Some (Ctypes.Internal process_func))
-    (TYF: Clight.type_of_function process_func = Ctypes.Tfunction (to_ctypelist targs) (to_ctype tres) tcc)
-    (CASTED: val_casted_list vargs targs)
-    (TARGSEQ: targs = (Tcons (Tbox type_int32s) Tnil))
-    (TRESEQ: tres = Tbox type_int32s)    
+    (* (TYF: Clight.type_of_function process_func = Ctypes.Tfunction (to_ctypelist targs) (to_ctype tres) tcc) *)
+    (CASTED: val_casted_list vargs (Tcons (Tbox type_int32s) Tnil))
+    (* (TARGSEQ: targs = (Tcons (Tbox type_int32s) Tnil)) *)
+    (* (TRESEQ: tres = Tbox type_int32s) *)
     (LEN: length vargs = 1%nat)
     (CALLEE: list_callee_ext w = process),
-    vq_process w (rsq vf (mksignature orgs rels (type_list_of_typelist targs) tres tcc (prog_comp_env linked_list_mod)) vargs m).
+    vq_process w (rsq vf (* (mksignature orgs rels (type_list_of_typelist targs) tres tcc (prog_comp_env linked_list_mod)) *) process_sig vargs m).
 
 
 Definition rsq_inv_list_ext (w: list_world_ext) (q: rust_query) (fid: ident) : Prop :=
@@ -341,30 +348,177 @@ Definition list_ext_inv: invariant li_rs :=
 Record hmap_world_int :=
   {
     hmap_list_ext: list_world_ext;
-    hmap_rs_own: rs_own_world;
+    (* option is necessary when the other C modules call hmap_process
+    which cannot pass a rs_own_world *)
+    hmap_rs_own: option rs_own_world;
+    hmap_location: option block; (* Record the location of the hash
+    map, which is used in the post-condition of hmap_process. It is
+    necessary because we pass the hash map as reference to
+    hmap_process *)
   }.
 
-Local Open Scope inv_scope.
 
-Definition cq_inv_hmap_int (w: hmap_world_int) (q: c_query) (fid: ident) : Prop :=
+(** Pre- and Post- conditions for hmap_process. We define hmap_pred
+here. *)
+
+Local Open Scope sep_scope.
+
+
+Inductive bucket_val_spec m fp : Values.val -> Prop :=
+| bucket_val_spec_intro: forall v
+    (WTVAL: sem_wt_val ll_ce m fp v)
+    (WTFP: wt_footprint ll_ce List_box fp)
+    (NOREP: list_norepet (footprint_flat fp))
+    (CASTED: RustOp.val_casted v List_box),
+    bucket_val_spec m fp v.
+      
+Definition bucket_val_pred m fp v :=
+  if Val.eq v Vnullptr then
+    fp = fp_emp
+  else
+    bucket_val_spec m fp v.
+
+
+  
+Remark sizeof_List_ty: Rusttypes.sizeof ll_ce List_ty = 32.
+  reflexivity. Defined.
+
+Lemma bucket_val_spec_unchanged_on: forall m1 m2 fp v,
+    Mem.unchanged_on (fun b _ => In b (footprint_flat fp)) m1 m2 ->
+    bucket_val_spec m1 fp v ->
+    bucket_val_spec m2 fp v.
+Proof.
+  intros until v. intros UNC PRED.  
+  inv PRED. econstructor; eauto.
+  eapply sem_wt_val_unchanged_blocks. eauto.
+  eapply Mem.unchanged_on_implies. eauto.
+  intros. simpl.
+  inv WTFP. inv WTVAL. simpl in WF. congruence.
+  rewrite sizeof_List_ty in *. inv WTVAL.
+  simpl in H. simpl. destruct H; try contradiction; eauto.
+  destruct H; try contradiction; eauto.
+Qed.  
+
+Lemma bucket_val_pred_unchanged_on: forall m1 m2 fp v,
+    Mem.unchanged_on (fun b _ => In b (footprint_flat fp)) m1 m2 ->
+    bucket_val_pred m1 fp v ->
+    bucket_val_pred m2 fp v.
+Proof.
+  intros until v. intros UNC PRED.
+  unfold bucket_val_pred in *. destruct Val.eq; auto.
+  eapply bucket_val_spec_unchanged_on; eauto.
+Qed.
+
+
+Lemma ll_ce_composite_members_norepet:  forall id co,
+    ll_ce ! id = Some co -> list_norepet (MoveChecking.name_members (Rusttypes.co_members co)).
+Proof.
+  intros.
+  assert (P: PTree_Properties.for_all ll_ce (fun id co => proj_sumbool (list_norepet_dec ident_eq (MoveChecking.name_members (Rusttypes.co_members co)))) = true).
+  { reflexivity. }
+  eapply PTree_Properties.for_all_correct in P; eauto.
+  eapply proj_sumbool_true. eapply P.
+Qed.
+
+Program Definition bucket_pred (b: block) (pos: Z) (fp: footprint) : massert :=
+  {| m_pred m := m |= contains Mptr b pos (bucket_val_pred m fp)
+                   (* disjointness: it is necessary because the
+                   rely-guarantee of rs_own ensure that the footprint
+                   outside fp is unchanged. Without this condition,
+                   the contents of the bucket may be changed *)
+                   /\ ~ In b (footprint_flat fp);
+    m_footprint b1 ofs1 := (b = b1 /\ pos <= ofs1 < pos + size_chunk Mptr)
+                           \/ In b1 (footprint_flat fp); |}.
+Next Obligation.
+  destruct H2.
+  repeat apply conj; auto.
+  - red. intros. erewrite <- Mem.unchanged_on_perm; eauto.
+    simpl. left. auto.
+    eapply Mem.perm_valid_block with (ofs := pos). eapply H2.
+    lia.
+  - exists H3. split.
+    + eapply Mem.load_unchanged_on; eauto.
+      intros. simpl. left; auto.
+    + eapply bucket_val_pred_unchanged_on.
+      eapply Mem.unchanged_on_implies. eauto.
+      intros. simpl. right. auto. auto.
+Defined.
+Next Obligation.
+  destruct H0.
+  - destruct H0; subst.
+    eapply Mem.valid_access_valid_block.
+    eapply Mem.valid_access_implies. eauto. constructor.
+  - unfold bucket_val_pred in H6. destruct Val.eq in H6; subst.
+    + inv H0.
+    + inv H6.
+      eapply sem_wt_val_footprint_valid_block with (ce := ll_ce) (v:=H3); eauto.
+      eapply ll_ce_composite_members_norepet.
+Defined.
+
+Fixpoint hmap_pred_rec (num: nat) (fpl: list footprint) (b: block) (pos: Z) : massert :=
+  match num, fpl with
+  | O, nil => Separation.pure True
+  | S num', fp :: fpl' =>
+      bucket_pred b pos fp ** hmap_pred_rec num' fpl' b (pos + size_chunk Mptr)
+  | _, _ =>
+      Separation.pure False
+  end.
+
+(* [m|= (hmap_pred b fpl)] means that the memory contents in block b is
+the list of the buckets occupying the footprint fpl *)
+Definition hmap_pred N (b: block) (fpl: list footprint) : massert :=
+  contains Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
+    ** hmap_pred_rec N fpl b 0.
+
+
+Inductive vq_hmap_process N (w: hmap_world_int) : c_query -> Prop :=
+| vq_hmap_process_intro: forall vf targs tres tcc m vargs b_hm kv fpl
+    (* For safety of initial_state *)
+    (FINDF: Genv.find_funct (Genv.globalenv (list_senv_ext (hmap_list_ext w)) hash_map_prog) vf = Some (Ctypes.Internal hmap_operate_on_func))
+    (TYF: Clight.type_of_function hmap_operate_on_func = Ctypes.Tfunction targs tres tcc)
+    (CASTED: Cop.val_casted_list vargs targs)
+    (CALLEE: list_callee_ext (hmap_list_ext w) = hmap_process)
+    (* pre-conditions of argument *)
+    (ARGSEQ: vargs = [Vptr b_hm Ptrofs.zero; Vint kv])
+    (MPRED: m |= hmap_pred N b_hm fpl)
+    (HMLOC: hmap_location w = Some b_hm),
+    vq_hmap_process N w (cq vf (Ctypes.signature_of_type targs tres tcc) [Vptr b_hm Ptrofs.zero; Vint kv] m).
+
+
+Inductive vr_hmap_process N (w: hmap_world_int) : c_reply -> Prop :=
+| vr_hmap_process_intro: forall m b_hm fpl
+    (MPRED: m |= hmap_pred N b_hm fpl)
+    (HMLOC: hmap_location w = Some b_hm),
+    vr_hmap_process N w (cr Vundef m).
+
+
+(* {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q} *)
+Definition cq_inv_hmap_int N (w: hmap_world_int) (q: c_query) (fid: ident) : Prop :=
   if ident_eq fid process then
     (* process ↦ ⊤⋅I_rs⋅R_rc. ⊤ requires us to consider the length of
     argument and signature *)
-    query_inv ((list_ext_inv @@ rs_own) @! cc_rust_c)
-      (w.(hmap_list_ext), (w.(hmap_list_ext).(list_senv_ext), w.(hmap_rs_own)), tt) q
+    match w.(hmap_rs_own) with
+    | Some rw =>
+        query_inv ((list_ext_inv @@ rs_own) @! cc_rust_c)
+          (w.(hmap_list_ext), (w.(hmap_list_ext).(list_senv_ext), rw), tt) q
+    | None => False
+    end
   else if ident_eq fid hmap_process then
-         (* TODO *)
-         True
+         vq_hmap_process N w q
        else False.
 
-Definition cr_inv_hmap_int (w: hmap_world_int) (r: c_reply) (fid: ident) : Prop :=
+Definition cr_inv_hmap_int N (w: hmap_world_int) (r: c_reply) (fid: ident) : Prop :=
   if ident_eq fid process then
     (* process ↦ ⊤⋅I_rs⋅R_rc *)
-    reply_inv ((list_ext_inv @@ rs_own) @! cc_rust_c)
-      (w.(hmap_list_ext), (w.(hmap_list_ext).(list_senv_ext), w.(hmap_rs_own)), tt) r
+    match w.(hmap_rs_own) with
+    | Some rw =>
+        reply_inv ((list_ext_inv @@ rs_own) @! cc_rust_c)
+          (w.(hmap_list_ext), (w.(hmap_list_ext).(list_senv_ext), rw), tt) r
+    | None =>
+        False
+    end
   else if ident_eq fid hmap_process then
-         (* TODO *)
-         True
+         vr_hmap_process N w r
        else False.
 
 (* Pre-conditions of rust query composed of the conditions of each
@@ -389,14 +543,14 @@ Definition cr_inv {W: Type} (w: W) (r: c_reply) callee (fn_pred: W -> c_reply ->
 
 (* Safety interfaces for incoming calls of hmap.c,
    i.e., {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q} *)
-Definition hmap_int_inv : invariant li_c :=
+Definition hmap_int_inv N : invariant li_c :=
   {| inv_world := hmap_world_int;
     symtbl_inv w se := (list_senv_ext (hmap_list_ext w)) = se
                        (* wf_xx_senv is used to ensure the safety of
                        function call (see eval_Eglobal) *)
                        /\ wf_senv se;
-    query_inv w q := cq_inv w q (list_senv_ext (hmap_list_ext w)) cq_inv_hmap_int;
-    reply_inv w r := cr_inv w r (list_callee_ext (hmap_list_ext w)) cr_inv_hmap_int|}.
+    query_inv w q := cq_inv w q (list_senv_ext (hmap_list_ext w)) (cq_inv_hmap_int N);
+    reply_inv w r := cr_inv w r (list_callee_ext (hmap_list_ext w)) (cr_inv_hmap_int N)|}.
 
 
 Definition length_of_args (f: ident) : nat :=
@@ -409,3 +563,4 @@ Definition length_of_args (f: ident) : nat :=
            1
   else O.
   
+

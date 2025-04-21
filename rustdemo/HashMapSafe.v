@@ -85,32 +85,6 @@ Admitted.
 
 (* Separation predicate of bucket *)
 
-Definition ll_ce := Rusttypes.prog_comp_env LinkedList.linked_list_mod.
-
-Lemma ll_ce_composite_members_norepet:  forall id co,
-    ll_ce ! id = Some co -> list_norepet (MoveChecking.name_members (Rusttypes.co_members co)).
-Proof.
-  intros.
-  assert (P: PTree_Properties.for_all ll_ce (fun id co => proj_sumbool (list_norepet_dec ident_eq (MoveChecking.name_members (Rusttypes.co_members co)))) = true).
-  { reflexivity. }
-  eapply PTree_Properties.for_all_correct in P; eauto.
-  eapply proj_sumbool_true. eapply P.
-Qed.
-
-Inductive bucket_val_spec m fp : Values.val -> Prop :=
-| bucket_val_spec_intro: forall v
-    (WTVAL: sem_wt_val ll_ce m fp v)
-    (WTFP: wt_footprint ll_ce List_box fp)
-    (NOREP: list_norepet (footprint_flat fp))
-    (CASTED: RustOp.val_casted v List_box),
-    bucket_val_spec m fp v.
-      
-Definition bucket_val_pred m fp v :=
-  if Val.eq v Vnullptr then
-    fp = fp_emp
-  else
-    bucket_val_spec m fp v.
-
 (* similar definition for parameter of process *)
 Inductive process_val_spec m fp : Values.val -> Prop :=
 | process_val_spec_intro: forall v
@@ -120,36 +94,6 @@ Inductive process_val_spec m fp : Values.val -> Prop :=
     (CASTED: RustOp.val_casted v Tbox_int),
     process_val_spec m fp v.
 
-
-  
-Remark sizeof_List_ty: Rusttypes.sizeof ll_ce List_ty = 32.
-  reflexivity. Defined.
-
-Lemma bucket_val_spec_unchanged_on: forall m1 m2 fp v,
-    Mem.unchanged_on (fun b _ => In b (footprint_flat fp)) m1 m2 ->
-    bucket_val_spec m1 fp v ->
-    bucket_val_spec m2 fp v.
-Proof.
-  intros until v. intros UNC PRED.  
-  inv PRED. econstructor; eauto.
-  eapply sem_wt_val_unchanged_blocks. eauto.
-  eapply Mem.unchanged_on_implies. eauto.
-  intros. simpl.
-  inv WTFP. inv WTVAL. simpl in WF. congruence.
-  rewrite sizeof_List_ty in *. inv WTVAL.
-  simpl in H. simpl. destruct H; try contradiction; eauto.
-  destruct H; try contradiction; eauto.
-Qed.  
-
-Lemma bucket_val_pred_unchanged_on: forall m1 m2 fp v,
-    Mem.unchanged_on (fun b _ => In b (footprint_flat fp)) m1 m2 ->
-    bucket_val_pred m1 fp v ->
-    bucket_val_pred m2 fp v.
-Proof.
-  intros until v. intros UNC PRED.
-  unfold bucket_val_pred in *. destruct Val.eq; auto.
-  eapply bucket_val_spec_unchanged_on; eauto.
-Qed.
 
 Lemma process_val_spec_unchanged_on: forall m1 m2 fp v,
     Mem.unchanged_on (fun b _ => In b (footprint_flat fp)) m1 m2 ->
@@ -167,41 +111,6 @@ Proof.
   destruct H; try contradiction; eauto.
 Qed.  
 
-
-Program Definition bucket_pred (b: block) (pos: Z) (fp: footprint) : massert :=
-  {| m_pred m := m |= contains Mptr b pos (bucket_val_pred m fp)
-                   (* disjointness: it is necessary because the
-                   rely-guarantee of rs_own ensure that the footprint
-                   outside fp is unchanged. Without this condition,
-                   the contents of the bucket may be changed *)
-                   /\ ~ In b (footprint_flat fp);
-    m_footprint b1 ofs1 := (b = b1 /\ pos <= ofs1 < pos + size_chunk Mptr)
-                           \/ In b1 (footprint_flat fp); |}.
-Next Obligation.
-  destruct H2.
-  repeat apply conj; auto.
-  - red. intros. erewrite <- Mem.unchanged_on_perm; eauto.
-    simpl. left. auto.
-    eapply Mem.perm_valid_block with (ofs := pos). eapply H2.
-    lia.
-  - exists H3. split.
-    + eapply Mem.load_unchanged_on; eauto.
-      intros. simpl. left; auto.
-    + eapply bucket_val_pred_unchanged_on.
-      eapply Mem.unchanged_on_implies. eauto.
-      intros. simpl. right. auto. auto.
-Defined.
-Next Obligation.
-  destruct H0.
-  - destruct H0; subst.
-    eapply Mem.valid_access_valid_block.
-    eapply Mem.valid_access_implies. eauto. constructor.
-  - unfold bucket_val_pred in H6. destruct Val.eq in H6; subst.
-    + inv H0.
-    + inv H6.
-      eapply sem_wt_val_footprint_valid_block with (ce := ll_ce) (v:=H3); eauto.
-      eapply ll_ce_composite_members_norepet.
-Defined.
 
 Program Definition process_val_pred (b: block) (pos: Z) (fp: footprint) : massert :=
   {| m_pred m := m |= contains Mptr b pos (process_val_spec m fp)
@@ -319,9 +228,7 @@ Section SOUNDNESS.
 Variable N : nat.
 
 Context (se : Genv.symtbl).
-Context (w: hmap_world).
-
-Context (rw: rs_own_world).
+Context (w: hmap_world_int).
 
 
 Let ge := globalenv se hash_map_prog.
@@ -346,14 +253,24 @@ Proof.
   assert (10 < Int.max_unsigned) by reflexivity. lia.
 Qed.
 
-Definition rw_mem : mem :=
+Let rw := hmap_rs_own w.
+
+Definition rw_mem : option mem :=
   match rw with
-  | rsw _ _ m _ => m
+  | Some (rsw _ _ m _)  => Some m
+  | None => None
   end.
 
-Definition rw_fp : flat_footprint :=
+Definition rw_fp : option flat_footprint :=
   match rw with
-  | rsw _ fp _ _ => fp
+  | Some (rsw _ fp _ _) => Some fp
+  | None => None                
+  end.
+
+Definition rw_sg : option rust_signature :=
+  match rw with
+  | Some (rsw sg _ _ _) => Some sg
+  | None => None                
   end.
 
 
@@ -362,23 +279,6 @@ Hypothesis wf_senv: wf_senv se.
 
 Remark hmap_ce: genv_cenv ge = PTree.empty composite.
   reflexivity. Qed.
-
-
-
-Fixpoint hmap_pred_rec (num: nat) (fpl: list footprint) (b: block) (pos: Z) : massert :=
-  match num, fpl with
-  | O, nil => pure True
-  | S num', fp :: fpl' =>
-      bucket_pred b pos fp ** hmap_pred_rec num' fpl' b (pos + size_chunk Mptr)
-  | _, _ =>
-      pure False
-  end.
-
-(* [m|= (hmap_pred b fpl)] means that the memory contents in block b is
-the list of the buckets occupying the footprint fpl *)
-Definition hmap_pred (b: block) (fpl: list footprint) : massert :=
-  contains Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
-    ** hmap_pred_rec N fpl b 0.
 
 Lemma massert_eqv_pure_l: forall P,
     massert_eqv P (pure True ** P).
@@ -434,6 +334,7 @@ Proof.
     destruct H0. simpl. f_equal. eauto.
 Qed.    
 
+Let hmap_pred := hmap_pred N.
 
 Lemma hmap_pred_fpl_length: forall m b fpl,
     m |= hmap_pred b fpl ->
@@ -563,6 +464,8 @@ Inductive call_hmap_operate_on: state -> Prop :=
 | call_hmap_operate_on_intro: forall b1 b2 kv m fpl k
     (SYM: Genv.invert_symbol se b1 = Some hmap_process)
     (** specify the cont *)
+
+    (** TODO: b2 must be the hmap_location of the world *)
     (HMAP: m |= hmap_pred b2 fpl),    
     call_hmap_operate_on (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m).
     
@@ -577,32 +480,45 @@ Inductive call_find_bucket: state -> Prop :=
 
 Inductive sound_state : state -> Prop :=
 (* callstate in process function *)
-| hmap_call_process: forall bf b 
+| hmap_call_process: forall bf b rwm rwfp
     (SYMB: Genv.invert_symbol se bf = Some process)
-    (WTVAL: sem_wt_val ll_ce rw_mem (fp_box b 4 (fp_scalar Rusttypes.type_int32s)) (Vptr b Ptrofs.zero))
-    (FPEQ: list_equiv rw_fp (footprint_flat (fp_box b 4 (fp_scalar Rusttypes.type_int32s))))
-    (FUNID: hmap_callee w = inr process),
-    sound_state (Callstate (Vptr bf Ptrofs.zero) [Vptr b Ptrofs.zero] Kstop rw_mem)
-| hmap_process_internal: forall b_val m e s t n fp Hm
+    (RWMEM: rw_mem = Some rwm)
+    (RWFP: rw_fp = Some rwfp)
+    (WTVAL: sem_wt_val ll_ce rwm (fp_box b 4 (fp_scalar Rusttypes.type_int32s)) (Vptr b Ptrofs.zero))
+    (FPEQ: list_equiv rwfp (footprint_flat (fp_box b 4 (fp_scalar Rusttypes.type_int32s))))
+    (FUNID: (list_callee_ext (hmap_list_ext w)) = process)
+    (SGEQ: rw_sg = Some process_sig),
+    sound_state (Callstate (Vptr bf Ptrofs.zero) [Vptr b Ptrofs.zero] Kstop rwm)
+| hmap_process_internal: forall b_val m e s t n fp rwm Hm rwfp
     (MPRED: m |= process_val_pred b_val 0 fp
-              ** rs_own_acc_pred rw_mem fp Hm)
-    (FPEQ: list_equiv rw_fp (footprint_flat fp))
+              ** rs_own_acc_pred rwm fp Hm)
+    (RWMEM: rw_mem = Some rwm)
+    (RWFP: rw_fp = Some rwfp)
+    (FPEQ: list_equiv rwfp (footprint_flat fp))
     (STAR: starNf step1 num_frames ge n (State process_func (fn_body process_func) Kstop e (PTree.empty Values.val) m) t s)
     (ENV: e = PTree.set val (b_val, tptr tint) empty_env)
     (NOTCALLRET: not_call_return_state s)
-    (FUNID: hmap_callee w = inr process)
+    (FUNID: (list_callee_ext (hmap_list_ext w)) = process)
+    (SGEQ: rw_sg = Some process_sig)
     (RAN: (0 <= n <= 5)%nat),
     sound_state s
-| hmap_return_process: forall b fp m Hm
-    (MPRED: m |= rs_own_acc_pred rw_mem fp Hm)
+| hmap_return_process: forall b fp m rwm rwfp Hm
+    (MPRED: m |= rs_own_acc_pred rwm fp Hm)
+    (RWMEM: rw_mem = Some rwm)
+    (RWFP: rw_fp = Some rwfp)
     (WTVAL: sem_wt_val ll_ce m fp (Vptr b Ptrofs.zero))
-    (FPEQ: list_equiv rw_fp (footprint_flat fp))
-    (FUNID: hmap_callee w = inr process),
+    (WTFP: wt_footprint ll_ce (Tbox Rusttypes.type_int32s) fp)
+    (NOREP: list_norepet (footprint_flat fp))
+    (CAST: RustOp.val_casted (Vptr b Ptrofs.zero) (rs_sig_res process_sig)) 
+    (FPEQ: list_equiv rwfp (footprint_flat fp))
+    (FUNID: (list_callee_ext (hmap_list_ext w)) = process)
+    (SGEQ: rw_sg = Some process_sig),
     sound_state (Returnstate (Vptr b Ptrofs.zero) Kstop m)
 
 (* We need to maintain an invariant that hmap_operate_on is an internal function *) 
 | hmap_operate_on_callstate: forall b1 b2 kv k m
     (CALL: call_hmap_operate_on (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m))
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
     (CONT: hmap_operate_on_cont k),
     sound_state (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m)
 | hmap_operate_on_internal1: forall t s b_hmap b_key fpl ki b m e le k n
@@ -614,6 +530,7 @@ Inductive sound_state : state -> Prop :=
     (STAR: starNf step1 num_frames ge n (State hmap_operate_on_func (fn_body hmap_operate_on_func) k e le m) t s)
     (CONT: hmap_operate_on_cont k)
     (NOTCALLRET: not_call_return_state s)
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
     (RAN: (0<= n <=1)%nat),
     sound_state s
 (* return from find_bucket *)
@@ -635,6 +552,7 @@ Inductive sound_state : state -> Prop :=
     (MAXRAN: Int.unsigned idx < (Z.of_nat N))
     (FPLEN: length (fpl1 ++ fp :: fpl2) = N)
     (NOTCALLRET: not_call_return_state s2)
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
     (RAN: (0 <= n <= 10)%nat),
     sound_state s2
 | hmap_operate_on_call_find: forall m k MP fp ki bf v
@@ -643,13 +561,15 @@ Inductive sound_state : state -> Prop :=
     (VSPEC: bucket_val_spec m fp v)
     (FINDSYM: Genv.invert_symbol se bf = Some find)
     (CONT: call_find_cont k MP)
-    (SUP: Mem.sup_include (footprint_flat fp) (Mem.support m)),
+    (SUP: Mem.sup_include (footprint_flat fp) (Mem.support m))
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
     (** TODO: specify the query_inv of (I @@ rs_own) *)
     sound_state (Callstate (Vptr bf Ptrofs.zero) [v; Vint ki] k m)
 | hmap_operate_on_return_find: forall m k MP fp v
     (MPRED: m |= MP)
     (DISJOINT: forall b ofs, m_footprint MP b ofs -> In b (footprint_flat fp) -> False)
     (VSPEC: bucket_val_spec m fp v)
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
     (CONT: call_find_cont k MP),
     sound_state (Returnstate v k m)
 (* execution after returning from find *)
@@ -672,15 +592,18 @@ Inductive sound_state : state -> Prop :=
     (NOTCALLRET: not_call_return_state s)
     (RAN: (0 <= n <= 3)%nat)
     (MAXRAN: Int.unsigned idx < (Z.of_nat N))
-    (FPLEN: length (fpl1 ++ fp :: fpl2) = N),
+    (FPLEN: length (fpl1 ++ fp :: fpl2) = N)
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
     sound_state s
 (*     sound_state s *)
 | hmap_operate_on_returnstate: forall k m
     (** TODO: specify the cont *)
-    (CONT: hmap_operate_on_cont k),
+    (CONT: hmap_operate_on_cont k)
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
     sound_state (Returnstate Vundef k m)
 | find_bucket_callstate: forall b1 b2 kv k m
-    (CALL: call_find_bucket (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m)),
+    (CALL: call_find_bucket (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m))    
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
     sound_state (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m)
 | find_bucket_internal1: forall s0 t s n b_key b_hmap m k b fpl ki MP
     (SEQ: s0 = (State find_bucket_func (fn_body find_bucket_func) k
@@ -693,19 +616,22 @@ Inductive sound_state : state -> Prop :=
     (CONT: call_find_bucket_cont b k MP)
     (STAR: starNf step1 num_frames ge n s0 t s)
     (NOTCALLRET: not_call_return_state s)
-    (RAN: (0 <= n <= 1)%nat),
+    (RAN: (0 <= n <= 1)%nat)
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
     sound_state s
 (* at_external state calling hash function in the Rust side *)
 | find_bucket_call_hash: forall ki b k m MP
     (COND: hash_pre_cond_args Ni [Vint ki; Vint Ni])
     (FINDSYM: Genv.invert_symbol se b = Some hash)
     (CONT: call_hash_cont k MP)
-    (MPRED: m |= MP),
+    (MPRED: m |= MP)
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
     sound_state (Callstate (Vptr b Ptrofs.zero) [Vint ki; Vint Ni] k m)
 | find_bucket_return_hash: forall v k m MP
     (COND: hash_post_cond_retv Ni v)
     (CONT: call_hash_cont k MP)
-    (MPRED: m |= MP),
+    (MPRED: m |= MP)
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
     sound_state (Returnstate v k m)
 | find_bucket_internal2: forall s0 t s n b_key b_hmap m k b fpl ki MP r
     (SEQ: s0 = (State find_bucket_func Sskip
@@ -718,6 +644,7 @@ Inductive sound_state : state -> Prop :=
     (CONT: call_find_bucket_cont b k MP)
     (STAR: starNf step1 num_frames ge n s0 t s)
     (NOTCALLRET: not_call_return_state s)
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
     (RAN: (0 <= n <= 1)%nat),
     sound_state s
 | find_bucket_returnstate: forall idx fpl1 fpl2 b fp m k MP
@@ -728,7 +655,8 @@ Inductive sound_state : state -> Prop :=
               ** MP)
     (MAXRAN: Int.unsigned idx < Z.of_nat N)
     (FPLEN: length (fpl1 ++ fp :: fpl2) = N)
-    (CONT: call_find_bucket_cont b k MP),
+    (CONT: call_find_bucket_cont b k MP)
+    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
     sound_state (Returnstate (Vptr b (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx))) k m)
 .
 
@@ -874,16 +802,17 @@ Definition find_rs_sig :=
 Definition hash_rs_sig :=
   mksignature nil nil [Rusttypes.type_int32s; type_int32u] type_int32u cc_default ll_ce.
 
+(* External interface: {find_process ↦ ⊤, hash ↦ P} ⋅ I_rs⋅R_rc *)
 Lemma hash_map_external: forall s q,
     sound_state s ->
     at_external ge s q ->
     exists wI w_rs q_rs,
       cc_rust_c_mq q_rs q
-      /\ vq_hash_map wI q_rs
+      /\ query_inv hmap_ext_inv wI q_rs
       /\ rs_own_query w_rs q_rs
-      /\ wI.(hmap_senv) = se
+      /\ wI.(hmap_senv_ext) = se
       /\ forall r_rs r_c,
-        vr_hash_map wI r_rs ->
+        reply_inv hmap_ext_inv wI r_rs ->
         (* kripke relation *)
         (exists w_rs', rsw_acc w_rs w_rs' /\ rs_own_reply w_rs' r_rs) ->
         cc_rust_c_mr r_rs r_c ->
@@ -906,7 +835,7 @@ Proof.
       auto. }
     rewrite H in FIND. inv FIND.
   (* call find *)
-  - exists (Build_hmap_world (inl find) se (nat_to_int N)),
+  - exists (Build_hmap_world_ext find se (nat_to_int N)),
       (rsw find_rs_sig (footprint_flat fp) m SUP),
       (rsq (Vptr bf Ptrofs.zero) find_rs_sig [v; Vint ki] m).
     assert (FINDFUN1: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some find_ext).
@@ -925,11 +854,10 @@ Proof.
     + econstructor.
     + unfold find_rs_sig.
       replace [List_box; Rusttypes.type_int32s] with (type_list_of_typelist (Rusttypes.Tcons List_box (Rusttypes.Tcons Rusttypes.type_int32s Rusttypes.Tnil))).
-      eapply vq_hash_map_intro1 with (f:= find_func).
-      eapply FINDFUN2.
-      simpl. unfold Genv.is_internal.
-      simpl in FINDFUN1. setoid_rewrite FINDFUN1. auto.
-      reflexivity. reflexivity.
+      simpl. red. simpl. rewrite dec_eq_true. rewrite FINDSYM.
+      red. rewrite dec_eq_true.
+      replace ([List_box; Rusttypes.type_int32s]) with (type_list_of_typelist (Rusttypes.Tcons List_box (Rusttypes.Tcons Rusttypes.type_int32s Rusttypes.Tnil))) by reflexivity.
+      econstructor. eauto.
       (* casted *)
       econstructor.
       inv VSPEC. auto.
@@ -938,7 +866,7 @@ Proof.
       eauto.
       (* pre-cond *)
       econstructor. 
-      reflexivity. reflexivity. reflexivity.
+      reflexivity. reflexivity. 
     + inv VSPEC.
       eapply rs_own_query_intro with (fpl := [fp; fp_scalar Rusttypes.type_int32s]).
       * simpl. rewrite app_nil_r. auto.
@@ -951,8 +879,8 @@ Proof.
         red; split; auto.
     + reflexivity.
     (* reply *)
-    + intros ? ? A1 A2 A3. inv A1.
-      2: { inv FIDEQ. }
+    + intros ? ? A1 A2 A3.
+      simpl in A1. red in A1. red in A1. rewrite dec_eq_true in A1.
       destruct A2 as (w_rs' & ACC & A2). inv A2.
       inv A3.
       eexists. split.
@@ -974,7 +902,7 @@ Proof.
       eapply DISJOINT; eauto. 
       eapply SEP; eauto.       
       (* spec *)
-      econstructor; eauto.
+      econstructor; eauto. auto.
       econstructor; eauto.
   - inv CALL.
     assert (FIND: Genv.find_funct ge (Vptr b1 Ptrofs.zero) = Some (Internal find_bucket_func)).
@@ -986,7 +914,7 @@ Proof.
   (* call hash *)
   - assert (SUP: Mem.sup_include nil (Mem.support m)).
     { eapply incl_nil_l. }
-    exists (Build_hmap_world (inl hash) se (nat_to_int N)),
+    exists (Build_hmap_world_ext hash se (nat_to_int N)),
       (rsw hash_rs_sig nil m SUP),
       (rsq (Vptr b Ptrofs.zero) hash_rs_sig [Vint ki; Vint Ni] m).
     assert (FINDFUN1: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some hash_ext).
@@ -1003,14 +931,13 @@ Proof.
               sig_cc := cc_default |} with (signature_of_rust_signature hash_rs_sig) by reflexivity.
     repeat apply conj.
     + econstructor.
-    + unfold hash_rs_sig.
-      replace [Rusttypes.type_int32s; type_int32u] with (type_list_of_typelist (Rusttypes.Tcons Rusttypes.type_int32s (Rusttypes.Tcons type_int32u Rusttypes.Tnil))).
-      eapply vq_hash_map_intro1 with (f:= hash_func).
-      eapply FINDFUN2.
-      simpl. unfold Genv.is_internal.
-      simpl in FINDFUN1. setoid_rewrite FINDFUN1. auto.
-      vm_compute.
-      reflexivity. reflexivity.
+    + unfold hash_rs_sig.      
+      simpl. red. simpl. rewrite dec_eq_true. rewrite FINDSYM.
+      red. rewrite dec_eq_false; try congruence.
+      2: { vm_compute. congruence. }
+      rewrite dec_eq_true.
+      replace [Rusttypes.type_int32s; type_int32u] with (type_list_of_typelist (Rusttypes.Tcons Rusttypes.type_int32s (Rusttypes.Tcons type_int32u Rusttypes.Tnil))) by reflexivity.
+      econstructor. eauto.
       (* casted *)
       econstructor.
       econstructor. auto.
@@ -1021,7 +948,7 @@ Proof.
       econstructor. unfold Ni. rewrite Neq10. reflexivity.
       econstructor. auto.
       econstructor. auto.
-      reflexivity. reflexivity. reflexivity.
+      reflexivity. 
     + eapply rs_own_query_intro with (fpl := [fp_scalar Rusttypes.type_int32s; fp_scalar type_int32u]).
       * simpl. econstructor.
       * econstructor.
@@ -1033,8 +960,9 @@ Proof.
         red; split; auto.
     + reflexivity.
     (* reply *)
-    + intros ? ? A1 A2 A3. inv A1.
-      2: { inv FIDEQ. }
+    + intros ? ? A1 A2 A3.
+      simpl in A1. red in A1. red in A1. rewrite dec_eq_false in A1.
+      rewrite dec_eq_true in A1. inv A1.
       destruct A2 as (w_rs' & ACC & A2). inv A2.
       inv A3.
       eexists. split.
@@ -1044,56 +972,72 @@ Proof.
       inv ACC.
       eapply find_bucket_return_hash.
       (* post conditions *)
-      inv FIDEQ. eauto.
+      eauto. 
       (* cont *)
       econstructor. eauto.
       eapply m_invar. eauto.
       eapply Mem.unchanged_on_implies. eauto.
-      intros. simpl. auto.
+      intros. simpl. auto. auto.
+      intro. inv H.
 Qed.
 
-  
-Lemma initial_preservation_progress: forall q_rs q_c,
+(* Incoming safety interface: {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q} *)
+Lemma initial_preservation_progress: forall q_c,
     valid_query (hash_map_sem se) q_c = true ->
-    hmap_senv w = se ->
-    cc_rust_c_mq q_rs q_c ->
-    rs_own_query rw q_rs ->
-    vq_hash_map w q_rs ->
+    (list_senv_ext (hmap_list_ext w)) = se ->
+    query_inv (hmap_int_inv N) w q_c ->
+    (* cc_rust_c_mq q_rs q_c -> *)
+    (* rs_own_query rw q_rs -> *)
+    (* vq_hash_map w q_rs -> *)
     exists s, initial_state ge q_c s
          /\ (forall s, initial_state ge q_c s -> sound_state s).
 Proof.
-  intros until q_c. intros VQ SEEQ RC RQ HQ.
-  inv HQ.
+  intros q_c VQ SEEQ HQ.
+  simpl in HQ. red in HQ.
+  destruct q_c. simpl in HQ. destruct cq_vf; try contradiction.
+  destruct Ptrofs.eq_dec in HQ; try contradiction. subst.
+  destruct Genv.invert_symbol eqn: SYM in HQ; try contradiction.
+  red in HQ.
+  (* two cases of i *)  
+  repeat destruct ident_eq in HQ; try contradiction; subst.   
   Strategy opaque [linked_list_mod].
-  - inv RC. simpl in VQ. rewrite SEEQ in *.
-    setoid_rewrite VQ in NFHMAP. congruence.
-  - inv RC.
-    assert (MEQ: rw_mem = m).
-    { unfold rw_mem. inv RQ. auto. }    
-    inv RQ.
+  (* call process *)
+  - simpl in HQ.
+    destruct (hmap_rs_own w) eqn: RSOWN in HQ; try contradiction.
+    destruct HQ as (q_rs & (QINV1 & QINV2) & QINV3).
+    inv QINV3. inv QINV2.    
+    red in QINV1. simpl in QINV1.
+    rewrite dec_eq_true in QINV1. rewrite SYM in QINV1. red in QINV1.
+    rewrite dec_eq_true in QINV1. inv QINV1.
+    assert (MEQ: rw_mem = Some cq_mem).
+    { unfold rw_mem, rw. rewrite RSOWN. auto. }
+    assert (RWFPEQ: rw_fp = Some fp).
+    { unfold rw_fp, rw. rewrite RSOWN. auto. }
     unfold signature_of_rust_signature. simpl.
-    assert (FIND: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some (Internal process_func)).
-    { simpl. destruct Ptrofs.eq_dec; try congruence.
-      eapply Genv.find_funct_ptr_iff.
-      rewrite Genv.find_def_spec.
-      rewrite <- SEEQ.
-      rewrite SYM.
-      reflexivity. }
-    generalize FIND. intros FIND1.
-    simpl in FIND. rewrite dec_eq_true in FIND.
-    rewrite <- SEEQ in FIND.
-    setoid_rewrite FINDF in FIND. inv FIND.    
+    assert (RWSGEQ: rw_sg = Some process_sig).
+    { unfold rw_sg, rw. rewrite RSOWN. auto. }    
+    (* assert (FIND: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some (Internal process_func)). *)
+    (* { simpl. destruct Ptrofs.eq_dec; try congruence. *)
+    (*   eapply Genv.find_funct_ptr_iff. *)
+    (*   rewrite Genv.find_def_spec. *)
+    (*   rewrite <- SEEQ. *)
+    (*   rewrite SYM. *)
+    (*   reflexivity. } *)
+    (* generalize FIND. intros FIND1. *)
+    (* simpl in FIND. rewrite dec_eq_true in FIND. *)
+    rewrite SEEQ in FINDF.
     eexists. split.
-    + replace {| sig_args := [Tptr]; sig_res := Tptr; sig_cc := tcc |} with (signature_of_type (to_ctypelist (Rusttypes.Tcons (Tbox Rusttypes.type_int32s) Rusttypes.Tnil)) (to_ctype (Tbox Rusttypes.type_int32s)) tcc).
-      econstructor. eauto. eauto.
+    + replace {| sig_args := [Tptr]; sig_res := Tptr; sig_cc := cc_default |} with (signature_of_type (to_ctypelist (Rusttypes.Tcons (Tbox Rusttypes.type_int32s) Rusttypes.Tnil)) (to_ctype (Tbox Rusttypes.type_int32s)) cc_default).
+      (* inv TYF. *)
+      econstructor; eauto.
       eapply RustOp.val_casted_list_to_ctype. eauto.
       reflexivity.
-    + intros. inv H0.
-      rewrite FIND1 in H8. inv H8.
-      inv WTFP. inv H6.
-      inv SEMWT. inv H7. inv H4; simpl in *; try congruence.
-      inv H5.
-      inv H5.
+    + intros. inv H.
+      unfold ge in H7. setoid_rewrite FINDF in H7. inv H7.
+      inv WTFP. inv H5.
+      inv SEMWT. inv H6. inv H3; simpl in *; try congruence.
+      inv H4.
+      inv H4.
       inv WT. inv WTLOC.
       inv WTLOC.
       inv WT. inv MODE.
@@ -1101,10 +1045,51 @@ Proof.
       rewrite <- SEEQ. eauto.
       econstructor. econstructor. reflexivity. eauto.
       econstructor. eauto. eauto. auto.
-      unfold rw_fp. rewrite <- H.
-      simpl in EQ. 
-      simpl. auto.
-Qed.      
+  (* call hmap_process *)
+  - inv HQ.
+    rewrite SEEQ in *.
+    eexists. split.
+    + econstructor; eauto.
+    + intros. inv H.
+      eapply hmap_operate_on_callstate; eauto.
+      econstructor; eauto. econstructor.
+Qed.
+
+Lemma final_progress: forall s r,
+    sound_state s ->
+    final_state s r ->
+    reply_inv (hmap_int_inv N) w r.
+Proof.
+  intros. inv H0. inv H; try (simpl in NOTCALLRET; contradiction).
+  (* return from process *)
+  + simpl. red. red.
+    rewrite FUNID. rewrite dec_eq_true. 
+    unfold rw_mem, rw_fp, rw_sg in *. unfold rw in *.
+    destruct (hmap_rs_own w) eqn: RSOWN; try congruence.
+    exists (rsr (Vptr b Ptrofs.zero) m).
+    repeat apply conj.
+    * simpl. red. red. rewrite FUNID. rewrite dec_eq_true. auto.
+    * destruct r. inv RWMEM. inv RWFP. inv SGEQ.
+      assert (SUP: Mem.sup_include rwfp (Mem.support m)).
+      { eapply Mem.sup_include_trans. eapply Hm0.
+        eapply Mem.unchanged_on_support. eapply MPRED. }
+      exists (rsw process_sig rwfp m SUP). split.
+      -- econstructor.
+         eapply Mem.unchanged_on_implies. eapply MPRED.
+         intros. simpl. intro. eapply H. eapply FPEQ. eauto.
+         eapply flat_footprint_separated_refl.
+      -- eapply rs_own_reply_intro with (rfp:= fp); eauto.
+         red. intros. eapply FPEQ. eauto.
+    * simpl. econstructor.
+  + inv CONT.
+  (** How to prevent returning from hmap_operate_on  *)
+  (* return from hmap_process *)
+  + simpl. red. red. 
+    rewrite FUNID. rewrite dec_eq_false. rewrite dec_eq_true.
+    econstructor; eauto.
+  + inv CONT.
+  + inv CONT. inv CONT0.
+Admitted.
 
 Lemma firstn_app_3 {A: Type}: forall (l1 l2 : list A),
     firstn (Datatypes.length l1) (l1 ++ l2) = l1.
@@ -1128,8 +1113,9 @@ Proof.
       eapply Genv.find_funct_ptr_iff.
       rewrite Genv.find_def_spec. rewrite SYMB.
       auto. }
-    assert (Hm': Mem.sup_include (footprint_flat (fp_box b 4 (fp_scalar Rusttypes.type_int32s))) (Mem.support rw_mem)).
-    { unfold rw_mem, rw_fp in *. destruct rw.      
+    assert (Hm': Mem.sup_include (footprint_flat (fp_box b 4 (fp_scalar Rusttypes.type_int32s))) (Mem.support rwm)).
+    { unfold rw_mem, rw_fp in *. destruct rw; try congruence.
+      destruct r. inv RWMEM. inv RWFP.
       eapply Mem.sup_include_trans. 2: eauto. red. intros.
       inv H. 
       eapply FPEQ. simpl. eauto. inv H0. }
@@ -1146,8 +1132,8 @@ Proof.
       exploit function_entry1_det. eauto. eapply ENTRY.
       intros (A1 & A2 & A3). subst.
       eapply hmap_process_internal.
-      eauto. eauto. econstructor.
-      reflexivity. reflexivity. eauto.
+      eauto. eauto. eauto. eauto. econstructor.
+      reflexivity. reflexivity. eauto. eauto.
       lia.
       
   (* process internal *)
@@ -1229,9 +1215,10 @@ Proof.
         replace (Vint (cast_int_int I32 Signed (Int.xor (cast_int_int I32 Signed n) (cast_int_int I32 Signed (Int.repr 42))))) with (Vint (Int.xor n (Int.repr 42))).
         eauto. reflexivity.
       + intros. eapply hmap_process_internal with (n:=2%nat). eapply MPRED1. eauto.
+        eauto. eauto.
         2: eauto.
         eapply starNf_step_right; eauto. 
-        1-2: inv H; simpl; auto. eauto. lia. }
+        1-2: inv H; simpl; auto. eauto. auto. lia. }
     inv STEP.
     (* inversion of assignment *)
     inv H8. inv H4. inv H.
@@ -1305,7 +1292,8 @@ Proof.
                destruct MPRED2 as (((A1 & A2 & A3) & A4) & A5).
                eapply A4. auto. }
         econstructor. econstructor. reflexivity.
-        eauto. econstructor. eauto. eauto. auto. }
+        eauto. econstructor. eauto. eauto. auto.
+        econstructor. econstructor. auto. }
     inv STEP.
     inv STAR1. inv NOTCALLRET.
     inv STEP.
@@ -1332,7 +1320,7 @@ Proof.
       intros (A1 & A2 & A3). subst.
       eapply hmap_operate_on_internal1. eauto.
       reflexivity. reflexivity. econstructor. auto.
-      simpl. auto. lia.
+      simpl. auto. auto. lia.
   (* hmap_operate_on_internal1 *)
   - generalize MPRED as MPRED1. intros.
     generalize STAR as STAR1. intros.
@@ -1589,7 +1577,7 @@ Proof.
           red. intros.
           eapply m_valid. eapply MPRED1.
           instantiate (1 := 0).
-          simpl. left. eauto. }
+          simpl. left. eauto. auto. }
       inv STEP.
       exploit eval_expr_det. eapply EVALFUN. eauto.
       intros. subst.      
@@ -1663,7 +1651,7 @@ Proof.
       - intros. eapply hmap_operate_on_internal3 with (n:=2%nat).
         reflexivity. eauto. reflexivity. eapply MPRED1. eauto. eauto.
         eapply starNf_step_right; eauto.
-        1-2: inv H; simpl; auto. lia. eauto. eauto. }
+        1-2: inv H; simpl; auto. lia. eauto. eauto. auto. }
     inv STEP.
     2: { destruct H7; congruence. }
     2: { destruct H7; congruence. }
@@ -1679,7 +1667,7 @@ Proof.
     assert (MPRED4: m' |= hmap_pred loc (fpl1 ++ fp :: fpl2) **
                       contains Mptr b_hmap 0 (eq (Vptr loc Ptrofs.zero)) **
                       contains Mint32 b_key 0 (eq (Vint ki))).
-    { unfold hmap_pred.
+    { unfold hmap_pred, HashMapCommon.hmap_pred.
       rewrite hmap_pred_rec_split with (k:=(int_to_nat idx)); eauto.
       exploit (hmap_pred_rec_fpl_length (int_to_nat idx) fpl1). eapply MPRED2.
       intros L1. rewrite <- L1 in *.
@@ -1743,7 +1731,7 @@ Proof.
       exploit function_entry1_det. eauto. eapply ENTRY.
       intros (A1 & A2 & A3). subst.
       eapply find_bucket_internal1 with (n:=0%nat). reflexivity. eauto. eauto.
-      econstructor. simpl. auto. lia.
+      econstructor. simpl. auto. lia. auto. 
   (* find_bucket_internal1  *)
   - generalize MPRED as MPRED1. intros.
     generalize STAR as STAR1. intros.
@@ -1913,7 +1901,7 @@ Proof.
           unfold int_to_nat. lia.
           unfold int_to_nat. rewrite LEN. lia.
           unfold int_to_nat. rewrite LEN. lia. }           
-        erewrite <- call_find_bucket_cont_eq_call_cont; eauto. }
+        erewrite <- call_find_bucket_cont_eq_call_cont; eauto. auto. }
     lia.
   (* return from find_bucket *)
   - inv CONT. inv CONT0.
@@ -1924,8 +1912,7 @@ Proof.
       (* return to hmap_process *)
       eapply hmap_operate_on_internal2 with (n:= 0%nat).
       2: econstructor. reflexivity.
-      eauto. eauto. lia. auto. simpl. auto. lia.
-
+      eauto. eauto. lia. auto. simpl. auto. auto. lia.
 Qed.
       
 End SOUNDNESS.
@@ -1933,35 +1920,35 @@ End SOUNDNESS.
 Local Open Scope inv_scope.
 (* Module total safety of hash_map_prog *)
 
+(* ⟦hmap.c⟧ ⊩ {find_process ↦ ⊤, hash ↦ P} ⋅ I_rs⋅R_rc
+             ↠ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q} *)
 Lemma hash_map_module_safe:
-  module_type_safe ((hmap_inv @@ rs_own) @! cc_rust_c) ((hmap_inv @@ rs_own) @! cc_rust_c) hash_map_sem SIF.
+  module_type_safe ((hmap_ext_inv @@ rs_own) @! cc_rust_c) (hmap_int_inv 10%nat) hash_map_sem SIF.
 Proof.
   red. econstructor.
   (* cannot specify msafek_invariant for unknown reason *)
-  eapply (Module_type_safe_components li_c li_c hash_map_sem ((hmap_inv @@ rs_own) @! cc_rust_c) ((hmap_inv @@ rs_own) @! cc_rust_c) SIF (fun se '((w, (se', rw)), _) s => sound_state 10%nat se w rw s)).
-  intros se ((w_hm, (?, w_rs)) & ?) SYMB VSE.
-  inv SYMB. destruct H. inv H0. inv H.
-  inv H0. inv H1. rename H2 into SYM1.
+  eapply (Module_type_safe_components li_c li_c hash_map_sem ((hmap_ext_inv @@ rs_own) @! cc_rust_c) (hmap_int_inv 10%nat) SIF (fun se w s => sound_state 10%nat se w s)).
+  intros se w SYMB VSE.
+  destruct SYMB as (SEEQ & WF).
   econstructor.
   (* preservation *)
   - intros. eapply step_preservation_progress; eauto.
   (* progress *)
   - intros. left. eapply step_preservation_progress; eauto.
   (* initial safe *)
-  - intros. inv H0. inv H1. inv H0.
-    eapply initial_preservation_progress; eauto.
+  - intros. eapply initial_preservation_progress; eauto.
   (* external safe *)
   - intros.
     exploit hash_map_external. reflexivity.
     eauto. eauto.
     intros (wI & w_rs1 & q_rs & A1 & A2 & A3 & A4 & A5).
     rewrite <- A4 in *.
-    exists ((wI, ((hmap_senv w_hm), w_rs1)), tt).
+    exists ((wI, (se, w_rs1)), tt).
     repeat apply conj.
     + econstructor. split.
       econstructor; eauto.
       econstructor. reflexivity. eauto.
-      rewrite A4. econstructor.
+      rewrite A4. reflexivity.
       econstructor.
     + econstructor. split; eauto.
       econstructor. eauto.
@@ -1969,11 +1956,5 @@ Proof.
     + intros. inv H1. inv H2. inv H1. inv H4. inv H1.
       eapply A5; eauto.
   (* final state *)
-  - intros. inv H0. inv H;try (simpl in NOTCALLRET; contradiction).
-    + admit.
-    + inv CONT.
-    (** How to prevent returning from hmap_operate_on  *)
-    + admit.
-    + inv CONT.
-    + inv CONT. inv CONT0.
-Admitted.    
+  - intros. eapply final_progress; eauto.
+Qed.
