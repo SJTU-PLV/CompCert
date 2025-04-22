@@ -213,7 +213,7 @@ Definition inv_sum {li} (I1 I2: invariant li) : invariant li :=
   |}.
 
 Declare Scope inv_scope.
-Infix "⊕" := inv_sum (at level 30, right associativity) : inv_scope.
+Infix "⊎" := inv_sum (at level 30, right associativity) : inv_scope.
 Infix "@@" := inv_compose (at level 30, right associativity) : inv_scope.
 Infix "@!" := invcc (at level 30, right associativity) : inv_scope.
 Infix "!@" := ccinv (at level 30, right associativity) : inv_scope.

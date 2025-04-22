@@ -8843,12 +8843,12 @@ End MOVE_CHECK.
 Definition mem_error prog se (s: state) : Prop :=
   step_mem_error (globalenv se prog) s.
 
-(* I is the generic partial safe invariant *)
-Lemma move_check_module_safe (I: invariant li_rs) p p1:
-  module_type_safe I I (semantics p) (mem_error p) ->  
+(* P and Q are the generic partial safe invariant *)
+Lemma move_check_module_safe (P Q: invariant li_rs) p p1:
+  module_type_safe P Q (semantics p) (mem_error p) ->  
   (* Genv.valid_for (erase_program (program_of_program p)) se ->  *)
   move_check_program p = OK p1 ->
-  module_type_safe (inv_compose I rs_own) (inv_compose I rs_own) (semantics p) SIF.
+  module_type_safe (inv_compose P rs_own) (inv_compose Q rs_own) (semantics p) SIF.
   (* module_safe_se (semantics p) (inv_compose I rs_own) (inv_compose I rs_own) not_stuck se. *)
 Proof.
   intros [SAFE] MVCHK. destruct SAFE as (SINV & PRE).
@@ -8862,7 +8862,7 @@ Proof.
                invariant is hard-code in the initial state *)
                /\ rs_sig_comp_env (mod_sg w2) = p.(prog_comp_env)).
   red. constructor.
-  eapply (Module_type_safe_components li_rs li_rs (semantics p) (inv_compose I rs_own) (inv_compose I rs_own) SIF IS).
+  eapply (Module_type_safe_components li_rs li_rs (semantics p) (inv_compose P rs_own) (inv_compose Q rs_own) SIF IS).
   intros se (w1 & (se' & w2)) (SYMINV1 & SYMINV2) VSE. simpl in SYMINV2. subst.
   simpl in VSE.
   generalize (PRE se w1 SYMINV1 VSE). intros PRE1.
