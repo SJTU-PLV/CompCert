@@ -434,6 +434,10 @@ Inductive type_safe_state_gen w: list (frame L) -> Prop :=
 
 End WITH_INV.
 
+(* L1 ⊩ I1 ->> I2
+   L2 ⊩ I2 ->> I1
+   L1 ⊕ L2 ⊩ (I1 ⊎ I2) ->> (I1 ⊎ I2)
+ *)
 
 Section COMPOSE_TYPE_SAFE_GENERAL.
   
@@ -445,15 +449,18 @@ Let L (i: bool) := if i then L1 else L2.
 disjoint *)
 Hypothesis valid_query_disjoint1: forall w q se,
     symtbl_inv I1 w se ->
-    Genv.valid_for (skel L1) se ->
+    (* When we prove this hypothesis, we may require that two lts has
+    valid symtbl *)
+    (forall i, Genv.valid_for (skel (L i)) se) ->
     query_inv I1 w q ->
     valid_query (L1 se) q = false.
 
 Hypothesis valid_query_disjoint2: forall w q se,
     symtbl_inv I2 w se ->
-    Genv.valid_for (skel L2) se ->
+    (forall i, Genv.valid_for (skel (L i)) se) ->
     query_inv I2 w q ->
     valid_query (L2 se) q = false.
+
 
 Hypothesis external_not_valid_query: forall i se s q,
     Smallstep.at_external (L i se) s q ->
@@ -598,8 +605,7 @@ Proof.
     the query in the same module as the valid_query *)
     destruct VQ as [VQ1 | VQ2].
     + simpl in QINV. destruct wB as [w1|w2].
-      eapply valid_query_disjoint1 in QINV; try eapply SYM.
-      2: { eapply (VALIDSE true). }
+      eapply valid_query_disjoint1 in QINV; try eapply SYM; eauto.
       rewrite VQ1 in QINV.
       congruence.
       simpl in SYM.
@@ -612,15 +618,13 @@ Proof.
       exploit @initial_preserves_progress. eapply (SAFE true).
       1-4: eauto. intros (s' & B1 & B2).
       destruct i.
-      2: { eapply valid_query_disjoint2 in QINV; try eapply SYM.
-           2: { eapply (VALIDSE false). }
+      2: { eapply valid_query_disjoint2 in QINV; try eapply SYM; eauto.
            rewrite H0 in QINV.           
            congruence. }      
       econstructor. econstructor.
       eauto. eauto.
     + simpl in QINV. destruct wB as [w1|w2].
-      2: { eapply valid_query_disjoint2 in QINV; try eapply SYM.
-           2: { eapply (VALIDSE false). }
+      2: { eapply valid_query_disjoint2 in QINV; try eapply SYM; eauto.
            rewrite VQ2 in QINV.
            congruence. }
       simpl in SYM.
@@ -633,8 +637,7 @@ Proof.
       exploit @initial_preserves_progress. eapply (SAFE false).
       1-4: eauto. intros (s' & B1 & B2).
       destruct i.
-      eapply valid_query_disjoint1 in QINV; try eapply SYM.
-      2: { eapply (VALIDSE true). }
+      eapply valid_query_disjoint1 in QINV; try eapply SYM; eauto.
       rewrite H0 in QINV.           
       congruence.
       econstructor. econstructor.

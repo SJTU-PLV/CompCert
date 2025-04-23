@@ -155,6 +155,20 @@ Proof.
   repeat destruct ident_eq in H; try contradiction; subst; reflexivity.
 Qed.
 
+Lemma hmap_int_inv_valid_query: forall w vf sg args m N,
+    query_inv (hmap_int_inv N) w (cq vf sg args m) ->
+    Genv.is_internal (Genv.globalenv (list_senv_ext (hmap_list_ext w)) (Ctypes.program_of_program hash_map_prog)) vf = true.
+Proof.
+  intros. simpl in H. red in H. simpl in H.
+  destruct vf; try contradiction.
+  destruct Ptrofs.eq_dec in H; try contradiction. subst.
+  destruct Genv.invert_symbol eqn: SYM in H; try contradiction.
+  red in H.
+  unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr.
+  rewrite dec_eq_true. rewrite Genv.find_def_spec. setoid_rewrite SYM.
+  repeat destruct ident_eq in H; try contradiction; subst; reflexivity.
+Qed.
+
 
 Theorem link_linked_list_hash_map_safe: forall linked_list_asm hash_map_asm linked_mod,
     transf_rustlight_program linked_list_mod = OK linked_list_asm ->
@@ -184,104 +198,88 @@ Proof.
     (* 2.1 prove safety composition *)
     3: {
       (** TODO: the senv must be valid  *)
-            eapply compose_total_type_safety_general.
-         (* 2.1.1 safety of hmap.s *)
-         4: { eapply compiled_hash_map_safe. eauto. }
-         (* 2.1.2 safety of list.s. It requires refienment *)
-         4: { eapply open_safety_inv_ref.
-              3: { eapply compiled_linked_list_safe. eauto. }
-              admit. admit. }
-         (* 2.1.3 disjointness of the safety interfaces for composition *)
-         { intros w q se SINV VQ QINV. destruct w as ((w1 & w2) & w3 & w4).
-           destruct QINV as (?q & Q1 & Q2).
-           destruct SINV as (?se & S1 & S2).           
-           (* use fsim to rewrite the valid_query *)
-           exploit clight_semantic_preservation.
-           eapply transf_clight_program_match. eauto. intros ([FSIM] & [BSIM]).
-           erewrite fsim_match_valid_query. 3: eapply Q2.
-           2: { eapply FSIM. eauto. eauto.
-                erewrite fsim_skel; eauto.
-                eapply match_senv_valid_for; eauto. }
-           (* destruct query_inv to show that valid query is false *)
-           destruct w1 as (w1' & w1'').
-           destruct Q1 as (?q & (Q11 & Q12) & Q13).
-           destruct S1 as (?se & (S11 & S12) & S13).           
-           inv S13. inv S11.
-           inv Q13. simpl. 
-           eapply hmap_ext_inv_hmap_fun_disjoint. eauto. }
-         (* similar to 2.1.3 *)
-         { intros w q se SINV VQ QINV. destruct w as (w1 & w2).
-           destruct QINV as (?q & Q1 & Q2).
-           destruct SINV as (?se & S1 & S2).
-           (* use fsim to rewrite the valid_query *)
-           exploit rustlight_semantic_preservation.
-           eapply transf_rustlight_program_match. eauto.
-           intros (FSIM & BSIM).
-           eapply CallconvAlgebra.open_fsim_ccref in FSIM.
-           2: { eapply cc_rust_compcert_eqv. }
-           2: { eapply cc_rust_compcert_eqv. }
-           destruct FSIM as [FSIM].
-           (** Maybe we can just prove the valid_query by definition as
-           we cannot construct a rust query *)
-           simpl.
-           destruct w2 as ((se21 & w21) & (se22 & w22) & (se23 & w23) & w24).
-           destruct Q2 as (q21 & Q21 & q22 & Q22 & q23 & Q23 & Q24).
-           destruct S2 as (S21 & S22 & S23 & S24).
-           inv S21. inv S22. inv Q21. inv Q22.
-           destruct q.
-           (* simplify *)
-           unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr.
-           simpl. destruct (r Asm.PC) eqn: PC; auto.
-           destruct Ptrofs.eq_dec; auto. subst.
-           simpl in Q24. destruct q23. inv Q24.
-           generalize (H6 Asm.PC). intros PCINJ.
-           fsim_match_valid_query
-           (* rewrite match_stbls of the cc_asm injp *)
-           match_prog_rustlight
-           rewrite 
-                     
-           (* inversion of cc_c_asm_injp *)
-           inv Q23. 
-           
-
-           match_senv
-           erewrite fsim_match_valid_query
-           
-           simpl.
-           match_prog
-           erewrite Genv.is_internal_match_id
-           Genv.is_internal
-           valid_query
-           simpl. 
-           
-           erewrite fsim_match_valid_query. 
-           2: { eapply FSIM. instantiate (1 := se0). instantiate (1 := (se0, tt, w2)).
-                econstructor. reflexivity. eauto.                
-                erewrite fsim_skel; eauto.
-                eapply match_senv_valid_for; eauto. }
-           simpl. 
-           (* destruct query_inv to show that valid query is false *)
-           instantiate (1 := q0).
-           simpl in S1. destruct S1 as ( S11 & S12).
-           destruct Q1 as (?q & (Q11 & Q12) & Q13).
-           destruct S1 as (?se & (S11 & S12) & S13).           
-           inv S13. inv S11.
-           inv Q13. simpl. 
-           eapply hmap_ext_inv_hmap_fun_disjoint. eauto. }
-
-                          
-           
-
-           
-         (* external calls are not valid incoming call *)
-         intros. destruct i.
-         simpl. destruct s. inv H2.
-         unfold Genv.is_internal. simpl. rewrite H3. reflexivity.
-         (* 2.1.4 semantic compose *)
-         unfold SmallstepLinking.compose. simpl.
-         erewrite Linking.link_erase_program; eauto. simpl.
-         f_equal. f_equal.
-         apply Axioms.functional_extensionality. intros [|]; auto.  }
+      eapply compose_total_type_safety_general.
+      (* 2.1.1 safety of hmap.s *)
+      4: { eapply compiled_hash_map_safe. eauto. }
+      (* 2.1.2 safety of list.s. It requires refienment *)
+      4: { eapply open_safety_inv_ref.
+           3: { eapply compiled_linked_list_safe. eauto. }
+           admit. admit. }
+      (* 2.1.3 disjointness of the safety interfaces for composition *)
+      { intros w q se SINV VQ QINV. destruct w as ((w1 & w2) & w3 & w4).
+        destruct QINV as (?q & Q1 & Q2).
+        destruct SINV as (?se & S1 & S2).           
+        (* use fsim to rewrite the valid_query *)
+        exploit clight_semantic_preservation.
+        eapply transf_clight_program_match. eauto. intros ([FSIM] & [BSIM]).
+        erewrite fsim_match_valid_query. 3: eapply Q2.
+        2: { eapply FSIM. eauto.
+             erewrite fsim_skel; eauto.
+             eapply match_senv_valid_for; eauto.
+             eapply (VQ true). }
+        (* destruct query_inv to show that valid query is false *)
+        destruct w1 as (w1' & w1'').
+        destruct Q1 as (?q & (Q11 & Q12) & Q13).
+        destruct S1 as (?se & (S11 & S12) & S13).           
+        inv S13. inv S11.
+        inv Q13. simpl. 
+        eapply hmap_ext_inv_hmap_fun_disjoint. eauto. }
+      (* 2.1.3 valid_query q is false if q satisfies the invariant
+         of the compiled hash_map. The proof here is different from
+         the above cases as we cannot construct a rust query to use
+         fsim_match_valid_query. We prove that if q satisfies the
+         hash_map invariant, it must satisfy the valid_query of the
+         hash_map_asm. We can use the property of syntactic linking
+         (link_prog, link_fundef) to show that if q points to an
+         internal function of hash_map_asm, then it must not point to
+         an internal function of linked_list_asm.  *)
+      { intros w q se SINV VQ QINV. destruct w as (w1 & w2).
+        destruct QINV as (?q & Q1 & Q2).
+        destruct SINV as (?se & S1 & S2).
+        (* use fsim to rewrite the valid_query *)
+        exploit clight_semantic_preservation.
+        eapply transf_clight_program_match. eauto.
+        intros ([FSIM] & [BSIM]).
+        assert (VQ1: valid_query (Asm.semantics hash_map_asm se) q = true).
+        { erewrite fsim_match_valid_query. 3: eapply Q2.
+          2: { eapply FSIM. eauto.
+               erewrite fsim_skel; eauto.
+               eapply match_senv_valid_for; eauto. 
+               eapply (VQ true). }
+          (* property of hmap_int_inv *)
+          simpl.
+          destruct S1. rewrite <- H2.
+          destruct q0.
+          eapply hmap_int_inv_valid_query.  eauto. }
+        simpl. simpl in VQ1.
+        (* simplify *)
+        destruct q. simpl. simpl in VQ1.
+        unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr in *.
+        destruct (r Asm.PC) eqn: PC; auto.           
+        destruct Ptrofs.eq_dec; auto. subst.
+        erewrite Genv.find_def_spec in *.
+        destruct (Genv.invert_symbol se b) eqn: SYM; try congruence.
+        destruct ((prog_defmap hash_map_asm) ! i) eqn: FIND1 in VQ1; try congruence.
+        destruct ((prog_defmap linked_list_asm) ! i) eqn: FIND2; auto.
+        eapply Linking.link_prog_inv in H1. destruct H1 as (A1 & A2 & A3).
+        exploit A2. eauto. eauto. intros (IN1 & IN2 & (gd & LINK)).
+        destruct g; destruct g0; simpl in LINK; try congruence; auto.
+        change Linking.link with (@Linking.link_def Asm.fundef unit _ _) in LINK.
+        simpl in LINK.
+        change Linking.link with (@Linking.link_fundef Asm.function) in LINK.
+        destruct f; destruct f0; simpl in VQ1, LINK; try congruence; simpl; auto. }
+      { (* external calls are not valid incoming call *)
+        intros. destruct i.
+        simpl. destruct s. inv H2.
+        unfold Genv.is_internal. simpl. rewrite H3. reflexivity.
+        simpl. destruct s. inv H2.
+        unfold Genv.is_internal. simpl. rewrite H3. reflexivity. }
+      { (* 2.1.4 semantic compose *)
+        unfold SmallstepLinking.compose. simpl.
+        erewrite Linking.link_erase_program; eauto. simpl.
+        f_equal. f_equal.
+        apply Axioms.functional_extensionality. intros [|]; auto.  }
+    } 
     (* 2.2 refinement of invariant *)
     admit.
     (* 2.3 refinement of invariant *)

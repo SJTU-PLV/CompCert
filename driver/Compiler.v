@@ -876,20 +876,20 @@ Qed.
 
 (** Simulation convention of the rust compiler *)
 
-Definition ⊎ompcert: callconv li_rs li_asm :=
+Definition cc_rust_compcert: callconv li_rs li_asm :=
   ro_rs @ wt_rs @
   cc_rust_asm_injp @
   cc_asm injp.
 
-Lemma ⊎ollapse:
+Lemma cc_rust_collapse:
   ccref
     (ro_rs @                    (* Self simulation of Rustlight *)
        cc_rs injp @             (* Elaborate drop *)
-       (cc_rs injp @ ⊎) @  (* Clightgen: may be changed to injp *)
+       (cc_rs injp @ cc_rust_c) @  (* Clightgen: may be changed to injp *)
        cc_compcert)             (* CompCertO *)
-    ⊎ompcert.
+    cc_rust_compcert.
 Proof.
-  unfold cc_compcert, ⊎ompcert.
+  unfold cc_compcert, cc_rust_compcert.
   rewrite cc_compose_assoc.
   (* merge top-level injp *)
   rewrite <- (cc_compose_assoc (cc_rs injp)), <- cc_rs_compose. rewrite injp_injp2.
@@ -898,20 +898,20 @@ Proof.
   rewrite cc_compose_assoc.
   rewrite <- lessdef_c_cklr, cc_compose_assoc, <- (cc_compose_assoc wt_c).
   rewrite (commute_around (wt_c @ lessdef_c)).
-  rewrite !(commute_around ⊎).
+  rewrite !(commute_around cc_rust_c).
   rewrite <- !(cc_compose_assoc ro_rs).
   rewrite <- (cc_compose_assoc (ro_rs @ cc_rs injp)).
   rewrite trans_injp_rors_outgoing.
   rewrite cc_compose_assoc.
   (* move wt_c to the top *)
-  rewrite <- (cc_compose_assoc ⊎).
+  rewrite <- (cc_compose_assoc cc_rust_c).
   rewrite <- commut_rust_c_wt_lessdef.
   do 2 rewrite <- (cc_compose_assoc (cc_rs injp)).
   rewrite wt_rs_R_refinement.
   rewrite !cc_compose_assoc, <- (cc_compose_assoc lessdef_rs).
   rewrite lessdef_rs_cklr.
-  (* merge injp, ⊎ and cc_c_asm_injp *)  
-  rewrite <- (cc_compose_assoc ⊎), cc_rcca_ra.
+  (* merge injp, cc_rust_c and cc_c_asm_injp *)  
+  rewrite <- (cc_compose_assoc cc_rust_c), cc_rcca_ra.
   rewrite <- (cc_compose_assoc (cc_rs injp)), cc_injpra_rainjp.
   reflexivity.
 Qed.
@@ -919,17 +919,17 @@ Qed.
     
 Lemma cc_rust_expand:
   ccref
-    ⊎ompcert
+    cc_rust_compcert
     (ro_rs @                    (* Self simulation of Rustlight *)
        cc_rs injp @             (* Elaborate drop *)
-       (cc_rs injp @ ⊎) @  (* Clightgen: outgoing should be injp *)
+       (cc_rs injp @ cc_rust_c) @  (* Clightgen: outgoing should be injp *)
        (** may be we should not use cc_compcert because it contains
        some self-simulation invariant which is not belong to the
        compiler *)
        cc_compcert)             (* CompCertO *)
 .
 Proof.
-  unfold ⊎ompcert, cc_compcert.
+  unfold cc_rust_compcert, cc_compcert.
   rewrite !cc_compose_assoc.
   (* 1. expand RAinjp *)
   rewrite cc_rainjp_injpra.
@@ -938,7 +938,7 @@ Proof.
   (* 2. put down an injp *)
   rewrite injp_injp at 1. rewrite cc_rs_compose, cc_compose_assoc.
   (* swap injp⋅rc *)
-  rewrite <- (cc_compose_assoc (cc_rs injp) ⊎).
+  rewrite <- (cc_compose_assoc (cc_rs injp) cc_rust_c).
   rewrite injp_rs__rc_injp.
   rewrite cc_compose_assoc.    
   (* 3. put down wt_rs from rust to c *)
@@ -946,7 +946,7 @@ Proof.
   rewrite <- lessdef_rs_cklr at 1.
   rewrite ! cc_compose_assoc, <- (cc_compose_assoc wt_rs).
   rewrite (commute_around (wt_rs @ lessdef_rs)).
-  (* 3.1 swap (wt_rs @ lessdef_rs) and ⊎ *)
+  (* 3.1 swap (wt_rs @ lessdef_rs) and cc_rust_c *)
   rewrite <- (cc_compose_assoc (wt_rs @ lessdef_rs)).
   rewrite commut_rust_c_wt_lessdef.
   (* 3.2 absorb lessdef_c into injp *)
@@ -958,11 +958,11 @@ Proof.
   rewrite trans_rs_injp_inv_incoming.
   rewrite !cc_compose_assoc.
   (* 4.1 swap injp⋅rc *)
-  rewrite <- (cc_compose_assoc (cc_rs injp) ⊎).
+  rewrite <- (cc_compose_assoc (cc_rs injp) cc_rust_c).
   rewrite injp_rs__rc_injp.
   rewrite cc_compose_assoc.    
   (* 4.2 swap ro⋅rc *)
-  rewrite <- (cc_compose_assoc ro_rs ⊎).
+  rewrite <- (cc_compose_assoc ro_rs cc_rust_c).
   rewrite ro_rs__rc_ro.
   rewrite cc_compose_assoc.
   (* 4.3 swap injp and wt_c at c level *)
@@ -978,10 +978,10 @@ Proof.
   reflexivity.
 Qed.
 
-Lemma ⊎ompcert_eqv:
-  cceqv ⊎ompcert (⊎ @ cc_compcert).
+Lemma cc_rust_compcert_eqv:
+  cceqv cc_rust_compcert (cc_rust_c @ cc_compcert).
 Proof.
-  unfold ⊎ompcert, cc_compcert.
+  unfold cc_rust_compcert, cc_compcert.
   split.
   - rewrite cainjp__injp_ca_equiv.
     rewrite rainjp_injpra_equiv.
@@ -992,18 +992,18 @@ Proof.
     rewrite <- lessdef_rs_cklr at 1.
     rewrite ! cc_compose_assoc, <- (cc_compose_assoc wt_rs).
     (* 2. swap injp @ rc *)
-    rewrite <- (cc_compose_assoc (cc_rs injp) ⊎).
+    rewrite <- (cc_compose_assoc (cc_rs injp) cc_rust_c).
     rewrite injp_rs__rc_injp.
-    rewrite (cc_compose_assoc ⊎).
-    (* 3 swap (wt_rs @ lessdef_rs) and ⊎ *)
+    rewrite (cc_compose_assoc cc_rust_c).
+    (* 3 swap (wt_rs @ lessdef_rs) and cc_rust_c *)
     rewrite <- (cc_compose_assoc (wt_rs @ lessdef_rs)).
     rewrite commut_rust_c_wt_lessdef.
     (* 4 absorb lessdef_c into injp *)
     rewrite !cc_compose_assoc. 
     rewrite <- (cc_compose_assoc lessdef_c).
     rewrite lessdef_c_cklr.  
-    (* 5. swap ro_rs @ ⊎ *)
-    rewrite <- (cc_compose_assoc ro_rs ⊎).
+    (* 5. swap ro_rs @ cc_rust_c *)
+    rewrite <- (cc_compose_assoc ro_rs cc_rust_c).
     rewrite ro_rs__rc_ro.
     rewrite cc_compose_assoc.
     reflexivity.
@@ -1012,17 +1012,17 @@ Proof.
     rewrite cc_ra_rcca_equiv.
     rewrite !cc_compose_assoc.
     (* 1. swap rc and ro *)
-    rewrite !(commute_around ⊎).
+    rewrite !(commute_around cc_rust_c).
     (* 2. wt_rs => (wt_rs @ lessdef_rs) *)
     rewrite <- (cc_compose_assoc wt_c).
     rewrite <- lessdef_c_cklr at 1.
     rewrite ! cc_compose_assoc, <- (cc_compose_assoc wt_c).
-    (* 3 swap ⊎ and (wt_rs @ lessdef_rs) *)
-    rewrite <- (cc_compose_assoc ⊎ (wt_c @ lessdef_c)).
+    (* 3 swap cc_rust_c and (wt_rs @ lessdef_rs) *)
+    rewrite <- (cc_compose_assoc cc_rust_c (wt_c @ lessdef_c)).
     rewrite <- commut_rust_c_wt_lessdef.
     (* 4. swap rc and injp *)
     rewrite cc_compose_assoc.
-    rewrite !(commute_around ⊎).
+    rewrite !(commute_around cc_rust_c).
     (* 5 absorb lessdef_rs into injp *)
     rewrite !cc_compose_assoc. 
     rewrite <- (cc_compose_assoc lessdef_rs).
@@ -1199,7 +1199,7 @@ Definition cc_rustir_compcert : callconv li_rs li_asm :=
   ro in RustIRown and get the theorem easily *)
   ro_rs
   @ (cc_rs injp)
-  @ (cc_rs injp @ ⊎)
+  @ (cc_rs injp @ cc_rust_c)
   @ cc_compcert.
 
 (* The calling covention from rustir to asm is not a direct
@@ -1232,16 +1232,16 @@ Qed.
 Theorem rustlight_semantic_preservation:
   forall p tp,
   match_prog_rustlight p tp ->
-  forward_simulation ⊎ompcert ⊎ompcert (Rustlightown.semantics p) (Asm.semantics tp)
-  /\ backward_simulation ⊎ompcert ⊎ompcert (Rustlightown.semantics p) (Asm.semantics tp).
+  forward_simulation cc_rust_compcert cc_rust_compcert (Rustlightown.semantics p) (Asm.semantics tp)
+  /\ backward_simulation cc_rust_compcert cc_rust_compcert (Rustlightown.semantics p) (Asm.semantics tp).
 Proof.
   intros p tp M. unfold match_prog_rustlight, pass_match, CompCertO's_passes_rustlight in M. 
   cbn -[CompCertO's_passes_rustir] in M.
   repeat DestructM. destruct M. subst.
-  assert (F: forward_simulation ⊎ompcert ⊎ompcert (Rustlightown.semantics p) (Asm.semantics tp)).
+  assert (F: forward_simulation cc_rust_compcert cc_rust_compcert (Rustlightown.semantics p) (Asm.semantics tp)).
   { rewrite cc_rust_expand at 2.
     (* do 2 rewrite <- (cc_compose_assoc _ _ cc_compcert). *)
-    rewrite <- ⊎ollapse at 1.
+    rewrite <- cc_rust_collapse at 1.
     (* rewrite <- (cc_compose_assoc (cc_rs injp) _ cc_compcert). *)
     (* rewrite <- (cc_compose_assoc ro_rs _ cc_compcert). *)
     (* eapply compose_forward_simulations. *)
@@ -1267,7 +1267,7 @@ Qed.
 Theorem transf_rustlight_program_correct:
   forall p tp,
   transf_rustlight_program p = OK tp ->
-  backward_simulation ⊎ompcert ⊎ompcert (Rustlightown.semantics p) (Asm.semantics tp).
+  backward_simulation cc_rust_compcert cc_rust_compcert (Rustlightown.semantics p) (Asm.semantics tp).
 Proof.
   intros. apply rustlight_semantic_preservation. apply transf_rustlight_program_match; auto.
 Qed.
@@ -1289,7 +1289,7 @@ Qed.
   (compile) L2 ⊑_cc2 L3
       |           
      Asm    {((I @@ wt_rs) @@ cc1) @@ cc2} L2 [((I @@ wt_rs) @@ cc1) @@ cc2] ⊑ {(I @@ wt_rs) @@ cc} L2 [(I @@ wt_rs) @@ cc]
-             where cc ≡ cc1 @ cc2 (i.e., cc ≡ ⊎ompcert)
+             where cc ≡ cc1 @ cc2 (i.e., cc ≡ cc_rust_compcert)
  *)
 
 
@@ -1297,7 +1297,7 @@ Theorem rustlight_partial_safe_to_total_safe P Q:
   forall p tp,
   match_prog_rustlight p tp ->
   module_type_safe P Q (Rustlightown.semantics p) (Rustlightown.mem_error p) ->
-  module_type_safe ((P @@ rs_own) @! ⊎ompcert) ((Q @@ rs_own) @! ⊎ompcert) (Asm.semantics tp) SIF
+  module_type_safe ((P @@ rs_own) @! cc_rust_compcert) ((Q @@ rs_own) @! cc_rust_compcert) (Asm.semantics tp) SIF
   /\ module_type_safe (P @@ rs_own) (Q @@ rs_own) (Rustlightown.semantics p) SIF.
 Proof.
   intros p tp M SAFE. generalize M as M1. intros.
@@ -1335,10 +1335,10 @@ Proof.
    (* ref1 *)
    etransitivity. erewrite invcc_compose_assoc.
    eapply cc_inv_ref. reflexivity.
-   instantiate (1 := ⊎ompcert).
+   instantiate (1 := cc_rust_compcert).
    erewrite cc_compose_id_left.
    unfold cc_rustir_compcert.
-   eapply ⊎ollapse. reflexivity.
+   eapply cc_rust_collapse. reflexivity.
    (* ref2 *)
    red. etransitivity.
    eapply cc_inv_ref. reflexivity.
@@ -1362,7 +1362,7 @@ Theorem transf_rustlight_partial_safe_to_total_safe P Q:
   forall p tp,
   transf_rustlight_program p = OK tp ->
   module_type_safe P Q (Rustlightown.semantics p) (Rustlightown.mem_error p) ->
-  module_type_safe ((P @@ rs_own) @! ⊎ompcert) ((Q @@ rs_own) @! ⊎ompcert) (Asm.semantics tp) SIF
+  module_type_safe ((P @@ rs_own) @! cc_rust_compcert) ((Q @@ rs_own) @! cc_rust_compcert) (Asm.semantics tp) SIF
   /\ module_type_safe (P @@ rs_own) (Q @@ rs_own) (Rustlightown.semantics p) SIF.
 Proof.
   intros. eapply rustlight_partial_safe_to_total_safe; auto.
