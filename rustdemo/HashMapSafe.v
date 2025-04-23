@@ -70,18 +70,136 @@ Proof.
   simpl. auto.
 Qed.
 
+Lemma deref_loc_det: forall ty m b ofs bf v1 v2,
+    deref_loc ty m b ofs bf v1 ->
+    deref_loc ty m b ofs bf v2 ->
+    v1 = v2.
+Proof.
+  destruct ty; intros.
+  all: try (inv H; inv H0; simpl in *; try congruence).
+  all: try inv H1; inv H6. 
+  congruence.
+Qed.
+
+
 (* Clight evaluation of expression is deterministic *)
+Lemma eval_expr_lvalue_det: forall ge e le m,
+    (forall a v1 ,
+        eval_expr ge e le m a v1 ->
+        forall v2, eval_expr ge e le m a v2 ->
+              v1 = v2)
+    /\ (forall a b1 ofs1 bf1,
+          eval_lvalue ge e le m a b1 ofs1 bf1 ->
+          forall b2 ofs2 bf2, eval_lvalue ge e le m a b2 ofs2 bf2 ->
+                         Vptr b1 ofs1 = Vptr b2 ofs2 /\ bf1 = bf2).
+Proof.
+  intros ge e le m.
+  apply eval_expr_lvalue_ind; intros.
+  1-4: inv H; auto; inv H0.
+  (* tmepvar *)
+  inv H0. congruence. inv H1. inv H1.
+  eapply H0; eauto. inv H2.
+  (* unary operation *)
+  inv H2. exploit H0; eauto. intros; subst. congruence. inv H3.
+  (* binary op *)
+  inv H4.
+  exploit H0; eauto. intros; subst.
+  exploit H2; eauto. intros; subst. congruence. inv H5.
+  (* cast *)
+  inv H2. exploit H0; eauto. intros; subst. congruence. inv H3.
+  (* sizeof *)
+  inv H. eauto. inv H0.
+  (* alignof *)
+  inv H. auto. inv H0.
+  (* deref *)
+  { inv H.
+    - inv H2. exploit H0. eapply H. intros (A1 & A2). inv A1.
+      eapply deref_loc_det; eauto.
+    - inv H2. exploit H0. eapply H. intros (A1 & A2). inv A1.
+      eapply deref_loc_det; eauto.
+    - inv H2. exploit H0. eapply H. intros (A1 & A2). inv A1.
+      eapply deref_loc_det; eauto.
+    - inv H2. exploit H0. eapply H. intros (A1 & A2). inv A1.
+      eapply deref_loc_det; eauto.
+    - inv H2. exploit H0. eapply H. intros (A1 & A2). inv A1.
+      eapply deref_loc_det; eauto. }
+  inv H0; eauto.
+  split; congruence.
+  split; congruence.
+  inv H1; eauto.
+  split; congruence.
+  split; congruence.
+  inv H1. exploit H0. eapply H7. intros. inv H1. auto.
+  inv H4. exploit H0. eapply H8. intros. inv H4.
+  split; congruence.
+  exploit H0. eapply H8. intros. inv H4.
+  split; congruence.
+  inv H4. exploit H0. eapply H8. intros. inv H4.
+  split; congruence.
+  exploit H0. eapply H8. intros. inv H4.
+  split; congruence.
+Qed.
+
 Lemma eval_expr_det: forall ge e le m a v1 v2,
     eval_expr ge e le m a v1 ->
     eval_expr ge e le m a v2 ->
     v1 = v2.
-Admitted.
+Proof.       
+  intros. eapply eval_expr_lvalue_det; eauto.
+Qed.
 
-Lemma eval_exprlist_det: forall ge e le m al tyl vl1 vl2,
+  
+Lemma eval_exprlist_det: forall ge e le m al tyl vl1,
     eval_exprlist ge e le m al tyl vl1 ->
-    eval_exprlist ge e le m al tyl vl2 ->
+    forall vl2, eval_exprlist ge e le m al tyl vl2 ->
     vl1 = vl2.
-Admitted.
+Proof.
+  induction 1; intros.
+  inv H. auto. inv H2.
+  f_equal.
+  exploit eval_expr_det. eapply H. eauto. intros. congruence.
+  eauto.
+Qed.
+
+Lemma assign_loc_det ce : forall ty m b ofs bf v m1 m2,
+    assign_loc ce ty m b ofs bf v m1 ->
+    assign_loc ce ty m b ofs bf v m2 ->
+    m1 = m2.
+Proof.
+  intros. inv H; inv H0; auto; try congruence.
+  inv H1. inv H7. congruence.
+Qed.
+
+Lemma alloc_variables_det ce: forall l e1 m1 e2 m2 e3 m3,
+    alloc_variables ce e1 m1 l e2 m2 ->
+    alloc_variables ce e1 m1 l e3 m3 ->
+    e2 = e3 /\ m2 = m3.
+Proof.
+  induction l; intros until m3; intros A1 A2; inv A1; inv A2; auto.
+  rewrite H3 in H8. inv H8. eauto.
+Qed.
+
+Lemma bind_parameters_det ce: forall l vl e m m1 m2,
+    bind_parameters ce e m l vl m1 ->
+    bind_parameters ce e m l vl m2 ->
+    m1 = m2.
+Proof.
+  induction l; intros until m2; intros B1 B2; inv B1; inv B2; auto.
+  rewrite H1 in H9. inv H9.
+  exploit assign_loc_det. eapply H3. eauto. intros. subst.
+  eapply IHl; eauto.
+Qed.
+
+Lemma function_entry1_det: forall ge f vl m m1 m2 e1 le1 e2 le2,
+    function_entry1 ge f vl m e1 le1 m1 ->
+    function_entry1 ge f vl m e2 le2 m2 ->
+    e1 = e2 /\ le1 = le2 /\ m1 = m2.
+Proof.
+  intros. inv H. inv H0.
+  exploit alloc_variables_det. eapply H2. eauto. intros (A1 & A2). subst.
+  repeat apply conj; auto.
+  eapply bind_parameters_det; eauto.
+Qed.
 
 (* Separation predicate of bucket *)
 
@@ -349,8 +467,10 @@ Qed.
 Lemma sep_assoc5: forall A1 A2 A3 A4 A5 m,    
     m |= (A1 ** A2 ** A3 ** A4) ** A5 ->
     m |= A1 ** A2 ** A3 ** A4 ** A5.
-Admitted.
-    
+Proof.
+  intros. rewrite !sep_assoc in H. auto.
+Qed.
+
 (** TODO: property of splitting hmap_pred_rec  *)
 
 (* Pre-condition of hmap_process function *)
@@ -670,13 +790,6 @@ Inductive sound_state : state -> Prop :=
     (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
     sound_state (Returnstate (Vptr b (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx))) k m)
 .
-
-
-Lemma function_entry1_det: forall ge f vl m m1 m2 e1 le1 e2 le2,
-    function_entry1 ge f vl m e1 le1 m1 ->
-    function_entry1 ge f vl m e2 le2 m2 ->
-    e1 = e2 /\ le1 = le2 /\ m1 = m2.
-Admitted.
 
 (* maybe we can have a general function_entry_rule *)
 Lemma function_entry_hmap_operate_on: forall m P b ofs ki,

@@ -255,14 +255,14 @@ Qed.
 
 (** Commute property of invcc and ccinv *)
 
-Lemma cc_inv_cc_equiv {li} (cc: callconv li li) I:
-  inveqv (cc !@ I @! cc) I.
-Proof.
-  split.
-  - red. intros (wcc1, (w, wcc2)) se q1 S Q.
-    inv S. destruct H. inv H. destruct H1.
-    inv Q. destruct H2. inv H2. destruct H4.
-Abort.
+(* Lemma cc_inv_cc_equiv {li} (cc: callconv li li) I: *)
+(*   inveqv (cc !@ I @! cc) I. *)
+(* Proof. *)
+(*   split. *)
+(*   - red. intros (wcc1, (w, wcc2)) se q1 S Q. *)
+(*     inv S. destruct H. inv H. destruct H1. *)
+(*     inv Q. destruct H2. inv H2. destruct H4. *)
+(* Abort. *)
 
 (* Arbitary cc is difficult *)
 Lemma id_inv_id_equiv {li} (I: invariant li) :
@@ -286,3 +286,54 @@ Proof.
 Qed.
 
     
+(* Refinement of inv_sum *)
+
+Lemma inv_sum_ref1 {li} (P1 Q1 P2 Q2 P1' Q1': invariant li) :
+  invref (P1 ⊎ Q1) (P2 ⊎ Q2) ->
+  invref P1' P1 ->
+  invref Q1' Q1 ->
+  invref (P1' ⊎ Q1') (P2 ⊎ Q2).
+Proof.
+  intros A1 A2 A3.
+  red. red in A1.
+  intros w1 se q S Q.
+  destruct w1 as [w1|w1]; simpl in S, Q.
+  - exploit A2; eauto. intros (w2 & S2 & QI2 & R2).
+    exploit (A1 (inl w2) se); eauto.
+    simpl. eauto.
+    intros (w3 & S3 & Q3 & R3). exists w3.
+    repeat apply conj; auto.
+    intros r R4. simpl. eapply R2.
+    eapply R3. eauto.
+  - exploit A3; eauto. intros (w2 & S2 & QI2 & R2).
+    exploit (A1 (inr w2) se); eauto.
+    simpl. eauto.
+    intros (w3 & S3 & Q3 & R3). exists w3.
+    repeat apply conj; auto.
+    intros r R4. simpl. eapply R2.
+    eapply R3. eauto.
+Qed.
+
+Lemma inv_sum_ref2 {li} (P1 Q1 P2 Q2 P2' Q2': invariant li) :
+  invref (P1 ⊎ Q1) (P2 ⊎ Q2) ->
+  invref P2 P2' ->
+  invref Q2 Q2' ->
+  invref (P1 ⊎ Q1) (P2' ⊎ Q2').
+Proof.
+  intros A1 A2 A3.
+  red. red in A1.
+  intros w1 se q S Q.
+  exploit (A1 w1 se); eauto.
+  intros (w3 & S3 & Q3 & R3).
+  destruct w3 as [w3|w3]; simpl in S3, Q3.
+  - exploit A2; eauto. intros (w2 & S2 & QI2 & R2).
+    exists (inl w2).
+    repeat apply conj; auto.
+    intros r R4. 
+    eapply R3. simpl. eapply R2. eauto.
+  - exploit A3; eauto. intros (w2 & S2 & QI2 & R2).
+    exists (inr w2).
+    repeat apply conj; auto.
+    intros r R4. 
+    eapply R3. simpl. eapply R2. eauto.
+Qed.

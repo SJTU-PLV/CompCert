@@ -170,6 +170,234 @@ Proof.
 Qed.
 
 
+Lemma hmap_inv_inv_ref: invref ((list_ext_inv @@ rs_own) @! cc_rust_c) (hmap_int_inv hmap_size).
+  red. intros ((w1 & w2) & w3) se q (se1 & (S11 & S12) & S2) (q1 & (Q11 & Q12) & Q2).
+  inv S2.
+  destruct w2 as (se' & w2). inv S12. inv S11.
+  simpl in Q11. red in Q11. inv Q2. simpl in *.
+  destruct vf; try contradiction.
+  destruct Ptrofs.eq_dec; try contradiction; subst.
+  destruct (Genv.invert_symbol) eqn: SYM; try contradiction.
+  red in Q11. 
+  exists (Build_hmap_world_int w1 (Some w2) None).
+  repeat apply conj; auto.
+  + simpl. red. simpl. rewrite dec_eq_true.
+    rewrite SYM. red.
+    destruct (ident_eq i process); subst; try contradiction.
+    * simpl. exists (rsq (Vptr b Ptrofs.zero) sg vargs m).
+      repeat apply conj; auto. red. simpl. rewrite dec_eq_true. rewrite SYM. auto.
+      econstructor.
+    * destruct ident_eq; try contradiction.
+  + intros r R. simpl in R. red in R. red in R.
+    repeat destruct ident_eq; try contradiction.
+    * simpl in R. destruct R as (r1 & (R1 & (w' & ACC & ROWN)) & R2).
+      simpl. exists r1. repeat apply conj; eauto.
+    (* impossible *)
+    * subst. inv Q11. congruence.
+Qed.        
+
+(* Used in the refienment of safety interfaces in the linked module *)
+Lemma hmap_cc_compcert_eqv: 
+  inveqv
+    ((((hmap_ext_inv @@ rs_own) @! cc_rust_c) @! cc_compcert)
+     ⊎ hmap_int_inv hmap_size @! cc_compcert)
+    ((((hmap_rs_cond @@ rs_own) @! cc_rust_c) @! cc_compcert)
+       ⊎ hmap_process_cond hmap_size @! cc_compcert).
+Proof.
+  split.
+  - red. intros [w1 | w1].
+    + destruct w1 as (((w1 & w2) & w3) & w4).
+      intros se q (se1 & (se2 & ((S1 & S2) & S3)) & S4) (q1 & (q2 & ((Q1 & Q2) & Q3)) & Q4).
+      inv S3.
+      (* case analysis of Q1 *)
+      simpl in Q1. red in Q1. destruct q2. simpl in Q1.
+      destruct rsq_vf; try contradiction.
+      destruct Ptrofs.eq_dec in Q1; try contradiction. subst.
+      destruct Genv.invert_symbol eqn: SYM in Q1; try contradiction.
+      red in Q1. destruct w3. inv Q3.
+      repeat destruct ident_eq in Q1; try contradiction; subst.
+      (* call find *)
+      * exists (inl ((((inl w1), w2), tt), w4)). repeat apply conj.
+        -- econstructor. split; eauto.
+           econstructor. split; eauto.
+           2: { simpl. eauto. }
+           simpl in S1. 
+           econstructor. simpl. eauto.
+           auto.
+        -- econstructor. split; eauto.
+           econstructor. split.
+           2: econstructor. 
+           econstructor. simpl. red. simpl.
+           rewrite dec_eq_true. rewrite SYM. auto.
+           auto.
+        -- intros r (r1 & (r2 & ((R1 & R2) & R3)) & R4).
+           econstructor. split; eauto.
+           econstructor. split; eauto.
+           econstructor; auto.
+      (* call hash, the same as above *)
+      * exists (inl ((((inl w1), w2), tt), w4)). repeat apply conj.
+        -- econstructor. split; eauto.
+           econstructor. split; eauto.
+           2: { simpl. eauto. }
+           simpl in S1. 
+           econstructor. simpl. eauto.
+           auto.
+        -- econstructor. split; eauto.
+           econstructor. split.
+           2: econstructor. 
+           econstructor. simpl. red. simpl.
+           rewrite dec_eq_true. rewrite SYM. auto.
+           auto.
+        -- intros r (r1 & (r2 & ((R1 & R2) & R3)) & R4).
+           econstructor. split; eauto.
+           econstructor. split; eauto.
+           econstructor; auto.
+    + destruct w1 as (w1 & w2).
+      intros se q (se1 & (S1 & S2)) (q1 & (Q1 & Q2)).
+      (* case analysis of Q1 *)
+      simpl in Q1. red in Q1. destruct q1. simpl in Q1.
+      destruct cq_vf; try contradiction.
+      destruct Ptrofs.eq_dec in Q1; try contradiction. subst.
+      destruct Genv.invert_symbol eqn: SYM in Q1; try contradiction.
+      red in Q1. 
+      repeat destruct ident_eq in Q1; try contradiction; subst.
+      (* call process *)
+      * destruct (hmap_rs_own w1) eqn: ROWN; try contradiction.
+        exists (inl ((((inr (hmap_list_ext w1)), (se1, r)), tt), w2)).
+        repeat apply conj.
+        -- econstructor. split; eauto.
+           econstructor. split; eauto.
+           2: econstructor.
+           econstructor. eauto. reflexivity.
+        -- econstructor. split; eauto.
+           inv Q1. inv H. inv H1. inv H0. 
+           econstructor. split.
+           2: econstructor.
+           econstructor. eauto. eauto.
+        -- intros r0 (r1 & (R1 & R2)).
+           inv Q1. inv H. inv H1. inv H0.
+           simpl in H. red in H. simpl in H.
+           rewrite dec_eq_true in H. rewrite SYM in H.
+           red in H. rewrite dec_eq_true in H. inv H.
+           inv R1. inv H. inv H0. inv H2.
+           econstructor. split; eauto.
+           simpl. red. red. rewrite CALLEE in *.
+           rewrite dec_eq_true. rewrite ROWN.
+           econstructor; eauto. split.
+           2: econstructor.
+           econstructor; eauto.
+      (* call hmap_process *)
+      * exists (inr (w1, w2)). repeat apply conj.
+        -- econstructor. split; eauto.
+        -- econstructor. split; eauto.
+           simpl. red. simpl. 
+           rewrite dec_eq_true. rewrite SYM. auto.
+        -- intros r (r1 & (R1 & R2)).
+           simpl in R1. red in R1.
+           econstructor. split; eauto.
+           inv Q1.
+           simpl. red. red. rewrite CALLEE in *.
+           rewrite dec_eq_false; auto.
+  - red. intros [w1 | w1].
+    + destruct w1 as (((w1 & w2) & w3) & w4).
+      intros se q (se1 & (se2 & ((S1 & S2) & S3)) & S4) (q1 & (q2 & ((Q1 & Q2) & Q3)) & Q4).
+      inv S3.
+      (* case analysis of Q1 *)
+      simpl in Q1.
+      destruct w1 as [w1 | w1].
+      * red in Q1. destruct q2. simpl in Q1.
+        destruct rsq_vf; try contradiction.
+        destruct Ptrofs.eq_dec in Q1; try contradiction. subst.
+        destruct Genv.invert_symbol eqn: SYM in Q1; try contradiction.
+        red in Q1. destruct w3. inv Q3.
+        repeat destruct ident_eq in Q1; try contradiction; subst.
+        (* call find *)
+        -- exists (inl (((w1, w2), tt), w4)). repeat apply conj.
+           ++ econstructor. split; eauto.
+              econstructor. split; eauto.
+              2: econstructor. 
+              econstructor; eauto.
+           ++  econstructor. split; eauto.
+           econstructor. split.
+           2: econstructor. 
+           econstructor. simpl. red. simpl.
+           rewrite dec_eq_true. rewrite SYM. auto.
+           auto.
+           ++ intros r (r1 & (r2 & ((R1 & R2) & R3)) & R4).
+              econstructor. split; eauto.
+              econstructor. split; eauto.
+              econstructor; auto.
+        (* call hashs *)
+        -- exists (inl (((w1, w2), tt), w4)). repeat apply conj.
+           ++ econstructor. split; eauto.
+              econstructor. split; eauto.
+              2: econstructor. 
+              econstructor; eauto.
+           ++  econstructor. split; eauto.
+           econstructor. split.
+           2: econstructor. 
+           econstructor. simpl. red. simpl.
+           rewrite dec_eq_true. rewrite SYM. auto.
+           auto.
+           ++ intros r (r1 & (r2 & ((R1 & R2) & R3)) & R4).
+              econstructor. split; eauto.
+              econstructor. split; eauto.
+              econstructor; auto.
+      * red in Q1. destruct q2. simpl in Q1.
+        destruct rsq_vf; try contradiction.
+        destruct Ptrofs.eq_dec in Q1; try contradiction. subst.
+        destruct Genv.invert_symbol eqn: SYM in Q1; try contradiction.
+        red in Q1. destruct w3. inv Q3.
+        repeat destruct ident_eq in Q1; try contradiction; subst.
+        (* call process *)
+        exists (inr ((Build_hmap_world_int w1 (Some (snd w2)) None), w4)). repeat apply conj.
+        -- econstructor. split; eauto. auto.
+        -- econstructor. split; eauto.
+           simpl. red. simpl. rewrite dec_eq_true. rewrite SYM.
+           red. rewrite dec_eq_true. simpl.
+           eexists. split.
+           2: econstructor. split.
+           red. simpl. rewrite dec_eq_true. rewrite SYM. auto.
+           destruct w2; auto.
+        -- intros r R. inv R. inv H.
+           simpl in H0. red in H0.
+           inv Q1.
+           red in H0. rewrite CALLEE in *. rewrite dec_eq_true in H0.
+           simpl in H0. destruct H0 as (r1 & ((R1 & R2) & R3)).
+           econstructor. split; eauto.
+           econstructor. split; eauto.
+           econstructor; auto.
+           destruct w2; eauto.
+    + destruct w1 as (w1 & w2).
+      intros se q (se1 & (S1 & S2)) (q1 & (Q1 & Q2)).
+      (* case analysis of Q1 *)
+      simpl in Q1. red in Q1. destruct q1. simpl in Q1.
+      destruct cq_vf; try contradiction.
+      destruct Ptrofs.eq_dec in Q1; try contradiction. subst.
+      destruct Genv.invert_symbol eqn: SYM in Q1; try contradiction.
+      red in Q1. 
+      repeat destruct ident_eq in Q1; try contradiction; subst.
+      (* call hmap_process *)
+      exists (inr (w1, w2)). repeat apply conj.
+      * econstructor. split; eauto.
+      * econstructor. split; eauto.
+        simpl. red. simpl. 
+        rewrite dec_eq_true. rewrite SYM. auto.
+      * intros r (r1 & (R1 & R2)).
+        simpl in R1. red in R1.
+        econstructor. split; eauto.
+        inv Q1.
+        simpl. red. red. rewrite CALLEE in *.
+        rewrite dec_eq_true; auto.
+Qed.
+
+              
+(*  ⟦hmap.s + list.s⟧ ⊩ {find_process ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra
+                     ⊎ {hmap_process ↦ Q}⋅ R_ca
+                     ↠ 
+                     {find_process ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra
+                     ⊎ {hmap_process ↦ Q}⋅ R_ca
+ *)
 Theorem link_linked_list_hash_map_safe: forall linked_list_asm hash_map_asm linked_mod,
     transf_rustlight_program linked_list_mod = OK linked_list_asm ->
     transf_clight_program hash_map_prog = OK hash_map_asm ->
@@ -204,7 +432,20 @@ Proof.
       (* 2.1.2 safety of list.s. It requires refienment *)
       4: { eapply open_safety_inv_ref.
            3: { eapply compiled_linked_list_safe. eauto. }
-           admit. admit. }
+           { etransitivity. 
+             eapply cc_inv_ref. reflexivity.
+             eapply cc_rust_compcert_eqv.
+             erewrite <- invcc_compose_assoc.
+             eapply cc_inv_ref. 2: reflexivity.
+             (* ((list_ext_inv @@ rs_own) @! cc_rust_c) ≤ (hmap_int_inv hmap_size) *)
+             eapply hmap_inv_inv_ref. }
+           { etransitivity. 
+             eapply cc_inv_ref. reflexivity.
+             eapply cc_rust_compcert_eqv.
+             red. erewrite <- invcc_compose_assoc.
+             eapply cc_inv_ref. 2: reflexivity.
+             reflexivity. }
+      }
       (* 2.1.3 disjointness of the safety interfaces for composition *)
       { intros w q se SINV VQ QINV. destruct w as ((w1 & w2) & w3 & w4).
         destruct QINV as (?q & Q1 & Q2).
@@ -281,9 +522,22 @@ Proof.
         apply Axioms.functional_extensionality. intros [|]; auto.  }
     } 
     (* 2.2 refinement of invariant *)
-    admit.
+    { eapply inv_sum_ref2.
+      2: { etransitivity.
+           2: { eapply cc_inv_ref. reflexivity.
+                eapply cc_rust_compcert_eqv. }
+           erewrite <- invcc_compose_assoc. reflexivity. }
+      2: reflexivity.
+      eapply hmap_cc_compcert_eqv. }
     (* 2.3 refinement of invariant *)
-    admit. }
+    red.
+    eapply inv_sum_ref1.
+    2: { etransitivity.
+         eapply cc_inv_ref. reflexivity.
+         eapply cc_rust_compcert_eqv.
+         erewrite <- invcc_compose_assoc. reflexivity. }
+    2: reflexivity.
+    eapply hmap_cc_compcert_eqv. }
   (* 3. refienment of the interface of Lowering *)
   eapply module_type_safe_compose_id.
   eauto.
