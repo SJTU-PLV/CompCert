@@ -125,6 +125,8 @@ Extract Constant Compiler.print_LTL => "PrintLTL.print_if".
 Extract Constant Compiler.print_Mach => "PrintMach.print_if".
 Extract Constant Compiler.print => "fun (f: 'a -> unit) (x: 'a) -> f x; x".
 Extract Constant Compiler.time  => "Timing.time_coq".
+Extract Constant Compiler.print_Rustlight => "PrintRustlight.print_if".
+
 
 (* Rust Compiler *)
 Extract Constant Clightgen.create_union_idents => "Dropglue.create_union_idents".
@@ -183,7 +185,8 @@ Cd "extraction".
 Separate Extraction
    Compiler.transf_c_program Compiler.transf_cminor_program
    (* clight2rustlight *)
-   Compiler.transf_clight2rustlight_program
+   Compiler.transf_clight2rustlight_program Compiler.transf_rustlight_program_temp 
+   Compiler.transf_c2rust_program
    (* rust *)
    Compiler.transf_rust_program MoveChecking.move_check_program
    (* Some functions are needed in Ocaml side *)

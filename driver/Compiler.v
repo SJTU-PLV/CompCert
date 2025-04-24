@@ -126,6 +126,7 @@ Parameter print_Cminor: Cminor.program -> unit.
 Parameter print_RTL: Z -> RTL.program -> unit.
 Parameter print_LTL: LTL.program -> unit.
 Parameter print_Mach: Mach.program -> unit.
+Parameter print_Rustlight: Rustlight.program -> unit.
 
 Local Open Scope string_scope.
 
@@ -270,6 +271,19 @@ Definition transf_rustlight_program (p: Rustlight.program) : res Asm.program :=
   @@@ time "Generate Clight and insert drop glue" Clightgen.transl_program
   @@@ transf_clight_program.
 
+  Definition transf_rustlight_program_temp (p: Rustlight.program) : res Asm.program :=
+    OK p
+    !@@ print print_Rustlight
+    !@@ time "Rustlight to RustIR" RustIRgen.transl_program
+    (* @@@ time "Elaborate drop in RustIR" ElaborateDrop.transl_program *)
+    @@@ time "Generate Clight and insert drop glue" Clightgen.transl_program
+    @@@ transf_clight_program.
+
+    Definition transf_c2rust_program (p: Csyntax.program) : res Asm.program :=
+      OK p
+      @@@ time "Clight generation" SimplExpr.transl_program
+      @@@ transf_clight2rustlight_program
+      @@@ transf_rustlight_program_temp.
 
 (** The following lemmas help reason over compositions of passes. *)
 

@@ -20,8 +20,6 @@ open Frontend
 open Assembler
 open Linker
 open Diagnostics
-open Compiler
-open PrintRustlight
 
 (* Name used for version string etc. *)
 let tool_name = "C verified compiler"
@@ -48,7 +46,7 @@ let compile_c_file sourcename ifile ofile =
   set_dest Cprint.destination option_dparse ".parsed.c";
   set_dest PrintCsyntax.destination option_dcmedium ".compcert.c";
   set_dest PrintClight.destination option_dclight ".light.c";
-  set_dest PrintRustlight.destination option_drustlight ".rustlight.c";
+  set_dest PrintRustlight.destination option_drustlight ".light.rust";
   set_dest PrintCminor.destination option_dcminor ".cm";
   set_dest PrintRTL.destination option_drtl ".rtl";
   set_dest Regalloc.destination_alloctrace option_dalloctrace ".alloctrace";
@@ -60,7 +58,7 @@ let compile_c_file sourcename ifile ofile =
   (* Convert to Asm *)
   let asm =
     match Compiler.apply_partial
-               (Compiler.transf_c_program csyntax)
+               (Compiler.transf_c2rust_program csyntax)
                Asmexpand.expand_program with
     | Errors.OK asm ->
         asm
@@ -220,6 +218,7 @@ Code generation options: (use -fno-<opt> to turn off -f<opt>)
   -dparse        Save C file after parsing and elaboration in <file>.parsed.c
   -dc            Save generated Compcert C in <file>.compcert.c
   -dclight       Save generated Clight in <file>.light.c
+  -drustlight    Save generated Rustlight in <file>.light.rust
   -dcminor       Save generated Cminor in <file>.cm
   -drtl          Save RTL at various optimization points in <file>.rtl.<n>
   -dltl          Save LTL after register allocation in <file>.ltl
