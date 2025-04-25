@@ -122,6 +122,7 @@ Require Import InvariantAlgebra.
 
 (** Pretty-printers (defined in Caml). *)
 Parameter print_Clight: Clight.program -> unit.
+Parameter print_Clight0: Clight.program -> unit.
 Parameter print_Cminor: Cminor.program -> unit.
 Parameter print_RTL: Z -> RTL.program -> unit.
 Parameter print_LTL: LTL.program -> unit.
@@ -255,6 +256,7 @@ Definition transf_rust_program (p: Rustsyntax.program) : res Asm.program :=
 (** c2rust-light **)
 Definition transf_clight2rustlight_program (p : Clight.program) : res Rustlight.program :=
   OK p 
+  !@@ print print_Clight0
   @@@ time "clight to rustlight" Clight2Rustlight.transl_program.
   
 (* For ownership language, we just consider Rustlight as the source

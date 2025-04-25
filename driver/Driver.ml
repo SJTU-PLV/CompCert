@@ -46,6 +46,7 @@ let compile_c_file sourcename ifile ofile =
   set_dest Cprint.destination option_dparse ".parsed.c";
   set_dest PrintCsyntax.destination option_dcmedium ".compcert.c";
   set_dest PrintClight.destination option_dclight ".light.c";
+  set_dest PrintClight.destination option_dclight0 ".light.c0";
   set_dest PrintRustlight.destination option_drustlight ".light.rust";
   set_dest PrintCminor.destination option_dcminor ".cm";
   set_dest PrintRTL.destination option_drtl ".rtl";
@@ -218,6 +219,7 @@ Code generation options: (use -fno-<opt> to turn off -f<opt>)
   -dparse        Save C file after parsing and elaboration in <file>.parsed.c
   -dc            Save generated Compcert C in <file>.compcert.c
   -dclight       Save generated Clight in <file>.light.c
+  -dclight0      Save generated Clight in <file>.light.c0 before transpiling
   -drustlight    Save generated Rustlight in <file>.light.rust
   -dcminor       Save generated Cminor in <file>.cm
   -drtl          Save RTL at various optimization points in <file>.rtl.<n>
@@ -329,6 +331,7 @@ let cmdline_actions =
   Exact "-dparse", Set option_dparse;
   Exact "-dc", Set option_dcmedium;
   Exact "-dclight", Set option_dclight;
+  Exact "-dclight0", Set option_dclight0;
   Exact "-drustlight", Set option_drustlight;
   Exact "-dcminor", Set option_dcminor;
   Exact "-drtl", Set option_drtl;
@@ -341,6 +344,7 @@ let cmdline_actions =
     option_dparse := true;
     option_dcmedium := true;
     option_dclight := true;
+    option_dclight0 := true;
     option_drustlight := true;
     option_dcminor := true;
     option_drtl := true;

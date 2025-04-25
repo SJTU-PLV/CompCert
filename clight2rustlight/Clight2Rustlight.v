@@ -99,47 +99,48 @@ End MEMORY.
       end.
 
     (** Convert Clight expression to Rustlight pure expression *)
-    Fixpoint cexpr_to_pexpr (e: Clight.expr): res Rustlight.pexpr :=
+    Fixpoint cexpr_to_pexpr (locals: list ident) (e: Clight.expr): res Rustlight.pexpr :=
       match e with
       | Clight.Econst_int i ty => OK (Rustlight.Econst_int i (to_rusttype ty))
       | Clight.Econst_float f ty => OK (Rustlight.Econst_float f (to_rusttype ty))
       | Clight.Econst_single f ty => OK (Rustlight.Econst_single f (to_rusttype ty))
       | Clight.Econst_long l ty => OK (Rustlight.Econst_long l (to_rusttype ty))
       | Clight.Eunop op e' ty => 
-          do pe <- cexpr_to_pexpr e';
+          do pe <- cexpr_to_pexpr locals e';
           OK (Rustlight.Eunop op pe (to_rusttype ty))
       | Clight.Ebinop op e1 e2 ty => 
-          do pe1 <- cexpr_to_pexpr e1;
-          do pe2 <- cexpr_to_pexpr e2;
+          do pe1 <- cexpr_to_pexpr locals e1;
+          do pe2 <- cexpr_to_pexpr locals e2;
           OK (Rustlight.Ebinop op pe1 pe2 (to_rusttype ty))
+      | Clight.Evar id ty => 
+          if in_dec ident_eq id locals then
+            do p <- cexpr_to_place (Clight.Evar id ty);
+            OK (Eplace p (to_rusttype ty))
+          else
+            OK (Eglobal id (to_rusttype ty))
       | Clight.Eaddrof e ty => 
           do p <- cexpr_to_place e;
-          OK (Eref 1%positive Mutable p (to_rusttype ty))
-      (* | Clight.Esizeof ty ty' => OK (Rustlight.Esizeof (to_rusttype ty) (to_rusttype ty')) *)
+          OK (Eref 2%positive Mutable p (to_rusttype ty))
+      | Clight.Ederef e ty => 
+          do p <- cexpr_to_place e;
+          OK (Rustlight.Eplace (Rustlight.Pderef p (to_rusttype ty)) (to_rusttype ty))
+      | Clight.Efield e' id ty => 
+          do p <- cexpr_to_place e';
+          OK (Rustlight.Eplace (Rustlight.Pfield p id (to_rusttype ty)) (to_rusttype ty))
+      (* | Clight.Ecast e' ty => cexpr_to_pexpr locals e'
+      | Clight.Esizeof ty ty' => OK (Rustlight.Esizeof (to_rusttype ty) (to_rusttype ty')) *)
       (* | Clight.Ealignof ty ty' => OK (Rustlight.Ealignof (to_rusttype ty) (to_rusttype ty')) *)
       (*FIXME ???*)
-      (* 
-  | Clight.Evar id ty => 
-      if in_dec ident_eq id locals then
-        Error (msg "global variable is contained in locals")
-      else
-        OK (Eglobal id (to_rusttype ty))
-  | Clight.Ederef e' ty => 
-      do p <- cexpr_to_place e';
-      OK (Rustlight.Eplace (Rustlight.Pderef p (to_rusttype ty)) (to_rusttype ty))
-  | Clight.Efield e' id ty => 
-      do p <- cexpr_to_place e';
-      OK (Rustlight.Eplace (Rustlight.Pfield p id (to_rusttype ty)) (to_rusttype ty))
-  | Clight.Ecast e' ty => cexpr_to_pexpr locals e' *)
+      (*  *)
       | _ => Error (msg "Unsupported rvalue expression")
       end.
 
-    Fixpoint transl_expr_list (el: list Clight.expr) : res (list Rustlight.pexpr) :=
+    Fixpoint transl_expr_list (locals: list ident) (el: list Clight.expr) : res (list Rustlight.pexpr) :=
       match el with
       | nil => OK nil
       | e :: rest =>
-          do pe <- cexpr_to_pexpr e;
-          do rest' <- transl_expr_list rest;
+          do pe <- cexpr_to_pexpr locals e;
+          do rest' <- transl_expr_list locals rest;
           OK (pe :: rest')
       end.
 
@@ -150,7 +151,8 @@ End MEMORY.
       Rustlight.Plocal 1%positive Rusttypes.Tunit. 
     
 
-    Fixpoint transl_stmt (s: Clight.statement): res Rustlight.statement :=
+    Fixpoint transl_stmt (locals: list ident) (s: Clight.statement): res Rustlight.statement :=
+      let transl_stmt := transl_stmt locals in
       match s with
       | Clight.Sskip => OK Rustlight.Sskip
       | Clight.Ssequence s1 s2 => 
@@ -158,7 +160,7 @@ End MEMORY.
           do rs2 <- transl_stmt s2;
           OK (Rustlight.Ssequence rs1 rs2)
       | Clight.Sifthenelse e s1 s2 => 
-          do pe <- cexpr_to_pexpr e;
+          do pe <- cexpr_to_pexpr locals e;
           do rs1 <- transl_stmt s1;
           do rs2 <- transl_stmt s2;
           OK (Rustlight.Sifthenelse (Rustlight.Epure pe) rs1 rs2)
@@ -169,15 +171,15 @@ End MEMORY.
       | Clight.Scontinue => OK Rustlight.Scontinue
       | Clight.Sassign e1 e2 => 
           do p <- cexpr_to_place e1;
-          do pe <- cexpr_to_pexpr e2;
+          do pe <- cexpr_to_pexpr locals e2;
           OK (Rustlight.Sassign p (Rustlight.Epure pe))
       (* | Clight.Sset id e => 
-          do pe <- cexpr_to_pexpr e;
+          do pe <- cexpr_to_pexpr locals e;
           OK (Rustlight.Sassign (Rustlight.Plocal id (to_rusttype (Clight.typeof e))) 
                 (Rustlight.Epure pe)) *)
       | Clight.Scall optid e args =>
-          do pe <- cexpr_to_pexpr e;
-          do pargs <- transl_expr_list args;
+          do pe <- cexpr_to_pexpr locals e;
+          do pargs <- transl_expr_list locals args;
           match optid with
           | None => 
               (* without return value *)
@@ -193,7 +195,7 @@ End MEMORY.
           (* no return value*)
           OK (Rustlight.Sreturn empty_place)
       | Clight.Sreturn (Some e) => 
-          do pe <- cexpr_to_pexpr e;
+          do pe <- cexpr_to_pexpr locals e;
           (* create a temp variable to store return value *)
           let ret_place := Rustlight.Plocal 2%positive (to_rusttype (Clight.typeof e)) in
           (* assign the return value to the temp variable and return *)
@@ -201,7 +203,7 @@ End MEMORY.
                 (Rustlight.Sassign ret_place (Rustlight.Epure pe))
                 (Rustlight.Sreturn ret_place))
       (* | Clight.Sswitch e cases =>
-        do pe <- cexpr_to_pexpr e;
+        do pe <- cexpr_to_pexpr locals e;
         let fix convert_cases (cases: Clight.labeled_statements) : res Rustlight.statement :=
             match cases with
             | nil => OK Rustlight.Sskip
@@ -222,7 +224,8 @@ End MEMORY.
 
     (** Convert Clight function to Rustlight function *)
     Definition transl_function (f: Clight.function): res Rustlight.function :=
-      do body <- transl_stmt (Clight.fn_body f);
+      let locals := List.map (@fst ident _) (Clight.fn_params f ++ Clight.fn_vars f) in
+      do body <- transl_stmt locals (Clight.fn_body f);
       OK {| Rustlight.fn_generic_origins := [];
            Rustlight.fn_origins_relation := [];
            Rustlight.fn_drop_glue := None;

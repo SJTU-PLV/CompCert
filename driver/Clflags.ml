@@ -42,6 +42,7 @@ let option_dprepro = ref false
 let option_dparse = ref false
 let option_dcmedium = ref false
 let option_dclight = ref false
+let option_dclight0 = ref false
 let option_drustlight = ref false
 let option_dcminor = ref false
 let option_drtl = ref false
