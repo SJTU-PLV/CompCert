@@ -169,6 +169,49 @@ Proof.
   repeat destruct ident_eq in H; try contradiction; subst; reflexivity.
 Qed.
 
+Lemma hmap_process_cond_valid_query: forall w vf sg args m,
+    query_inv (hmap_process_cond hmap_size) w (cq vf sg args m) ->
+    Genv.is_internal (Genv.globalenv (list_senv_ext (hmap_list_ext w)) (Ctypes.program_of_program hash_map_prog)) vf = true.
+Proof.
+  intros. simpl in H. red in H. simpl in H.
+  destruct vf; try contradiction.
+  destruct Ptrofs.eq_dec in H; try contradiction. subst.
+  destruct Genv.invert_symbol eqn: SYM in H; try contradiction.
+  red in H.
+  unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr.
+  rewrite dec_eq_true. rewrite Genv.find_def_spec. setoid_rewrite SYM.
+  repeat destruct ident_eq in H; try contradiction; subst; reflexivity.
+Qed.
+
+
+Lemma list_ext_inv_valid_query: forall w vf sg args m,
+    query_inv list_ext_inv w (rsq vf sg args m) ->
+    Genv.is_internal (Genv.globalenv (list_senv_ext w) (Ctypes.program_of_program hash_map_prog)) vf = true.
+Proof.
+  intros. simpl in H. red in H. simpl in H.
+  destruct vf; try contradiction.
+  destruct Ptrofs.eq_dec in H; try contradiction. subst.
+  destruct Genv.invert_symbol eqn: SYM in H; try contradiction.
+  red in H.
+  unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr.
+  rewrite dec_eq_true. rewrite Genv.find_def_spec. setoid_rewrite SYM.
+  repeat destruct ident_eq in H; try contradiction; subst; reflexivity.
+Qed.
+
+Lemma hmap_ext_inv_valid_query: forall w vf sg args m,
+    query_inv hmap_ext_inv w (rsq vf sg args m) ->
+    Genv.is_internal (Genv.globalenv (hmap_senv_ext w) (program_of_program linked_list_mod)) vf = true.
+Proof.
+  intros. simpl in H. red in H. simpl in H.
+  destruct vf; try contradiction.
+  destruct Ptrofs.eq_dec in H; try contradiction. subst.
+  destruct Genv.invert_symbol eqn: SYM in H; try contradiction.
+  red in H.
+  unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr.
+  rewrite dec_eq_true. rewrite Genv.find_def_spec. setoid_rewrite SYM.
+  repeat destruct ident_eq in H; try contradiction; subst; reflexivity.
+Qed.
+
 
 Lemma hmap_inv_inv_ref: invref ((list_ext_inv @@ rs_own) @! cc_rust_c) (hmap_int_inv hmap_size).
   red. intros ((w1 & w2) & w3) se q (se1 & (S11 & S12) & S2) (q1 & (Q11 & Q12) & Q2).
@@ -398,6 +441,142 @@ Qed.
                      {find_process ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra
                      ⊎ {hmap_process ↦ Q}⋅ R_ca
  *)
+Theorem compose_linked_list_hash_map_safe: forall linked_list_asm hash_map_asm composed_mod linked_mod,
+    transf_rustlight_program linked_list_mod = OK linked_list_asm ->
+    transf_clight_program hash_map_prog = OK hash_map_asm ->
+    SmallstepLinking.compose
+      (Asm.semantics hash_map_asm)
+      (Asm.semantics linked_list_asm) = Some composed_mod ->
+    (* it is required for the premised of safety composition *)
+    Linking.link hash_map_asm linked_list_asm = Some linked_mod ->
+    module_type_safe
+      (((hmap_rs_cond @@ rs_own) @! cc_rust_compcert)
+         ⊎ hmap_process_cond hmap_size @! cc_compcert)
+      (((hmap_rs_cond @@ rs_own) @! cc_rust_compcert)
+         ⊎ hmap_process_cond hmap_size @! cc_compcert)
+      composed_mod SIF.
+Proof.
+  intros until linked_mod. intros T1 T2 COMP LINK.
+  (* 1. safety preservation under syntactic linking *)
+  assert (SAFE: module_type_safe
+                  ((((hmap_rs_cond @@ rs_own) @! cc_rust_compcert)
+                      ⊎ hmap_process_cond hmap_size @! cc_compcert))
+                  ((((hmap_rs_cond @@ rs_own) @! cc_rust_compcert)
+                      ⊎ hmap_process_cond hmap_size @! cc_compcert))
+                  composed_mod SIF).
+  { (* 2. refinement of safety interfaces *)
+    eapply open_safety_inv_ref.
+    (* 2.1 safety composition *)
+    3: { eapply compose_total_type_safety_general.
+         (* 2.1.1 safety of hmap.s *)
+         4: { eapply compiled_hash_map_safe. eauto. }
+         (* 2.1.2 safety of list.s. It requires refienment *)
+         4: { eapply open_safety_inv_ref.
+              3: { eapply compiled_linked_list_safe. eauto. }
+              { etransitivity. 
+                eapply cc_inv_ref. reflexivity.
+                eapply cc_rust_compcert_eqv.
+                erewrite <- invcc_compose_assoc.
+                eapply cc_inv_ref. 2: reflexivity.
+                (* ((list_ext_inv @@ rs_own) @! cc_rust_c) ≤ (hmap_int_inv hmap_size) *)
+                eapply hmap_inv_inv_ref. }
+              { etransitivity. 
+                eapply cc_inv_ref. reflexivity.
+                eapply cc_rust_compcert_eqv.
+                red. erewrite <- invcc_compose_assoc.
+                eapply cc_inv_ref. 2: reflexivity.
+                reflexivity. }
+         }
+         (* 2.1.3 disjointness of the safety interfaces for composition *)
+         { intros w q se SINV VQ QINV. destruct w as ((w1 & w2) & w3 & w4).
+           destruct QINV as (?q & Q1 & Q2).
+           destruct SINV as (?se & S1 & S2).           
+           (* use fsim to rewrite the valid_query *)
+           exploit clight_semantic_preservation.
+           eapply transf_clight_program_match. eauto. intros ([FSIM] & [BSIM]).
+           erewrite fsim_match_valid_query. 3: eapply Q2.
+           2: { eapply FSIM. eauto.
+                erewrite fsim_skel; eauto.
+                eapply match_senv_valid_for; eauto.
+                eapply (VQ true). }
+           (* destruct query_inv to show that valid query is false *)
+           destruct w1 as (w1' & w1'').
+           destruct Q1 as (?q & (Q11 & Q12) & Q13).
+           destruct S1 as (?se & (S11 & S12) & S13).           
+           inv S13. inv S11.
+           inv Q13. simpl. 
+           eapply hmap_ext_inv_hmap_fun_disjoint. eauto. }
+         (* 2.1.3 valid_query q is false if q satisfies the invariant
+         of the compiled hash_map. The proof here is different from
+         the above cases as we cannot construct a rust query to use
+         fsim_match_valid_query. We prove that if q satisfies the
+         hash_map invariant, it must satisfy the valid_query of the
+         hash_map_asm. We can use the property of syntactic linking
+         (link_prog, link_fundef) to show that if q points to an
+         internal function of hash_map_asm, then it must not point to
+         an internal function of linked_list_asm.  *)
+         { intros w q se SINV VQ QINV. destruct w as (w1 & w2).
+           destruct QINV as (?q & Q1 & Q2).
+           destruct SINV as (?se & S1 & S2).
+           (* use fsim to rewrite the valid_query *)
+           exploit clight_semantic_preservation.
+           eapply transf_clight_program_match. eauto.
+           intros ([FSIM] & [BSIM]).
+           assert (VQ1: valid_query (Asm.semantics hash_map_asm se) q = true).
+           { erewrite fsim_match_valid_query. 3: eapply Q2.
+             2: { eapply FSIM. eauto.
+                  erewrite fsim_skel; eauto.
+                  eapply match_senv_valid_for; eauto. 
+                  eapply (VQ true). }
+             (* property of hmap_int_inv *)
+             simpl.
+             destruct S1. rewrite <- H.
+             destruct q0.
+             eapply hmap_int_inv_valid_query.  eauto. }
+           simpl. simpl in VQ1.
+           (* simplify *)
+           destruct q. simpl. simpl in VQ1.
+           unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr in *.
+           destruct (r Asm.PC) eqn: PC; auto.           
+           destruct Ptrofs.eq_dec; auto. subst.
+           erewrite Genv.find_def_spec in *.
+           destruct (Genv.invert_symbol se b) eqn: SYM; try congruence.
+           destruct ((prog_defmap hash_map_asm) ! i) eqn: FIND1 in VQ1; try congruence.
+           destruct ((prog_defmap linked_list_asm) ! i) eqn: FIND2; auto.
+           eapply Linking.link_prog_inv in LINK. destruct LINK as (A1 & A2 & A3).
+           exploit A2. eauto. eauto. intros (IN1 & IN2 & (gd & LINK)).
+           destruct g; destruct g0; simpl in LINK; try congruence; auto.
+           change Linking.link with (@Linking.link_def Asm.fundef unit _ _) in LINK.
+           simpl in LINK.
+           change Linking.link with (@Linking.link_fundef Asm.function) in LINK.
+           destruct f; destruct f0; simpl in VQ1, LINK; try congruence; simpl; auto. }
+         { (* external calls are not valid incoming call *)
+           intros. destruct i.
+           simpl. destruct s. inv H.
+           unfold Genv.is_internal. simpl. rewrite H0. reflexivity.
+           simpl. destruct s.  inv H.
+           unfold Genv.is_internal. simpl. rewrite H0. reflexivity. }
+         auto. }
+    (* 2.2 refinement of invariant *)
+    { eapply inv_sum_ref2.
+      2: { etransitivity.
+           2: { eapply cc_inv_ref. reflexivity.
+                eapply cc_rust_compcert_eqv. }
+           erewrite <- invcc_compose_assoc. reflexivity. }
+      2: reflexivity.
+      eapply hmap_cc_compcert_eqv. }
+    (* 2.3 refinement of invariant *)
+    red.
+    eapply inv_sum_ref1.
+    2: { etransitivity.
+         eapply cc_inv_ref. reflexivity.
+         eapply cc_rust_compcert_eqv.
+         erewrite <- invcc_compose_assoc. reflexivity. }
+    2: reflexivity.
+    eapply hmap_cc_compcert_eqv. }
+  auto.
+Qed.
+
 Theorem link_linked_list_hash_map_safe: forall linked_list_asm hash_map_asm linked_mod,
     transf_rustlight_program linked_list_mod = OK linked_list_asm ->
     transf_clight_program hash_map_prog = OK hash_map_asm ->
@@ -421,125 +600,146 @@ Proof.
     (Asm.semantics linked_mod) SIF).
   { eapply module_type_safe_preservation.
     2: { eapply AsmLinking.asm_linking_backward. eauto. }
-    (* 2. refinement of safety interfaces *)
-    eapply open_safety_inv_ref.
+    (* 2. safety of the composed semantics *)
+    eapply compose_linked_list_hash_map_safe; eauto.
     (* 2.1 prove safety composition *)
-    3: {
-      (** TODO: the senv must be valid  *)
-      eapply compose_total_type_safety_general.
-      (* 2.1.1 safety of hmap.s *)
-      4: { eapply compiled_hash_map_safe. eauto. }
-      (* 2.1.2 safety of list.s. It requires refienment *)
-      4: { eapply open_safety_inv_ref.
-           3: { eapply compiled_linked_list_safe. eauto. }
-           { etransitivity. 
-             eapply cc_inv_ref. reflexivity.
-             eapply cc_rust_compcert_eqv.
-             erewrite <- invcc_compose_assoc.
-             eapply cc_inv_ref. 2: reflexivity.
-             (* ((list_ext_inv @@ rs_own) @! cc_rust_c) ≤ (hmap_int_inv hmap_size) *)
-             eapply hmap_inv_inv_ref. }
-           { etransitivity. 
-             eapply cc_inv_ref. reflexivity.
-             eapply cc_rust_compcert_eqv.
-             red. erewrite <- invcc_compose_assoc.
-             eapply cc_inv_ref. 2: reflexivity.
-             reflexivity. }
-      }
-      (* 2.1.3 disjointness of the safety interfaces for composition *)
-      { intros w q se SINV VQ QINV. destruct w as ((w1 & w2) & w3 & w4).
-        destruct QINV as (?q & Q1 & Q2).
-        destruct SINV as (?se & S1 & S2).           
-        (* use fsim to rewrite the valid_query *)
-        exploit clight_semantic_preservation.
-        eapply transf_clight_program_match. eauto. intros ([FSIM] & [BSIM]).
-        erewrite fsim_match_valid_query. 3: eapply Q2.
-        2: { eapply FSIM. eauto.
-             erewrite fsim_skel; eauto.
-             eapply match_senv_valid_for; eauto.
-             eapply (VQ true). }
-        (* destruct query_inv to show that valid query is false *)
-        destruct w1 as (w1' & w1'').
-        destruct Q1 as (?q & (Q11 & Q12) & Q13).
-        destruct S1 as (?se & (S11 & S12) & S13).           
-        inv S13. inv S11.
-        inv Q13. simpl. 
-        eapply hmap_ext_inv_hmap_fun_disjoint. eauto. }
-      (* 2.1.3 valid_query q is false if q satisfies the invariant
-         of the compiled hash_map. The proof here is different from
-         the above cases as we cannot construct a rust query to use
-         fsim_match_valid_query. We prove that if q satisfies the
-         hash_map invariant, it must satisfy the valid_query of the
-         hash_map_asm. We can use the property of syntactic linking
-         (link_prog, link_fundef) to show that if q points to an
-         internal function of hash_map_asm, then it must not point to
-         an internal function of linked_list_asm.  *)
-      { intros w q se SINV VQ QINV. destruct w as (w1 & w2).
-        destruct QINV as (?q & Q1 & Q2).
-        destruct SINV as (?se & S1 & S2).
-        (* use fsim to rewrite the valid_query *)
-        exploit clight_semantic_preservation.
-        eapply transf_clight_program_match. eauto.
-        intros ([FSIM] & [BSIM]).
-        assert (VQ1: valid_query (Asm.semantics hash_map_asm se) q = true).
-        { erewrite fsim_match_valid_query. 3: eapply Q2.
-          2: { eapply FSIM. eauto.
-               erewrite fsim_skel; eauto.
-               eapply match_senv_valid_for; eauto. 
-               eapply (VQ true). }
-          (* property of hmap_int_inv *)
-          simpl.
-          destruct S1. rewrite <- H2.
-          destruct q0.
-          eapply hmap_int_inv_valid_query.  eauto. }
-        simpl. simpl in VQ1.
-        (* simplify *)
-        destruct q. simpl. simpl in VQ1.
-        unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr in *.
-        destruct (r Asm.PC) eqn: PC; auto.           
-        destruct Ptrofs.eq_dec; auto. subst.
-        erewrite Genv.find_def_spec in *.
-        destruct (Genv.invert_symbol se b) eqn: SYM; try congruence.
-        destruct ((prog_defmap hash_map_asm) ! i) eqn: FIND1 in VQ1; try congruence.
-        destruct ((prog_defmap linked_list_asm) ! i) eqn: FIND2; auto.
-        eapply Linking.link_prog_inv in H1. destruct H1 as (A1 & A2 & A3).
-        exploit A2. eauto. eauto. intros (IN1 & IN2 & (gd & LINK)).
-        destruct g; destruct g0; simpl in LINK; try congruence; auto.
-        change Linking.link with (@Linking.link_def Asm.fundef unit _ _) in LINK.
-        simpl in LINK.
-        change Linking.link with (@Linking.link_fundef Asm.function) in LINK.
-        destruct f; destruct f0; simpl in VQ1, LINK; try congruence; simpl; auto. }
-      { (* external calls are not valid incoming call *)
-        intros. destruct i.
-        simpl. destruct s. inv H2.
-        unfold Genv.is_internal. simpl. rewrite H3. reflexivity.
-        simpl. destruct s. inv H2.
-        unfold Genv.is_internal. simpl. rewrite H3. reflexivity. }
-      { (* 2.1.4 semantic compose *)
-        unfold SmallstepLinking.compose. simpl.
-        erewrite Linking.link_erase_program; eauto. simpl.
-        f_equal. f_equal.
-        apply Axioms.functional_extensionality. intros [|]; auto.  }
-    } 
-    (* 2.2 refinement of invariant *)
-    { eapply inv_sum_ref2.
-      2: { etransitivity.
-           2: { eapply cc_inv_ref. reflexivity.
-                eapply cc_rust_compcert_eqv. }
-           erewrite <- invcc_compose_assoc. reflexivity. }
-      2: reflexivity.
-      eapply hmap_cc_compcert_eqv. }
-    (* 2.3 refinement of invariant *)
-    red.
-    eapply inv_sum_ref1.
-    2: { etransitivity.
-         eapply cc_inv_ref. reflexivity.
-         eapply cc_rust_compcert_eqv.
-         erewrite <- invcc_compose_assoc. reflexivity. }
-    2: reflexivity.
-    eapply hmap_cc_compcert_eqv. }
-  (* 3. refienment of the interface of Lowering *)
+    { (* semantic compose *)
+      unfold SmallstepLinking.compose. simpl.
+      erewrite Linking.link_erase_program; eauto. simpl.
+      f_equal. f_equal.
+      apply Axioms.functional_extensionality. intros [|]; auto.  } }  
+  (* 3. refienment of the interface I @! id *)
   eapply module_type_safe_compose_id.
   eauto.
 Qed.
 
+(* ∀ I, I ⊑ ⊥ *)
+Definition inv_bot {li} : invariant li :=
+  {| inv_world := unit;
+    symtbl_inv _ _ := False;
+    query_inv _ _ := False;
+    reply_inv _ _ := True |}.
+
+(* ∀ I, ⊤ ⊑ I *)
+Definition inv_top {li} : invariant li :=
+  {| inv_world := unit;
+    symtbl_inv _ _ := True;
+    query_inv _ _ := True;
+    reply_inv _ _ := False |}.
+
+
+(*  ⟦hmap.s + list.s⟧ ⊩ ⊥
+                     ↠ 
+                     {find_process ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra
+                     ⊎ {hmap_process ↦ Q}⋅ R_ca
+
+Since the linked module must not perform external calls, so we can set the external interfaces to be ⊥
+ *)
+
+Theorem link_linked_list_hash_map_safe_1: forall linked_list_asm hash_map_asm linked_mod,
+    transf_rustlight_program linked_list_mod = OK linked_list_asm ->
+    transf_clight_program hash_map_prog = OK hash_map_asm ->
+    Linking.link hash_map_asm linked_list_asm = Some linked_mod ->
+    module_type_safe
+      inv_bot
+      (* The same as above *)
+      (((hmap_rs_cond @@ rs_own) @! cc_rust_compcert) ⊎ (hmap_process_cond hmap_size @! cc_compcert))
+      (Asm.semantics linked_mod) SIF.
+Proof.
+  intros until linked_mod. intros T1 T2 LINK.
+  assert (SAFE: module_type_safe
+    (inv_bot @! 1)
+    ((((hmap_rs_cond @@ rs_own) @! cc_rust_compcert)
+       ⊎ hmap_process_cond hmap_size @! cc_compcert) @! 1)
+    (Asm.semantics linked_mod) SIF).
+  { eapply module_type_safe_preservation.    
+    2: { eapply AsmLinking.asm_linking_backward. eauto. }
+    (* 2. safety implication  *)
+    exploit compose_linked_list_hash_map_safe; eauto.
+    { unfold SmallstepLinking.compose. simpl.
+      erewrite Linking.link_erase_program; eauto. simpl.
+      instantiate (1 := (SmallstepLinking.semantics
+       (fun i : bool => Asm.semantics (if i then hash_map_asm else linked_list_asm))
+       (erase_program linked_mod))).
+      f_equal. f_equal.
+      apply Axioms.functional_extensionality. intros [|]; auto.  } 
+    intros [SAFE].
+    destruct SAFE as (inv & SAFE).
+    constructor.
+    eapply (Module_type_safe_components Asm.li_asm Asm.li_asm _ _ _ _ inv).
+    intros se w SYM VSE.
+    econstructor; eauto.
+    1-3, 5: intros; eapply SAFE; eauto.
+    (* at_external *)
+    intros s q SINV ATEXT.
+    exploit @external_preserves_progress; eauto.
+    intros (w1 & SYM1 & QINV1 & RINV1).
+    inv ATEXT.
+    assert (VQ: valid_query (Asm.semantics hash_map_asm se) q = false
+                /\ valid_query (Asm.semantics linked_list_asm se) q = false).
+    { split.
+      eapply (H0 true); eauto.
+      eapply (H0 false); eauto. }
+    exploit clight_semantic_preservation.
+    eapply transf_clight_program_match. eauto.
+    intros ([FSIM1] & [BSIM1]).
+    exploit rustlight_semantic_preservation.
+    eapply transf_rustlight_program_match. eauto.
+    intros ([FSIM2] & [BSIM2]).
+    eapply Linking.link_erase_program in LINK.
+    destruct VQ as (VQ1 & VQ2).      
+    destruct w1 as [w1 | w1].
+    - destruct w1 as ((w1 & w2) & w3).
+      destruct QINV1 as (q1 & (Q11 & Q12) & Q2).
+      destruct SYM1 as (se1 & (S11 & S12) & S2).
+      destruct w1 as [w1 | w1].
+      (* call list *)
+      + erewrite fsim_match_valid_query in VQ2.
+        2: { eapply FSIM2. eauto.           
+             erewrite fsim_skel; eauto.
+             eapply match_senv_valid_for; eauto.
+             eapply Genv.valid_for_linkorder; eauto.
+            simpl. eapply Linking.link_linkorder. eauto. }
+        2: eauto.
+        simpl in Q11. destruct q1. 
+        exploit hmap_ext_inv_valid_query; eauto.
+        simpl. eauto. intros VQ2'.
+        simpl in VQ2. inv S11. setoid_rewrite VQ2 in VQ2'. inv VQ2'.
+      (* call process *)
+      + (* match_senv. We need to construct the match_senv cc_compcert
+      from match_senv cc_rust_compcert *)
+        generalize cc_rust_compcert_eqv. intros (A1 & A2).
+        exploit @A1; eauto. intros (((se1' & w11') & w12') & (S11' & S12') & (q1' & Q11' & Q12') & R1').
+        inv S11'.
+        erewrite fsim_match_valid_query in VQ1.
+        2: { eapply FSIM1. eauto.
+             eauto.
+             erewrite fsim_skel; eauto.
+             eapply match_senv_valid_for; eauto.
+             eapply Genv.valid_for_linkorder; eauto.
+             simpl. eapply (proj1 (Linking.link_linkorder _ _ _ LINK)). }
+        2: eauto.
+        (* simplify the query_inv *)
+        simpl in Q11. destruct q1. 
+        exploit list_ext_inv_valid_query; eauto.
+        simpl. eauto. intros VQ1'.
+        inv S11. inv Q11'. simpl in VQ1. setoid_rewrite VQ1 in VQ1'. inv VQ1'.
+    (* call hmap_process *)
+    - destruct w1 as (w1 & w2).
+      destruct QINV1 as (q1 & Q1 & Q2).
+      destruct SYM1 as (se1 & S1 & S2).
+      erewrite fsim_match_valid_query in VQ1.
+      2: { eapply FSIM1. eauto.
+           erewrite fsim_skel; eauto.
+             eapply match_senv_valid_for; eauto.
+             eapply Genv.valid_for_linkorder; eauto.
+             simpl. eapply (proj1 (Linking.link_linkorder _ _ _ LINK)). }
+      2: eauto.
+      simpl in Q1. destruct q1.
+      exploit hmap_process_cond_valid_query; eauto.
+      simpl. eauto.
+      inv S1.
+      intros VQ1'. simpl in VQ1. setoid_rewrite VQ1 in VQ1'. inv VQ1'. }
+  eapply module_type_safe_compose_id.
+  eauto.
+Qed.
