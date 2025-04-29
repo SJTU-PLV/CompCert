@@ -207,6 +207,16 @@ Proof.
   intros. apply sup_incr_in2.
 Qed.
 
+
+(* for iteration of all valid blocks *)
+
+Definition sup_list (s:sup):= s.
+
+Lemma sup_list_in : forall b s, sup_In b s <-> In b (sup_list s).
+Proof.
+  intros. simpl. reflexivity.
+Qed.
+
 End Sup.
 
 Module Mem <: MEM.
@@ -6246,11 +6256,14 @@ Next Obligation.
     apply Mem.access_default.
 Qed.
 
-Fixpoint map_sup (s:sup) (m:mem) :=
-  match s with
+Fixpoint map_sup' (bl:list block) (m:mem) :=
+  match bl with
   |nil => m
-  |hd:: tl => map_block hd (map_sup tl m)
+  |hd:: tl => map_block hd (map_sup' tl m)
   end.
+
+Definition map_sup (s: sup) (m:mem) :=
+  map_sup' (sup_list s) m.
 
 (** step2, with the extension of support s2' which is constructed in step (1) *)
 Definition step2 := 
@@ -6268,11 +6281,18 @@ Proof.
   destruct (sup_dec); auto.
 Qed.
 
+Lemma map_sup_support' : forall bl m,
+    support (map_sup' bl m) = support m.
+Proof.
+   induction bl; intros; simpl; eauto.
+   rewrite map_block_support. eauto.
+Qed.
+
 Lemma map_sup_support : forall s m,
     support (map_sup s m) = support m.
 Proof.
-  induction s; intros; simpl; eauto.
-  rewrite map_block_support. eauto.
+  intros.
+  apply map_sup_support'.
 Qed.
 
 Lemma step2_support :
@@ -6321,8 +6341,8 @@ Section REVERSE.
     end.
 
   (* find (b_1,o_1) in all blocks in s *)
-  Fixpoint loc_in_reach_find' (b2: block) (o2: Z) (s : sup): option (block * Z) :=
-    match s with
+  Fixpoint loc_in_reach_find' (b2: block) (o2: Z) (bl : list block ): option (block * Z) :=
+    match bl with
     | nil => None
     | hd :: tl =>
         match block_find hd b2 o2 with
@@ -6333,7 +6353,7 @@ Section REVERSE.
 
   (*specific find function, find (b_1,o_1) in sup(m_1)*)
   Definition loc_in_reach_find (b2: block) (o2: Z) :=
-    loc_in_reach_find' b2 o2 (Mem.support m1).
+    loc_in_reach_find' b2 o2 (sup_list (Mem.support m1)).
 
   Lemma block_find_valid: forall b b2 o2 b1 o1,
       block_find b b2 o2 = Some (b1, o1) ->
@@ -6401,7 +6421,7 @@ Section REVERSE.
   
   Lemma loc_in_reach_find'_none_rec : forall s b2 o2,
       loc_in_reach_find' b2 o2 s = None ->
-      forall b1 d1, j12 b1 = Some (b2,d1) -> sup_In b1 s -> ~ perm m1 b1 (o2 - d1) Max Nonempty.
+      forall b1 d1, j12 b1 = Some (b2,d1) -> In b1 s -> ~ perm m1 b1 (o2 - d1) Max Nonempty.
   Proof.
     induction s; intros.
     - inv H1.
@@ -6415,7 +6435,7 @@ Qed.
   Proof.
     intros. unfold loc_in_reach_find in H.
     red. intros. eapply loc_in_reach_find'_none_rec; eauto.
-    inv INJ1. destruct (sup_dec b0 (support m1)). auto.
+    inv INJ1. destruct (sup_dec b0 (support m1)). apply sup_list_in. auto.
     exploit mi_freeblocks0; eauto.
     intro. congruence.
   Qed.
@@ -6789,14 +6809,15 @@ Qed.
    unfold copy_access_block. rewrite setN'_default.
    apply access_default.
  Qed.
-
-
- Fixpoint copy_sup (s:sup) m : mem :=
-   match s with
+ 
+ Fixpoint copy_sup' (bl:list block) m : mem :=
+   match bl with
    | nil => m
-   | hd :: tl => copy_block hd (copy_sup tl m)
+   | hd :: tl => copy_block hd (copy_sup' tl m)
    end.
 
+ Definition copy_sup (s: sup) m : mem := copy_sup' (sup_list s) m.
+ 
  (** lemmas about step3 *)
  Lemma copy_block_support : forall b m m',
      copy_block b m = m' ->
@@ -6807,13 +6828,20 @@ Qed.
    destruct (sup_dec); auto.
  Qed.
 
- Lemma copy_sup_support : forall s m m',
-     copy_sup s m = m' ->
+ Lemma copy_sup_support' : forall s m m',
+     copy_sup' s m = m' ->
      support m' = support m.
  Proof.
    induction s; intros; subst; simpl; eauto.
    erewrite copy_block_support. 2: eauto.
    eauto.
+ Qed.
+
+ Lemma copy_sup_support : forall s m m',
+     copy_sup s m = m' ->
+     support m' = support m.
+ Proof.
+   intros. eapply copy_sup_support'. eauto.
  Qed.
 
 End STEP23.
@@ -6833,6 +6861,7 @@ Global Opaque Mem.alloc Mem.free Mem.store Mem.load Mem.storebytes Mem.loadbytes
 Global Hint Resolve
   Mem.sup_incr_in1
   Mem.sup_incr_in2
+  Mem.sup_list_in
   Mem.sup_include_refl
   Mem.sup_include_trans
   Mem.sup_include_incr

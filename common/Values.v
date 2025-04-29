@@ -28,9 +28,9 @@ Parameter block : Type.
 Parameter eq_block : forall (x y:block),{x=y}+{x<>y}.
 
 End BLOCK.
-(*
-Declare Module Block : BLOCK.
-*)
+
+(* Declare Module Block : BLOCK. *)
+
 Module Block <: BLOCK.
 Definition block := positive.
 Definition eq_block := peq.

@@ -1125,7 +1125,7 @@ Definition check_add_global (se : Genv.symtbl)
   end.
                             
 Definition romem_for_symtbl (se : Genv.symtbl) : romem :=
-  fold_right (check_add_global se)  (PTree.empty ablock) (Genv.genv_sup se).
+  fold_right (check_add_global se)  (PTree.empty ablock) (Mem.sup_list (Genv.genv_sup se)).
 
 Lemma check_add_global_diff:
   forall a b se id map,
@@ -1213,6 +1213,7 @@ Proof.
   erewrite MAP. reflexivity.
   intros (b & g & FIND & INFO & LINK).
   subst ab. eapply romem_for_in; eauto.
+  apply Mem.sup_list_in.
   eapply Genv.genv_info_range; eauto.
 Qed.
   

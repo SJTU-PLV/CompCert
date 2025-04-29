@@ -125,8 +125,9 @@ Proof.
   intros. apply sup_incr_in2.
 Qed.
 
+Parameter sup_list : sup -> list block.
+Parameter sup_list_in : forall b s, sup_In b s <-> In b (sup_list s).
 End SUP.
-
 
 Module Type MEM.
 

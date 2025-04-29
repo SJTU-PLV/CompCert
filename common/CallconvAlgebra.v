@@ -319,7 +319,10 @@ Section JOIN.
 
   (** Trivial consequences of the least upper bound property. *)
 
-  Hint Resolve cc_join_lub cc_join_l cc_join_r (reflexivity (R:=ccref)) : core.
+  Lemma cc_refl : forall li1 li2 (cc: callconv li1 li2), ccref cc cc.
+    Proof. intros. reflexivity. Qed.
+      
+  Hint Resolve cc_join_lub cc_join_l cc_join_r cc_refl : core.
   Hint Unfold cceqv : core.
 
   Global Instance cc_join_ref:
@@ -430,7 +433,6 @@ Infix "+" := cc_join : cc_scope.
 
 Create HintDb cc.
 Hint Resolve cc_join_ub_l cc_join_ub_r cc_join_l cc_join_r : cc.
-Hint Resolve (reflexivity (R := ccref)) : cc.
 
 (** ** Superposition *)
 

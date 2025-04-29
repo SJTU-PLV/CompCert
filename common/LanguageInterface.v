@@ -64,6 +64,7 @@ Record callconv {li1 li2} :=
   }.
 
 Arguments callconv: clear implicits.
+Declare Scope cc_scope.
 Delimit Scope cc_scope with cc.
 Bind Scope cc_scope with callconv.
 Local Obligation Tactic := cbn; eauto.

@@ -1040,8 +1040,8 @@ Proof.
     ++ constructor; auto; try lia.
        intro. intros. exploit H8; eauto.
        intros (BND1 & BND2). split.
-       intro. apply BND1. apply BELOW. right. eauto.
-       intro. apply BND2. apply TBELOW. right. eauto.
+       intro. apply BND1. apply BELOW. apply Mem.sup_incr_in2. eauto.
+       intro. apply BND2. apply TBELOW. apply Mem.sup_incr_in2. eauto.
   + eapply regset_inject_incr; eauto.
 Qed.
 
