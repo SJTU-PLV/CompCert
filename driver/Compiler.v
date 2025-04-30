@@ -516,37 +516,131 @@ Qed.
 
 Require Import Conventions Asm Mach Lineartyping.
 
+(** Simulation Convention of the CompCert Compilation Passes:
+
+    SimplLocals : injp ↠ injp
+    Cshmgen: id ↠ id
+    Cminorgen: injp ↠ inj
+    Selection : (wt_c @ ext) ↠ (wt_c @ ext)
+    RTLgen : ext ↠ ext
+    Tailcall : ext ↠ ext
+    Inlining : injp ↠ inj
+    Renumber : id ↠ id
+    Constprop : option ((ro @ injp) ↠ (ro @ injp))
+    CSE      : option ((ro @ injp) ↠ (ro @ injp))
+    Deadcode  : option ((ro @ injp) ↠ (ro @ injp))
+    (* End of cc_c_level *)
+
+    Alloc : (wt_c @ ext @ CL) ↠ (wt_c @ ext @ CL)
+    Tunneling : (cc_locset ext) ↠ (cc_locset ext)
+    Linearize : id ↠ id
+    Cleanuplabels : id ↠ id
+    Debugvar : id ↠ id
+    Stacking : (wt_loc @ cc_stacking_injp) ↠ (wt_loc @ cc_stacking_injp)
+    Asmgen : (cc_mach ext @ MA) ↠ (cc_mach ext @ MA)
+ *)
+
 (** This is the simulation convention for the whole compiler. *)
+
+(* Definition cc_compcert : callconv li_c li_asm := *)
+(*        ro @ wt_c @ *)
+(*        cc_c_asm_injp @ *)
+(*        cc_asm injp. *)
 
 Definition cc_compcert : callconv li_c li_asm :=
        ro @ wt_c @
        cc_c_asm_injp @
-       cc_asm injp.
+       cc_asm ext.
+
 
 (** The C-level simulation convention *)
 Definition cc_c_level : callconv li_c li_c := ro @ wt_c @ cc_c injp.
 
+(* Definition cc_compcert_cod : callconv li_c li_asm := *)
+(*   ro @ wt_c @ cc_c injp @ *)
+(*        cc_c_locset @ cc_locset_mach @ cc_mach_asm @ *)
+(*        @ cc_asm inj. *)
+
+(* Definition cc_compcert_dom : callconv li_c li_asm := *)
+(*   ro @ wt_c @  cc_c injp @ *)
+(*        cc_c_locset @ cc_locset_mach @ cc_mach_asm. *)
+
 Definition cc_compcert_cod : callconv li_c li_asm :=
   ro @ wt_c @ cc_c injp @
-       cc_c_locset @ cc_locset_mach @ cc_mach_asm @
-       @ cc_asm inj.
+       cc_c_locset @ cc_stacking injp @ cc_mach_asm @
+       @ cc_asm ext.
 
 Definition cc_compcert_dom : callconv li_c li_asm :=
-  ro @ wt_c @  cc_c injp @
-       cc_c_locset @ cc_locset_mach @ cc_mach_asm.
+  ro @ wt_c @ cc_c injp @
+       cc_c_locset @ cc_stacking injp @ cc_mach_asm @
+       @ cc_asm ext.
 
-Lemma transport_injp_to_asm :
-  ccref (ro @ wt_c @ cc_c injp @ cc_c_locset @ cc_locset_mach @ cc_mach_asm @ cc_asm injp @ cc_asm inj)
-        cc_compcert_cod.
+
+(* Lemma transport_injp_to_asm : *)
+(*   ccref (ro @ wt_c @ cc_c injp @ cc_c_locset @ cc_locset_mach @ cc_mach_asm @ cc_asm injp @ cc_asm inj) *)
+(*         cc_compcert_cod. *)
+(* Proof. *)
+(*   rewrite (commute_around cc_mach_asm). *)
+(*   rewrite (commute_around cc_locset_mach). *)
+(*   rewrite (commute_around cc_c_locset). *)
+(*   rewrite <- (cc_compose_assoc (cc_c injp)). *)
+(*   rewrite <- cc_c_compose. *)
+(*   rewrite injp_injp_eq. *)
+(*   reflexivity. *)
+(* Qed. *)
+
+Lemma cc_cainjp_expand:
+  ccref cc_c_asm_injp (cc_c_locset @ cc_stacking injp @ cc_mach_asm).
+Admitted.
+
+
+Lemma cc_cainjp_collapse:
+  ccref (cc_c_locset @ cc_stacking injp @ cc_mach_asm) cc_c_asm_injp.
+Admitted.
+
+Lemma cc_stacking_injp_injp2:
+  ccref (cc_stacking injp) (cc_locset injp @ cc_stacking injp).
+Admitted.
+
+
+Lemma cc_stacking_injp2_injp:
+  ccref (cc_locset injp @ cc_stacking injp) (cc_stacking injp).
+Admitted.
+
+Lemma cc_injpCL_CLinjp:
+  ccref (injp @ cc_c_locset) (cc_c_locset @ cc_locset injp).
+Admitted.
+
+Lemma cc_wtstacking_stacking:
+  ccref (wt_loc @ cc_stacking injp) (cc_stacking injp).
+Admitted.
+
+Lemma cc_stacking_wtstacking:
+  ccref (cc_stacking injp) (wt_loc @ cc_stacking injp).
+Admitted.
+
+
+Global Instance cc_locset_ref:
+  Monotonic (@cc_locset) (subcklr ++> ccref).
 Proof.
-  rewrite (commute_around cc_mach_asm).
-  rewrite (commute_around cc_locset_mach).
-  rewrite (commute_around cc_c_locset).
-  rewrite <- (cc_compose_assoc (cc_c injp)).
-  rewrite <- cc_c_compose.
-  rewrite injp_injp_eq.
-  reflexivity.
-Qed.
+Admitted.
+
+Lemma cc_locset_compose R12 R23:
+  cceqv (cc_locset (R12 @ R23)) (cc_locset R12 @ cc_locset R23).
+Proof.
+Admitted.
+
+(* MA_trans_ext2 *)
+Lemma cc_extMA_MAext:
+  ccref (cc_mach ext @ cc_mach_asm) (cc_mach_asm @ cc_asm ext).
+Admitted.
+
+(* refer to cctrans_injp_ext *)
+Lemma injp_ext_injp__injp:
+  subcklr (injp @ ext @ injp) injp.
+Proof.
+  Admitted.
+
 
 (** The first expand of cc_compcert for both directions *)
 Theorem cc_compcert_merge:
@@ -556,17 +650,14 @@ Theorem cc_compcert_merge:
 Proof.
   intros.
   unfold cc_compcert, cc_compcert_cod, cc_compcert_dom in *.
-  rewrite injp__injp_inj_injp at 2. rewrite !cc_asm_compose.
-  rewrite <- transport_injp_to_asm in H.
-  rewrite <- !cc_compose_assoc.
-  eapply compose_forward_simulations.
-  rewrite <- cc_injpca_cainjp at 1.
-  rewrite cc_cainjp__injp_ca.
-  rewrite <- cc_cllmma_ca at 1.
-  rewrite cc_ca_cllmma.
-  rewrite cc_compose_assoc at 1.
-  rewrite !cc_compose_assoc. eauto.
-  eapply semantics_asm_rel.
+  rewrite cc_cainjp_expand at 2. rewrite !cc_compose_assoc.
+  rewrite <- cc_cainjp_collapse at 1. rewrite !cc_compose_assoc.
+  (* split injp from cc_stacking injp *)
+  erewrite cc_stacking_injp_injp2 at 2. rewrite !cc_compose_assoc.
+  rewrite (commute_around cc_c_locset (R2:= cc_locset injp)).
+  rewrite <- cc_stacking_injp2_injp at 1. rewrite !cc_compose_assoc.
+  rewrite <- (cc_compose_assoc cc_c_locset). rewrite <- cc_injpCL_CLinjp, cc_compose_assoc.    
+  auto.
 Qed.
 
 (** Derivation of the simulation conventions after C-level at the incoming side *)
@@ -574,38 +665,50 @@ Lemma cc_compcert_expand:
   ccref
     cc_compcert_cod
     (cc_c_level @                                          (* Passes up to Alloc *)
-     cc_c inj @                                            (* RTL self sim *)
      (wt_c @ cc_c ext @ cc_c_locset) @                     (* Alloc *)
      cc_locset ext @                                       (* Tunneling *)
-     (wt_loc @ cc_locset_mach @ cc_mach inj) @             (* Stacking *)
+     (wt_loc @ cc_stacking injp) @                         (* Stacking *)
      (cc_mach ext @ cc_mach_asm) @                         (* Asmgen *)
-     cc_asm inj).
+     cc_asm ext).
 Proof.
   unfold cc_compcert_cod. unfold cc_c_level.
   rewrite !cc_compose_assoc.
+  (* (ro @ *)
+  (*    wt_c @ *)
+  (*    injp @ *)
+  (*    wt_c @ *)
+  (*    ext @ *)
+  (*    cc_c_locset @ *)
+  (*    cc_locset ext @ wt_loc @ cc_stacking injp @ cc_mach ext @ cc_mach_asm @ cc_asm ext) *)
   etransitivity.
   {
-    rewrite inj_inj, !cc_asm_compose.
-    rewrite inj_inj at 1. rewrite !cc_asm_compose. rewrite cc_compose_assoc.
+    (* get ext from stacking injp *)
+    rewrite cc_stacking_injp_injp2, !cc_compose_assoc.
+    rewrite injp__injp_ext_injp at 2. rewrite !cc_locset_compose, !cc_compose_assoc.
+    rewrite <- ext_ext at 1. rewrite !cc_locset_compose, !cc_compose_assoc.
+    do 1 rewrite (commute_around cc_c_locset).
+    rewrite <- (cc_compose_assoc injp), <- cc_c_compose. rewrite injp_injp_eq.    
     rewrite <- lessdef_c_cklr, cc_compose_assoc.
     rewrite <- (cc_compose_assoc wt_c lessdef_c).
     rewrite (inv_dup wt_c), (cc_compose_assoc wt_c), (cc_compose_assoc wt_c).
     rewrite (commute_around (_@_) (R2:= cc_c injp)).
-    do 4 rewrite (commute_around _ (R2 := _ inj)).
+    do 1 rewrite (commute_around cc_c_locset).
     reflexivity.
   }
   repeat (rstep; [rauto | ]).
+  (* (wt_c @ *)
+  (*    ext @ *)
+  (*    cc_c_locset @ *)
+  (*    cc_locset ext @ wt_loc @ cc_stacking injp @ cc_mach ext @ cc_mach_asm @ cc_asm ext) *)
   etransitivity.
   {
     rewrite !cc_compose_assoc.
-    rewrite <- ext_inj, !cc_asm_compose.
-    rewrite cc_compose_assoc.
-    rewrite <- ext_ext at 1. rewrite cc_asm_compose, cc_compose_assoc.
-    do 4 rewrite (commute_around cc_mach_asm).
-    do 2 rewrite (commute_around cc_locset_mach).
-    do 1 rewrite (commute_around cc_c_locset).
+    rewrite <- ext_ext at 3. rewrite cc_asm_compose. 
+    do 1 rewrite (commute_around cc_mach_asm).
     rewrite <- (cc_compose_assoc lessdef_c), lessdef_c_cklr.
-    rewrite <- wt_loc_out_of_thin_air, cc_compose_assoc.
+    rewrite <- (cc_compose_assoc (cc_locset injp)).
+    rewrite cc_stacking_injp2_injp.
+    rewrite cc_stacking_wtstacking, cc_compose_assoc.
     reflexivity.
   }
   reflexivity.
@@ -615,58 +718,40 @@ Qed.
 Lemma cc_compcert_collapse:
   ccref
     (cc_c_level @                                 (* Passes up to Alloc *)
-     cc_c inj @                                   (* RTL self sim  *)
      (wt_c @ cc_c ext @ cc_c_locset) @            (* Alloc *)
      cc_locset ext @                              (* Tunneling *)
-     (wt_loc @ cc_locset injp @ cc_locset_mach) @ (* Stacking *)
-     (cc_mach ext @ cc_mach_asm) @
-    cc_asm inj)                                   (* Asmgen *)
+     (wt_loc @ cc_stacking injp) @                (* Stacking *)
+     (cc_mach ext @ cc_mach_asm) @                (* Asmgen *)
+    cc_asm ext)                                   
     cc_compcert_dom.
 Proof.
+  (* absorb wt_loc into stacking injp *)
+  rewrite cc_wtstacking_stacking.  
+  (* commute mach ext to asm ext *)
+  rewrite cc_extMA_MAext, !cc_compose_assoc.
+  rewrite <- cc_asm_compose, ext_ext.
   (* commute the cklrs towards source C level *)
-  rewrite <- wt_loc_out_of_thin_air.
-  rewrite <- (cc_compose_assoc wt_loc) at 1.
-  rewrite <- (cc_compose_assoc (wt_loc @ _)) at 1.
-  rewrite (cc_compose_assoc wt_loc) at 1.
-  rewrite (inv_drop (cc_locset injp) wt_loc), (cc_compose_assoc _ wt_loc).
-  rewrite wt_loc_out_of_thin_air, !cc_compose_assoc.
-  assert (ccref (cc_mach_asm @ cc_asm inj) (cc_mach inj @ cc_mach_asm)).
-  eapply commut_mach_asm.
-  rewrite H.
-  rewrite !(commute_around cc_locset_mach).
-  rewrite !(commute_around cc_c_locset).
   unfold cc_c_level. rewrite !cc_compose_assoc.
-
+  
   (* compose the wt_c invaraint using its propagatation property *)
-  rewrite <- lessdef_c_cklr, cc_compose_assoc, <- (cc_compose_assoc wt_c) at 1.
-  rewrite (commute_around (wt_c @ lessdef_c)), cc_compose_assoc.
-  rewrite <- (cc_compose_assoc lessdef_c).
-  rewrite lessdef_c_cklr.
-  rewrite <- (cc_compose_assoc (cc_c inj)).
+  rewrite <- (cc_compose_assoc (cc_c injp)).
   rewrite <- (cc_compose_assoc wt_c).
   rewrite (inv_drop _ wt_c), !cc_compose_assoc.
   (* move the wt_c to top level *)
-  rewrite <- (lessdef_c_cklr ext) , cc_compose_assoc, <- (cc_compose_assoc wt_c) at 1.
-  rewrite <- (cc_compose_assoc (cc_c inj)).
-  rewrite !wt_R_refinement. rewrite cc_compose_assoc.
-  rewrite <- (cc_compose_assoc (cc_c injp)).
-  rewrite wt_R_refinement. rewrite !cc_compose_assoc.
+  rewrite <- (lessdef_c_cklr ext) , cc_compose_assoc.
+  rewrite <- (cc_compose_assoc wt_c lessdef_c).
+  rewrite <- (cc_compose_assoc injp).
+  rewrite !wt_R_refinement. rewrite !cc_compose_assoc.
   rewrite <- (cc_compose_assoc lessdef_c).
   rewrite lessdef_c_cklr.
 
-  (* manully compose the cklrs into a single injp *)
-  rewrite <- (cc_compose_assoc (cc_c inj)), <- cc_c_compose.
-  rewrite inj_ext.
-  rewrite <- (cc_compose_assoc (cc_c inj)), <- cc_c_compose.
-  rewrite inj_ext.
-  rewrite <- (cc_compose_assoc (cc_c ext)), <- cc_c_compose.
-  rewrite ext_inj.
-  rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose.
-  rewrite injp_inj.
-  rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose.
-  rewrite injp_injp_eq.
-  rewrite <- (cc_compose_assoc (cc_c injp)), <- cc_c_compose.
-  rewrite injp_inj.
+  (* produce a injp from stacking *)
+  rewrite cc_stacking_injp_injp2, cc_compose_assoc.
+  (* merge injp ext injp *)
+  rewrite !(commute_around cc_c_locset).
+  rewrite <- (cc_compose_assoc ext). rewrite <- cc_c_compose, ext_ext.
+  rewrite <- (cc_compose_assoc ext), <- (cc_compose_assoc injp), <- !cc_c_compose.
+  rewrite injp_ext_injp__injp.
   reflexivity.
 Qed.
 
@@ -770,12 +855,11 @@ Lemma cc_expand :
       cc_c inj @
       cc_c ext @ cc_c inj @ cc_c injp @
       (ro @ injp) @ (ro @ injp) @ (ro @ injp) @
-    cc_c inj @                                   (* RTL self sim *)
     (wt_c @ cc_c ext @ cc_c_locset) @            (* Alloc *)
     cc_locset ext @                              (* Tunneling *)
-    (wt_loc @ cc_locset_mach @ cc_mach inj ) @   (* Stacking *)
+    (wt_loc @ cc_stacking injp) @                (* Stacking *)
     (cc_mach ext @ cc_mach_asm) @
-    cc_asm inj
+    cc_asm ext
     ).
 Proof.
   unfold cc_compcert_cod. rewrite cc_compcert_expand.
@@ -792,12 +876,11 @@ Lemma cc_collapse :
       cc_c inj @
       cc_c ext @ cc_c injp @ cc_c injp @
       (ro @ injp) @ (ro @ injp) @ (ro @ injp) @
-      cc_c inj @                                   (* RTL self sim *)
       (wt_c @ cc_c ext @ cc_c_locset) @            (* Alloc *)
       cc_locset ext @                              (* Tunneling *)
-      (wt_loc @ cc_locset injp @ cc_locset_mach) @ (* Stacking *)
+      (wt_loc @ cc_stacking injp) @                (* Stacking *)
       (cc_mach ext @ cc_mach_asm) @
-      cc_asm inj
+      cc_asm ext
     )
     cc_compcert_dom.
 Proof.
@@ -879,7 +962,7 @@ Qed.
 Definition cc_rust_compcert: callconv li_rs li_asm :=
   ro_rs @ wt_rs @
   cc_rust_asm_injp @
-  cc_asm injp.
+  cc_asm ext.
 
 Lemma cc_rust_collapse:
   ccref
@@ -1093,11 +1176,6 @@ Proof.
       eapply Deadcodeproof.transf_program_correct'; eassumption.
       subst. apply va_interface_selfsim. }
     eapply compose_forward_simulations.
-    (** A hack: using self-simulation to prove inj forward simulation,
-    preventing modifying lots of code when removing Unusedglob pass *)
-    eapply RTLrel.semantics_rel.
-    (* eapply Unusedglobproof.transf_program_correct; eassumption. *)
-    eapply compose_forward_simulations.
     eapply Allocproof.transf_program_correct; eassumption.
     eapply compose_forward_simulations.
     eapply Tunnelingproof.transf_program_correct; eassumption.
@@ -1108,7 +1186,6 @@ Proof.
     eapply compose_optional_pass; eauto using compose_identity_pass.
     exact Debugvarproof.transf_program_correct.
     eapply compose_forward_simulations.
-    rewrite <- cc_stacking_lm, cc_lm_stacking.
     eapply Stackingproof.transf_program_correct with (rao := Asmgenproof0.return_address_offset).
     exact Asmgenproof.return_address_exists.
     eassumption.
