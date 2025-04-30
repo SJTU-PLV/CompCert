@@ -637,9 +637,11 @@ Record cc_stacking_world {R} :=
     stk_w :> world R;
     stk_sg : signature;
     stk_ls1 : Locmap.t;
+    stk_rs2 : regset;
     stk_sp2 : val;
     stk_m2 : mem;
   }.
+
 
 Arguments cc_stacking_world : clear implicits.
 
@@ -654,25 +656,27 @@ Inductive cc_stacking_mq R: cc_stacking_world R -> _ -> _ -> Prop :=
       Val.has_type sp2 Tptr ->
       Val.has_type ra2 Tptr ->
       cc_stacking_mq R
-        (stkw R w sg ls1 sp2 m2)
+        (stkw R w sg ls1 rs2 sp2 m2)
         (lq vf1 sg ls1 m1)
         (mq vf2 sp2 ra2 rs2 m2).
 
 Inductive cc_stacking_mr R: cc_stacking_world R -> _ -> _ -> Prop :=
-  | cc_stacking_mr_intro w w' sg ls1 ls1' m1' sp2 m2 rs2' m2':
+  | cc_stacking_mr_intro w w' sg ls1 ls1' m1' rs2 sp2 m2 rs2' m2':
     w ~> w' ->
     (forall r,
       In r (regs_of_rpair (loc_result sg)) ->
       Val.inject (mi R w') (ls1' (Locations.R r)) (rs2' r)) ->
+    (* (forall r, *)
+    (*   is_callee_save r = true -> *)
+    (*   Val.inject (mi R w') (ls1 (Locations.R r)) (rs2' r)) -> *)
     (forall r,
-      is_callee_save r = true ->
-      Val.inject (mi R w') (ls1 (Locations.R r)) (rs2' r)) ->
+        is_callee_save r = true -> rs2 r = rs2' r) ->
     match_mem R w' m1' m2' ->
     Mem.unchanged_on (loc_init_args (size_arguments sg) sp2) m2 m2' ->
     (forall b ofs, loc_init_args (size_arguments sg) sp2 b ofs ->
                    loc_out_of_reach (mi R w') m1' b ofs) ->
     cc_stacking_mr R
-      (stkw R w sg ls1 sp2 m2)
+      (stkw R w sg ls1 rs2 sp2 m2)
       (lr ls1' m1')
       (mr rs2' m2').
 

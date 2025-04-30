@@ -1284,76 +1284,76 @@ Qed.
 (*         destruct in_dec; eauto. *)
 (* Qed. *)
 
-Lemma cc_lm_stacking_injp:
-  ccref (cc_locset_mach @ cc_mach injp) (cc_stacking injp).
-Proof.
-    intros [[_ wlm] w] se1 se2 q1 q2 [[ ] Hse] (qi & Hq1i & Hqi2). cbn in *.
-    destruct Hqi2. inv Hq1i.
-    generalize H6 as MM.
-    destruct w. inv H6.
-    assert (Hm': Mem.inject f m_ m2 /\ Mem.support m_ = Mem.support m1).
-    { destruct H12 as [ | sb1 sofs1 m1 m1_ ]; auto.
-      assert (Mem.extends m1_ m1) by eauto using Mem.free_left_extends, Mem.extends_refl.
-      split.
-      eapply Mem.extends_inject_compose; eauto.
-      exploit Mem.mext_sup. eauto. eauto. }
-    destruct Hm' as (Hm' & SUP).    
-  exists (stkw injp (injpw f m_ m2 Hm') sg (make_locset rs1 m1 sp1) sp2 m2).
-  split; [ | split].
-  - cbn. inv Hse. rewrite <- SUP in H13. econstructor; eauto. 
-  - constructor; auto.
-    + cbn -[Z.add Z.mul]. repeat apply conj.
-      * apply Mem.unchanged_on_refl.
-      * intro Hsz.
-        destruct H12. { apply zero_size_arguments_tailcall_possible in H6. extlia. }
-        inv H2. eexists _, _. split; eauto. split.
-        -- eapply transport in H6 as (m2_ & Hm2_ & Hm_).
-           2: {
-             change ?x with (id x) in H6. repeat rstep.
-             eapply offset_sarg_ptrrange_inject; eauto.
-             eapply Mem.free_range_perm; eauto.
-             rewrite (offset_sarg_expand (size_arguments sg)).
-             extlia.
-           }
-           eapply Mem.free_range_perm; eauto.
-        -- intros ofs Hofs.
-           eapply offset_fits_inject; eauto.
-           eapply Mem.free_range_perm; eauto.
-      * intros ofs ty REG. destruct H12.
-        -- apply tailcall_possible_reg in REG; auto. contradiction.
-        -- edestruct H9 as [v Hv]; eauto. rewrite Hv.
-           transport Hv. rewrite H10. eauto.
-    + econstructor.
-    + destruct 1 as [sb2 sofs2 ofs].
-      inversion H2 as [ | | | | sb1 sofs1 | ]; clear H2; try congruence. subst b2 ofs2 sp1.
-      inversion H12; clear H12.
-      { apply zero_size_arguments_tailcall_possible in H2.
-        unfold offset_sarg in *. extlia. }
-      subst sb sofs m m_0.
-      assert (offset_sarg sofs1 0 <= ofs - delta < offset_sarg sofs1 (size_arguments sg)).
-      {
-        rewrite (offset_sarg_expand (size_arguments sg)) in *.
-        exploit (offset_sarg_inject injp (injpw f m1 m2 Hm) m1 m2 sb1 sofs1 sb2 sofs2 0); eauto.
-        * eapply Mem.free_range_perm; eauto. extlia.
-        * subst. eauto.
-        * inversion 1. assert (delta0 = delta) by congruence. extlia.
-      }
-      intros sb1' delta' Hsb1' Hp.
-      destruct (eq_block sb1 sb1').
-      { subst sb1'. assert (delta' = delta).
-        { setoid_rewrite H7 in Hsb1'. inv Hsb1'. auto. } subst.
-        eapply Mem.perm_free_2; eauto. }
-      apply cklr_no_overlap in MM. red in MM.
-      edestruct (MM sb1 sb2 delta sb1' sb2 delta'); eauto.
-      * eapply Mem.perm_max, Mem.perm_implies.
-        eapply Mem.free_range_perm; eauto.
-        constructor.
-      * eapply Mem.perm_free_3; eauto.
-      * extlia.
-    + destruct H2; congruence.
-    + destruct H4; congruence.
-  - intros r1 r2 Hr. inv Hr.
-Abort.
+(* Lemma cc_lm_stacking_injp: *)
+(*   ccref (cc_locset_mach @ cc_mach injp) (cc_stacking injp). *)
+(* Proof. *)
+(*     intros [[_ wlm] w] se1 se2 q1 q2 [[ ] Hse] (qi & Hq1i & Hqi2). cbn in *. *)
+(*     destruct Hqi2. inv Hq1i. *)
+(*     generalize H6 as MM. *)
+(*     destruct w. inv H6. *)
+(*     assert (Hm': Mem.inject f m_ m2 /\ Mem.support m_ = Mem.support m1). *)
+(*     { destruct H12 as [ | sb1 sofs1 m1 m1_ ]; auto. *)
+(*       assert (Mem.extends m1_ m1) by eauto using Mem.free_left_extends, Mem.extends_refl. *)
+(*       split. *)
+(*       eapply Mem.extends_inject_compose; eauto. *)
+(*       exploit Mem.mext_sup. eauto. eauto. } *)
+(*     destruct Hm' as (Hm' & SUP).     *)
+(*   exists (stkw injp (injpw f m_ m2 Hm') sg (make_locset rs1 m1 sp1) sp2 m2). *)
+(*   split; [ | split]. *)
+(*   - cbn. inv Hse. rewrite <- SUP in H13. econstructor; eauto.  *)
+(*   - constructor; auto. *)
+(*     + cbn -[Z.add Z.mul]. repeat apply conj. *)
+(*       * apply Mem.unchanged_on_refl. *)
+(*       * intro Hsz. *)
+(*         destruct H12. { apply zero_size_arguments_tailcall_possible in H6. extlia. } *)
+(*         inv H2. eexists _, _. split; eauto. split. *)
+(*         -- eapply transport in H6 as (m2_ & Hm2_ & Hm_). *)
+(*            2: { *)
+(*              change ?x with (id x) in H6. repeat rstep. *)
+(*              eapply offset_sarg_ptrrange_inject; eauto. *)
+(*              eapply Mem.free_range_perm; eauto. *)
+(*              rewrite (offset_sarg_expand (size_arguments sg)). *)
+(*              extlia. *)
+(*            } *)
+(*            eapply Mem.free_range_perm; eauto. *)
+(*         -- intros ofs Hofs. *)
+(*            eapply offset_fits_inject; eauto. *)
+(*            eapply Mem.free_range_perm; eauto. *)
+(*       * intros ofs ty REG. destruct H12. *)
+(*         -- apply tailcall_possible_reg in REG; auto. contradiction. *)
+(*         -- edestruct H9 as [v Hv]; eauto. rewrite Hv. *)
+(*            transport Hv. rewrite H10. eauto. *)
+(*     + econstructor. *)
+(*     + destruct 1 as [sb2 sofs2 ofs]. *)
+(*       inversion H2 as [ | | | | sb1 sofs1 | ]; clear H2; try congruence. subst b2 ofs2 sp1. *)
+(*       inversion H12; clear H12. *)
+(*       { apply zero_size_arguments_tailcall_possible in H2. *)
+(*         unfold offset_sarg in *. extlia. } *)
+(*       subst sb sofs m m_0. *)
+(*       assert (offset_sarg sofs1 0 <= ofs - delta < offset_sarg sofs1 (size_arguments sg)). *)
+(*       { *)
+(*         rewrite (offset_sarg_expand (size_arguments sg)) in *. *)
+(*         exploit (offset_sarg_inject injp (injpw f m1 m2 Hm) m1 m2 sb1 sofs1 sb2 sofs2 0); eauto. *)
+(*         * eapply Mem.free_range_perm; eauto. extlia. *)
+(*         * subst. eauto. *)
+(*         * inversion 1. assert (delta0 = delta) by congruence. extlia. *)
+(*       } *)
+(*       intros sb1' delta' Hsb1' Hp. *)
+(*       destruct (eq_block sb1 sb1'). *)
+(*       { subst sb1'. assert (delta' = delta). *)
+(*         { setoid_rewrite H7 in Hsb1'. inv Hsb1'. auto. } subst. *)
+(*         eapply Mem.perm_free_2; eauto. } *)
+(*       apply cklr_no_overlap in MM. red in MM. *)
+(*       edestruct (MM sb1 sb2 delta sb1' sb2 delta'); eauto. *)
+(*       * eapply Mem.perm_max, Mem.perm_implies. *)
+(*         eapply Mem.free_range_perm; eauto. *)
+(*         constructor. *)
+(*       * eapply Mem.perm_free_3; eauto. *)
+(*       * extlia. *)
+(*     + destruct H2; congruence. *)
+(*     + destruct H4; congruence. *)
+(*   - intros r1 r2 Hr. inv Hr. *)
+(* Abort. *)
 
 (** *** Outgoing calls *)
 
@@ -2042,3 +2042,52 @@ Proof.
   reflexivity. reflexivity.
 Qed.
 
+
+(* Lemma cc_stacking_injp_injp2: *)
+(*   ccref (cc_stacking injp) (cc_locset injp @ cc_stacking injp). *)
+(* Proof. *)
+(*   red. intros [w sg ls1 rs3 sp3 m3] se1 se2 q1 q2 Hse Hq. *)
+(*     inv Hse. simpl in H2. inv Hq. inv H3. clear Hm Hm0. *)
+(*     (* Compute  ccworld (locset_injp @ cc_stacking_injp). *) *)
+(*     exists (se1, (sg, injpw (meminj_dom f) m1 m1 (mem_inject_dom f m1 m2 Hm1), (stkjw(injpw f m1 m2 Hm1) sg ls1 rs3 sp3 m2))). *)
+(*     repeat apply conj. *)
+(*     + simpl. split. econstructor; eauto. eapply match_stbls_dom; eauto. *)
+(*       econstructor; eauto. *)
+(*     + simpl. exists (lq vf1 sg ls1 m1). split. econstructor; simpl; eauto. *)
+(*       eapply val_inject_dom; eauto. red. intros. *)
+(*       inv H2. *)
+(*       eapply val_inject_dom; eauto. destruct H14 as [A [B C]]. *)
+(*       exploit C; eauto. intros [v' [D E]]. *)
+(*       eapply val_inject_dom; eauto. *)
+(*       econstructor; eauto. *)
+(*     + simpl. constructor; eauto. rewrite meminj_dom_compose. reflexivity. *)
+(*     + simpl. econstructor; eauto. intros. unfold meminj_dom in H3. *)
+(*       destruct (f b1) as [[? ?]|] eqn: Hf; inv H3. congruence. *)
+(*       intros. exists b2, ofs2. split. auto. unfold meminj_dom. rewrite H4. *)
+(*       replace (ofs2 - ofs2) with 0 by lia. reflexivity. *)
+(*     + simpl. intros r1 r3 wp1 wp2 wp1' Hmatch [Hae1 Hae2] [Hai1 Hai2] Hr. *)
+(*       simpl in Hae1, Hae2. destruct wp1' as [wp11' wp12']. *)
+(*       destruct wp1 as [wp11 wp12]. simpl in *. *)
+(*       destruct wp11' as [j12 m1' m2' Hm1']. *)
+(*       destruct wp12' as [j23 m2'_ m3' Hm2']. *)
+(*       destruct Hr as [r' [Hr1 Hr2]]. inv Hr1. inv Hr2. inv H3. clear Hm'0 Hm'2 Hm'1. *)
+(*       clear Hm0 Hm2 Hm3. rename m1'0 into m1'. rename m2'0 into m2'. *)
+(*       exists (injpw (compose_meminj j12 j23) m1' m3' (Mem.inject_compose _ _ _ _ _ Hm1' Hm2')). *)
+(*       repeat apply conj; eauto. *)
+(*       -- eapply injp_comp_acce. 3: apply Hae1. 3: apply Hae2. *)
+(*          econstructor; eauto. *)
+(*          econstructor; eauto. *)
+(*       -- inv Hmatch. eapply injp_comp_acci; eauto. econstructor; eauto. *)
+(*       -- econstructor; eauto. intros. *)
+(*          eapply val_inject_compose; eauto. *)
+(*          intros.  red. intros. *)
+(*          specialize (H25 _ _ H3). red in H25. *)
+(*          unfold compose_meminj in H4. repeat destr_in H4. *)
+(*          intro. exploit H25; eauto. *)
+(*          replace (ofs - z0) with (ofs - (z + z0) + z) by lia. *)
+(*          eapply Mem.perm_inject; eauto. *)
+
+
+(* Lemma cc_stacking_injp2_injp: *)
+(*   ccref (cc_locset injp @ cc_stacking injp) (cc_stacking injp). *)
+(* Admitted. *)
