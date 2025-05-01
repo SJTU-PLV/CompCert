@@ -598,15 +598,6 @@ Lemma cc_cainjp_collapse:
   ccref (cc_c_locset @ cc_stacking injp @ cc_mach_asm) cc_c_asm_injp.
 Admitted.
 
-Lemma cc_stacking_injp_injp2:
-  ccref (cc_stacking injp) (cc_locset injp @ cc_stacking injp).
-Admitted.
-
-
-Lemma cc_stacking_injp2_injp:
-  ccref (cc_locset injp @ cc_stacking injp) (cc_stacking injp).
-Admitted.
-
 Lemma cc_injpCL_CLinjp:
   ccref (injp @ cc_c_locset) (cc_c_locset @ cc_locset injp).
 Admitted.

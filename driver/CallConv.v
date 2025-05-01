@@ -1825,7 +1825,7 @@ Proof.
     generalize (Mem.unchanged_on_support _ _ _ UNCHANGE3).
     intros SUPINCL3.
     generalize (inject_incr_inv _ _ _ _ _ _ _ DOMIN12 IMGIN12 DOMIN23 DOMIN13' SUPINCL1 INCR13 DISJ13).
-    intros (j12' & j23' & m2'_sup & JEQ & INCR12 & INCR23 & SUPINCL2 & DOMIN12' & IMGIN12' & DOMIN23' & INCRDISJ12 & INCRDISJ23 & INCRNOLAP & ADDZERO & ADDEXISTS & ADDSAME).
+    intros (j12' & j23' & m2'_sup & INCRn1 & INCRn2 & JEQ & INCR12 & INCR23 & SUPINCL2 & DOMIN12' & IMGIN12' & DOMIN23' & INCRDISJ12 & INCRDISJ23 & INCRNOLAP & ADDZERO & ADDEXISTS & ADDSAME).
     subst. cbn in *.
     set (m2' := m2' m1 m2 m1' j12 j23 j12' m2'_sup INJ12 ).
     assert (INJ12' :  Mem.inject j12' m1' m2'). eapply INJ12'; eauto.
@@ -2042,52 +2042,170 @@ Proof.
   reflexivity. reflexivity.
 Qed.
 
+(* Composition of (cc_stacking injp). Copy from CCOC *)
 
-(* Lemma cc_stacking_injp_injp2: *)
-(*   ccref (cc_stacking injp) (cc_locset injp @ cc_stacking injp). *)
-(* Proof. *)
-(*   red. intros [w sg ls1 rs3 sp3 m3] se1 se2 q1 q2 Hse Hq. *)
-(*     inv Hse. simpl in H2. inv Hq. inv H3. clear Hm Hm0. *)
-(*     (* Compute  ccworld (locset_injp @ cc_stacking_injp). *) *)
-(*     exists (se1, (sg, injpw (meminj_dom f) m1 m1 (mem_inject_dom f m1 m2 Hm1), (stkjw(injpw f m1 m2 Hm1) sg ls1 rs3 sp3 m2))). *)
-(*     repeat apply conj. *)
-(*     + simpl. split. econstructor; eauto. eapply match_stbls_dom; eauto. *)
-(*       econstructor; eauto. *)
-(*     + simpl. exists (lq vf1 sg ls1 m1). split. econstructor; simpl; eauto. *)
-(*       eapply val_inject_dom; eauto. red. intros. *)
-(*       inv H2. *)
-(*       eapply val_inject_dom; eauto. destruct H14 as [A [B C]]. *)
-(*       exploit C; eauto. intros [v' [D E]]. *)
-(*       eapply val_inject_dom; eauto. *)
-(*       econstructor; eauto. *)
-(*     + simpl. constructor; eauto. rewrite meminj_dom_compose. reflexivity. *)
-(*     + simpl. econstructor; eauto. intros. unfold meminj_dom in H3. *)
-(*       destruct (f b1) as [[? ?]|] eqn: Hf; inv H3. congruence. *)
-(*       intros. exists b2, ofs2. split. auto. unfold meminj_dom. rewrite H4. *)
-(*       replace (ofs2 - ofs2) with 0 by lia. reflexivity. *)
-(*     + simpl. intros r1 r3 wp1 wp2 wp1' Hmatch [Hae1 Hae2] [Hai1 Hai2] Hr. *)
-(*       simpl in Hae1, Hae2. destruct wp1' as [wp11' wp12']. *)
-(*       destruct wp1 as [wp11 wp12]. simpl in *. *)
-(*       destruct wp11' as [j12 m1' m2' Hm1']. *)
-(*       destruct wp12' as [j23 m2'_ m3' Hm2']. *)
-(*       destruct Hr as [r' [Hr1 Hr2]]. inv Hr1. inv Hr2. inv H3. clear Hm'0 Hm'2 Hm'1. *)
-(*       clear Hm0 Hm2 Hm3. rename m1'0 into m1'. rename m2'0 into m2'. *)
-(*       exists (injpw (compose_meminj j12 j23) m1' m3' (Mem.inject_compose _ _ _ _ _ Hm1' Hm2')). *)
-(*       repeat apply conj; eauto. *)
-(*       -- eapply injp_comp_acce. 3: apply Hae1. 3: apply Hae2. *)
-(*          econstructor; eauto. *)
-(*          econstructor; eauto. *)
-(*       -- inv Hmatch. eapply injp_comp_acci; eauto. econstructor; eauto. *)
-(*       -- econstructor; eauto. intros. *)
-(*          eapply val_inject_compose; eauto. *)
-(*          intros.  red. intros. *)
-(*          specialize (H25 _ _ H3). red in H25. *)
-(*          unfold compose_meminj in H4. repeat destr_in H4. *)
-(*          intro. exploit H25; eauto. *)
-(*          replace (ofs - z0) with (ofs - (z + z0) + z) by lia. *)
-(*          eapply Mem.perm_inject; eauto. *)
+Inductive match_injp_comp_world : (injp_world * injp_world) -> injp_world -> Prop :=
+|world_comp_intro:
+  forall m1 m2 m3 j12 j23 j13 Hm12 Hm23 Hm13,
+    j13 = compose_meminj j12 j23 ->
+    match_injp_comp_world (injpw j12 m1 m2 Hm12, injpw j23 m2 m3 Hm23) (injpw j13 m1 m3 Hm13).
+
+Inductive injp_trivial_comp_world : (injp_world * injp_world) -> injp_world -> Prop :=
+|trivial_comp_intro : forall j m1 m3 Hm12 Hm23 Hm13,
+    injp_trivial_comp_world (injpw (meminj_dom j) m1 m1 Hm12, injpw j m1 m3 Hm23)
+      (injpw j m1 m3 Hm13).
 
 
-(* Lemma cc_stacking_injp2_injp: *)
-(*   ccref (cc_locset injp @ cc_stacking injp) (cc_stacking injp). *)
-(* Admitted. *)
+          
+Lemma injp_comp_acce : forall w11 w12 w11' w12' w1 w2,
+    injp_trivial_comp_world (w11, w12)  w1 ->
+    match_injp_comp_world (w11', w12')  w2 ->
+    injp_acc w11 w11' -> injp_acc w12 w12' ->
+    injp_acc w1 w2.
+Proof.
+  intros. inv H. inv H0.
+  inv H1. inv H2. rename m0 into m1'. rename m2 into m2'. rename m4 into m3'.
+  econstructor; eauto.
+  - eapply Mem.unchanged_on_implies. eapply H11.
+    intros. red. unfold meminj_dom. 
+    rewrite H. reflexivity.
+  - assert (j = compose_meminj (meminj_dom j) j).
+    rewrite meminj_dom_compose. reflexivity.
+    rewrite H. rauto.
+  - red.
+    intros b1 b2 delta Hb Hb'. unfold compose_meminj in Hb'.
+    destruct (j12 b1) as [[bi delta12] | ] eqn:Hb1'; try discriminate.
+    destruct (j23 bi) as [[xb2 delta23] | ] eqn:Hb2'; try discriminate.
+    inv Hb'.
+    exploit H14; eauto. unfold meminj_dom. rewrite Hb. reflexivity.
+    intros [X Y].
+    destruct (j bi) as [[? ?] | ] eqn:Hfbi.
+    {
+      eapply Mem.valid_block_inject_1 in Hfbi; eauto.
+    }
+    edestruct H21; eauto. 
+Qed.
+
+Ltac clean_destr :=
+  match goal with
+  | H: _ = left _ |- _ => clear H
+  | H: _ = right _ |- _ => clear H
+  end.
+
+Ltac destr :=
+  match goal with
+    |- context [match ?a with _ => _ end] => destruct a eqn:?; try intuition congruence
+  end; repeat clean_destr.
+
+Ltac destr_in H :=
+  match type of H with
+    context [match ?a with _ => _ end] => destruct a eqn:?; try intuition congruence
+  | _ => inv H
+  end; repeat clean_destr.
+
+Lemma cc_stacking_injp_injp2:
+  ccref (cc_stacking injp) (cc_locset injp @ cc_stacking injp).
+Proof.
+  red. intros [w sg ls1 rs3 sp3 m3] se1 se2 q1 q2 Hse Hq.
+    inv Hse. simpl in H2. inv Hq. inv H15. rename m0 into m1. rename m3 into m2.
+    (* Compute  ccworld (cc_locset injp @ cc_stacking injp). *)
+    exists (se1, (sg, injpw (meminj_dom f) m1 m1 (mem_inject_dom f m1 m2 Hm)), (stkw injp (injpw f m1 m2 Hm) sg ls1 rs3 sp3 m2)). 
+    repeat apply conj.
+    + simpl. split. econstructor; eauto. eapply match_stbls_dom; eauto.
+      econstructor; eauto.
+    + simpl. exists (lq vf1 sg ls1 m1). split. econstructor; simpl; eauto.
+      eapply val_inject_dom; eauto. red. intros.
+      inv H2.
+      eapply val_inject_dom; eauto. destruct H14 as [A [B C]].
+      exploit C; eauto. intros [v' [D E]].
+      eapply val_inject_dom; eauto.
+      econstructor; eauto.
+      econstructor.
+    + simpl. intros r1 r3 Hr.
+      destruct Hr as [r' [Hr1 Hr2]]. inv Hr1.
+      destruct x as [j12 m1' m2' Hm1'].
+      destruct H2 as (ACC & LOCR). inv LOCR.
+      inv Hr2.
+      destruct w' as [j23 m2'_ m3' Hm2'].      
+      inv H23. inv H3.
+      rename m1'0 into m1'. rename m2'0 into m2'. rename m2'1 into m3'.
+      exists (injpw (compose_meminj j12 j23) m1' m3' (Mem.inject_compose _ _ _ _ _ Hm1' Hm5)).
+      repeat apply conj; eauto.
+      -- eapply injp_comp_acce.
+         econstructor; eauto.
+         econstructor; eauto. eauto. eauto.
+      -- intros. simpl.
+         eapply val_inject_compose; eauto.
+      -- eauto.
+      -- simpl. eauto.
+      -- eauto.
+      -- intros. red. intros.
+         specialize (H25 _ _ H3). red in H25.
+         unfold compose_meminj in H4. simpl in H4. repeat destr_in H4.
+         intro. exploit H25; eauto.
+         replace (ofs - z0) with (ofs - (z + z0) + z) by lia.
+         eapply Mem.perm_inject; eauto.
+Qed.
+
+Lemma cc_stacking_injp2_injp:
+  ccref (cc_locset injp @ cc_stacking injp) (cc_stacking injp).
+Proof.
+  red. intros w1 se1 se2 q1 q3 Hs Hq.
+  destruct w1 as ((x, w11), w12).
+  destruct w11 as (sg' & w11). destruct w12 as [w12 sg ls2 rs3 sp3 m3].
+  (** Basiclly the same as old injp_comp (the hard part) *)
+  destruct w11 as [j12' m1' m2' Hm12'].
+  destruct w12 as [j23' m2'_ m3' Hm23'].
+  destruct Hs as [Hs1 Hs2]. inv Hs1. inv Hs2.
+  destruct Hq as [q2 [Hq1 Hq2]]. inv Hq1. inv Hq2. inv H1. rename ls0 into ls2.
+  inv H24.
+  rename m1 into m1'. rename m2 into m2'. rename m3 into m3'.
+  exists (stkw injp (injpw (compose_meminj j12' j23')  m1' m3' (Mem.inject_compose _ _ _ _ _ Hm7 Hm10)) sg' ls1 rs3 sp3 m3').
+  repeat apply conj; eauto.
+  + econstructor; eauto.
+    eapply Genv.match_stbls_compose; eauto.
+  + simpl.
+    econstructor; simpl; eauto. 
+    eapply val_inject_compose; eauto.
+    intros. eapply val_inject_compose; eauto. eapply H0; eauto. constructor.
+    destruct H23 as [A [B C]]. split. auto. split. auto. intros.
+    exploit C; eauto. intros [v [Hl Hinj]].  exists v.
+    split. eauto. eapply val_inject_compose. eapply H0; eauto. constructor. eauto.
+    eauto.
+    intros.  red. intros.
+    specialize (H25 _ _ H1). red in H25.
+    unfold compose_meminj in H7. repeat destr_in H7.
+    intro. exploit H25; eauto.
+    replace (ofs - z0) with (ofs - (z + z0) + z) by lia.
+    eapply Mem.perm_inject; eauto.
+  + (** The accessbility construction *)
+    intros r1 r3 MR. simpl in MR.
+    inv MR.
+    destruct w' as [j13'' m1'' m3'' Hm13']. 
+    exploit injp_acce_outgoing_constr. eapply H14.
+    instantiate (4 := Hm12'). instantiate (1 := Hm23').
+    intros (j12'' & j23'' & m2'' & Hm12'' & Hm23'' & COMPOSE & ACCE1 & ACCE2 &  OUT).
+    (* exists ((injpw j12'' m1'' m2'' Hm12''),(injpw j23'' m2'' m3'' Hm23'')). *)
+    simpl.
+    generalize (loc_result_always_one sg'). intro Hresult.
+    destruct Hresult as [r Hresult]. rewrite Hresult in *.
+    exploit H17; eauto. simpl. left. reflexivity. intro Hinjresult.
+    exploit compose_meminj_midvalue. simpl in Hinjresult. rewrite COMPOSE in Hinjresult.
+    eauto.
+    intros [vres2 [RES1 RES2]]. 
+    set (ls2' l := if Loc.eq l (R r) then vres2 else ls1' l).
+    exists (lr ls2' m2''). split. red.
+    exists ((injpw j12'' m1'' m2'' Hm12'')). split.
+    eauto.
+    econstructor; eauto. simpl.
+    red. intros. rewrite Hresult in H1.  inv H1. simpl.
+    unfold ls2'.
+    rewrite pred_dec_true. eauto. reflexivity. inv H7.
+    simpl. simpl.
+    inv H19. eauto.
+    econstructor; eauto. eauto. intros. rewrite Hresult in H1. inv H1.
+    unfold ls2'.
+    rewrite pred_dec_true. eauto. reflexivity. inv H7.
+    inv H19. simpl. eauto.
+    inv H19. simpl. eauto.
+Qed.
