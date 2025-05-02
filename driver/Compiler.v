@@ -576,56 +576,6 @@ Definition cc_compcert_dom : callconv li_c li_asm :=
        @ cc_asm ext.
 
 
-(* Lemma transport_injp_to_asm : *)
-(*   ccref (ro @ wt_c @ cc_c injp @ cc_c_locset @ cc_locset_mach @ cc_mach_asm @ cc_asm injp @ cc_asm inj) *)
-(*         cc_compcert_cod. *)
-(* Proof. *)
-(*   rewrite (commute_around cc_mach_asm). *)
-(*   rewrite (commute_around cc_locset_mach). *)
-(*   rewrite (commute_around cc_c_locset). *)
-(*   rewrite <- (cc_compose_assoc (cc_c injp)). *)
-(*   rewrite <- cc_c_compose. *)
-(*   rewrite injp_injp_eq. *)
-(*   reflexivity. *)
-(* Qed. *)
-
-Lemma cc_cainjp_expand:
-  ccref cc_c_asm_injp (cc_c_locset @ cc_stacking injp @ cc_mach_asm).
-Admitted.
-
-
-Lemma cc_cainjp_collapse:
-  ccref (cc_c_locset @ cc_stacking injp @ cc_mach_asm) cc_c_asm_injp.
-Admitted.
-
-Lemma cc_injpCL_CLinjp:
-  ccref (injp @ cc_c_locset) (cc_c_locset @ cc_locset injp).
-Admitted.
-
-Lemma cc_wtstacking_stacking:
-  ccref (wt_loc @ cc_stacking injp) (cc_stacking injp).
-Admitted.
-
-Lemma cc_stacking_wtstacking:
-  ccref (cc_stacking injp) (wt_loc @ cc_stacking injp).
-Admitted.
-
-
-Global Instance cc_locset_ref:
-  Monotonic (@cc_locset) (subcklr ++> ccref).
-Proof.
-Admitted.
-
-Lemma cc_locset_compose R12 R23:
-  cceqv (cc_locset (R12 @ R23)) (cc_locset R12 @ cc_locset R23).
-Proof.
-Admitted.
-
-(* MA_trans_ext2 *)
-Lemma cc_extMA_MAext:
-  ccref (cc_mach ext @ cc_mach_asm) (cc_mach_asm @ cc_asm ext).
-Admitted.
-
 (* refer to cctrans_injp_ext *)
 Lemma injp_ext_injp__injp:
   subcklr (injp @ ext @ injp) injp.
@@ -664,13 +614,6 @@ Lemma cc_compcert_expand:
 Proof.
   unfold cc_compcert_cod. unfold cc_c_level.
   rewrite !cc_compose_assoc.
-  (* (ro @ *)
-  (*    wt_c @ *)
-  (*    injp @ *)
-  (*    wt_c @ *)
-  (*    ext @ *)
-  (*    cc_c_locset @ *)
-  (*    cc_locset ext @ wt_loc @ cc_stacking injp @ cc_mach ext @ cc_mach_asm @ cc_asm ext) *)
   etransitivity.
   {
     (* get ext from stacking injp *)
@@ -687,10 +630,6 @@ Proof.
     reflexivity.
   }
   repeat (rstep; [rauto | ]).
-  (* (wt_c @ *)
-  (*    ext @ *)
-  (*    cc_c_locset @ *)
-  (*    cc_locset ext @ wt_loc @ cc_stacking injp @ cc_mach ext @ cc_mach_asm @ cc_asm ext) *)
   etransitivity.
   {
     rewrite !cc_compose_assoc.

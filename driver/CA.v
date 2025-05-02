@@ -559,3 +559,147 @@ Lemma cainjp__injp_ca_equiv:
   cceqv cc_c_asm_injp (cc_c injp @ cc_c_asm).
 Proof. split. apply cc_cainjp__injp_ca. apply cc_injpca_cainjp. Qed.
 
+
+(* CAinjp is equivalent to CL @ cc_stacking injp @ MA where we do not
+use LM *)
+Lemma cc_cainjp_expand:
+  ccref cc_c_asm_injp (cc_c_locset @ cc_stacking injp @ cc_mach_asm).
+Proof.
+  red. intros [[f m1 m4 Hm] sg rs4] se1 se2 q1 q2 Hse Hq.
+  inv Hse. clear Hm1 Hm2 Hm3. inv Hq.
+  (* Compute ccworld (cc_c_locset @ cc_stacking_injp @ cc_mach_asm). *)
+  set (mrs3 mr := rs4 (preg_of mr)). rename tsp0 into sp4.
+  set (ls2i := Locmap.init Vundef).
+  set (ls3 := make_locset mrs3 m4 sp4).
+  generalize (loc_arguments_always_one sg). intro Hone.
+  generalize (loc_arguments_norepet sg). intro Hnorepet.
+  assert (exists ls2, (fun p : rpair loc => Locmap.getpair p ls2) ## (loc_arguments sg) = args /\
+                   forall l : loc,  loc_external sg l  -> Val.inject f (ls2 l) (ls3 l)).
+  { generalize dependent args.
+    induction loc_arguments; cbn; intros.
+    - inv H7. exists ls2i. split. auto. intros. constructor.
+    - inv H7. exploit IHl; eauto. intros.
+      exploit Hone. right. eauto. auto.
+      inv Hnorepet. auto.
+      exploit Hone. left. reflexivity. intros [la Hla].
+      intros [rs1 [A B]].
+      exists (setpairloc a v rs1). split.
+      + simpl. f_equal.  rewrite Hla.
+        erewrite setpairloc_gsspair; eauto.
+        rewrite <- A.
+        apply map_ext_in. intros. exploit Hone; eauto.
+        right. eauto. intros [la0 Hla0]. rewrite Hla0.
+        erewrite setpairloc_gso1; eauto. rewrite Hla. reflexivity.
+        inv Hnorepet. congruence.
+      + intros. rewrite Hla.
+        destruct (Loc.eq la l0).
+        * subst. erewrite setpairloc_gss; eauto. 
+        * erewrite setpairloc_gso. 2: eauto. eauto. auto.
+  }
+  destruct H as [ls2 [Hargs Hargsinj]].
+  exists (se1, sg, (se2, stkw injp (injpw f m1 m4 Hm) sg ls2 mrs3 sp4 m4 ,(rs4, Mem.support m4))).
+  repeat apply conj; eauto.
+  + econstructor; eauto. constructor. split. econstructor; eauto. constructor.
+  + exists (lq vf sg ls2 m1). split. econstructor; eauto.
+    exists (mq tvf sp4 tra mrs3 m4). split. econstructor; eauto.
+    intros. specialize (Hargsinj (R r)). exploit Hargsinj. constructor. eauto.
+    split. eauto with mem. split. intros.
+    {
+      intros. inv H15. rewrite H0 in H. extlia.
+      do 2 eexists. split.  reflexivity. 
+      split; eauto.
+      eapply Mem.free_range_perm; eauto.
+    }
+    {
+      intros. inv H15. apply tailcall_possible_reg in H. inv H. eauto.
+      exploit H12; eauto. intros [v4 Hl]. exists v4. split. eauto.
+      specialize (Hargsinj (S Outgoing ofs ty)). exploit Hargsinj; eauto. constructor. eauto.
+      unfold ls3. simpl. rewrite <- H0. setoid_rewrite Hl. eauto.
+    }
+    simpl. auto.
+    econstructor; eauto. subst tvf. inv H8; try congruence.
+  + intros r1 r2. rename r2 into r4. intros (r2 & Hr1 & r3 & Hr2 & Hr3). 
+    inv Hr1. inv Hr2. simpl in Hr3. inv Hr3. rename m' into m1''.
+    rename m2' into m4''.
+    inv H23.
+    eapply cc_c_asm_injp_mr_intro with (j' := f0) (Hm' := Hm0); eauto.
+    destruct (loc_result_always_one sg) as [r Hr]. rewrite Hr. simpl. rewrite <- H13. eapply H21.
+    rewrite Hr. constructor. reflexivity. 
+    intros. rewrite <- H13. rewrite <- H22; eauto.
+Qed.
+
+
+
+Lemma inject_list_in {A: Type}:
+  forall (l : list A)
+    (map1 map2: A -> val) j, (forall a, In a l -> Val.inject j (map1 a) (map2 a)) ->
+                                    Val.inject_list j map1##l  map2##l.
+Proof.
+  induction l; intros.
+  - constructor.
+  - simpl. constructor. eapply H. left. auto.
+    eapply IHl. intros. apply H. right. auto.
+Qed.
+
+Lemma cc_cainjp_collapse:
+  ccref (cc_c_locset @ cc_stacking injp @ cc_mach_asm) cc_c_asm_injp.
+Proof.
+  red. intros ((xse & sg) & ((xse2 & [[j' m1' m4' Hm'] xsg ls2 mrs3 sp4 xm4]) & [rs4 xsup])).
+  intros se1 se4 q1 q4 [Hse1 [Hse2 Hse3]] [q2 [Hq1 [q3 [Hq2 Hq3]]]]. 
+  inv Hse1. inv Hse2. inv Hse3. inv Hq1. inv Hq2. inv Hq3.
+  inv H17.
+  rename xm4 into m4'. rename m into m1'.
+  exists (cajw (injpw j' m1' m4' Hm') sg rs4).
+  repeat apply conj; eauto.
+  + simpl. constructor; eauto.
+  + assert (exists m4'_, args_removed sg (rs4 RSP) m4' m4'_).
+    {
+      destruct H16 as [A [B C]].
+      destruct (Z_gt_dec (size_arguments sg) 0).
+      + exploit B; eauto. intros (sb & sofs & Hsp4 & Hrangep & Hofs).
+        apply Mem.range_perm_free in Hrangep. destruct Hrangep as [m4_ Hfree].
+        exists m4_. rewrite Hsp4.
+        eapply args_removed_free; eauto.
+        intros. exploit C; eauto. intros [v [D E]].
+        exists v. rewrite <- Hsp4. auto.
+      + exists m4'. constructor. red. 
+        generalize (size_arguments_above sg). intro. lia.
+    } destruct H as [m4'_ REMOVE].
+    simpl. econstructor; eauto.
+    { eapply inject_list_in.
+      intros. apply loc_arguments_always_one in H as Ho. destruct Ho as [l0 Ho]. subst a.
+      simpl.
+      apply loc_arguments_external in H. inv H.
+      simpl. rewrite <- H12. eauto.
+      simpl. destruct H16 as [A [B C]]. exploit C; eauto. intros [v [Hl Hinj]].
+      setoid_rewrite Hl. eauto.
+    }
+  + intros r1 r2 Hr. simpl in Hr. inv Hr.
+    assert (ACC: injp_acc (injpw j' m1' m4' Hm') (injpw j'0 m' tm' Hm'0)).
+    { inv H21. econstructor; eauto. }    
+    rename m' into m1''. rename tm' into m4''.
+    set (ls2' := Locmap.setpair (loc_result sg) res (Locmap.init Vundef)).
+    destruct (loc_result_always_one sg) as [r Hr]. subst tres. rewrite Hr in *. simpl in H7.
+    econstructor. instantiate (1 := (lr ls2' m1'')). split. econstructor; eauto.
+    unfold ls2'. simpl. rewrite Hr.
+    cbn. rewrite Locmap.gss. reflexivity.
+    set (mrs3' := fun mr => (rs' (preg_of mr))).
+    exists (mr mrs3' m4''). split. econstructor; eauto.
+    rewrite Hr. simpl. intros. inv H. unfold ls2'. rewrite Hr. simpl. rewrite Locmap.gss.
+    simpl. unfold mrs3'. eauto. inv H0.
+    intros. unfold mrs3'. eauto. rewrite H12. rewrite <- H22; eauto.
+    simpl. auto.
+    inv ACC.  eapply Mem.unchanged_on_implies; eauto.
+    intros.
+    {
+      inv ACC.
+      red. intros. specialize (H18 _ _ H). red in H18. intro Hpm1''.
+      inv H.
+      destruct (subinj_dec j' j'0 _ _ _ H31 H0).
+      eapply H18; eauto. eapply H27; eauto. eapply Mem.valid_block_inject_1; eauto.
+      exploit H32; eauto. rewrite <- H1 in H10. simpl in H10.
+      inv H10.
+      intros [A B]. apply B. eauto.
+    }
+    econstructor; eauto. inv ACC. destruct H29. auto.
+Qed.

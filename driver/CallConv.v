@@ -175,6 +175,353 @@ Proof.
       intuition subst. rewrite Locmap.gss. auto.
 Qed.
 
+
+(** * Lemmas about CL cc_c_locset *)
+
+Ltac clean_destr :=
+  match goal with
+  | H: _ = left _ |- _ => clear H
+  | H: _ = right _ |- _ => clear H
+  end.
+
+Ltac destr :=
+  match goal with
+    |- context [match ?a with _ => _ end] => destruct a eqn:?; try intuition congruence
+  end; repeat clean_destr.
+
+Ltac destr_in H :=
+  match type of H with
+    context [match ?a with _ => _ end] => destruct a eqn:?; try intuition congruence
+  | _ => inv H
+  end; repeat clean_destr.
+
+
+(** Ad-hoc locmap constructions for CL transformations *)
+Definition Locmap_set_list (rs : Locmap.t) (vals: list val) (pairs : list (rpair loc)) := rs.
+
+Definition set (l : loc) (v : val) (m: Locmap.t) (p: loc):=
+  if Loc.eq l p then v else m p.
+
+Definition setpairloc (p : rpair loc) (v: val) (m: Locmap.t) :=
+  match p with
+  |One l => set l v m
+  |Twolong hi lo => set lo (Val.loword v) (set hi (Val.hiword v) m)
+  end.
+
+Lemma setpairloc_gsspair : forall l v m m',
+    setpairloc (One l) v m = m' ->
+    Locmap.getpair (One l) m'= v.
+Proof.
+  intros.
+  - simpl in *. subst m'. unfold set. rewrite pred_dec_true; auto.
+Qed.
+
+Lemma setpairloc_gss : forall l v m m',
+    setpairloc (One l) v m = m' ->
+    m' l = v.
+Proof.
+  intros.
+  - simpl in *. subst m'. unfold set. rewrite pred_dec_true; auto.
+Qed.
+
+Lemma setpairloc_gso1 : forall l v m m' l',
+    setpairloc (One l) v m = m' ->
+    l <> l' ->
+    Locmap.getpair (One l') m' = Locmap.getpair (One l') m.
+Proof.
+  intros.
+  - simpl in *. subst m'. unfold set. rewrite pred_dec_false; auto.
+Qed.
+
+Lemma setpairloc_gso : forall l v m m' l',
+    setpairloc (One l) v m = m' ->
+    l <> l' ->
+    m' l' = m l'.
+Proof.
+  intros.
+  - simpl in *. subst m'. unfold set. rewrite pred_dec_false; auto.
+Qed.
+
+(**  Prove that the locations  [loc_arguments sg] is norepet *)
+Lemma notin_loc_arguments_win64_y : forall l x y1 y2 t,
+    y1 < y2 ->
+    ~ In (One (S Outgoing y1 t)) (loc_arguments_win64 l x y2).
+Proof.
+  induction l; intros.
+  - simpl. auto.
+  - simpl. repeat destr.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+Qed.
+
+Lemma notin_loc_arguments_win64_x_int : forall tys r1 r2 ireg y,
+    list_nth_z int_param_regs_win64 r1 = Some ireg ->
+    r1 < r2 ->
+    ~ In (One (R ireg)) (loc_arguments_win64 tys r2 y).
+Proof.
+  induction tys; intros.
+  - simpl. auto.
+  - cbn -[list_nth_z]. repeat destr.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+Qed.
+
+Lemma notin_loc_arguments_win64_x_float : forall tys r1 r2 ireg y,
+    list_nth_z float_param_regs_win64 r1 = Some ireg ->
+    r1 < r2 ->
+    ~ In (One (R ireg)) (loc_arguments_win64 tys r2 y).
+Proof.
+    induction tys; intros.
+  - simpl. auto.
+  - cbn -[list_nth_z]. repeat destr.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+Qed.
+
+Lemma notin_loc_arguments_elf64_y : forall l x y z1 z2 t,
+    z1 < z2 ->
+    ~ In (One (S Outgoing z1 t)) (loc_arguments_elf64 l x y z2).
+Proof.
+  induction l; intros.
+  - simpl. auto.
+  - simpl. repeat destr.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. eapply IHl. 2: eauto. lia.
+    + intros [A|B]. inv A. extlia. eapply IHl. 2: eauto. lia.
+Qed.
+
+Lemma notin_loc_arguments_elf64_x_int : forall tys r1 r2 ireg y z,
+    list_nth_z int_param_regs_elf64 r1 = Some ireg ->
+    r1 < r2 ->
+    ~ In (One (R ireg)) (loc_arguments_elf64 tys r2 y z).
+Proof.
+  induction tys; intros.
+  - simpl. auto.
+  - cbn -[list_nth_z]. repeat destr.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+Qed.
+
+Lemma notin_loc_arguments_elf64_y_float : forall tys r1 r2 ireg x z,
+    list_nth_z float_param_regs_elf64 r1 = Some ireg ->
+    r1 < r2 ->
+    ~ In (One (R ireg)) (loc_arguments_elf64 tys x r2 z).
+Proof.
+   induction tys; intros.
+  - simpl. auto.
+  - cbn -[list_nth_z]. repeat destr.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A. simpl in *.
+       repeat destr_in H; repeat destr_in Heqo; extlia.
+       eapply IHtys. 3: eauto. eauto. lia.
+    ++ intros [A|B]. inv A.
+       eapply IHtys. 3: eauto. eauto. lia.
+Qed.
+
+Lemma loc_arguments_norepet sg:
+  list_norepet (loc_arguments sg).
+Proof.
+  unfold loc_arguments. replace Archi.ptr64 with true by reflexivity.
+  destruct Archi.win64.
+* cut (forall x y, list_norepet (loc_arguments_win64 (sig_args sg) x y)).
+  - eauto.
+  - induction (sig_args sg); cbn -[list_nth_z].
+    + constructor.
+    + intros x y.
+      destruct a, (list_nth_z) eqn: Hz;
+        cbn; constructor; eauto;
+        try (apply notin_loc_arguments_win64_y; lia);
+        try (eapply notin_loc_arguments_win64_x_int; try apply Hz; lia);
+      try (eapply notin_loc_arguments_win64_x_float; try apply Hz; lia).
+* cut (forall x y z, list_norepet (loc_arguments_elf64 (sig_args sg) x y z)).
+  - intros. apply (H 0 0 0).
+  - induction sig_args; cbn -[list_nth_z].
+    + constructor.
+    + intros x y z.
+      destruct a, list_nth_z eqn: Hz; cbn; constructor; eauto;
+        try (apply notin_loc_arguments_elf64_y; lia);
+        try (eapply notin_loc_arguments_elf64_x_int; try apply Hz; lia);
+      try (eapply notin_loc_arguments_elf64_y_float; try apply Hz; lia).
+Qed.
+
+(* CL_trans_injp from CCOC *)
+Lemma cc_injpCL_CLinjp:
+  ccref (injp @ cc_c_locset) (cc_c_locset @ cc_locset injp).
+Proof.
+  red. intros [[se' wp] sg] se1 se2 q1 q2 [Hse1 Hse2] [q1' [Hq1 Hq2]].
+  simpl in sg. inv Hse2. inv Hse1. inv Hq2. inv Hq1. inv H9.
+  cbn in H7, H8.
+  (* Compute (ccworld (cc_c_locset @ locset_injp)). *)
+  exists (se1, sg, (sg,(injpw f m0 m Hm))). repeat apply conj; eauto.
+  + constructor; eauto. constructor; eauto. constructor; eauto.
+  + generalize (loc_arguments_always_one sg). intro Hone.
+    generalize (loc_arguments_norepet sg). intro Hnorepet.
+    assert (exists rs1, (fun p : rpair loc => Locmap.getpair p rs1) ## (loc_arguments sg) = vargs1 /\
+                     forall l : loc, loc_external sg l -> Val.inject f (rs1 l) (rs l)).
+    { generalize dependent vargs1.
+      induction loc_arguments; cbn; intros.
+      - inv H8. exists (Locmap.init Vundef).
+        split. auto. intros. constructor.
+      - inv H8. exploit IHl; eauto. intros.
+        exploit Hone. right. eauto. auto.
+        inv Hnorepet. auto.
+        exploit Hone. left. reflexivity. intros [la Hla].
+        intros [rs1 [A B]].
+        exists (setpairloc a v rs1). split.
+        + simpl. f_equal.  rewrite Hla.
+          erewrite setpairloc_gsspair; eauto.
+          rewrite <- A.
+          apply map_ext_in. intros. exploit Hone; eauto.
+          right. eauto. intros [la0 Hla0]. rewrite Hla0.
+          erewrite setpairloc_gso1; eauto. rewrite Hla. reflexivity.
+          inv Hnorepet. congruence.
+        + intros. rewrite Hla.
+          destruct (Loc.eq la l0).
+          * subst. erewrite setpairloc_gss; eauto.
+          * erewrite setpairloc_gso. 2: eauto. eauto. auto.
+    }
+    destruct H2 as [rs1 [A B]].
+    exists (lq vf1 sg rs1 m0). split. econstructor; eauto.
+    constructor; eauto. constructor.
+  + intros. rename r2 into r3.
+    destruct H2 as (r2 & Hr1 & Hr2). inv Hr1.
+    destruct Hr2 as ([f1 m1' m2' Hm'] & ACC & Hr2). inv Hr2. inv H6.
+    eexists. simpl. split.
+    red. eexists.  split; eauto.
+    constructor; simpl; eauto.
+    2: {constructor. reflexivity. }
+    red in H4. simpl.
+    destruct (loc_result_always_one sg) as [r Hr]. rewrite Hr in *. cbn in *.
+    apply H4. auto.
+Qed.
+
 (** ** [cc_mach_asm] *)
 
 (** The commutation property for [cc_mach_asm] is straightforward.
@@ -184,12 +531,14 @@ Qed.
 Inductive preg_class :=
   | prc_pc
   | prc_sp
+  | prc_ra 
   | prc_preg_of (r : mreg)
   | prc_other.
 
 Inductive preg_classify_spec : preg_class -> preg -> Prop :=
   | prc_pc_spec : preg_classify_spec prc_pc PC
   | prc_sp_spec : preg_classify_spec prc_sp SP
+  | prc_ra_spec : preg_classify_spec prc_ra RA
   | prc_preg_spec m : preg_classify_spec (prc_preg_of m) (preg_of m)
   | prc_other_spec r : preg_classify_spec prc_other r.
 
@@ -197,6 +546,7 @@ Definition preg_classify r :=
   match r with
     | PC => prc_pc
     | SP => prc_sp
+    | RA => prc_ra
     | RAX => prc_preg_of AX
     | RBX => prc_preg_of BX
     | RCX => prc_preg_of CX
@@ -229,7 +579,7 @@ Definition preg_classify r :=
     | XMM14 => prc_preg_of X14
     | XMM15 => prc_preg_of X15
     | ST0 => prc_preg_of FP0
-    | RA | CR _ => prc_other
+    | CR _ => prc_other
   end.
 
 Lemma preg_classify_preg m:
@@ -243,6 +593,15 @@ Lemma preg_classify_cases r:
 Proof.
   destruct r as [ | [ ] | [ ] | | | ]; constructor.
 Qed.
+
+Lemma inject_noundef_eq_trans: forall v1 v2 v1' v2' j,
+    v1 = v2 -> v1 <> Vundef ->
+    Val.inject j v1 v1' -> Val.inject j v2 v2' ->
+    v1' = v2'.
+Proof.
+  intros. inv H1; inv H2; try congruence.
+Qed.
+
 
 Instance commut_mach_asm R:
   Commutes cc_mach_asm (cc_mach R) (cc_asm R).
@@ -270,6 +629,7 @@ Proof.
              | prc_sp => rs1 SP
              | prc_preg_of m => rs0 m
              | prc_other => Vundef
+             | prc_ra => Vundef
            end).
     exists (rs1', m0). split.
     + constructor; eauto.
@@ -280,10 +640,62 @@ Proof.
       destruct (preg_classify_cases r).
       * rewrite H4. generalize (Hrs RA). rauto.
       * rewrite H3. generalize (Hrs SP). rauto.
+      * constructor.
       * rewrite <- H6. eauto.
       * constructor.
 Qed.
 
+
+(* MA_trans_ext1 from CCOC *)
+Lemma cc_extMA_MAext:
+  ccref (cc_mach ext @ cc_mach_asm) (cc_mach_asm @ cc_asm ext).
+Proof.
+  red. intros [[se' w] [rs sup]] se1 se2 q1 q2 [Hse1 Hse2] [q1' [Hq1 Hq2]].
+  inv Hse2. inv Hse1. inv Hq2. inv Hq1. simpl in H16.
+  cbn in H9, H12, H14, H15.
+  rename rs1 into mrs1. rename mrs into mrs2.
+  rename m into m2. rename rs into rs3.
+  set (rs2 r :=
+         match preg_classify r with
+         | prc_pc => vf1
+         | prc_sp => sp1
+         | prc_ra => ra1  
+         | prc_preg_of m => mrs1 m
+         | prc_other => Vundef
+         end).
+  (* Compute ccworld (cc_mach_asm @ asm_injp). *)
+  exists (se2,(rs2,(Mem.support m1)) , tt).
+  repeat apply conj; eauto.
+  + constructor; eauto. constructor. constructor; eauto.
+  + exists (rs2, m1). split.
+    replace vf1 with rs2 # PC by reflexivity.
+    replace sp1 with rs2 # RSP by reflexivity.
+    replace ra1 with rs2 # RA by reflexivity.
+    econstructor; eauto.
+    unfold rs2. simpl. inv H0. rewrite <- H3 in H12. inv H12; try congruence.
+    unfold inject_id in H7. inv H7. constructor.
+    erewrite Mem.mext_sup; eauto.
+    intros. simpl. unfold rs2. rewrite preg_classify_preg. reflexivity.
+    econstructor; simpl; eauto.
+    intros. unfold rs2.
+    destruct (preg_classify_cases r); eauto.
+    rewrite <- H2. eauto. 
+  + intros. rename r2 into r3. destruct H3 as (r2 & Hr1 & Hr2).
+    inv Hr1. destruct Hr2 as (w' & ACC & Hr3). inv ACC.
+    destruct r3. inv Hr3. simpl in H11.
+    rename r into rs3'.
+    rename rs' into rs2'. rename m into m3'.
+    exists (mr (fun r => rs3' (preg_of r)) m3'). split.
+    exists tt. simpl. split; eauto. red. auto.
+    econstructor; simpl; eauto. intros. rewrite H6. eauto. constructor.
+    eapply inject_noundef_eq_trans. apply H3. rewrite H3.
+    unfold rs2. simpl. eauto. eauto. destruct w'. eauto. 
+    eapply inject_noundef_eq_trans. apply H4. rewrite H4.
+    unfold rs2. simpl. eauto. eauto. destruct w'. eauto. 
+    erewrite <- (Mem.mext_sup _ m3'). 2: eapply H11.
+    erewrite <- (Mem.mext_sup _ m2). 2: eapply H16. auto.
+    reflexivity.
+Qed.
 
 (** * Typing invariants *)
 
@@ -2086,22 +2498,6 @@ Proof.
     edestruct H21; eauto. 
 Qed.
 
-Ltac clean_destr :=
-  match goal with
-  | H: _ = left _ |- _ => clear H
-  | H: _ = right _ |- _ => clear H
-  end.
-
-Ltac destr :=
-  match goal with
-    |- context [match ?a with _ => _ end] => destruct a eqn:?; try intuition congruence
-  end; repeat clean_destr.
-
-Ltac destr_in H :=
-  match type of H with
-    context [match ?a with _ => _ end] => destruct a eqn:?; try intuition congruence
-  | _ => inv H
-  end; repeat clean_destr.
 
 Lemma cc_stacking_injp_injp2:
   ccref (cc_stacking injp) (cc_locset injp @ cc_stacking injp).
@@ -2208,4 +2604,53 @@ Proof.
     rewrite pred_dec_true. eauto. reflexivity. inv H7.
     inv H19. simpl. eauto.
     inv H19. simpl. eauto.
+Qed.
+
+(* refer to cctrans_wt_loc_stacking *)
+Lemma cc_stacking_wtstacking:
+  ccref (cc_stacking injp) (wt_loc @ cc_stacking injp).
+Proof.
+  red. intros [[j m1 my Hm] sg ls1 rs2 sp2 m2]. intros.
+  inv H. inv H0. inv H15. clear Hm1 Hm2 Hm3.
+  rename m0 into m1.
+  (* Compute cc_world (wt_loc @ cc_stacking injp). *)
+  exists (se1, (se1, sg), stkw injp (injpw j m1 m2 Hm) sg ls1 rs2 sp2 m2).
+  repeat apply conj; eauto.
+  + econstructor. constructor. constructor. constructor; eauto.
+  + exists (lq vf1 sg ls1 m1). split. econstructor; eauto. constructor.
+    intros l Hl. destruct Hl.
+    * apply always_has_mreg_type.
+    * cbn -[Z.add Z.mul]. rewrite <- (type_of_chunk_of_type ty) at 2.
+      inv H14 . destruct H1 as [A B]. exploit B; eauto.
+      intros [b [Hload]]. simpl in H1.
+      eapply (val_has_type_inject); eauto.
+      unfold load_stack in Hload. unfold Mem.loadv in Hload.
+      destr_in Hload.
+      eapply Mem.load_type. eauto.
+    * econstructor; eauto. simpl. auto.
+  + intros r1 r2 Hr. 
+    destruct Hr as [r' [Hr1 Hr2]]. inv Hr1. inv Hr2. inv H21. simpl in H.
+    eapply cc_stacking_mr_intro with (w' := (injpw f m1' m2' Hm0)); eauto.
+    simpl. auto.
+Qed.    
+
+Lemma cc_wtstacking_stacking:
+  ccref (wt_loc @ cc_stacking injp) (cc_stacking injp).
+Proof.
+  red. intros [[xse [xse2 sg]] [[j' m1' m2'x Hm'] sg' ls1 rs2 sp2 m2']].
+  intros se1 se2 q1 q2 [Hse1 Hse2] [q' [Hq1 Hq2]]. inv Hse1. inv Hse2. inv Hq1. inv Hq2.
+  inv H16. rename m1 into m1'.
+  exists (stkw injp (injpw j' m1' m2' Hm') sg' ls1 rs2 sp2 m2'). repeat apply conj; eauto.
+  + econstructor; eauto.
+  + econstructor; eauto. simpl. auto.
+  + intros r1 r2  Hr.
+    simpl in Hr. inv Hr. inv H22.
+    rename m1'0 into m1''. rename m2'0 into m2''.
+    simpl.
+    exists (lr ls1' m1''). split.
+    econstructor. 
+    econstructor; eauto.
+    intros. apply always_has_mreg_type.
+    econstructor; eauto.
+    simpl. auto.
 Qed.

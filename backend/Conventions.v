@@ -478,3 +478,131 @@ Next Obligation.
   intros.
   eapply match_stbls_proj in H. erewrite Genv.valid_for_match; eauto.
 Qed.
+
+Require Import CKLR CKLRAlgebra CallconvAlgebra.
+
+Global Instance cc_locset_ref:
+  Monotonic (@cc_locset) (subcklr ++> ccref).
+Proof.
+  red. red. intros r1 r2 SUB.
+  red in SUB. red.
+  intros (sg & w) se1 se2 q1 q2 Hse Hq.
+  simpl in Hse, Hq. inv Hq.
+  exploit SUB; eauto. intros (w2 & Hse2 & Hm2 & INCR & Hr).
+  exists (sg, w2). repeat apply conj; eauto.
+  econstructor; eauto.
+  - red. intros. eapply Values.val_inject_incr; eauto.
+  - intros. destruct H3 as (w2' & Hr3 & Hr4). inv Hr4.
+    exploit Hr; eauto. 
+    intros (w2'' & Hm' & ACC & INCR').
+    econstructor. split; eauto.
+    econstructor; eauto.
+    red. intros. eapply Values.val_inject_incr; eauto.
+Qed.
+
+Require Import ClassicalChoice.
+
+Lemma match_locset_query_compose (R12 R23: cklr) (w12: world R12) (w23: world R23) sg:
+  eqrel    
+    (cc_locset_query (R12 @ R23) sg (w12, w23))
+    (rel_compose (cc_locset_query R12 sg w12) (cc_locset_query R23 sg w23)).
+Proof.
+  split.
+  - red. intros _ _ [vf1 vf3 ls1 ls3 m1 m3 Hvf Hlr Hm NUN].
+    simpl in *.
+    apply val_inject_compose in Hvf. destruct Hvf as (vf2 & Hvf12 & Hv23).
+    red in Hlr.
+    assert (LOCM: exists ls2, forall (l: loc) ,
+               loc_external sg l ->
+               Val.inject (mi R12 w12) (ls1 l) (ls2 l)
+               /\ Val.inject (mi R23 w23) (ls2 l) (ls3 l)).
+    { apply choice with (R := fun (l: loc) w =>
+                                loc_external sg l ->
+                                Val.inject (mi R12 w12) (ls1 l) w
+                                /\ Val.inject (mi R23 w23) w (ls3 l)).        
+      intros l.
+      destruct (loc_is_external sg l) eqn: EXT.
+      eapply loc_external_is in EXT. 
+      specialize (Hlr l EXT).
+      eapply val_inject_compose in Hlr. destruct Hlr as (v' & Hlr1 & Hlr2).
+      exists v'. eauto.
+      exists Vundef. intro. eapply loc_external_is in H. congruence. }
+    destruct LOCM as (ls2 & LOCM).
+    destruct Hm as (m2 & Hm12 & Hm23).
+    exists (lq vf2 sg ls2 m2); split; constructor; simpl; eauto.
+    + red. intros. eapply LOCM; auto.
+    + red. intros. eapply LOCM; auto.
+    + destruct Hvf12; congruence.
+  - intros q1 q3 (q2 & Hq12 & Hq23).
+    destruct Hq23 as [vf1 vf2 ls2 ls3 m2 m3 Hvf Hlr23 Hm23 Hvf1].
+    inv Hq12.
+    constructor; simpl.
+    + apply val_inject_compose. ercompose; eauto.
+    + red. intros l LOC.
+      specialize (Hlr23 l LOC).
+      specialize (H4 l LOC).
+      eapply val_inject_compose. eauto.
+    + ercompose; eauto.
+    + auto.
+Qed.
+
+Lemma cc_locset_compose R12 R23:
+  cceqv (cc_locset (R12 @ R23)) (cc_locset R12 @ cc_locset R23).
+Proof.
+  split.
+  - red. intros (sg & w12 & w23) se1 se3 q1 q3 (se2 & Hse12 & Hse23) Hq.
+    apply match_locset_query_compose in Hq as (q2 & Hq12 & Hq23).
+    exists (se2, (sg, w12), (sg, w23)).
+    repeat apply conj.
+    cbn; auto. cbn; eauto.
+    intros r1 r3 (r2 & (w12' & Hw21' & Hr12) & (w23' & Hw23' & Hr23)).
+    exists (w12', w23'). split. constructor; cbn; auto.
+    destruct Hr12; inv Hr23.
+    constructor; cbn; eauto.
+    red. intros.
+    red in H, H3.
+    exploit H; eauto. exploit H3; eauto. intros.
+    apply val_inject_compose; eauto.
+  - intros [[se2 (sg1 & w12)] (sg2 & w23)] se1 se3 q1 q3 (Hse12 & Hse23) (q2 & Hq12 & Hq23).
+    assert (sg1 = sg2).
+    { inv Hq12. inv Hq23. auto. } subst.
+    cbn in *. exists (sg2, (w12, w23)). repeat apply conj; eauto.
+    + apply match_locset_query_compose; eauto.
+    + intros r1 r3 ([w12' w23'] & Hw' & Hr).
+      destruct Hr. cbn in *.
+      red in H.
+      assert (INJ: forall r,
+                 In r (regs_of_rpair (loc_result sg2)) ->
+                 (rel_compose (Val.inject (mi R12 w12')) (Val.inject (mi R23 w23'))) (ls1' (R r)) (ls2' (R r))).
+      { intros. exploit H; eauto. intros INJ1.
+        apply val_inject_compose in INJ1. eauto. }
+      assert (LOCM: exists ls', forall (l: loc) ,
+                 match l with
+                 | R r => 
+                     In r (regs_of_rpair (loc_result sg2)) ->
+                     Val.inject (mi R12 w12') (ls1' (R r)) (ls' l)
+                     /\ Val.inject (mi R23 w23') (ls' l) (ls2' (R r))               
+                 | _ => True
+                 end).
+      { apply choice with (R := fun (l: loc) w =>
+                 match l with
+                 | R r => 
+                     In r (regs_of_rpair (loc_result sg2)) ->
+                     Val.inject (mi R12 w12') (ls1' (R r)) w
+                     /\ Val.inject (mi R23 w23') w (ls2' (R r))
+                 | _ => True
+                 end).
+        
+        intros l. destruct l.
+        2: { exists Vundef. eauto. }
+        destruct (in_dec mreg_eq r (regs_of_rpair (loc_result sg2))).
+        specialize (INJ r i). destruct INJ as (v' & INJ1 & INJ2).
+        exists v'. intro. eauto.
+        exists Vundef. intro. congruence. }
+      destruct LOCM as (ls' & LOCM).
+      destruct Hw' as [? ?], H0 as (mi & ? & ?).
+      exists (lr ls' mi).
+      split; eexists; constructor; eauto; constructor; eauto.
+      * red. intros. specialize (LOCM (R r) H4) as (LOC1 & LOC2). eauto.
+      * red. intros. specialize (LOCM (R r) H4) as (LOC1 & LOC2). eauto.
+Qed.
