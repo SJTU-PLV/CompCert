@@ -623,6 +623,10 @@ Definition update_add_same (j23 j23' j12': meminj ) : Prop :=
     exists b1, j12' b1 = Some (b2,0) /\
     (forall b1' d, j12' b1' = Some (b2,d) -> b1' = b1).
 
+Definition update_add_block (s2 s2' : sup) (j12' j23' : meminj) : Prop :=
+  forall b2, ~ sup_In b2 s2 -> sup_In b2 s2' ->
+        exists b1 b3 d, j12' b1 = Some (b2, 0) /\ j23' b2 = Some (b3 ,d).
+
 Definition update_add_same2 (j23 j23' : meminj ) : Prop :=
   forall b2 b3 ofs2,
     j23 b2 = None -> j23' b2 = Some (b3,ofs2) ->
@@ -673,7 +677,8 @@ Lemma update_properties': forall s1' bl1 j1 j2 s2 s2' j1' j2' j' s3,
     /\ inject_incr_no_overlap' j1 j1'
     /\ update_add_exists j1 j1' j'
     /\ update_add_zero j1 j1'
-    /\ update_add_same j2 j2' j1'.
+    /\ update_add_same j2 j2' j1'
+    /\ update_add_block s2 s2' j1' j2'.
 (*    /\ update_add_same2 j2 j2' . *)
 Proof.
   induction s1'.
@@ -720,7 +725,7 @@ Proof.
       intros. intro. apply IMGIN12 in H. eapply freshness; eauto.
     +
     intros (incr1& incr2 & sinc & imagein1 & domin2 &
-            disjoint1 & disjoint2 & no_overlap & add_exists & add_zero & add_same1).
+            disjoint1 & disjoint2 & no_overlap & add_exists & add_zero & add_same1 & add_newb).
     repeat apply conj; eauto.
     (*incr1*)
     eapply inject_incr_trans; eauto.
@@ -788,6 +793,14 @@ Proof.
         + exploit disjoint1; eauto. intros [A B].
           exfalso. apply B. apply Mem.sup_incr_in1.
       - eapply add_same1; eauto. rewrite meminj_add_diff; eauto.
+    }
+    {
+      red. red in add_newb. intros.
+      destruct (eq_block b2 (fresh_block s2)).
+      - subst. exists a,b,z. split. apply incr1. unfold meminj_add. rewrite pred_dec_true; reflexivity.
+        apply incr2. unfold meminj_add. rewrite pred_dec_true; reflexivity.
+      - apply add_newb; eauto. intro. eapply Mem.sup_incr_in in H2.
+        destruct H2. congruence. congruence.
     }
 Qed.
 
@@ -1074,7 +1087,8 @@ Lemma inject_incr_inv: forall j1 j2 j' s1 s2 s3 s1',
                inject_incr_no_overlap' j1 j1' /\
                update_add_zero j1 j1' /\
                update_add_exists j1 j1' j' /\
-               update_add_same j2 j2' j1'.
+               update_add_same j2 j2' j1' /\
+               update_add_block s2 s2' j1' j2'.
 Proof.
   intros.
   destruct (update_meminj12 (Mem.sup_list s1') j1 j2 j' s2) as [[j1' j2'] s2'] eqn: UPDATE.
@@ -1086,7 +1100,7 @@ Proof.
   intro COMPOSE.
   exploit update_properties'; eauto.
   rewrite inject_incr_disjoint_eqv.
-  intros (A & B & C & D & E & F & G & I & J & K & L).
+  intros (A & B & C & D & E & F & G & I & J & K & L & M).
   repeat apply conj; eauto. eapply add_from_to_dom_in; eauto.
 Qed.
 
@@ -1245,6 +1259,7 @@ Section CONSTR_PROOF.
   Hypothesis ADDZERO: update_add_zero j1 j1'.
   Hypothesis ADDEXISTS: update_add_exists j1 j1' (compose_meminj j1' j2').
   Hypothesis ADDSAME : update_add_same j2 j2' j1'.
+  Hypothesis ADDBLOCK: update_add_block (Mem.support m2) s2' j1' j2'.
 
   (** step2 of Definition C.7, defined in common/Memory.v as memory operation *)
   Definition m2'1 := Mem.step2 m1 m2 m1' s2' j1'.
@@ -2644,7 +2659,7 @@ Proof.
     generalize (Mem.unchanged_on_support _ _ _ UNCHANGE3).
     intros SUPINCL3.
     generalize (inject_incr_inv _ _ _ _ _ _ _ DOMIN12 IMGIN12 DOMIN23 DOMIN13' SUPINCL1 INCR13 DISJ13).
-    intros (j12' & j23' & m2'_sup & JEQ & INCR12 & INCR23 & SUPINCL2 & DOMIN12' & IMGIN12' & DOMIN23' & INCRDISJ12 & INCRDISJ23 & INCRNOLAP & ADDZERO & ADDEXISTS & ADDSAME).
+    intros (j12' & j23' & m2'_sup & JEQ & INCR12 & INCR23 & SUPINCL2 & DOMIN12' & IMGIN12' & DOMIN23' & INCRDISJ12 & INCRDISJ23 & INCRNOLAP & ADDZERO & ADDEXISTS & ADDSAME & ADDNB).
     subst.
     set (m2' := m2' m1 m2 m1' j12 j23 j12' m2'_sup INJ12 ).
     assert (INJ12' :  Mem.inject j12' m1' m2'). eapply INJ12'; eauto.
