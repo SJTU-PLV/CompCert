@@ -684,8 +684,6 @@ Proof.
     apply match_c_query_compose in Hq as (q2 & Hq12 & Hq23).
     exists (se2, w12, w23).
     repeat apply conj; cbn; eauto.
-    
-    
     intros r1 r3 (r2 & (w12' & Hw21' & Hr12) & (w23' & Hw23' & Hr23)).
     exists (w12', w23'). split. constructor; cbn; auto.
     destruct Hr12; inv Hr23.

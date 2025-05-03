@@ -30,6 +30,8 @@ Section CONSTR_PROOF.
   Hypothesis MAXPERM1 : injp_max_perm_decrease m1 m1'.
   Hypothesis IMGIN1': inject_image_in j1' s2'.
   Hypothesis DOMIN2': inject_dom_in j2' s2'.
+  Hypothesis INCRNEW1: inject_incr_newblock1 j1 j1' (Mem.support m2).
+  Hypothesis INCRNEW2: inject_incr_newblock2 j2 j2' (Mem.support m2).
   Hypothesis ADDZERO: update_add_zero j1 j1'.
   Hypothesis ADDEXISTS: update_add_exists j1 j1' (compose_meminj j1' j2').
   Hypothesis ADDSAME : update_add_same j2 j2' j1'.
@@ -1843,7 +1845,7 @@ Proof.
     assert (DOMIN24 : inject_dom_in j34 (Mem.support m2)).
     erewrite Mem.mext_sup; eauto. 
     generalize (inject_incr_inv _ _ _ _ _ _ _ DOMIN12 IMGIN12 DOMIN24 DOMIN14' SUPINCL1 INCR14 DISJ14).
-    intros (j12' & j34' & m2'_sup & JEQ & INCR12 & INCR23 & SUPINCL2 & DOMIN12' & IMGIN12' & DOMIN23' & INCRDISJ12 & INCRDISJ23 & INCRNOLAP & ADDZERO & ADDEXISTS & ADDSAME & ADDNB).
+    intros (j12' & j34' & m2'_sup & JEQ & INCRn1 & INCRn2 & INCR12 & INCR23 & SUPINCL2 & DOMIN12' & IMGIN12' & DOMIN23' & INCRDISJ12 & INCRDISJ23 & INCRNOLAP & ADDZERO & ADDEXISTS & ADDSAME & ADDNB).
     subst.
     set (m2' := m2' m1 m2 m1' j12 j34 j12' m2'_sup INJ12).
     set (m3' := m3' m1 m2 m3 m1' j12 j34 j12' m2'_sup INJ12 EXT23).

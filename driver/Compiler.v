@@ -25,6 +25,7 @@ Require Import CKLR.
 Require Import CKLRAlgebra.
 Require Import Inject.
 Require Import InjectFootprint.
+Require Import InjpExtInjp.
 Require Import Extends.
 Require Import Clightrel.
 Require Import RTLrel.
@@ -574,13 +575,6 @@ Definition cc_compcert_dom : callconv li_c li_asm :=
   ro @ wt_c @ cc_c injp @
        cc_c_locset @ cc_stacking injp @ cc_mach_asm @
        @ cc_asm ext.
-
-
-(* refer to cctrans_injp_ext *)
-Lemma injp_ext_injp__injp:
-  subcklr (injp @ ext @ injp) injp.
-Proof.
-  Admitted.
 
 
 (** The first expand of cc_compcert for both directions *)

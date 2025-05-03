@@ -111,7 +111,7 @@ COMMON=Errors.v AST.v Linking.v \
 CKLR=\
   CKLR.v CKLRAlgebra.v \
   Extends.v \
-  Inject.v InjectFootprint.v \
+  Inject.v InjectFootprint.v InjpExtInjp.v\
   Mapsrel.v \
   Valuesrel.v Builtinsrel.v Eventsrel.v \
   Coprel.v Clightrel.v \
