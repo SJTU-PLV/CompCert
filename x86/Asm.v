@@ -17,6 +17,7 @@ Require Import AST Integers Floats Values Memory Events Globalenvs Smallstep.
 Require Import Locations Stacklayout Conventions.
 Require Import Mach LanguageInterface CallconvAlgebra CKLR CKLRAlgebra.
 Require Import ClassicalChoice.
+Require Import SmallstepClosed.
 
 (** * Abstract syntax *)
 
@@ -1225,6 +1226,42 @@ Definition semantics (p: program): Smallstep.semantics li_asm li_asm :=
         Smallstep.globalenv := ge;
       |}
   |}.
+
+(* construct symbol table *)
+Definition initial_se p := Genv.symboltbl p.
+
+Definition main_id (p: AST.program unit unit) := prog_main p.
+
+Definition initial_regset (pc : val) (sp: val):=
+  (Pregmap.init Vundef) # PC <- pc
+                        # RA <- Vnullptr
+                        # RSP <- sp.
+
+(* construct the intiialized query for the open semantics *)
+Definition init_query (p: AST.program unit unit) : option (query li_asm) :=
+  let se := initial_se p in
+  let main_id := main_id p in
+  match Genv.find_symbol se main_id with
+  | Some main_b =>
+      match Genv.init_mem p with
+      | Some m =>
+          let (m1, sb) := Mem.alloc m 0 0 in
+          let rs := initial_regset (Vptr main_b Ptrofs.zero) (Vptr sb Ptrofs.zero) in
+          Some (rs, m1)
+      | _ => None
+      end
+  | _ => None
+  end.
+
+Definition final_reply (r: reply li_asm) : val :=
+  let (rs, _) := r in
+  rs # RAX.
+
+Definition closed_semantics (p: program) : SmallstepClosed.semantics :=
+  let open_sem := semantics p in
+  close_semantics open_sem (initial_se (skel open_sem)) init_query final_reply.
+
+(** Closed semantics *)
 
 (** Determinacy of the [Asm] semantics. *)
 

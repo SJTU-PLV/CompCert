@@ -218,6 +218,19 @@ Infix "@@" := inv_compose (at level 30, right associativity) : inv_scope.
 Infix "@!" := invcc (at level 30, right associativity) : inv_scope.
 Infix "!@" := ccinv (at level 30, right associativity) : inv_scope.
 
+(* ∀ I, I ⊑ ⊥ *)
+Definition inv_bot {li} : invariant li :=
+  {| inv_world := unit;
+    symtbl_inv _ _ := False;
+    query_inv _ _ := False;
+    reply_inv _ _ := True |}.
+
+(* ∀ I, ⊤ ⊑ I *)
+Definition inv_top {li} : invariant li :=
+  {| inv_world := unit;
+    symtbl_inv _ _ := True;
+    query_inv _ _ := True;
+    reply_inv _ _ := False |}.
 
 (** * Invariant-based simulation proof methods *)
 

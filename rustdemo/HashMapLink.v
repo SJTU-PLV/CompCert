@@ -613,21 +613,6 @@ Proof.
   eauto.
 Qed.
 
-(* ∀ I, I ⊑ ⊥ *)
-Definition inv_bot {li} : invariant li :=
-  {| inv_world := unit;
-    symtbl_inv _ _ := False;
-    query_inv _ _ := False;
-    reply_inv _ _ := True |}.
-
-(* ∀ I, ⊤ ⊑ I *)
-Definition inv_top {li} : invariant li :=
-  {| inv_world := unit;
-    symtbl_inv _ _ := True;
-    query_inv _ _ := True;
-    reply_inv _ _ := False |}.
-
-
 (*  ⟦hmap.s + list.s⟧ ⊩ ⊥
                      ↠ 
                      {find_process ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra

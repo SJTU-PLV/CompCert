@@ -100,6 +100,7 @@ COMMON=Errors.v AST.v Linking.v \
   Separation.v Builtins0.v Builtins1.v Builtins.v \
   LanguageInterface.v \
   SmallstepLinking.v SmallstepSafe.v SmallstepLinkingSafe.v\
+  SmallstepClosed.v\
   Invariant.v \
   CallconvAlgebra.v InvariantAlgebra.v\
 
