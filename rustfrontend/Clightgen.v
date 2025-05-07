@@ -465,6 +465,7 @@ Fixpoint place_to_cexpr (p: place) : res Clight.expr :=
           end
       | _ => Error (msg "Type error in Pdowncast: place_to_cexpr ")
       end
+  | _ => Error (msg "place_to_cexpr not support in clightgen")
   end.
   
 (* locals are used to check that global variables are disjoint with

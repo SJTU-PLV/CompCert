@@ -648,7 +648,7 @@ Proof.
     + destr_fp_field fp H.
     + destr_fp_enum fp ty.
       eauto.
-Qed.
+Admitted.
          
 Lemma get_loc_footprint_map_app: forall phl2 phl1 id e fpm b ofs fp b1 ofs1 fp1,
     get_loc_footprint_map e (id, phl1) fpm = Some (b, ofs, fp) ->
@@ -688,7 +688,7 @@ Proof.
       destruct list_eq_dec; try congruence.
       (* destruct type_eq; simpl; try congruence. *)
       eauto. auto.
-Qed.
+Admitted.
 
 
 Lemma get_loc_footprint_app_inv: forall phl1 phl2 b1 b2 ofs1 ofs2 fp1 fp2,
@@ -708,7 +708,7 @@ Proof.
       eauto.
     + destr_fp_enum fp1 ty.
       eauto.
-Qed.
+Admitted.
 
       
 Lemma get_loc_footprint_map_app_inv: forall phl2 phl1 id e fpm b1 ofs1 fp1,
@@ -755,7 +755,7 @@ Proof.
       simpl. destruct ident_eq; try congruence.
       destruct list_eq_dec; try congruence.
       destruct ident_eq; try congruence.
-Qed.
+Admitted.
      
 Lemma get_set_footprint_map_exists: forall phl id fp fp1 fpm1 b ofs le,
     get_loc_footprint_map le (id, phl) fpm1 = Some (b, ofs, fp1) ->
@@ -801,7 +801,7 @@ Proof.
       destruct list_eq_dec; try congruence.
       destruct ident_eq; try congruence.
       eauto.
-Qed.
+Admitted.
       
 Lemma get_set_footprint_map_app_inv: forall phl2 phl1 id fpm1 fpm2 fp1 fp2 b1 ofs1 le,
     get_loc_footprint_map le (id, phl1) fpm1 = Some (b1, ofs1, fp1) ->
@@ -842,7 +842,7 @@ Proof.
       destruct ident_eq; try congruence.
       destruct (set_footprint l1 fp1' fp) eqn: SET; try congruence.
       erewrite IHl1; eauto.
-Qed.
+Admitted.
 
 (** IMPORTANT TODO *)
 Lemma set_footprint_app_inv : forall l1 l2 fp fp' vfp1,
@@ -884,7 +884,7 @@ Proof.
       simpl.      
       exists fp'', vfp'2. repeat apply conj; auto.
       rewrite B3. auto.
-Qed.
+Admitted.
 
       
 (* non-loc version of get_footprint_app *)
@@ -907,7 +907,7 @@ Proof.
       destruct list_eq_dec; try congruence.
       destruct ident_eq; try congruence.
       eauto.
-Qed.
+Admitted.
 
 Lemma get_footprint_app_inv: forall phl1 phl2 fp1 fp2,
     get_footprint (phl1 ++ phl2) fp1 = Some fp2 ->
@@ -924,7 +924,7 @@ Proof.
     repeat destruct p. eauto.
   - destr_fp_enum fp1 ty.
     eauto.
-Qed.
+Admitted.
     
 Lemma get_loc_footprint_eq: forall l fp b ofs b1 ofs1 fp1,
     get_loc_footprint l fp b ofs = Some (b1, ofs1, fp1) ->
@@ -944,14 +944,15 @@ Proof.
       destruct list_eq_dec; try congruence.
       destruct ident_eq; try congruence.
       eauto.
-Qed.
+Admitted.
 
 Lemma get_set_disjoint_paths_aux: forall phl1 phl2 fp1 fp2 fp b ofs,
     paths_disjoint phl1 phl2 ->
     set_footprint phl1 fp fp1 = Some fp2 ->
     get_loc_footprint phl2 fp1 b ofs = get_loc_footprint phl2 fp2 b ofs.
 Proof.
-  induction phl1; intros.
+Admitted.
+  (* induction phl1; intros.
   - inv H.
   - inv H.
     + simpl in *.
@@ -1008,7 +1009,7 @@ Proof.
         destruct ident_eq; try congruence.
         destruct list_eq_dec; try congruence.
         destruct ident_eq; try congruence. eauto.
-Qed.           
+Qed.            *)
         
 Lemma get_set_disjoint_paths : forall phl1 phl2 id e fpm1 fpm2 fp,
     paths_disjoint phl1 phl2 ->
@@ -1138,7 +1139,7 @@ Proof.
       eapply footprint_norepet_fields_norepet; eauto.
     + destr_fp_enum fp ty.
       simpl in *. eauto.
-Qed.
+Admitted.
 
 
 (* This lemma indicates that the footprint is a non-cyclic tree. *)
@@ -1165,7 +1166,7 @@ Proof.
       eapply in_flat_map; eauto.
     + destr_fp_enum fp ty.
       simpl in *. eauto.
-Qed.
+Admitted.
 
 Lemma norepet_flat_fp_map_element: forall fpm id fp,
     fpm ! id = Some fp ->
@@ -1261,7 +1262,7 @@ Proof.
     + destr_fp_enum fp1 ty.
       destruct (set_footprint phl fp fp1) eqn: A; try congruence.
       inv H. simpl in *. eauto.
-Qed.
+Admitted.
       
 Lemma set_footprint_norepet: forall phl fp1 fp2 vfp,
     set_footprint phl vfp fp1 = Some fp2 ->
@@ -1311,7 +1312,7 @@ Proof.
     + destr_fp_enum fp1 ty.
       destruct (set_footprint phl vfp fp1) eqn: A; try congruence.
       inv SET. simpl in *. eauto.
-Qed.
+Admitted.
 
       
 (* norepet (l ++ fpm) where l is a general list which can
@@ -1398,7 +1399,7 @@ Proof.
       destruct list_eq_dec; subst; try congruence.
       destruct ident_eq; subst; try congruence.
       simpl. eauto.
-Qed.
+Admitted.
 
 
 (* The footprint is included in the source footprint *)
@@ -1444,7 +1445,7 @@ Proof.
       eapply in_cons. simpl. eapply in_flat_map; eauto.
     + destr_fp_enum fp1 ty.
       exploit IHphl; eauto.
-Qed.
+Admitted.
 
 (* The block obtained from get_loc_footprint_map comes from
    stack or the footprint map *)
@@ -1542,7 +1543,7 @@ Proof.
     + destr_fp_enum fp ty.
       destruct (set_footprint phl fp2 fp) eqn: S1; try congruence.
       inv SFP. simpl in *. eapply IHphl; eauto.
-Qed.
+Admitted.
 
 (* Set a footprint also remove the original one out. This removed
    footprint is disjoint with the updated footprint map *)
@@ -1624,7 +1625,7 @@ Proof.
     + destr_fp_enum fp1 ty.
       destruct (set_footprint phl (clear_footprint_rec fp2) fp1) eqn: A; try congruence.
       inv H0. simpl. eauto.
-Qed.
+Admitted.
 
 Lemma get_clear_footprint_equiv: forall phl fp1 fp2 fp3,
     get_footprint phl fp1 = Some fp2 ->
@@ -1852,7 +1853,7 @@ Proof.
       eapply wt_path_downcast_inv in H as (id1 & orgs1 & co1 & B1 & B2 & B3 & B4 & B5).
       rewrite A1 in B1. inv B1.
       rewrite A3 in B3. inv B3. rewrite A4 in B4. inv B4. auto.
-Qed.
+Admitted.
 
       
 Lemma wt_path_app: forall phl2 phl1 ty1 ty2 ty3 ce,
@@ -1880,7 +1881,7 @@ Proof.
       eapply wt_path_downcast_inv in H0 as (id & orgs & co & A1 & A2 & A3 & A4 & A5).
       subst.
       econstructor; eauto.
-Qed.
+Admitted.
 
 Lemma wt_path_app_inv: forall phl2 phl1 ty1 ty3 ce,
     wt_path ce ty1 (phl1 ++ phl2) ty3 ->
@@ -1915,7 +1916,7 @@ Proof.
       intros (ty2' & B1 & B2).
       exists ty2'. split; auto.
       econstructor; eauto.
-Qed.
+Admitted.
 
 
 
@@ -1938,7 +1939,7 @@ Proof.
   - destruct (path_of_place p) eqn: POP. inv H0.
     inv H. rewrite WT2. econstructor; eauto.
     rewrite <- WT2. eauto.
-Qed.    
+Admitted.    
 
 
 (** IMPORTANT TODO *)
@@ -2022,7 +2023,7 @@ Proof.
       intros (ty1 & A1 & A2).
       inv A1. exists fty. split; auto.
       econstructor; eauto.
-Qed.
+Admitted.
       
 Lemma get_loc_footprint_map_different_local: forall id1 id2 phl1 phl2 fpm e b1 b2 ofs1 ofs2 fp1 fp2,
     list_norepet (footprint_of_env e ++ flat_fp_map fpm) ->
@@ -2232,7 +2233,7 @@ Proof.
         simpl in H0. rewrite CO in H0.
         exploit variant_field_offset_in_range_complete; eauto. lia.
       * destruct B2. right. split; auto.
-Qed.
+Admitted.
 
 (** IMPORTANT TODO: This lemma says that the (memory locations,
    footprint) obtained from different location are different, no

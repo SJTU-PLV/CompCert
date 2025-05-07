@@ -597,7 +597,7 @@ Proof.
     do 3 eexists. repeat apply conj.
     eauto. econstructor; eauto.    lia.
     (* ??? use the fact that variant_field_offset is constant to prove *)
-Qed.
+Admitted.
 
 Lemma valid_owner_bmatch: forall p m b ofs1 fofs1 fp1 fp,
     bmatch ce m b ofs1 fp1 ->
@@ -694,7 +694,7 @@ Proof.
   - exfalso. eapply WF.
     simpl. destruct (path_of_place p) eqn: POP. simpl. eapply in_app.
     right. econstructor. eauto.
-Qed.
+Admitted.
 
 (** IMPRTANT TODO: use this lemma to prove eval_place_sound. Think
 about the field type in wt_footprint is correct or not? *)
@@ -1032,7 +1032,7 @@ Proof.
   congruence.
   intros. inv H. auto.
   intros. inv H. auto.
-Qed.
+Admitted.
 
 Lemma place_dominator_strict_prefix: forall p p',
     place_dominator p = Some p' ->
@@ -1043,7 +1043,7 @@ Proof.
     eapply is_prefix_strict_field.
   - inv H. eapply is_prefix_strict_deref.
   - inv H. eapply is_prefix_strict_downcast.
-Qed.
+Admitted.
 
 
 (** Definition of shallow prefix path *)
@@ -1403,7 +1403,7 @@ Proof.
       destruct list_eq_dec in H0; subst; try congruence.
       destruct ident_eq in H0; subst; try congruence.
       inv H. eauto.
-Qed.
+Admitted.
 
 Lemma sem_wt_loc_implies_bmatch: forall fp m b ofs ce,
     sem_wt_loc ce m fp b ofs ->

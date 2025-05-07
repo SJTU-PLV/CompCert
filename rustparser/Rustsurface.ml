@@ -244,9 +244,19 @@ module To_syntax = struct
       if m = T.Mutable then
         pp_print_string pp "mut ";
       pp_print_rust_type symmap pp t
-    | T.Tarray (ty, sz) ->
+    | T.Traw_pointer (mut, ty) ->
+      pp_print_rust_type symmap pp ty;
+      if mut = T.Mutable then
+        pp_print_string pp "mut ";
+      pp_print_rust_type symmap pp t
+    | T.Tarray (mut, ty, sz) ->
       pp_print_rust_type symmap pp ty;
       Format.fprintf pp "[%ld]" (Camlcoq.camlint_of_coqint sz)
+    | T.Tslice (mut, ty) ->
+      pp_print_rust_type symmap pp ty;
+      if mut = T.Mutable then
+        pp_print_string pp "mut ";
+      pp_print_rust_type symmap pp t
 
 
   let pp_print_unop pp (op: Cop.unary_operation) =
@@ -1344,7 +1354,7 @@ module To_syntax = struct
                    (String.to_seq s)
       in
       let init = List.append init_body [AST.Init_int8 (Camlcoq.Z.Z0)]  in
-      let var_ty = Rusttypes.Tarray(t_byte, (Camlcoq.Z.of_uint (List.length init))) in
+      let var_ty = Rusttypes.Tarray(Rusttypes.Mutable, t_byte, (Camlcoq.Z.of_uint (List.length init))) in
       (* TODO: what is the origin of static string *)
       let global_var = AST.({ gvar_info = var_ty
                             ; gvar_init = init

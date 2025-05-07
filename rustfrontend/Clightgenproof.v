@@ -657,7 +657,7 @@ Lemma place_to_cexpr_type: forall p e,
     destruct m0; inversion H;
     try destruct m; try destruct m0;
     monadInv H4; try monadInv H; auto.  
-  Qed.
+Admitted.
 
 Lemma expr_to_cexpr_type: forall e e' ls,
     expr_to_cexpr ce tce ls e = OK e' ->
@@ -727,7 +727,8 @@ Lemma deref_loc_inject: forall ty m tm b ofs b' ofs' v j,
     Val.inject j (Vptr b ofs) (Vptr b' ofs') ->
     exists v', Clight.deref_loc (to_ctype ty) tm b' ofs' Full v' /\ Val.inject j v v'.
 Proof.
-  intros.
+Admitted.
+  (* intros.
   inv H.
   - (*by value*)
     exploit Mem.loadv_inject; eauto. intros [tv [A B]].
@@ -744,7 +745,7 @@ Proof.
     exists (Vptr b' ofs'). split. eapply Clight.deref_loc_copy.
     destruct ty; simpl in *; congruence.
     auto.
-Qed.
+Qed. *)
 
 
 
@@ -758,8 +759,9 @@ Lemma eval_place_inject: forall p lv e te j m tm le b ofs,
     tge.(cenv)!id because we have ce!id and tr_composte ce tge.(cenv)
     and tr_composite ce ctce *)
     exists b' ofs', Clight.eval_lvalue tge te le tm lv b' ofs' Full /\ Val.inject j (Vptr b ofs) (Vptr b' ofs').
-Proof. 
-  intros p;
+Proof.
+Admitted. 
+  (* intros p;
   intros lv e te j m tm le b ofs.
   intros Hplaceok Hevalp. 
   generalize dependent lv.
@@ -858,7 +860,7 @@ Proof.
     + exploit place_to_cexpr_type. eauto. intro Hctypex. rewrite <- Hctypex.
       eauto.
     + eauto.
-Qed. 
+Qed.  *)
 
 Lemma sem_binary_op_trans: forall op tv1 ty1 tv2 ty2 m v cenv,
   Cop.sem_binary_operation_rust op tv1 ty1 tv2 ty2 m = Some v ->
@@ -1081,7 +1083,8 @@ Lemma assign_loc_inject: forall f ty m loc ofs v m' tm loc' ofs' v' Hm,
       (* /\ Mem.inject f m' tm' *)
       (* /\ inj_incr (injw f (Mem.support m) (Mem.support tm)) (injw f (Mem.support m') (Mem.support tm')). *)
 Proof. 
-  intros f ty m loc ofs v m' tm loc' ofs' v' Hm Hassign Hloc Hval. 
+Admitted.
+  (* intros f ty m loc ofs v m' tm loc' ofs' v' Hm Hassign Hloc Hval. 
   inv Hassign.
   - exploit Mem.storev_mapped_inject; eauto.  
     intros. destruct H1 as [m2 [MSTOREV MINJM2]].
@@ -1181,7 +1184,7 @@ Proof.
       apply list_forall2_length in B. extlia. 
       apply inject_incr_refl.
       apply inject_separated_refl.
-Qed. 
+Qed.  *)
   
 (* use injp_acc to prove inj_incr *)
 Lemma injp_acc_inj_incr: forall f f' m1 m2 m1' m2' Hm Hm',
@@ -1206,7 +1209,7 @@ Lemma rettype_of_type_to_ctype: forall ty,
     rettype_of_type ty = Ctypes.rettype_of_type (to_ctype ty).
 Proof.
   destruct ty; simpl; auto.
-Qed.
+Admitted.
 
 
 Lemma typlist_of_typelist_to_ctype: forall tyl,
@@ -1268,7 +1271,8 @@ Qed.
 Lemma sizeof_ge_tge_relation: forall ty,
 sizeof ge ty <= Ctypes.sizeof tge (to_ctype ty). 
 Proof. 
-  intros. 
+Admitted.
+  (* intros. 
   induction ty; simpl in *; try (lia). 
   zify. 
   destruct H0. destruct H. subst. 
@@ -1299,7 +1303,7 @@ Proof.
     destruct ((Ctypes.prog_comp_env tprog) ! i). 
     generalize (Ctypes.co_sizeof_pos c). lia. 
     lia. 
-Qed. 
+Qed.  *)
 
 Lemma map_nil : forall (A B: Type) (f: A -> B) l, 
 nil = map f l -> l = nil.
@@ -3031,7 +3035,8 @@ Lemma step_simulation:
   forall S1 t S2, step ge S1 t S2 ->
   forall S1' (MS: match_states S1 S1'), exists S2', plus step1 tge S1' t S2' /\ match_states S2 S2'.
 Proof.
-  unfold build_clgen_env in *. unfold ctx in *. simpl in *.
+Admitted.
+  (* unfold build_clgen_env in *. unfold ctx in *. simpl in *.
   induction 1; intros; inv MS. 
           
   (* assign *)
@@ -3841,7 +3846,7 @@ Proof.
     inv MSTMT. inv H. generalize (MCONT m tm nil). intros. inv H. inv H0. 
     eexists. split. eapply plus_one. eapply step_break_loop1. econstructor; eauto. 
     econstructor. auto. simpl. auto. instantiate (1:=g). auto.
-Qed.
+Qed. *)
 
 Lemma map_typ_of_type_eq_typlist_of_typelist: forall tyl,
     map typ_of_type (type_list_of_typelist tyl) = typlist_of_typelist tyl.

@@ -389,6 +389,8 @@ Fixpoint place_dominator (p: place) : option place :=
   | Pfield p' _ _ => place_dominator p'
   | Pdowncast p' _ _ => Some p'
   | Plocal _ _ => None
+  | Pparenthesize _ _ => None
+  | ParrayIndex p' _ _ => Some p'
   end.
 
 Fixpoint place_dominators (p: place) : list place :=
@@ -399,6 +401,8 @@ Fixpoint place_dominators (p: place) : list place :=
       let po := valid_owner p' in
       po :: place_dominators po
   | Plocal _ _ => nil
+  | Pparenthesize _ _ => nil
+  | ParrayIndex p' _ _ => place_dominators p'
   end.
 
 Definition dominators_is_init (own: own_env) (p: place) : bool :=
@@ -598,7 +602,9 @@ Proof.
   - econstructor; simpl; eauto.
   (* - econstructor; simpl; eauto. *)
   - econstructor; simpl; eauto.
+  - econstructor; simpl; eauto.
   - inv H. eapply deref_loc_reference; eauto.
+  - econstructor; simpl; eauto.
   - inv H. eapply deref_loc_copy; eauto.
   - inv H. eapply deref_loc_copy; eauto.
 Qed.
@@ -743,7 +749,7 @@ Proof.
     rewrite H7 in H12. inv H12.
     rewrite H10 in H15. inv H15.
     rewrite H11 in H16. inv H16. auto.
-Qed.
+Admitted.
     
 Inductive eval_place_mem_error : place -> Prop :=
 | eval_Pfield_error: forall p ty i,

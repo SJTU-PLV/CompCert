@@ -23,6 +23,8 @@ Inductive place : Type :=
 | Pderef : place -> type -> place
 | Pdowncast: place -> ident -> type -> place 
 (**r represent the location of a constructor *)
+| Pparenthesize: ident -> type -> place
+| ParrayIndex : place -> ident -> type -> place
 .
 
 Lemma place_eq: forall (p1 p2: place), {p1=p2} + {p1<>p2}.
@@ -39,9 +41,31 @@ Definition typeof_place p :=
   | Pfield _ _ ty => ty
   | Pderef _ ty => ty
   | Pdowncast _ _ ty => ty
+  | Pparenthesize _ ty => ty
+  | ParrayIndex _ _ ty => ty
   end.
 
+(* assignee expression 
+  An assignee expression is an expression that appears in the left operand of
+  an assignment expression. Explicitly, the assignee expressions are:
+    Place expressions.
+    Underscores.
+    Tuples of assignee expressions.
+    Slices of assignee expressions.
+    Tuple structs of assignee expressions.
+    Structs of assignee expressions (with optionally named fields).
+    Unit structs.*)
+Inductive aexpr : Type :=
+| Aplace: place -> aexpr
+| Aslice: aexpr -> ident -> type -> aexpr
+.
 
+Definition typeof_aexpr a :=
+  match a with
+  | Aplace p => typeof_place p
+  | Aslice _ _ ty => ty
+  end.
+  
 (** ** Expression *)
 Inductive pexpr : Type :=
 | Eunit                                 (**r unit value  *)
@@ -188,6 +212,8 @@ Fixpoint parent_paths (p: place) : list place :=
   | Pfield p' _ _ => p' :: parent_paths p'
   | Pderef p' _ =>  p' :: parent_paths p'
   | Pdowncast p' _ _ => p' :: parent_paths p'
+  | ParrayIndex p' _ _ => p' :: parent_paths p'
+  | Pparenthesize  _ _ => nil
   end.
 
 Fixpoint shallow_parent_paths (p: place) : list place :=
@@ -195,8 +221,10 @@ Fixpoint shallow_parent_paths (p: place) : list place :=
   | Plocal _ _ => nil
   | Pfield p' _ _ => p' :: shallow_parent_paths p'
   | Pderef _ _ => nil
-  (** FIXMEL: how to handle downcast? *)
+  (** FIXMEL: how to handle downcast, ParrayIndex and Pparenthesize? *)
   | Pdowncast p' _ _ => p' :: shallow_parent_paths p'
+  | ParrayIndex p' _ _ => nil
+  | Pparenthesize _ _ => nil
   end.
 
 Fixpoint support_parent_paths (p: place) : list place :=
@@ -206,11 +234,14 @@ Fixpoint support_parent_paths (p: place) : list place :=
   | Pderef p' _ =>
       match typeof_place p' with
       | Tbox _ 
+      | Traw_pointer mutable _
       | Treference _ Mutable _ =>
           p' :: support_parent_paths p'
       | _ => nil
       end
   | Pdowncast p' _ _ => p' :: support_parent_paths p'
+  | ParrayIndex p' _ _ => p' :: support_parent_paths p'
+  | Pparenthesize _ _ => nil
   end.
 
 
@@ -219,7 +250,9 @@ Variant path : Type :=
   | ph_deref
   | ph_field (fid: ident)
   (* type of the variant here is used in valid_owner proof !! *)
-  | ph_downcast (ty: type) (fid: ident) (* (fty: type) *).
+  | ph_downcast (ty: type) (fid: ident) (* (fty: type) *)
+  (* | ph_paren (ty:type) *)
+  | ph_arrayIndex (aid: ident) (ty: type).
 
 Lemma path_eq: forall (p1 p2: path), {p1 = p2} + {p1 <> p2}.
 Proof.
@@ -227,6 +260,8 @@ Proof.
   destruct p1; destruct p2; auto; try (right; congruence).
   destruct (ident_eq fid fid0); subst. auto. right. congruence.
   destruct (ident_eq fid fid0); destruct (type_eq ty ty0); subst; auto.
+  1-3: right; congruence.
+  destruct (ident_eq aid aid0); destruct (type_eq ty ty0); subst; auto.
   1-3: right; congruence.
 Defined.
 
@@ -246,6 +281,11 @@ Fixpoint path_of_place (p: place) : paths :=
   | Pdowncast p1 fid fty =>
       let (id, phl) := path_of_place p1 in
       (id, phl ++ [ph_downcast (typeof_place p1) fid (* fty *)])
+  | Pparenthesize id ty =>
+      (id, nil)
+  | ParrayIndex p1 aid ty =>
+      let (id, phl) := path_of_place p1 in
+      (id, phl ++ [ph_arrayIndex aid ty])
   end.
 
 (* If ph1 is a prefix of phl2, return trues *)
@@ -314,6 +354,9 @@ Fixpoint local_of_place (p: place) :=
   | Pfield p' _ _ => local_of_place p'
   | Pderef p' _ => local_of_place p'
   | Pdowncast p' _ _ => local_of_place p'
+  (* FIXME *)
+  | Pparenthesize id _ => id
+  | ParrayIndex p' _ _ => local_of_place p'
   end.
 
 Lemma paths_contain_refl: forall l,
@@ -528,6 +571,8 @@ Proof.
     split.
     destruct ident_eq; try congruence; auto.
     eapply paths_contain_app; eauto.
+  - simpl. eapply is_prefix_refl.
+  - simpl. eapply is_prefix_refl.
 Qed.
 
 Ltac solve_prefix_left :=
@@ -755,6 +800,45 @@ Proof.
   congruence.
 Qed.
 
+(* 
+Lemma is_prefix_paren: forall p1 pid ty,
+    is_prefix p1 (Pparenthesize pid ty) = true.
+Proof.
+  intros. unfold is_prefix. simpl.
+  destruct (path_of_place p1).
+  solve_prefix_left.
+  eapply paths_contain_app.
+Qed.
+
+Lemma is_prefix_strict_paren: forall p1 ty,
+    is_prefix_strict p1 (Pparenthesize p1 ty) = true.
+Proof.
+  intros. unfold is_prefix_strict. simpl.
+  destruct (path_of_place p1).
+  solve_prefix_left.
+  eapply paths_contain_strict_app.
+  congruence.
+Qed. *)
+
+Lemma is_prefix_array: forall p1 aid ty,
+    is_prefix p1 (ParrayIndex p1 aid ty) = true.
+Proof.
+  intros. unfold is_prefix. simpl.
+  destruct (path_of_place p1).
+  solve_prefix_left.
+  eapply paths_contain_app.
+Qed.
+
+Lemma is_prefix_strict_array: forall p1 aid ty,
+    is_prefix_strict p1 (ParrayIndex p1 aid ty) = true.
+Proof.
+  intros. unfold is_prefix_strict. simpl.
+  destruct (path_of_place p1).
+  solve_prefix_left.
+  eapply paths_contain_strict_app.
+  congruence.
+Qed.
+
 (** Alternative definition of is_prefix which considers the type information *)
 
 Definition is_prefix_type (p1 p2: place) : bool :=
@@ -771,6 +855,12 @@ Proof.
   - destruct H0. subst.
     + auto.
     + right. eapply IHp3. eapply H. apply H0.
+  - destruct H0. subst.
+    + auto.
+    + right. eapply IHp3. eapply H. apply H0.
+  (* - destruct H0. subst.
+    + auto.
+    + right. eapply IHp3. eapply H. apply H0. *)
   - destruct H0. subst.
     + auto.
     + right. eapply IHp3. eapply H. apply H0.
@@ -795,6 +885,15 @@ Proof.
     + eapply is_prefix_downcast.
     + eapply is_prefix_trans. eapply IHp2; eauto.
       eapply is_prefix_downcast.
+  - contradiction.
+   (* destruct IN; subst.
+    + eapply is_prefix_paren.
+    + eapply is_prefix_trans. eapply IHp2; eauto.
+        eapply is_prefix_paren. *)
+  - destruct IN; subst.
+    + eapply is_prefix_array.
+    + eapply is_prefix_trans. eapply IHp2; eauto.
+            eapply is_prefix_array.
 Qed.
       
 Lemma is_prefix_type_is_prefix: forall p2 p1,
@@ -1118,6 +1217,8 @@ Fixpoint local_type_of_place (p: place) :=
   | Pfield p' ty _ => local_type_of_place p'
   | Pderef p' ty => local_type_of_place p'
   | Pdowncast p' _ _ => local_type_of_place p'
+  | Pparenthesize _ ty => ty
+  | ParrayIndex p' _ ty => local_type_of_place p'
   end.
   
 

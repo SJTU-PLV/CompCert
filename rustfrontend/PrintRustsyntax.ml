@@ -79,8 +79,12 @@ let rec name_rust_decl id ty =
       "struct" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
   | Tvariant(orgs, name) ->
       "variant" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
-  | Tarray(ty, sz) ->
-    name_rust_decl (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
+  | Traw_pointer(mut, ty) ->
+    "*" ^ (name_rust_decl ""  ty) ^ name_optid id
+  | Tarray(mut, ty, sz) ->
+    string_of_mut mut ^ " "^ name_rust_decl (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
+  | Tslice(mut, ty) ->
+    "&" ^ string_of_mut mut ^ " " ^ (name_rust_decl ""  ty) ^ name_optid id
 
 (* Type *)
 
