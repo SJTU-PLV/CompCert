@@ -8,6 +8,7 @@ open Rustlight
 open PrintCsyntax
 open PrintRustsyntax
 
+let coq_z_to_ocaml_int = Z.to_int
 let temp_name (id: AST.ident) =
   try
     "$" ^ Hashtbl.find string_of_atom id
@@ -24,6 +25,10 @@ let rec print_place out (p: place) =
     fprintf out "%a.%s" print_place p' (extern_atom fid)
   | Pdowncast(p',fid, _) ->
       fprintf out "(%a as %s)" print_place p' (extern_atom fid)
+  | Pparenthesize(pid, _, offset) ->
+      fprintf out "%s.as_mut_ptr().offset(%d)" (extern_atom pid) (coq_z_to_ocaml_int offset)
+  | ParrayIndex(p', aid, _) ->
+      fprintf out "(%a as %s)" print_place p' (extern_atom aid)
 
 (* Precedences and associativity (copy from PrintClight.ml) *)
 

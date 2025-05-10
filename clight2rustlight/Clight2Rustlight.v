@@ -154,7 +154,13 @@ End MEMORY.
           match ty with
           | Ctypes.Tpointer _ _ =>
               do i <- gensym (to_rusttype ty);
-              ret (Rustlight.Pparenthesize i (to_rusttype ty))
+              match e2 with
+              | Clight.Econst_int offset _ => 
+                  ret (Rustlight.Pparenthesize i (to_rusttype ty) offset)
+              | Clight.Econst_long offset64 _ => 
+                  ret (Rustlight.Pparenthesize i (to_rusttype ty) (Int.repr (Int64.unsigned offset64)))
+              | _ => error (msg "pointer cannot add non-integer in cexpr_to_place")
+              end
           | _ =>
               error (msg "not pointer, Unsupported lvalue expression")
           end

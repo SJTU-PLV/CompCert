@@ -91,6 +91,9 @@ Extract Constant Allocation.regalloc => "Regalloc.regalloc".
 (* Linearize *)
 Extract Constant Linearize.enumerate_aux => "Linearizeaux.enumerate_aux".
 
+(* Clight2Rustlight *)
+Extract Constant Clight2Rustlight.first_unused_ident => "Camlcoq.first_unused_ident".
+
 (* SimplExpr *)
 Extract Constant SimplExpr.first_unused_ident => "Camlcoq.first_unused_ident".
 Extraction Inline SimplExpr.ret SimplExpr.error SimplExpr.bind SimplExpr.bind2.

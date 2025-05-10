@@ -246,7 +246,7 @@ module To_syntax = struct
       pp_print_rust_type symmap pp t
     | T.Traw_pointer (mut, ty) ->
       pp_print_rust_type symmap pp ty;
-      if mut = T.Mutable then
+      if mut = T.Coq_mutable then
         pp_print_string pp "mut ";
       pp_print_rust_type symmap pp t
     | T.Tarray (mut, ty, sz) ->

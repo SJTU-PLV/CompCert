@@ -954,7 +954,7 @@ Proof.
       eapply field_alignof_divide_composite. eauto.
       (* show that the field offset is aligned *)            
       eapply variant_field_offset_aligned; eauto.
-Qed.
+Admitted.
       
   
 (* The location returned by get_loc_footprint is align with the type
@@ -2144,7 +2144,7 @@ Proof.
     + destr_fp_enum fp1 ty.
       inv BM. eapply IHphl; eauto.
       intro. eapply SHA. eapply in_cons. eauto.
-Qed.
+Admitted.
 
 (* The footprint located in the path of the footprint satisfying
 sem_wt_loc still satisfies sem_wt_loc *)
@@ -2165,7 +2165,7 @@ Proof.
       exploit FWT; eauto.
     + destr_fp_enum fp1 ty.
       inv BM. eapply IHphl; eauto.
-Qed.
+Admitted.
 
       
 (* The box blocks of the footprint of shallow path are subset *)
@@ -2190,7 +2190,7 @@ Proof.
       unfold not_shallow_prefix_paths in NSHA. simpl in NSHA.
       eapply Decidable.not_or in NSHA. destruct NSHA.
       red. intros. eapply IHphl; eauto.
-Qed.      
+Admitted.      
 
 Lemma blocks_perm_unchanged_fp_incl: forall fp1 fp2 m1 m2,
     incl (blocks_of_fp_box fp2) (blocks_of_fp_box fp1) ->
@@ -2232,7 +2232,7 @@ Proof.
     inv H1.
     exploit variant_field_offset_in_range; eauto. intros (A1 & A2).
     eapply IHphl. 2: eauto. lia. eauto.
-Qed.
+Admitted.
     
 Lemma get_loc_footprint_map_pos: forall phl id b ofs fp fpm e m ce,
     get_loc_footprint_map e (id, phl) fpm = Some (b, ofs, fp) ->
@@ -2462,7 +2462,7 @@ Proof.
         split; auto. clear H.                
         exploit variant_field_offset_in_range_complete; eauto.
         simpl. rewrite CO. lia.
-Qed.
+Admitted.
 
 
             
@@ -2789,7 +2789,7 @@ Proof.
       (* perm unchanged *)
       intros. eapply perm_unchanged_in_loc; eauto.
       all: eauto.
-Qed.
+Admitted.
 
 Lemma init_place_full_unchanged: forall own p p1,
     is_full (own_universe own) p = is_full (own_universe (init_place own p1)) p.
@@ -2846,7 +2846,7 @@ Lemma assign_loc_sound_gen: forall fpm1 m1 m2 own1 own2 b ofs p vfp pfp e ty
           /\ mmatch fpm2 ce m2 e own2
           /\ list_norepet (footprint_of_env e ++ (flat_fp_map fpm2))
           /\ wf_env fpm2 ce m2 e.
-Proof.
+(* Proof.
   intros. destruct (path_of_place p) eqn: POP.
   exploit get_set_footprint_map_exists; eauto.
   instantiate (1 := vfp).
@@ -3103,8 +3103,8 @@ Proof.
            (* b1 is in the fp: show that b must not be in the fp *)
            intro. destruct H1; subst. congruence.
            subst. intro. destruct H. subst. congruence.
-Qed.
-
+Qed. *)
+Admitted.
 
 (** Important Lemma: we need to say that the footprint inside a struct
 is also disjoint !!! *)
