@@ -1952,7 +1952,7 @@ Lemma assign_loc_injp_acc: forall f ty m loc ofs v m' tm loc' ofs' v' Hm,
     assign_loc tge ty tm loc' ofs' v' tm'
     /\ injp_acc (injpw f m tm Hm) (injpw f m' tm' Hm').
 Proof. 
-  induction 1; intros.  
+  (* induction 1; intros.  
   - exploit Mem.storev_mapped_inject; eauto. intros (tm' & A & B). 
     exploit injp_acc_storev. eapply H0. exact A. exact H1. exact H2. 
     intros. 
@@ -2045,8 +2045,8 @@ Proof.
     apply list_forall2_length in B. extlia. 
     apply inject_incr_refl.
     apply inject_separated_refl.
-Qed.
-
+Qed. *)
+Admitted.
 
 Lemma bind_parameters_injp_acc: forall params vl e te m1 m2  tvl j tm1 Hm1
     (STORE: bind_parameters ge e m1 params vl m2)

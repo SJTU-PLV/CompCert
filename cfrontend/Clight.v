@@ -46,7 +46,7 @@ Require Import Cop.
 
   As in Compcert C, all expressions are annotated with their types,
   as needed to resolve operator overloading and type-dependent behaviors. *)
-Locate int.
+
 Inductive expr : Type :=
   | Econst_int: int -> type -> expr       (**r integer literal *)
   | Econst_float: float -> type -> expr   (**r double float literal *)

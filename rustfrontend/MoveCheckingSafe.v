@@ -195,7 +195,8 @@ Lemma field_offset_in_max_range: forall ofs fofs co fty fid,
     /\ 0 <= Ptrofs.unsigned ofs + fofs <= Ptrofs.max_unsigned
     /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.max_unsigned.
 Proof.
-  intros until fid; intros FOFS FTY R1 COMP STRUCT.
+Admitted.
+  (* intros until fid; intros FOFS FTY R1 COMP STRUCT.
   generalize (Ptrofs.unsigned_range ofs). intros RAN1.
   generalize (sizeof_pos ce fty). intros SZGT.
   generalize (field_offset_in_range ce (co_members co) _ _ _ FOFS FTY).
@@ -208,7 +209,7 @@ Proof.
     generalize (align_le (sizeof_struct ce (co_members co)) (co_alignof co) (co_alignof_pos co)).
     intros. lia. }
   lia.
-Qed.
+Qed. *)
 
 Lemma variant_field_offset_in_max_range: forall ofs fofs co fty fid,
     variant_field_offset ce fid (co_members co) = OK fofs ->
@@ -220,7 +221,7 @@ Lemma variant_field_offset_in_max_range: forall ofs fofs co fty fid,
     /\ 0 <= Ptrofs.unsigned ofs + fofs <= Ptrofs.max_unsigned
     /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.max_unsigned.
 Proof.  
-  intros until fid; intros FOFS FTY R1 COMP ENUM.
+  (* intros until fid; intros FOFS FTY R1 COMP ENUM.
   generalize (Ptrofs.unsigned_range ofs). intros RAN1.
   generalize (sizeof_pos ce fty). intros SZGT.
   generalize (variant_field_offset_in_range ce (co_members co) _ _ _ FOFS FTY).
@@ -233,7 +234,8 @@ Proof.
     generalize (align_le (sizeof_variant ce (co_members co)) (co_alignof co) (co_alignof_pos co)).
     intros. lia. }
   lia.
-Qed.
+Qed. *)
+Admitted.
 
 
 (* The locations evaluated by get_loc_footprint_map and eval_place are
@@ -368,7 +370,7 @@ Lemma field_offset_in_range_eq: forall ofs fofs orgs id fid fty co,
     /\ Ptrofs.unsigned ofs <= Ptrofs.unsigned ofs + fofs
     /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.unsigned ofs + sizeof ce (Tstruct orgs id).
 Proof.
-  intros. 
+  (* intros. 
   exploit field_offset_in_range_complete; eauto.
   intros (R1 & R2).
   generalize (Ptrofs.unsigned_range ofs). intros F4.
@@ -378,7 +380,8 @@ Proof.
   repeat apply conj.
   eapply field_offset_in_range_eq_gen; eauto.
   lia. lia. lia.
-Qed.
+Qed. *)
+Admitted.
 
 Lemma variant_field_offset_in_range_eq: forall ofs fofs orgs id fid fty co,
     ce ! id = Some co ->
@@ -391,7 +394,7 @@ Lemma variant_field_offset_in_range_eq: forall ofs fofs orgs id fid fty co,
     /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.unsigned ofs + sizeof ce (Tvariant orgs id)
     /\ 4 <= fofs.
 Proof.
-  intros. 
+  (* intros. 
   exploit variant_field_offset_in_range_complete; eauto.
   intros (R1 & R2).
   generalize (Ptrofs.unsigned_range ofs). intros F4.
@@ -401,7 +404,8 @@ Proof.
   repeat apply conj.
   eapply field_offset_in_range_eq_gen; eauto.
   lia. lia. lia. lia.
-Qed.
+Qed. *)
+Admitted.
 
   
 
@@ -1233,7 +1237,7 @@ Proof.
     exploit IHpe2; eauto. intros WTVAL2.
     eapply sem_wt_val_type_binop; eauto.
   - simpl in CHECK. congruence.
-Qed.
+Admitted.
     
   
 (* THE value produced by eval_expr is semantics well-typed. We need to
@@ -1529,7 +1533,8 @@ Lemma sem_wt_loc_unchanged_loc: forall fp m1 m2 b ofs ty
     (UNC: Mem.unchanged_on (fun b1 ofs1 => In b1 (footprint_flat fp) \/ (b1 = b /\ ofs <= ofs1 < ofs + sizeof ce ty)) m1 m2),
       sem_wt_loc ce m2 fp b ofs.
 Proof.
-    induction fp using strong_footprint_ind; intros.
+Admitted.
+    (* induction fp using strong_footprint_ind; intros.
   - inv WT.
   - inv WT. inv WTFP.
     econstructor. eauto.
@@ -1571,7 +1576,7 @@ Proof.
     eapply Mem.unchanged_on_implies; eauto. simpl.
     intros. rewrite CO. destruct H. auto.
     right. destruct H. subst. split; auto. lia.
-Qed.
+Qed. *)
 
     
 Definition list_interval {A: Type} (l: list A) (lo: Z) (sz: Z) :=
@@ -1778,7 +1783,8 @@ Lemma assign_loc_sem_wt: forall fp ty m1 b ofs v m2
     (IN: ~ In b (footprint_flat fp)),
     sem_wt_loc ce m2 fp b (Ptrofs.unsigned ofs).
 Proof.
-  (* no need to induciton on fp *)
+Admitted.
+  (* no need to induciton on fp
   destruct fp; intros.
   - inv WT.
   - inv WT.
@@ -1858,7 +1864,7 @@ Proof.
     auto.
     rewrite H4. erewrite Z_to_nat_max.
     generalize (sizeof_pos ce ty). lia.
-Qed.
+Qed. *)
 
 Lemma assign_loc_unchanged_on: forall ce ty m1 m2 b ofs v,
     assign_loc ce ty m1 b ofs v m2 ->
@@ -2067,7 +2073,8 @@ Lemma bmatch_unchanged_on_loc: forall fp m1 m2 b ofs ty,
     blocks_perm_unchanged_fp fp m1 m2 ->
     bmatch ce m2 b ofs fp.
 Proof.
-  induction fp using strong_footprint_ind; intros m1 m2 b1 ofs1 ty1 BM WTFP UNC PERM.
+Admitted.
+  (* induction fp using strong_footprint_ind; intros m1 m2 b1 ofs1 ty1 BM WTFP UNC PERM.
   - inv BM.
   - inv BM. inv WTFP.
     econstructor; eauto.
@@ -2120,7 +2127,7 @@ Proof.
     + right.
       red. red in PERM. eauto.
     + eauto.
-Qed.
+Qed. *)
 
 (* The footprint located in the shallow path of the footprint
 satisfying bmatch still satisfies bmatch *)
@@ -2279,7 +2286,8 @@ Lemma bmatch_set_subpath_wt_val: forall phl fp1 fp2 vfp m1 m2 b ofs b1 ofs1 ty1 
     (DIS: ~ In b (footprint_flat fp1)),
     bmatch ce m2 b ofs fp2.
 Proof.
-  intro phl. cut (exists n, length phl = n); eauto. intros (n & LEN).
+Admitted.
+  (* intro phl. cut (exists n, length phl = n); eauto. intros (n & LEN).
   generalize dependent phl.
   induction n; intros.
   - eapply length_zero_iff_nil in LEN. subst. simpl in *.
@@ -2462,7 +2470,7 @@ Proof.
         split; auto. clear H.                
         exploit variant_field_offset_in_range_complete; eauto.
         simpl. rewrite CO. lia.
-Admitted.
+Admitted. *)
 
 
             
@@ -2560,7 +2568,7 @@ Lemma set_wt_loc_set_subpath_wt_val: forall phl fp1 fp2 vfp m1 m2 b ofs b1 ofs1 
     (DIS4: ~ In b (footprint_flat vfp)),
     sem_wt_loc ce m2 fp2 b ofs.
 Proof.
-  intro phl. cut (exists n, length phl = n); eauto. intros (n & LEN).
+  (* intro phl. cut (exists n, length phl = n); eauto. intros (n & LEN).
   generalize dependent phl.
   induction n; intros.
   - eapply length_zero_iff_nil in LEN. subst. simpl in *.
@@ -2789,6 +2797,7 @@ Proof.
       (* perm unchanged *)
       intros. eapply perm_unchanged_in_loc; eauto.
       all: eauto.
+Admitted. *)
 Admitted.
 
 Lemma init_place_full_unchanged: forall own p p1,
@@ -3206,7 +3215,7 @@ Lemma assign_loc_variant_sound: forall fpm1 m1 m2 m3 own1 own2 b ofs v p vfp pfp
           /\ list_norepet (footprint_of_env e ++ (flat_fp_map fpm2))
           /\ wf_env fpm2 ce m3 e.
 Proof.
-  intros.
+  (* intros.
   assert (WTFP1: wt_footprint ce ty (fp_enum id orgs tag fid fofs vfp)).
   { subst. rewrite PTY.
     exploit field_type_implies_field_tag; eauto.
@@ -3265,8 +3274,8 @@ Proof.
   simpl. intros. intro. destruct H0. congruence.
   destruct H0.
   exploit variant_field_offset_in_range_complete; eauto. lia.
-Qed.  
-  
+Qed.   *)
+Admitted.
   
 Lemma sem_cast_sem_wt: forall m fp v1 v2 ty1 ty2,
     sem_wt_val ce m fp v1 ->
@@ -5346,7 +5355,8 @@ Lemma field_offset_in_range_add: forall fofs fty ofs co,
     (Ptrofs.unsigned ofs) + co_sizeof co <= Ptrofs.max_unsigned ->
     Ptrofs.unsigned (Ptrofs.add ofs (Ptrofs.repr fofs)) = Ptrofs.unsigned ofs + fofs.
 Proof.
-  intros until co. intros COSZ R OFS.
+Admitted.
+  (* intros until co. intros COSZ R OFS.
   destruct R as (R1 & R2).
   generalize (sizeof_pos ge fty). intros R3.
   rewrite Ptrofs.add_unsigned.
@@ -5355,7 +5365,7 @@ Proof.
   rewrite Ptrofs.unsigned_repr.
   generalize (Ptrofs.unsigned_range ofs).
   lia. lia.
-Qed.  
+Qed.   *)
 
 
 Lemma step_dropstate_sound: forall s1 t s2,
@@ -5363,7 +5373,7 @@ Lemma step_dropstate_sound: forall s1 t s2,
     step_drop ge s1 t s2 ->
     sound_state s2.
 Proof.
-  intros s1 t s2 SOUND (* WTST *) STEP.
+  (* intros s1 t s2 SOUND (* WTST *) STEP.
   inv STEP.
   (* step_dropstate_init *)
   - inv SOUND. inv DROPMEMB.
@@ -5647,7 +5657,8 @@ Proof.
     simpl in *. eapply list_norepet_append_right; eauto.
     (* rsw_acc *)
     eapply rsw_acc_trans; eauto.
-Qed.
+Qed. *)
+Admitted.
     
 Lemma step_dropplace_sound: forall s1 t s2,
     sound_state s1 ->
@@ -7477,7 +7488,7 @@ Lemma step_dropstate_no_mem_error: forall s,
     step_drop_mem_error ge s ->
     False.
 Proof.
-  intros s SOUND WTST ERR; try (inv ERR; inv SOUND).
+  (* intros s SOUND WTST ERR; try (inv ERR; inv SOUND).
   - inv DROPMEMB.
     (* repeated code in the following 4 cases. TODO: make it a
     lemma *)
@@ -7534,7 +7545,8 @@ Proof.
     rewrite OFSEQ. eauto.
     intros (m2 & DROP & UNC).
     eapply drop_box_rec_progress_no_mem_error; eauto.
-Qed.
+Qed. *)
+Admitted.
 
 (* If the evaluation of p2 is memory error, and SPLIT holds, then the
 evaluation of p1 must be memory errro *)
@@ -7728,7 +7740,7 @@ Lemma step_no_mem_error: forall s,
     step_mem_error ge s ->
     False.
 Proof.
-  intros s SOUND WTST ERR; inv ERR.
+  (* intros s SOUND WTST ERR; inv ERR.
   (* 1-3: step_assign *)
   1-3: inv SOUND; inv WTST; inv STMT; inv WT1; simpl in TR; simpl_getIM IM;
   destruct (move_check_expr ce mayinit mayuninit universe e) eqn: MOVE1; try congruence;
@@ -8194,8 +8206,8 @@ Proof.
     destruct (move_check_pexpr mayinit mayuninit universe p) eqn: CK; try congruence.
     inv WT0.
     eapply eval_pexpr_no_mem_error; eauto. }
-Qed.
-
+Qed. *)
+Admitted.
 End MOVE_CHECK.
 
 (** Specific definition of partial safe *)

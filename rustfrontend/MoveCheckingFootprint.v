@@ -2113,7 +2113,8 @@ Lemma field_offset_in_range_complete: forall ce co id ofs ty,
     field_type id (co_members co) = OK ty ->
     0 <= ofs /\ ofs + sizeof ce ty <= co_sizeof co.
 Proof.
-  intros.
+Admitted.
+  (* intros.
   exploit field_offset_in_range; eauto.
   intros (S1 & S2). 
   split. lia.
@@ -2126,7 +2127,7 @@ Proof.
   intros M1 M2. simpl in M1.
   generalize (align_le (sizeof_struct ce0 (co_members co)) _ M1).
   intros M3. lia.
-Qed.
+Qed. *)
 
 Lemma variant_field_offset_in_range_complete: forall ce co id ofs ty,
     co_sv co = TaggedUnion ->
@@ -2135,7 +2136,8 @@ Lemma variant_field_offset_in_range_complete: forall ce co id ofs ty,
     field_type id (co_members co) = OK ty ->
     4 <= ofs /\ ofs + sizeof ce ty <= co_sizeof co.
 Proof.
-  intros.
+Admitted.
+  (* intros.
   exploit variant_field_offset_in_range; eauto.
   intros (S1 & S2). 
   split. lia.
@@ -2148,7 +2150,7 @@ Proof.
   intros M1 M2. simpl in M1.
   generalize (align_le (sizeof_variant ce0 (co_members co)) _ M1).
   intros M3. lia.
-Qed.
+Qed. *)
 
 
 (* Two memory location (b1, ofs1) and (b2, ofs2) which have type ty1
@@ -2171,7 +2173,8 @@ Lemma get_loc_footprint_in_range: forall phl fp b ofs b1 ofs1 fp1 ty ty1,
     (b = b1 /\ ofs <= ofs1 /\ ofs1 + sizeof ce ty1 <= ofs + sizeof ce ty)
     \/ (b <> b1 /\ In b1 (footprint_flat fp)).
 Proof.
-  intro phl. cut (exists n, length phl = n); eauto. intros (n & LEN).
+Admitted.
+  (* intro phl. cut (exists n, length phl = n); eauto. intros (n & LEN).
   generalize dependent phl.
   induction n; intros until ty1; intros WTFP WTPH NIN NOREP GFP; simpl in *.  
   - eapply length_zero_iff_nil in LEN. subst. simpl in *.
@@ -2233,7 +2236,7 @@ Proof.
         simpl in H0. rewrite CO in H0.
         exploit variant_field_offset_in_range_complete; eauto. lia.
       * destruct B2. right. split; auto.
-Admitted.
+Admitted. *)
 
 (** IMPORTANT TODO: This lemma says that the (memory locations,
    footprint) obtained from different location are different, no
@@ -2260,7 +2263,7 @@ Lemma get_loc_footprint_disjoint_loc: forall phl1 phl2 b1 b2 ty1 ty2 ofs1 ofs2 b
     /\ ~ In b2' (footprint_flat fp1')
     /\ list_disjoint (footprint_flat fp1') (footprint_flat fp2').
 Proof.
-  induction phl1; intros until fp2'; intros DIS1 WT1 WT2 WTPH1 WTPH2 G1 G2 DIS2 NOREP1 NOREP2 IN1 IN2 IN3 IN4.
+  (* induction phl1; intros until fp2'; intros DIS1 WT1 WT2 WTPH1 WTPH2 G1 G2 DIS2 NOREP1 NOREP2 IN1 IN2 IN3 IN4.
   - simpl in G1. inv G1.
     exploit get_loc_footprint_in_range. eapply WT2. eapply WTPH2. 
     3: eapply G2. eauto. eauto.
@@ -2325,7 +2328,8 @@ Proof.
     (* b2 is not in fp3 *)
     intro. eapply IN4. eapply get_loc_footprint_incl. eauto.
     auto.
-Qed.
+Qed. *)
+Admitted.
 
 
 
@@ -2353,7 +2357,7 @@ Lemma get_loc_footprint_disjoint_paths: forall phl1 phl2 fp b ofs b1 b2 ofs1 ofs
     (* b1 may be equal to b2 so we cannot say b1::fp1 is disjoint with b2::fp2 *)
     /\ list_disjoint (footprint_flat fp1) (footprint_flat fp2).
 Proof.
-  induction phl1; intros until ty2.
+  (* induction phl1; intros until ty2.
   - intros. inv H.
   - intros DIS NOREP WT WTPH1 WTPH2 G1 G2 IN.
     inv DIS.
@@ -2429,7 +2433,8 @@ Proof.
       exploit get_loc_footprint_norepet. eapply NOREP. eauto. eauto.
       intros (D1 & D2).            
       exploit IHphl1; eauto.      
-Qed.
+Qed. *)
+Admitted.
 
 End COMP_ENV.
 

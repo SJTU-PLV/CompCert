@@ -514,6 +514,11 @@ Fixpoint pexpr_to_cexpr (locals: list ident) (e: pexpr) : Errors.res Clight.expr
       do e1' <- pexpr_to_cexpr locals e1;
       do e2' <- pexpr_to_cexpr locals e2;
       OK (Clight.Ebinop binop e1' e2' (to_ctype ty))
+  | Eas pe ty =>
+      do pe' <- pexpr_to_cexpr locals pe;
+      OK (Clight.Ecast pe' (to_ctype ty))
+  | Esizeof ty ty' =>
+      OK (Clight.Esizeof (to_ctype ty) (to_ctype ty')) 
   end.
 
 Definition expr_to_cexpr locals (e: expr) : res Clight.expr :=

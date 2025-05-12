@@ -15,7 +15,7 @@ Local Open Scope error_monad_scope.
 
 
 (** ** Place (used to build lvalue expression) *)
-
+Locate type.
 Inductive place : Type :=
 | Plocal : ident -> type -> place
 | Pfield : place -> ident -> type -> place 
@@ -24,6 +24,7 @@ Inductive place : Type :=
 | Pdowncast: place -> ident -> type -> place 
 (**r represent the location of a constructor *)
 | Pparenthesize: ident -> type -> int -> place
+| PparenthesizeV: ident -> type -> ident ->type (*Evar ident type*)-> place
 | ParrayIndex : place -> ident -> type -> place
 .
 
@@ -43,6 +44,7 @@ Definition typeof_place p :=
   | Pderef _ ty => ty
   | Pdowncast _ _ ty => ty
   | Pparenthesize _ ty _ => ty
+  | PparenthesizeV _ ty _ _ => ty
   | ParrayIndex _ _ ty => ty
   end.
 
@@ -66,7 +68,36 @@ Definition typeof_aexpr a :=
   | Aplace p => typeof_place p
   | Aslice _ _ ty => ty
   end.
-  
+
+(** ** Size of a type *)
+
+(** In the ISO C standard, size is defined only for complete
+  types.  However, it is convenient that [sizeof] is a total
+  function.  For [void] and function types, we follow GCC and define
+  their size to be 1.  For undefined structures and unions, the size is
+  arbitrarily taken to be 0.
+*)
+
+Fixpoint sizeof (env: composite_env) (t: type) : Z :=
+  match t with
+  | Tunit => 1
+  | Tint I8 _ => 1
+  | Tint I16 _ => 2
+  | Tint I32 _ => 4
+  | Tint IBool _ => 1
+  | Tlong _ => 8
+  | Tfloat F32 => 4
+  | Tfloat F64 => 8
+  | Tbox _
+  | Treference _ _ _
+  | Traw_pointer _ _
+  | Tslice _ _ => if Archi.ptr64 then 8 else 4
+  | Tarray _ t' n => sizeof env t' * Z.max 0 n
+  | Tfunction _ _ _ _ _ => 1
+  | Tstruct _ id | Tvariant _ id =>
+      match env!id with Some co => co_sizeof co | None => 0 end
+  end.
+
 (** ** Expression *)
 Inductive pexpr : Type :=
 | Eunit                                 (**r unit value  *)
@@ -79,7 +110,9 @@ Inductive pexpr : Type :=
 | Eref:  origin -> mutkind -> place -> type -> pexpr     (**r &[mut] p  *)
 | Eunop: unary_operation -> pexpr -> type -> pexpr  (**r unary operation *)
 | Ebinop: binary_operation -> pexpr -> pexpr -> type -> pexpr (**r binary operation *)
-| Eglobal: ident -> type -> pexpr.                          (**r constant global variable, we do not give it semantics for now *)
+| Eglobal: ident -> type -> pexpr                          (**r constant global variable, we do not give it semantics for now *)
+| Eas: pexpr -> type -> pexpr   (**r type cast (e as ty) *)
+| Esizeof: type -> type -> pexpr.        (**r size of a type *)
 
 (* The evaluaiton of expr may produce a moved-out place *)
 Inductive expr : Type :=
@@ -100,6 +133,8 @@ Definition typeof_pexpr (pe: pexpr) : type :=
   | Eunop _ _ ty
   | Ebinop _ _ _ ty => ty
   | Eglobal _ ty => ty
+  | Esizeof _ ty => ty
+  | Eas _ ty => ty
   end.
 
 Definition typeof (e: expr) : type :=
@@ -215,6 +250,7 @@ Fixpoint parent_paths (p: place) : list place :=
   | Pdowncast p' _ _ => p' :: parent_paths p'
   | ParrayIndex p' _ _ => p' :: parent_paths p'
   | Pparenthesize  _ _ _ => nil
+  | PparenthesizeV  _ _ _ _ => nil
   end.
 
 Fixpoint shallow_parent_paths (p: place) : list place :=
@@ -226,6 +262,7 @@ Fixpoint shallow_parent_paths (p: place) : list place :=
   | Pdowncast p' _ _ => p' :: shallow_parent_paths p'
   | ParrayIndex p' _ _ => nil
   | Pparenthesize _ _ _=> nil
+  | PparenthesizeV _ _ _ _=> nil
   end.
 
 Fixpoint support_parent_paths (p: place) : list place :=
@@ -243,6 +280,7 @@ Fixpoint support_parent_paths (p: place) : list place :=
   | Pdowncast p' _ _ => p' :: support_parent_paths p'
   | ParrayIndex p' _ _ => p' :: support_parent_paths p'
   | Pparenthesize _ _ _=> nil
+  | PparenthesizeV _ _ _ _ => nil
   end.
 
 
@@ -283,6 +321,8 @@ Fixpoint path_of_place (p: place) : paths :=
       let (id, phl) := path_of_place p1 in
       (id, phl ++ [ph_downcast (typeof_place p1) fid (* fty *)])
   | Pparenthesize id ty _ =>
+      (id, nil)
+  | PparenthesizeV id ty _ _ =>
       (id, nil)
   | ParrayIndex p1 aid ty =>
       let (id, phl) := path_of_place p1 in
@@ -357,6 +397,7 @@ Fixpoint local_of_place (p: place) :=
   | Pdowncast p' _ _ => local_of_place p'
   (* FIXME *)
   | Pparenthesize id _ _ => id
+  | PparenthesizeV id _ _ _ => id
   | ParrayIndex p' _ _ => local_of_place p'
   end.
 
@@ -572,6 +613,7 @@ Proof.
     split.
     destruct ident_eq; try congruence; auto.
     eapply paths_contain_app; eauto.
+  - simpl. eapply is_prefix_refl.
   - simpl. eapply is_prefix_refl.
   - simpl. eapply is_prefix_refl.
 Qed.
@@ -886,6 +928,7 @@ Proof.
     + eapply is_prefix_downcast.
     + eapply is_prefix_trans. eapply IHp2; eauto.
       eapply is_prefix_downcast.
+  - contradiction.
   - contradiction.
    (* destruct IN; subst.
     + eapply is_prefix_paren.
@@ -1219,6 +1262,7 @@ Fixpoint local_type_of_place (p: place) :=
   | Pderef p' ty => local_type_of_place p'
   | Pdowncast p' _ _ => local_type_of_place p'
   | Pparenthesize _ ty _ => ty
+  | PparenthesizeV _ ty _ _ => ty
   | ParrayIndex p' _ ty => local_type_of_place p'
   end.
   

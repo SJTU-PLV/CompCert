@@ -27,6 +27,9 @@ let rec print_place out (p: place) =
       fprintf out "(%a as %s)" print_place p' (extern_atom fid)
   | Pparenthesize(pid, _, offset) ->
       fprintf out "%s.as_mut_ptr().offset(%d)" (extern_atom pid) (coq_z_to_ocaml_int offset)
+  | PparenthesizeV(pid, _, vid, ty) ->
+      (* assert(ty is int or int64) *)
+      fprintf out "%s.as_mut_ptr().offset(%s)" (extern_atom pid) (extern_atom vid)
   | ParrayIndex(p', aid, _) ->
       fprintf out "(%a as %s)" print_place p' (extern_atom aid)
 
@@ -51,6 +54,8 @@ let precedence' = function
   | Eplace(_, _) -> (16,NA)
   | Ecktag(_, _) -> (15, RtoL)
   | Eref(_, _, _, _) -> (15, RtoL)
+  | Eas(_, _) -> (16, NA)
+  | Esizeof(_, _) -> (16, NA)
 
 let precedence = function
   | Emoveplace(_,_) -> (16,NA)
@@ -96,6 +101,10 @@ let rec pexpr p (prec, e) =
     fprintf p "%s(%a, %s)" "cktag" print_place v (extern_atom fid)
   | Eref(org, mut, v, _) ->
     fprintf p "&%s %s%a" (extern_atom org) (string_of_mut mut) print_place v
+  | Eas(pe, ty) ->
+      fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty)
+  | Esizeof(ty1, ty2) ->
+      fprintf p "::core::mem::size_of::<%s>()" (name_rust_type ty1)
   end;
   if prec' < prec then fprintf p ")@]" else fprintf p "@]"
 

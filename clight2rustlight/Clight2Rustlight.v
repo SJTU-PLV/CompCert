@@ -17,6 +17,7 @@ Require Import Coqlib.
 Require Import Errors.
 Require Import Maps.
 Require Import Integers.
+Require Import Values.
 Require Import Floats.
 Require Import AST.
 Require Import Ctypes Rusttypes.
@@ -137,7 +138,7 @@ End MEMORY.
 
     Local Open Scope string_scope.
     Local Open Scope gensym_monad_scope.
-    
+
 
     (** Convert Clight expression to Rustlight place *)
     Fixpoint cexpr_to_place (e: Clight.expr): mon Rustlight.place :=
@@ -153,19 +154,54 @@ End MEMORY.
       | Clight.Ebinop op e1 e2 ty => 
           match ty with
           | Ctypes.Tpointer _ _ =>
-              do i <- gensym (to_rusttype ty);
-              match e2 with
-              | Clight.Econst_int offset _ => 
-                  ret (Rustlight.Pparenthesize i (to_rusttype ty) offset)
-              | Clight.Econst_long offset64 _ => 
-                  ret (Rustlight.Pparenthesize i (to_rusttype ty) (Int.repr (Int64.unsigned offset64)))
-              | _ => error (msg "pointer cannot add non-integer in cexpr_to_place")
+              match op with
+              | Oadd =>
+                  do i <- gensym (to_rusttype ty);
+                  match e2 with
+                  (* | Clight.Econst_int offset _
+                  | Clight.Econst_long offset64 _
+                  | Clight.Evar id _ 
+                  | Clight.Etempvar id _ =>
+                      ret (Rustlight.Pparenthesize i (to_rusttype ty) e2) *)
+                  | Clight.Econst_int offset _ => 
+                      ret (Rustlight.Pparenthesize i (to_rusttype ty) offset)
+                  | Clight.Econst_long offset64 _ => 
+                      ret (Rustlight.Pparenthesize i (to_rusttype ty) (Int.repr (Int64.unsigned offset64)))
+                  | Clight.Evar id ty2 =>
+                      match ty2 with
+                      | Ctypes.Tint _ _ _ 
+                      | Ctypes.Tlong _ _ =>
+                          ret (Rustlight.PparenthesizeV i (to_rusttype ty) id (to_rusttype ty2))
+                      | _ => error (msg "index of pointer add can only be int or long")
+                      end
+                  | Clight.Etempvar id ty2 =>
+                      match ty2 with
+                      | Ctypes.Tint _ _ _ 
+                      | Ctypes.Tlong _ _ =>
+                          ret (Rustlight.PparenthesizeV i (to_rusttype ty) id (to_rusttype ty2))
+                      | _ => error (msg "index of pointer add can only be int or long")
+                      end
+                  | _ => error (msg "pointer add only support int long var tempvar")
+                  end
+              | _ => error (msg "pointer only support add op")
               end
           | _ =>
               error (msg "not pointer, Unsupported lvalue expression")
           end
       (* FIXME: support Pdowncast *)
-      | _ => error (msg "Unsupported lvalue expression")
+      | Clight.Econst_int _ _ => error (msg "Unsupported lvalue expression: constant integer")
+      | Clight.Econst_float _ _ => error (msg "Unsupported lvalue expression: constant float")
+      | Clight.Eunop op e ty => error (msg ("Unsupported lvalue expression: unary operation "))
+      | Clight.Esizeof ty' ty => error (msg "Unsupported lvalue expression: sizeof")
+      | Clight.Ealignof ty' ty => error (msg "Unsupported lvalue expression: alignof")
+      | Clight.Ecast e ty => 
+          match ty with
+          | Ctypes.Tpointer _ _ => 
+              do i <- gensym (to_rusttype ty);
+              ret (Rustlight.Plocal i (to_rusttype ty))
+          | _ => error (msg "lvalue cast only support pointer")
+          end
+      | _ => error (msg "Unsupported lvalue expression: unknown expression")
       end.
 
     (** Convert Clight expression to Rustlight pure expression *)
@@ -195,20 +231,21 @@ End MEMORY.
         else *)
           do p <- cexpr_to_place (Clight.Evar id ty);
           ret (Eplace p (to_rusttype ty))
-      | Clight.Eaddrof e ty => 
-          do p <- cexpr_to_place e;
-          ret (Eref 2%positive Mutable p (to_rusttype ty))
-      | Clight.Ederef e ty => 
-          do p <- cexpr_to_place e;
+      | Clight.Eaddrof e' ty => 
+          do i <- gensym (to_rusttype ty);
+          do p <- cexpr_to_place e';
+          ret (Eref i Mutable p (to_rusttype ty))
+      | Clight.Ederef e' ty => 
+          do p <- cexpr_to_place e';
           ret (Rustlight.Eplace (Rustlight.Pderef p (to_rusttype ty)) (to_rusttype ty))
       | Clight.Efield e' id ty => 
           do p <- cexpr_to_place e';
           ret (Rustlight.Eplace (Rustlight.Pfield p id (to_rusttype ty)) (to_rusttype ty))
-      (* | Clight.Ecast e' ty => cexpr_to_pexpr locals e'
-      | Clight.Esizeof ty ty' => ret (Rustlight.Esizeof (to_rusttype ty) (to_rusttype ty')) *)
+      | Clight.Esizeof ty ty' => ret (Rustlight.Esizeof (to_rusttype ty) (to_rusttype ty'))
+      | Clight.Ecast e' ty => 
+          do pe <- cexpr_to_pexpr locals e';
+          ret (Rustlight.Eas pe (to_rusttype ty))
       (* | Clight.Ealignof ty ty' => ret (Rustlight.Ealignof (to_rusttype ty) (to_rusttype ty')) *)
-      (*FIXME ???*)
-      (*  *)
       | _ => error (msg "Unsupported rvalue expression")
       end.
 
@@ -400,9 +437,7 @@ Local Open Scope error_monad_scope.
                     Rusttypes.prog_comp_env_eq := Hyp |}
                     | Error msg => fun _ => Error msg
                     end) (eq_refl tce)
-          | Err msg => Error msg
-          end.
-      (* | Err msg => Error msg
-      end. *)
+      | Err msg => Error msg
+      end.
   
     End TRANSL.
