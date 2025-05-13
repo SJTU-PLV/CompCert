@@ -11,7 +11,6 @@ Local Open Scope error_monad_scope.
 
 (** ** Replace origins in RustIR *)
 
-
 Definition find_elt {A: Type} (id: ident) (l: list (ident * A)) : option A :=
   match find (fun '(id', v) => ident_eq id id') l with
   | Some (_, v) => Some v

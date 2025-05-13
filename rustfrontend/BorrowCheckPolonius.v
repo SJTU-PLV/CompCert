@@ -5,7 +5,7 @@ Require Import FSetWeakList DecidableType.
 Require Import Lattice Kildall.
 Require Import Rusttypes Rustlight RustIR RustIRcfg.
 Require Import Errors.
-Require Import BorrowCheckDomain ReplaceOrigins.
+Require Import BorrowCheckDomain.
 
 Import ListNotations.
 Open Scope error_monad_scope.
@@ -97,11 +97,13 @@ Fixpoint transfer_pure_expr (pc: node) (live: LoanSet.t) (e: LOrgEnv.t) (pe: pex
       (* simple type check *)
       match ty with
       | Treference org' mut' _ =>
+          (* type checking *)
           if Pos.eqb org org' && mutkind_eq mut mut' then
-            (* mut' = Mutable implies (mutable_place p) *)
+            (* mut' = Mutable implies (mutable_place p), i.e., mutability checking *)
             if negb (mutkind_eq mut' Mutable) || mutable_place p then
               let ak := match mut with | Mutable => Awrite | Immutable => Aread end in
-              (* check all the loans in this place are not invalidated *)
+              (* check all the loans in this place are not
+              invalidated, i.e., borrow checking *)
               if valid_access e p then
                 (* invalide origins contain loans relevant to [p] *)
                 let ls := relevant_loans live p Adeep in
@@ -127,7 +129,7 @@ Fixpoint transfer_pure_expr (pc: node) (live: LoanSet.t) (e: LOrgEnv.t) (pe: pex
                 (* end *)
               else
                 Error (error_msg pc ++ [MSG "access an invalidated place "; CTX (local_of_place p)])
-            else Error (error_msg pc ++ [MSG "mutable reference a immutable place (transfer_pure_expr)"])
+            else Error (error_msg pc ++ [MSG "try to create a mutable reference of an immutable place (transfer_pure_expr)"])
           else
             Error (error_msg pc ++ [MSG "mismatch between expression type and place type in Eref"])
       | _ => Error (error_msg pc ++ [MSG "reference expression is not of reference type in Eref"])

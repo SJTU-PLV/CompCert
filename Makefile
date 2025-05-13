@@ -174,7 +174,7 @@ RUSTFRONTEND=Rusttypes.v Rustsyntax.v Rustlight.v RustIR.v\
   MoveChecking.v MoveCheckingFootprint.v MoveCheckingDomain.v MoveCheckingSafe.v\
   Clightgen.v Clightgenspec.v Clightgenproof.v\
   RustOp.v Rusttyping.v\
-  # BorrowCheckDomain.v ReplaceOrigins.v BorrowCheckPolonius.v
+  BorrowCheckDomain.v ReplaceOrigins.v BorrowCheckPolonius.v\
   # BorrowCheckSafe.v
 
 RUSTDEMO=LinkedList.v LinkedListSafe.v HashMap.v HashMapSafe.v HashMapCommon.v \
