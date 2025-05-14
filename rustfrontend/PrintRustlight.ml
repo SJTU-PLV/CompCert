@@ -15,6 +15,16 @@ let temp_name (id: AST.ident) =
   with Not_found ->
     Printf.sprintf "$%d" (P.to_int id)
 
+let print_int_list out loffset =
+  match loffset with
+  | [] -> ()
+  | _ -> List.iter (fun e -> fprintf out ".offset(%d)" (coq_z_to_ocaml_int e)) loffset 
+  
+let print_ident_list out ll =
+  match ll with
+  | [] -> ()
+  | _ -> List.iter (fun (eid, _) -> fprintf out ".offset(%s)" (extern_atom eid)) ll
+
 let rec print_place out (p: place) =
   match p with
   | Plocal(id, _) ->
@@ -24,12 +34,11 @@ let rec print_place out (p: place) =
   | Pfield(p', fid, _) ->
     fprintf out "%a.%s" print_place p' (extern_atom fid)
   | Pdowncast(p',fid, _) ->
-      fprintf out "(%a as %s)" print_place p' (extern_atom fid)
-  | Pparenthesize(pid, _, offset) ->
-      fprintf out "%s.as_mut_ptr().offset(%d)" (extern_atom pid) (coq_z_to_ocaml_int offset)
-  | PparenthesizeV(pid, _, vid, ty) ->
-      (* assert(ty is int or int64) *)
-      fprintf out "%s.as_mut_ptr().offset(%s)" (extern_atom pid) (extern_atom vid)
+    fprintf out "(%a as %s)" print_place p' (extern_atom fid)
+  | Pparenthesize(pid, _, loffset, ll) ->
+    fprintf out "%s.as_mut_ptr()" (extern_atom pid);
+    print_ident_list out ll;
+    print_int_list out loffset
   | ParrayIndex(p', aid, _) ->
       fprintf out "(%a as %s)" print_place p' (extern_atom aid)
 
@@ -187,13 +196,13 @@ let print_stmt_direct stmt = print_stmt (formatter_of_out_channel stdout) stmt
 let print_function p id f =
   fprintf p "%s@ "
             (name_rust_decl (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
-  (* Print variables and their types *)
-  List.iter
+  fprintf p "@[<v 2>{@ ";
+    (* Print variables and their types *)
+    List.iter
     (fun (id, ty) ->
       fprintf p "%s;@ " (name_rust_decl (extern_atom id) ty))
     f.fn_vars;
-  fprintf p "@[<v 2>{@ ";
-  print_stmt p f.fn_body;
+    print_stmt p f.fn_body;
   fprintf p "@;<0 -2>}@]@ @ "
 
 let print_fundef p id fd =

@@ -133,12 +133,56 @@ End MEMORY.
 
   Section TRANSL.
 
-    Variable ce: composite_env.
-    Variable tce: Rusttypes.composite_env.
+    (* Variable ce: composite_env.
+    Variable tce: Rusttypes.composite_env. *)
 
-    Local Open Scope string_scope.
+    (* Local Open Scope string_scope. *)
     Local Open Scope gensym_monad_scope.
 
+    Fixpoint binary_to_place (e: Clight.expr) : mon ((list int) * (list (ident * type))) :=
+        match e with
+        | Clight.Econst_int offset _ => 
+            ret ([offset], nil)
+        | Clight.Econst_long offset64 _ => 
+            ret ([Int.repr (Int64.unsigned offset64)],nil)
+        | Clight.Evar id ty2 =>
+                ret (nil,[(id,(to_rusttype ty2))])
+        | Clight.Etempvar id ty2 =>
+            (* match ty2 with
+            | Ctypes.Tint _ _ _ 
+            | Ctypes.Tlong _ _ => *)
+                ret (nil,[(id,(to_rusttype ty2))])
+            (* | _ => error (msg "In binary_to_place(tempvar) : index of pointer add can only be int or long")
+            end *)
+        | Clight.Econst_float _ _ =>
+            error (msg "In binary_to_place : Unsupported index expression in pointer addition: float constant")
+        | Clight.Econst_single _ _ =>
+            error (msg "In binary_to_place : Unsupported index expression in pointer addition: single-precision float constant")
+        | Clight.Ederef _ _ =>
+            error (msg "In binary_to_place : Unsupported index expression in pointer addition: dereference")
+        | Clight.Eaddrof _ _ =>
+            error (msg "In binary_to_place : Unsupported index expression in pointer addition: address-of")
+        | Clight.Eunop op _ _ =>
+            error (msg "In binary_to_place : Unsupported index expression in pointer addition: unary operation")
+        | Clight.Ecast _ _ =>
+            error (msg "In binary_to_place : Unsupported index expression in pointer addition: cast operation")
+        | Clight.Efield _ _ _ =>
+            error (msg "In binary_to_place : Unsupported index expression in pointer addition: field operation")
+        | Clight.Esizeof _ _ =>
+            error (msg "In binary_to_place : Unsupported index expression in pointer addition: sizeof operation")
+        | Clight.Ealignof _ _ =>
+            error (msg "In binary_to_place : Unsupported index expression in pointer addition: alignof operation")
+        | Clight.Ebinop op e1' e2' ty' =>
+            match op with
+            | Oadd =>
+                do r1 <- binary_to_place e1';
+                do r2 <- binary_to_place e2';
+                let (LIntL, LL) := r1 in
+                let (LIntR, LR) := r2 in
+                ret (LIntL ++ LIntR, LL ++ LR)
+            | _ => error (msg "In binary_to_place: pointer only support add op")
+            end
+        end.
 
     (** Convert Clight expression to Rustlight place *)
     Fixpoint cexpr_to_place (e: Clight.expr): mon Rustlight.place :=
@@ -157,32 +201,17 @@ End MEMORY.
               match op with
               | Oadd =>
                   do i <- gensym (to_rusttype ty);
-                  match e2 with
-                  (* | Clight.Econst_int offset _
-                  | Clight.Econst_long offset64 _
-                  | Clight.Evar id _ 
-                  | Clight.Etempvar id _ =>
-                      ret (Rustlight.Pparenthesize i (to_rusttype ty) e2) *)
-                  | Clight.Econst_int offset _ => 
-                      ret (Rustlight.Pparenthesize i (to_rusttype ty) offset)
-                  | Clight.Econst_long offset64 _ => 
-                      ret (Rustlight.Pparenthesize i (to_rusttype ty) (Int.repr (Int64.unsigned offset64)))
-                  | Clight.Evar id ty2 =>
-                      match ty2 with
-                      | Ctypes.Tint _ _ _ 
-                      | Ctypes.Tlong _ _ =>
-                          ret (Rustlight.PparenthesizeV i (to_rusttype ty) id (to_rusttype ty2))
-                      | _ => error (msg "index of pointer add can only be int or long")
-                      end
-                  | Clight.Etempvar id ty2 =>
-                      match ty2 with
-                      | Ctypes.Tint _ _ _ 
-                      | Ctypes.Tlong _ _ =>
-                          ret (Rustlight.PparenthesizeV i (to_rusttype ty) id (to_rusttype ty2))
-                      | _ => error (msg "index of pointer add can only be int or long")
-                      end
-                  | _ => error (msg "pointer add only support int long var tempvar")
-                  end
+                  do r1 <- binary_to_place e1;
+                  do r2 <- binary_to_place e2;
+                  let (LI1,LP1) := r1 in
+                  let (LI2,LP2) := r2 in
+                  let LI := LI1 ++ LI2 in
+                  let LP := LP1 ++ LP2 in
+                  (* drop out the name of array, for example: int a[2]; we not need offset(a)*)
+                    match LP with
+                    | h :: t => ret (Rustlight.Pparenthesize i (to_rusttype ty) LI t)
+                    | nil => error (msg "array pointer cannot be null")  
+                    end                
               | _ => error (msg "pointer only support add op")
               end
           | _ =>

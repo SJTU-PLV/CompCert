@@ -1021,7 +1021,7 @@ Lemma path_of_place_field: forall p id fid l,
       p = Pfield p' fid fty
       /\ path_of_place p' = (id, l).
 Proof.
-  induction p; intros id fid l A; simpl in *.
+  (* induction p; intros id fid l A; simpl in *.
   - inv A. exploit app_eq_nil. symmetry. eapply H1.
     intros (A1 & A2). inv A2.
   - destruct (path_of_place p) eqn: P. inv A.
@@ -1030,7 +1030,7 @@ Proof.
   - destruct (path_of_place p) eqn: P. inv A.
     eapply app_inj_tail in H1 as (B1 & B2). inv B2.
   - destruct (path_of_place p) eqn: P. inv A.
-    eapply app_inj_tail in H1 as (B1 & B2). inv B2.
+    eapply app_inj_tail in H1 as (B1 & B2). inv B2. *)
 Admitted.
 
 Lemma path_of_place_deref: forall p id l,
@@ -1039,7 +1039,7 @@ Lemma path_of_place_deref: forall p id l,
       p = Pderef p' ty
       /\ path_of_place p' = (id, l).
 Proof.
-  induction p; intros id l A; simpl in *.
+  (* induction p; intros id l A; simpl in *.
   - inv A. exploit app_eq_nil. symmetry. eapply H1.
     intros (A1 & A2). inv A2.
   - destruct (path_of_place p) eqn: P. inv A.
@@ -1048,7 +1048,7 @@ Proof.
     eapply app_inj_tail in H1 as (B1 & B2). inv B2. 
     eauto.
   - destruct (path_of_place p) eqn: P. inv A.
-    eapply app_inj_tail in H1 as (B1 & B2). inv B2.
+    eapply app_inj_tail in H1 as (B1 & B2). inv B2. *)
 Admitted.
 
 Lemma path_of_place_downcast: forall p id ty fid l,
@@ -1057,7 +1057,7 @@ Lemma path_of_place_downcast: forall p id ty fid l,
       p = Pdowncast p' fid fty
       /\ path_of_place p' = (id, l).
 Proof.
-  induction p; intros id ty fid l A; simpl in *.
+  (* induction p; intros id ty fid l A; simpl in *.
   - inv A. exploit app_eq_nil. symmetry. eapply H1.
     intros (A1 & A2). inv A2.
   - destruct (path_of_place p) eqn: P. inv A.
@@ -1066,7 +1066,7 @@ Proof.
     eapply app_inj_tail in H1 as (B1 & B2). inv B2.
   - destruct (path_of_place p) eqn: P. inv A.
     eapply app_inj_tail in H1 as (B1 & B2). inv B2. subst.
-    eauto.
+    eauto. *)
 Admitted.
 
 Lemma path_of_wt_place_eq: forall le ce p1 p2,
@@ -1075,7 +1075,7 @@ Lemma path_of_wt_place_eq: forall le ce p1 p2,
     path_of_place p1 = path_of_place p2 ->
     p1 = p2.
 Proof.
-  induction p1; intros p2 WT1 WT2 PEQ; simpl in *; destruct (path_of_place p2) eqn: P2; try (destruct (path_of_place p1) eqn: P1).
+  (* induction p1; intros p2 WT1 WT2 PEQ; simpl in *; destruct (path_of_place p2) eqn: P2; try (destruct (path_of_place p1) eqn: P1).
   - inv PEQ.
     eapply path_of_place_nil in P2 as (ty & A1). subst.
     inv WT1. inv WT2. rewrite WT0 in WT1. inv WT1. auto.
@@ -1092,7 +1092,7 @@ Proof.
     subst. inv WT1. inv WT2.
     exploit IHp1. eapply WT0. eapply WT1. eauto. intros. subst.
     rewrite WT3 in WT7. inv WT7. rewrite WT4 in WT8. inv WT8.
-    rewrite WT5 in WT9. inv WT9. auto.
+    rewrite WT5 in WT9. inv WT9. auto. *)
 Admitted.
 
 (** is_prefix and is_prefix_type are equivalent under two well-type places *)

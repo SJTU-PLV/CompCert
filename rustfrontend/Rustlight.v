@@ -15,7 +15,7 @@ Local Open Scope error_monad_scope.
 
 
 (** ** Place (used to build lvalue expression) *)
-Locate type.
+
 Inductive place : Type :=
 | Plocal : ident -> type -> place
 | Pfield : place -> ident -> type -> place 
@@ -23,14 +23,16 @@ Inductive place : Type :=
 | Pderef : place -> type -> place
 | Pdowncast: place -> ident -> type -> place 
 (**r represent the location of a constructor *)
-| Pparenthesize: ident -> type -> int -> place
-| PparenthesizeV: ident -> type -> ident ->type (*Evar ident type*)-> place
+| Pparenthesize: ident -> type -> list int -> list (ident * type) -> place
 | ParrayIndex : place -> ident -> type -> place
 .
 
 Lemma place_eq: forall (p1 p2: place), {p1=p2} + {p1<>p2}.
 Proof.
   generalize type_eq ident_eq. intros.
+  decide equality.
+  decide equality.
+  decide equality.
   decide equality.
   apply Int.eq_dec.
 Defined.
@@ -43,8 +45,7 @@ Definition typeof_place p :=
   | Pfield _ _ ty => ty
   | Pderef _ ty => ty
   | Pdowncast _ _ ty => ty
-  | Pparenthesize _ ty _ => ty
-  | PparenthesizeV _ ty _ _ => ty
+  | Pparenthesize _ ty _ _ => ty
   | ParrayIndex _ _ ty => ty
   end.
 
@@ -249,8 +250,7 @@ Fixpoint parent_paths (p: place) : list place :=
   | Pderef p' _ =>  p' :: parent_paths p'
   | Pdowncast p' _ _ => p' :: parent_paths p'
   | ParrayIndex p' _ _ => p' :: parent_paths p'
-  | Pparenthesize  _ _ _ => nil
-  | PparenthesizeV  _ _ _ _ => nil
+  | Pparenthesize  _ _ _ _=> nil
   end.
 
 Fixpoint shallow_parent_paths (p: place) : list place :=
@@ -261,8 +261,7 @@ Fixpoint shallow_parent_paths (p: place) : list place :=
   (** FIXMEL: how to handle downcast, ParrayIndex and Pparenthesize? *)
   | Pdowncast p' _ _ => p' :: shallow_parent_paths p'
   | ParrayIndex p' _ _ => nil
-  | Pparenthesize _ _ _=> nil
-  | PparenthesizeV _ _ _ _=> nil
+  | Pparenthesize _ _ _ _=> nil
   end.
 
 Fixpoint support_parent_paths (p: place) : list place :=
@@ -279,8 +278,7 @@ Fixpoint support_parent_paths (p: place) : list place :=
       end
   | Pdowncast p' _ _ => p' :: support_parent_paths p'
   | ParrayIndex p' _ _ => p' :: support_parent_paths p'
-  | Pparenthesize _ _ _=> nil
-  | PparenthesizeV _ _ _ _ => nil
+  | Pparenthesize _ _ _ _=> nil
   end.
 
 
@@ -320,9 +318,7 @@ Fixpoint path_of_place (p: place) : paths :=
   | Pdowncast p1 fid fty =>
       let (id, phl) := path_of_place p1 in
       (id, phl ++ [ph_downcast (typeof_place p1) fid (* fty *)])
-  | Pparenthesize id ty _ =>
-      (id, nil)
-  | PparenthesizeV id ty _ _ =>
+  | Pparenthesize id ty _ _ =>
       (id, nil)
   | ParrayIndex p1 aid ty =>
       let (id, phl) := path_of_place p1 in
@@ -396,8 +392,7 @@ Fixpoint local_of_place (p: place) :=
   | Pderef p' _ => local_of_place p'
   | Pdowncast p' _ _ => local_of_place p'
   (* FIXME *)
-  | Pparenthesize id _ _ => id
-  | PparenthesizeV id _ _ _ => id
+  | Pparenthesize id _ _ _ => id
   | ParrayIndex p' _ _ => local_of_place p'
   end.
 
@@ -613,7 +608,6 @@ Proof.
     split.
     destruct ident_eq; try congruence; auto.
     eapply paths_contain_app; eauto.
-  - simpl. eapply is_prefix_refl.
   - simpl. eapply is_prefix_refl.
   - simpl. eapply is_prefix_refl.
 Qed.
@@ -928,7 +922,6 @@ Proof.
     + eapply is_prefix_downcast.
     + eapply is_prefix_trans. eapply IHp2; eauto.
       eapply is_prefix_downcast.
-  - contradiction.
   - contradiction.
    (* destruct IN; subst.
     + eapply is_prefix_paren.
@@ -1261,8 +1254,7 @@ Fixpoint local_type_of_place (p: place) :=
   | Pfield p' ty _ => local_type_of_place p'
   | Pderef p' ty => local_type_of_place p'
   | Pdowncast p' _ _ => local_type_of_place p'
-  | Pparenthesize _ ty _ => ty
-  | PparenthesizeV _ ty _ _ => ty
+  | Pparenthesize _ ty _ _ => ty
   | ParrayIndex p' _ ty => local_type_of_place p'
   end.
   

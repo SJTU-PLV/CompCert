@@ -67,8 +67,7 @@ Definition siblings (p: place) : Paths.t :=
       end
   | Pderef p' _ => Paths.empty
   | Pdowncast _ _ _ => Paths.empty
-  | Pparenthesize _ _ _ => Paths.empty
-  | PparenthesizeV _ _ _ _ => Paths.empty
+  | Pparenthesize _ _ _ _ => Paths.empty
   | ParrayIndex _ _ _ => Paths.empty
   end.
                                                         
@@ -79,8 +78,7 @@ Fixpoint parents (p: place) : Paths.t :=
   | Pfield p' _ _ => Paths.add p' (parents p')
   | Pderef p' _ => Paths.add p' (parents p')
   | Pdowncast p' _ _ => Paths.add p' (parents p')
-  | Pparenthesize _ _ _=> Paths.empty
-  | PparenthesizeV _ _ _ _=> Paths.empty
+  | Pparenthesize _ _ _ _=> Paths.empty
   | ParrayIndex p' _ _ => Paths.add p' (parents p')
   end.
 
@@ -135,8 +133,7 @@ Fixpoint place_owns_loc (p: place) : bool :=
       end
   | Pfield p' _ _ => place_owns_loc p'
   | Pdowncast p' _ _ => place_owns_loc p'
-  | Pparenthesize _ _ _=> true
-  | PparenthesizeV _ _ _ _=> true
+  | Pparenthesize _ _ _ _=> true
   | ParrayIndex p' _ _ => place_owns_loc p'
   end.
 
@@ -181,8 +178,7 @@ Fixpoint collect (p: place) (l: Paths.t) : Paths.t :=
             l
       (** FIXME: we treat enum as a whole location  *)
       | Pdowncast p' _ _ => collect p' l
-      | Pparenthesize _ _ _ => Paths.add p l
-      | PparenthesizeV _ _ _ _ => Paths.add p l
+      | Pparenthesize _ _ _ _ => Paths.add p l
       | ParrayIndex p' _ _ => collect p' l
       end
     else l
