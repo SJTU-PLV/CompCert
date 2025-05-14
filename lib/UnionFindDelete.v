@@ -84,41 +84,42 @@ Module Type UNION_FIND_DELETE.
     \/ sameclass uf x a /\ sameclass uf y b
     \/ sameclass uf x b /\ sameclass uf y a.
 
-  Parameter merge: t -> elt -> elt -> t.
-  Axiom repr_merge:
-    forall uf a b x, repr (merge uf a b) x = repr (union uf a b) x.
-  Axiom sameclass_merge:
-    forall uf a b x y, sameclass (merge uf a b) x y <-> sameclass (union uf a b) x y.
+  (** merge and pathlen are not used in our compiler, so we comment them for simplicity  *)
+  (* Parameter merge: t -> elt -> elt -> t. *)
+  (* Axiom repr_merge: *)
+  (*   forall uf a b x, repr (merge uf a b) x = repr (union uf a b) x. *)
+  (* Axiom sameclass_merge: *)
+  (*   forall uf a b x y, sameclass (merge uf a b) x y <-> sameclass (union uf a b) x y. *)
 
-  Parameter path_ord: t -> elt -> elt -> Prop.
-  Axiom path_ord_wellfounded:
-    forall uf, well_founded (path_ord uf).
-  Axiom path_ord_canonical:
-    forall uf x y, repr uf x = x -> ~path_ord uf y x.
-  Axiom path_ord_merge_1:
-    forall uf a b x y,
-    path_ord uf x y -> path_ord (merge uf a b) x y.
-  Axiom path_ord_merge_2:
-    forall uf a b,
-    repr uf a <> repr uf b -> path_ord (merge uf a b) b (repr uf a).
+  (* Parameter path_ord: t -> elt -> elt -> Prop. *)
+  (* Axiom path_ord_wellfounded: *)
+  (*   forall uf, well_founded (path_ord uf). *)
+  (* Axiom path_ord_canonical: *)
+  (*   forall uf x y, repr uf x = x -> ~path_ord uf y x. *)
+  (* Axiom path_ord_merge_1: *)
+  (*   forall uf a b x y, *)
+  (*   path_ord uf x y -> path_ord (merge uf a b) x y. *)
+  (* Axiom path_ord_merge_2: *)
+  (*   forall uf a b, *)
+  (*   repr uf a <> repr uf b -> path_ord (merge uf a b) b (repr uf a). *)
 
-  Parameter pathlen: t -> elt -> nat.
-  Axiom pathlen_zero:
-    forall uf a, repr uf a = a <-> pathlen uf a = O.
-  Axiom pathlen_merge:
-    forall uf a b x,
-    pathlen (merge uf a b) x =
-      if elt_eq (repr uf a) (repr uf b) then
-        pathlen uf x
-      else if elt_eq (repr uf x) (repr uf a) then
-        pathlen uf x + pathlen uf b + 1
-      else
-        pathlen uf x.
-  Axiom pathlen_gt_merge:
-    forall uf a b x y,
-    repr uf x = repr uf y ->
-    pathlen uf x > pathlen uf y ->
-    pathlen (merge uf a b) x > pathlen (merge uf a b) y.
+  (* Parameter pathlen: t -> elt -> nat. *)
+  (* Axiom pathlen_zero: *)
+  (*   forall uf a, repr uf a = a <-> pathlen uf a = O. *)
+  (* Axiom pathlen_merge: *)
+  (*   forall uf a b x, *)
+  (*   pathlen (merge uf a b) x = *)
+  (*     if elt_eq (repr uf a) (repr uf b) then *)
+  (*       pathlen uf x *)
+  (*     else if elt_eq (repr uf x) (repr uf a) then *)
+  (*       pathlen uf x + pathlen uf b + 1 *)
+  (*     else *)
+  (*       pathlen uf x. *)
+  (* Axiom pathlen_gt_merge: *)
+  (*   forall uf a b x y, *)
+  (*   repr uf x = repr uf y -> *)
+  (*   pathlen uf x > pathlen uf y -> *)
+  (*   pathlen (merge uf a b) x > pathlen (merge uf a b) y. *)
 
   (* Delete operation *)
   Parameter delete: t -> elt -> t.
@@ -166,7 +167,7 @@ Definition order (m: M.t vt) (a a': elt) : Prop :=
 
 Definition consistent (m: M.t vt) : Prop :=
   forall a b_opt a_cl,
-    M.get a m = Some (b_opt, a_cl) ->
+    M.get a m = Some (b_opt, a_cl) ->    
     (* all the children in a_cl points to a *)
     Elts.For_all (order m a) a_cl
     /\ (match b_opt with
@@ -192,7 +193,7 @@ Proof.
     + right. eauto.
   - right; auto.
 Defined.
-
+  
 (* The canonical representative of an element *)
 
 Section REPR.
@@ -249,7 +250,16 @@ Proof.
   rewrite repr_unroll. destruct (M.get x (m uf)) as [([y|] & cl) | ] eqn:X; auto.
   eapply H. red. eauto.
   right. eauto.
-Qed.
+Defined.
+
+Lemma repr_res_none_dec:
+  forall (a: elt), {cl | M.get (repr a) uf.(m) = Some (None, cl)} + {M.get (repr a) uf.(m) = None}.
+Proof.
+  apply (well_founded_induction_type (mwf uf)). intros.
+  rewrite repr_unroll. destruct (M.get x (m uf)) as [([y|] & cl) | ] eqn:X1; auto.
+  eapply X. red. eauto.
+  left. eauto.
+Defined.
 
 Lemma repr_canonical:
   forall (a: elt), repr (repr a) = repr a.
@@ -339,7 +349,7 @@ Hypothesis a_canon: (M.get a uf.(m) = None /\ a_cl = Elts.empty)
                     \/ M.get a uf.(m) = Some (None, a_cl).
 Hypothesis not_same_class: repr uf b <> a.
 
-Let b_new := match M.get b uf.(m) with
+Definition b_new := match M.get b uf.(m) with
             | Some (c, b_cl) =>
                 (c, Elts.add a b_cl)
             | None =>
@@ -364,7 +374,7 @@ Proof.
   intros until y. unfold order, identify_ufm. rewrite !M.gsspec.
   split.
   - destruct (M.elt_eq x b).
-    + subst. destruct (M.get b (m uf)) as [(c & b_cl) |] eqn: G1.
+    + subst. unfold b_new. destruct (M.get b (m uf)) as [(c & b_cl) |] eqn: G1.
       * intros (cl & A). inv A. eauto.
       * intros (cl & A). inv A.
     + destruct (M.elt_eq x a).
@@ -420,21 +430,107 @@ Proof.
   unfold identify_ufm in *.
   rewrite !M.gsspec in G.
   destruct (M.elt_eq x b).
-  - subst. destruct (M.get b (m uf)) as [(c & b_cl) |] eqn: G1; inv G; unfold b_new in *.
+  (* x = b *)
+  - subst. unfold b_new in *.
+    destruct (M.get b (m uf)) as [(c & b_cl) |] eqn: G1; inv G.
     + split.
       * red. intros x IN. red.
         destruct (M.elt_eq x a).
         -- subst. rewrite !M.gsspec.
            rewrite dec_eq_false, dec_eq_true. eauto.
            apply a_not_eq_b.
-        -- apply Elts.add_3 in IN; auto.
+        -- 
+          apply Elts.add_3 in IN; auto.
            eapply (mcon uf)in IN; eauto. destruct IN as (x_cl & Gx).
-           assert (x <> b).
-           { intro. subst. rewrite G1 in Gx. inv Gx.
-             eapply repr_some_diff. eapply G1.
-
-             rewrite repr_unroll. rewrite 
-   
+           (* if x = b *)
+           destruct (M.elt_eq x b).
+           ++ subst. rewrite G1 in Gx. inv Gx.
+              rewrite !M.gsspec. rewrite dec_eq_true. unfold b_new. eauto.
+           (* x <> b *)
+           ++ rewrite !M.gsspec. rewrite !dec_eq_false. eauto. auto. auto.
+      * destruct x_opt as [xb |]; auto.
+        eapply (mcon uf) in G1 as G1'. destruct G1' as (A1 & (xb_par & xb_cl & G2 & G3)).
+        destruct xb_par as [xb_par|].
+        -- assert (ORD: order (m uf) xb_par xb).
+           { red. eauto. }
+           generalize (proj2 (identify_order xb xb_par) (or_introl ORD)). intros (cl' & ORD1).
+           unfold identify_ufm, b_new in ORD1.
+           rewrite G1 in ORD1. erewrite ORD1. do 2 eexists. split; eauto.
+           rewrite !M.gsspec in ORD1.
+           (* Adhoc *)
+           destruct (M.elt_eq xb b).
+           ++ subst. inv ORD1. rewrite G1 in G2. inv G2.
+              eapply Elts.add_2. auto.
+           ++ destruct (M.elt_eq xb a).
+              ** subst. inv ORD1.
+                 destruct a_canon as [(A4 & A2)| A3]; try congruence.
+              ** setoid_rewrite G2 in ORD1. inv ORD1. auto.
+        -- rewrite !M.gsspec.
+           destruct (M.elt_eq xb b).
+           ++ subst. congruence.
+           ++ destruct (M.elt_eq xb a).
+              ** subst. eapply repr_some in G1.
+                 eapply repr_none2 in G2. congruence.
+              ** eauto.
+    + split; auto.
+      red. intros x IN.
+      destruct (elt_eq x a).
+      * subst. red. rewrite !M.gsspec.
+        rewrite dec_eq_false. rewrite dec_eq_true.
+        eauto. apply a_not_eq_b.
+      * eapply Elts.add_3 in IN; auto.
+        exfalso. eapply Elts.empty_1. eauto.
+  (* x <> b *)
+  - destruct (elt_eq x a).
+    (* x = a *)
+    * subst. rewrite dec_eq_true in G. inv G.
+      split. 
+      -- red. intros y IN. red.
+         destruct a_canon as [(A4 & A2)| A3]; try congruence.
+         ++ subst. exfalso.
+            eapply Elts.empty_1. eauto.
+         ++ eapply (mcon uf) in A3 as (B1 & B2).
+            eapply B1 in IN. red in IN.            
+            destruct IN as (cl & G1).
+            rewrite !M.gsspec.
+            destruct (M.elt_eq y b); subst; eauto.
+            ** unfold b_new. rewrite G1. eauto.
+            ** destruct (M.elt_eq y a); subst; eauto.
+               destruct a_canon as [(A4 & A2)| A3]; try congruence.
+      -- rewrite M.gsspec. rewrite dec_eq_true.
+         unfold b_new.
+         destruct (M.get b (m uf)) as [(b_par & b_cl)| ] eqn: Gb.
+         ++ do 2 eexists. split; eauto.
+            eapply Elts.add_1. auto.
+         ++ do 2 eexists. split; eauto.
+            eapply Elts.add_1. auto.
+    (* x <> a *)
+    * rewrite dec_eq_false in G; auto.
+      split.
+      -- red. intros y IN. red.
+         rewrite !M.gsspec.
+         eapply (mcon uf) in G as (B1 & B2).
+         eapply B1 in IN. red in IN.            
+         destruct IN as (cl & G1).
+         destruct (M.elt_eq y b); subst; eauto.
+         ++ unfold b_new. rewrite G1. eauto.
+         ++ destruct (M.elt_eq y a); subst; eauto.
+            destruct a_canon as [(A4 & A2)| A3]; try congruence.
+      -- eapply (mcon uf) in G as (B1 & B2).
+         destruct x_opt as [x_par|]; auto.
+         destruct B2 as (x_par_par & x_par_cl & C1 & C2).
+         rewrite !M.gsspec. unfold b_new.
+         destruct (M.elt_eq x_par b).
+         ++ subst. rewrite C1.
+            do 2 eexists. split; eauto.
+            eapply Elts.add_2. auto.
+         ++ destruct (M.elt_eq x_par a).
+            ** subst. do 2 eexists. split; eauto.
+               destruct a_canon as [(A4 & A2)| A3]; try congruence.
+            ** do 2 eexists. split; eauto.
+Qed.
+         
+         
 Definition identify := mk identify_ufm identify_wf identify_consistent.
   
 Lemma repr_identify_1:
@@ -442,21 +538,72 @@ Lemma repr_identify_1:
 Proof.
   intros x0; pattern x0. apply (well_founded_ind (mwf uf)); intros.
   rewrite (repr_unroll uf) in *.
-  destruct (M.get x (m uf)) as [a'|] eqn:X.
-  rewrite <- H; auto.
-  apply repr_some. simpl. rewrite M.gsspec. rewrite dec_eq_false; auto. congruence.
-  apply repr_none. simpl. rewrite M.gsspec. rewrite dec_eq_false; auto.
+  destruct (M.get x (m uf)) as [(a' & a_cl')|] eqn:X.
+  - destruct a' as [a'|].
+    + rewrite <- H; auto.
+      destruct (M.elt_eq x b).
+      * subst.         
+        eapply repr_some. simpl. unfold identify_ufm. rewrite M.gsspec.
+        unfold b_new. rewrite X.
+        rewrite dec_eq_true. eauto.
+      * eapply repr_some. simpl. unfold identify_ufm. rewrite M.gsspec.
+        rewrite dec_eq_false; auto.
+        destruct (M.elt_eq x a); try congruence.
+        -- subst. destruct a_canon as [(A4 & A2)| A3]; try congruence.
+        -- rewrite M.gsspec. rewrite dec_eq_false. eauto. auto.
+      * red. eauto.
+    + destruct (M.elt_eq x b).
+      * subst. 
+        eapply repr_none2; eauto.      
+        unfold identify, identify_ufm. simpl.
+        unfold b_new. rewrite X. rewrite M.gsspec.
+        rewrite dec_eq_true. eauto.
+      * eapply repr_none2; eauto.
+        unfold identify, identify_ufm. simpl.
+        rewrite !M.gsspec.
+        rewrite !dec_eq_false; eauto.
+  - destruct (M.elt_eq x b).
+    * subst. 
+      eapply repr_none2; eauto.
+      unfold identify, identify_ufm. simpl.
+      unfold b_new. rewrite X. rewrite M.gsspec.
+      rewrite dec_eq_true. eauto.
+    * eapply repr_none; eauto.
+      unfold identify, identify_ufm. simpl.
+      rewrite !M.gsspec.
+      rewrite !dec_eq_false; eauto.
 Qed.
 
 Lemma repr_identify_2:
   forall x, repr uf x = a -> repr identify x = repr uf b.
 Proof.
   intros x0; pattern x0. apply (well_founded_ind (mwf uf)); intros.
-  rewrite (repr_unroll uf) in H0. destruct (M.get x (m uf)) as [a'|] eqn:X.
-  rewrite <- (H a'); auto.
-  apply repr_some. simpl. rewrite M.gsspec. rewrite dec_eq_false; auto. congruence.
-  subst x. rewrite (repr_unroll identify). simpl. rewrite M.gsspec.
-  rewrite dec_eq_true. apply repr_identify_1. auto.
+  rewrite (repr_unroll uf) in H0. destruct (M.get x (m uf)) as [(a' & a_cl')|] eqn:X.
+  - destruct a' as [a'|].
+    + exploit H. red. exists a_cl'. eapply X. auto.
+      intros A. rewrite <- A. 
+      destruct (M.elt_eq x b). 
+      * subst. eapply repr_some.
+        unfold identify, identify_ufm, b_new. simpl.
+        rewrite M.gsspec.
+        rewrite dec_eq_true. rewrite X. eauto.
+      * destruct (M.elt_eq x a).
+        -- subst. eapply repr_some_diff in X. congruence.
+        -- eapply repr_some.
+           unfold identify, identify_ufm, b_new. simpl.
+           rewrite !M.gsspec.
+           rewrite !dec_eq_false; auto. eauto.
+    + subst.
+      rewrite (repr_unroll identify).
+      unfold identify, identify_ufm, b_new at 1. simpl.
+      rewrite !M.gsspec. rewrite dec_eq_false. rewrite dec_eq_true.
+      apply repr_identify_1. auto.
+      apply a_not_eq_b.
+  - subst. rewrite (repr_unroll identify).
+      unfold identify, identify_ufm, b_new at 1. simpl.
+      rewrite !M.gsspec. rewrite dec_eq_false. rewrite dec_eq_true.
+      apply repr_identify_1. auto.
+      apply a_not_eq_b.
 Qed.
 
 End IDENTIFY.
@@ -473,8 +620,14 @@ Definition union (uf: t) (a b: elt) : t :=
   let a' := repr uf a in
   let b' := repr uf b in
   match M.elt_eq a' b' with
-  | left EQ => uf
-  | right NEQ => identify uf a' b' (repr_res_none uf a) (union_not_same_class uf a b NEQ)
+  | left EQ' => uf
+  | right NEQ =>
+      match repr_res_none_dec uf a with
+      | inright G1 => 
+          identify uf a' b' Elts.empty (or_introl (conj G1 (eq_refl Elts.empty))) (union_not_same_class uf a b NEQ)
+      | inleft (exist a'_cl G2) =>
+          identify uf a' b' a'_cl (or_intror G2) (union_not_same_class uf a b NEQ)
+      end          
   end.
 
 Lemma repr_union_1:
@@ -482,7 +635,10 @@ Lemma repr_union_1:
 Proof.
   intros. unfold union. destruct (M.elt_eq (repr uf a) (repr uf b)).
   auto.
-  apply repr_identify_1. auto.
+  destruct (repr_res_none_dec uf a).
+  - destruct s.
+    apply repr_identify_1. auto.
+  - apply repr_identify_1. auto.
 Qed.
 
 Lemma repr_union_2:
@@ -490,14 +646,20 @@ Lemma repr_union_2:
 Proof.
   intros. unfold union. destruct (M.elt_eq (repr uf a) (repr uf b)).
   congruence.
-  rewrite <- (repr_canonical uf b). apply repr_identify_2. auto.
+  destruct (repr_res_none_dec uf a).
+  - destruct s.
+    rewrite <- (repr_canonical uf b). apply repr_identify_2. auto.
+  - rewrite <- (repr_canonical uf b). apply repr_identify_2. auto.
 Qed.
 
 Lemma repr_union_3:
   forall uf a b, repr (union uf a b) b = repr uf b.
 Proof.
   intros. unfold union. destruct (M.elt_eq (repr uf a) (repr uf b)).
-  auto. apply repr_identify_1. auto.
+  auto. destruct (repr_res_none_dec uf a).
+  - destruct s.
+    apply repr_identify_1. auto.
+  - apply repr_identify_1. auto.
 Qed.
 
 Lemma sameclass_union_1:
@@ -533,163 +695,9 @@ Proof.
   repeat rewrite repr_union_1; auto.
 Qed.
 
-(* Merge *)
+(* Delete operation *)
 
-Definition merge (uf: t) (a b: elt) : t :=
-  let a' := repr uf a in
-  let b' := repr uf b in
-  match M.elt_eq a' b' with
-  | left EQ => uf
-  | right NEQ => identify uf a' b (repr_res_none uf a) (not_eq_sym NEQ)
-  end.
 
-Lemma repr_merge:
-  forall uf a b x, repr (merge uf a b) x = repr (union uf a b) x.
-Proof.
-  intros. unfold merge, union. destruct (M.elt_eq (repr uf a) (repr uf b)).
-  auto.
-  destruct (M.elt_eq (repr uf x) (repr uf a)).
-  repeat rewrite repr_identify_2; auto. rewrite repr_canonical; auto.
-  repeat rewrite repr_identify_1; auto.
-Qed.
-
-Lemma sameclass_merge:
-  forall uf a b x y, sameclass (merge uf a b) x y <-> sameclass (union uf a b) x y.
-Proof.
-  unfold sameclass; intros. repeat rewrite repr_merge. tauto.
-Qed.
-
-(* Path order and merge *)
-
-Definition path_ord (uf: t) : elt -> elt -> Prop := order uf.(m).
-
-Lemma path_ord_wellfounded:
-  forall uf, well_founded (path_ord uf).
-Proof.
-  intros. apply mwf.
-Qed.
-
-Lemma path_ord_canonical:
-  forall uf x y, repr uf x = x -> ~path_ord uf y x.
-Proof.
-  intros; red; intros. hnf in H0.
-  assert (M.get x (m uf) = None). rewrite <- H. apply repr_res_none.
-  congruence.
-Qed.
-
-Lemma path_ord_merge_1:
-  forall uf a b x y,
-  path_ord uf x y -> path_ord (merge uf a b) x y.
-Proof.
-  intros. unfold merge.
-  destruct (M.elt_eq (repr uf a) (repr uf b)).
-  auto.
-  red. simpl. red. rewrite M.gsspec. rewrite dec_eq_false. apply H.
-  red; intros. hnf in H. generalize (repr_res_none uf a). congruence.
-Qed.
-
-Lemma path_ord_merge_2:
-  forall uf a b,
-  repr uf a <> repr uf b -> path_ord (merge uf a b) b (repr uf a).
-Proof.
-  intros. unfold merge.
-  destruct (M.elt_eq (repr uf a) (repr uf b)).
-  congruence.
-  red. simpl. red. rewrite M.gsspec. rewrite dec_eq_true; auto.
-Qed.
-
-(* Path length and merge *)
-
-Section PATHLEN.
-
-Variable uf: t.
-
-Definition F_pathlen (a: elt) (rec: forall b, order uf.(m) b a -> nat) : nat :=
-  match getlink uf.(m) a with
-  | inleft (exist a' P) => S (rec a' P)
-  | inright _ => O
-  end.
-
-Definition pathlen (a: elt) : nat := Fix uf.(mwf) (fun _ => nat) F_pathlen a.
-
-Lemma pathlen_unroll:
-  forall a, pathlen a = match M.get a uf.(m) with Some a' => S(pathlen a') | None => O end.
-Proof.
-  intros. unfold pathlen at 1. rewrite Fix_eq.
-  unfold F_pathlen. destruct (getlink uf.(m) a) as [[a' P] | Q].
-  rewrite P; auto.
-  rewrite Q; auto.
-  intros. unfold F_pathlen. destruct (getlink (m uf) x) as [[a' P] | Q]; auto.
-Qed.
-
-Lemma pathlen_none:
-  forall a,
-  M.get a uf.(m) = None ->
-  pathlen a = 0.
-Proof.
-  intros. rewrite pathlen_unroll. rewrite H; auto.
-Qed.
-
-Lemma pathlen_some:
-  forall a a',
-  M.get a uf.(m) = Some a' ->
-  pathlen a = S (pathlen a').
-Proof.
-  intros. rewrite pathlen_unroll. rewrite H; auto.
-Qed.
-
-Lemma pathlen_zero:
-  forall a, repr uf a = a <-> pathlen a = O.
-Proof.
-  intros; split; intros.
-  apply pathlen_none. rewrite <- H. apply repr_res_none.
-  apply repr_none. rewrite pathlen_unroll in H.
-  destruct (M.get a (m uf)); congruence.
-Qed.
-
-End PATHLEN.
-
-(* Path length and merge *)
-
-Lemma pathlen_merge:
-  forall uf a b x,
-  pathlen (merge uf a b) x =
-    if M.elt_eq (repr uf a) (repr uf b) then
-      pathlen uf x
-    else if M.elt_eq (repr uf x) (repr uf a) then
-      pathlen uf x + pathlen uf b + 1
-    else
-      pathlen uf x.
-Proof.
-  intros. unfold merge.
-  destruct (M.elt_eq (repr uf a) (repr uf b)).
-  auto.
-  set (uf' := identify uf (repr uf a) b (repr_res_none uf a) (not_eq_sym n)).
-  pattern x. apply (well_founded_ind (mwf uf')); intros.
-  rewrite (pathlen_unroll uf'). destruct (M.get x0 (m uf')) as [x'|] eqn:G.
-  rewrite H; auto. simpl in G. rewrite M.gsspec in G.
-  destruct (M.elt_eq x0 (repr uf a)). rewrite e. rewrite repr_canonical. rewrite dec_eq_true.
-  inversion G. subst x'. rewrite dec_eq_false; auto.
-  replace (pathlen uf (repr uf a)) with 0. lia.
-  symmetry. apply pathlen_none. apply repr_res_none.
-  rewrite (repr_unroll uf x0), (pathlen_unroll uf x0); rewrite G.
-  destruct (M.elt_eq (repr uf x') (repr uf a)); lia.
-  simpl in G. rewrite M.gsspec in G. destruct (M.elt_eq x0 (repr uf a)); try discriminate.
-  rewrite (repr_none uf x0) by auto. rewrite dec_eq_false; auto.
-  symmetry. apply pathlen_zero; auto. apply repr_none; auto.
-Qed.
-
-Lemma pathlen_gt_merge:
-  forall uf a b x y,
-  repr uf x = repr uf y ->
-  pathlen uf x > pathlen uf y ->
-  pathlen (merge uf a b) x > pathlen (merge uf a b) y.
-Proof.
-  intros. repeat rewrite pathlen_merge.
-  destruct (M.elt_eq (repr uf a) (repr uf b)). auto.
-  rewrite H. destruct (M.elt_eq (repr uf y) (repr uf a)).
-  lia. auto.
-Qed.
 
 (* Path compression *)
 
