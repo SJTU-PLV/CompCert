@@ -82,7 +82,8 @@ let rec name_rust_decl id ty =
   | Traw_pointer(mut, ty) ->
     "*" ^ (name_rust_decl ""  ty) ^ name_optid id
   | Tarray(mut, ty, sz) ->
-    string_of_mut mut ^ " "^ name_rust_decl (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
+    (* string_of_mut mut ^ " "^ *)
+    name_rust_decl (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
   | Tslice(mut, ty) ->
     "&" ^ string_of_mut mut ^ " " ^ (name_rust_decl ""  ty) ^ name_optid id
 

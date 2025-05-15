@@ -101,14 +101,14 @@ Fixpoint to_rusttype (ty: Ctypes.type): Rusttypes.type :=
   (*todo*)
   | Ctypes.Tarray ty' sz _ => Rusttypes.Tarray Mutable (to_rusttype ty') sz
   | Ctypes.Tfunction tyl ty' cc => 
-      Rusttypes.Tfunction nil nil (to_rustlight tyl) (to_rusttype ty') cc
+      Rusttypes.Tfunction nil nil (to_rusttypelist tyl) (to_rusttype ty') cc
   end
     
-with to_rustlight (tyl: Ctypes.typelist) : Rusttypes.typelist :=
+with to_rusttypelist (tyl: Ctypes.typelist) : Rusttypes.typelist :=
        match tyl with
        | Ctypes.Tnil => Rusttypes.Tnil
        | Ctypes.Tcons ty tyl => 
-           Rusttypes.Tcons (to_rusttype ty) (to_rustlight tyl)
+           Rusttypes.Tcons (to_rusttype ty) (to_rusttypelist tyl)
        end.
 
 
@@ -200,7 +200,6 @@ End MEMORY.
           | Ctypes.Tpointer _ _ =>
               match op with
               | Oadd =>
-                  do i <- gensym (to_rusttype ty);
                   do r1 <- binary_to_place e1;
                   do r2 <- binary_to_place e2;
                   let (LI1,LP1) := r1 in
@@ -209,7 +208,7 @@ End MEMORY.
                   let LP := LP1 ++ LP2 in
                   (* drop out the name of array, for example: int a[2]; we not need offset(a)*)
                     match LP with
-                    | h :: t => ret (Rustlight.Pparenthesize i (to_rusttype ty) LI t)
+                    | (i, _) :: t => ret (Rustlight.Pparenthesize i (to_rusttype ty) LI t)
                     | nil => error (msg "array pointer cannot be null")  
                     end                
               | _ => error (msg "pointer only support add op")
@@ -393,7 +392,7 @@ End MEMORY.
           do tf <- transl_function func;
           OK (Internal tf)
       | Ctypes.External extfun typelist ty cconv =>
-          OK (External [] [] extfun (to_rustlight typelist) (to_rusttype ty) cconv)
+          OK (External [] [] extfun (to_rusttypelist typelist) (to_rusttype ty) cconv)
       end.
 
     Definition transl_globvar (id: ident) (ty: Ctypes.type) := OK (to_rusttype ty).
