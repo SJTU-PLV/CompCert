@@ -2,6 +2,7 @@ Require Coq.Program.Wf.
 Require Import Coqlib.
 Require Import FSets Equalities.
 Require Import FSetWeakList DecidableType.
+Require Import Relations.
 
 Open Scope nat_scope.
 Set Implicit Arguments.
@@ -120,7 +121,7 @@ Module Type UNION_FIND_DELETE.
   (*   repr uf x = repr uf y -> *)
   (*   pathlen uf x > pathlen uf y -> *)
   (*   pathlen (merge uf a b) x > pathlen (merge uf a b) y. *)
-
+  
   (* Delete operation *)
   Parameter delete: t -> elt -> t.
   Axiom delete_repr:
@@ -276,6 +277,23 @@ Proof.
   assert (repr a = a). rewrite H0 at 2. apply (repr_some a a' cl); auto.
   destruct (repr_res_none a) as [A | (cl' & B)].
   congruence. congruence.
+Qed.
+
+Lemma repr_some_same:
+  forall a cl, M.get a uf.(m) = Some (Some a, cl) -> a = repr a.
+Proof.
+  intros a cl. generalize (mwf uf a).
+  generalize dependent cl.
+  generalize dependent a.
+  induction 1. intros G.
+  eapply H0. red. eauto. auto.
+Qed.
+
+Lemma repr_some_neq:
+  forall a a' cl, M.get a uf.(m) = Some (Some a', cl) -> a <> a'.
+Proof.
+  intros. red. intro. subst. eapply repr_some_diff.
+  eauto. eapply repr_some_same; eauto.
 Qed.
 
 End REPR.
@@ -695,8 +713,197 @@ Proof.
   repeat rewrite repr_union_1; auto.
 Qed.
 
-(* Delete operation *)
+(** Cut operation used in deletion *)
 
+Definition clos_order m := clos_trans_1n elt (order m).
+
+Section CUT_EDGE.
+
+Variable uf: t.
+Variables a b: elt.
+Variable a_cl : Elts.t.           (* children of a *)
+Hypothesis a_edge: M.get a (m uf) = Some (Some b, a_cl).
+Hypothesis a_not_eq_b: a <> b.
+
+Definition b_cut :=
+  match M.get b uf.(m) with
+  | Some (c, b_cl) =>
+      (c, Elts.remove a b_cl)
+  | None =>
+      (* Impossible *)
+      (None, Elts.empty)
+  end.
+
+Definition cut_ufm := M.set b b_cut (M.set a (None, a_cl) (m uf)).
+
+Lemma cut_ufm_well_founded:
+  well_founded (order cut_ufm).
+Admitted.
+
+Lemma cut_ufm_consistent:
+  consistent cut_ufm.
+Admitted.
+
+Definition cut' : t := mk cut_ufm cut_ufm_well_founded cut_ufm_consistent.
+
+End CUT_EDGE.
+
+Remark not_eq_trans {A: Type} : forall (a b c: A),
+    a <> b -> b = c -> a <> c.
+Proof. intros. subst. auto. Defined.
+
+Section CUT.
+
+Variable uf: t.
+Variables a b: elt.
+
+(* cut the edge from a to b *)
+Definition cut : t :=
+  match M.elt_eq a b with
+  (* a is equal to b *)
+  | left EQ_ab => uf
+  | right NEQ_ab =>
+      (match M.get a (m uf) as g return (M.get a (m uf) = g -> t) with
+       (* a is the root *)
+       | None
+       | Some (None, _) => fun _ => uf
+       | Some (Some b', a_cl) =>
+           fun Hyp =>
+             match M.elt_eq b b' with
+             | left EQ_bb' =>
+                 cut'  uf a b' a_cl Hyp (not_eq_trans a b b' NEQ_ab EQ_bb')
+             (* a dose not point to b *)
+             | right NEQ => uf
+             end
+       end) (eq_refl (M.get a (m uf)))
+  end.
+  
+Lemma cut_a_root:
+  {a_cl | M.get a (m cut) = Some (None, a_cl)}.
+Admitted.
+
+Lemma cut_disjoint: forall x,
+    clos_order (m uf) a x -> repr cut x = a.
+Admitted.
+
+Lemma cut_unchanged: forall x,
+    ~ clos_order (m uf) a x -> repr cut x = repr uf x.
+Admitted.
+
+End CUT.
+
+(** Link the children of the deleted node to a new node *)
+
+(* Lemma order_dec: forall uf x y, *)
+
+(*     ex *)
+(*     {cl | M.get x (m uf) = Some (Some } *)
+
+Section LINK.
+  
+Variable uf : t.
+Variable r b: elt.
+Variable b_cl : Elts.t.
+Hypothesis get_b: M.get b (m uf) = Some (None, b_cl).
+Hypothesis r_not_eq_b: repr uf r <> b.
+Hypothesis r_not_in_cl: ~ Elts.In r b_cl.
+
+
+Lemma b_children_repr_diff: forall c,
+    Elts.In c b_cl -> c <> r.
+Proof.
+  intros. intro. subst. contradiction.
+Qed.
+
+Program Fixpoint link_children_acc (cl: list elt) (acc: t)
+  (* invariant of the recursion *)
+  (Hacc: repr acc r = repr uf r)
+  (Hc: forall c, InA eq c cl -> Elts.In c b_cl)
+  (Hcl: forall c, InA eq c cl -> exists c_cl, M.get c (m acc) = Some (Some b, c_cl))
+  (NoDup_cl: NoDup cl) : t :=
+  match cl with
+  | nil => acc
+  | y :: cl' =>
+      (* construct the proof of (InA y (y::cl')) *)
+      (* let HIn := InA_cons_hd cl' (eq_refl y) in *)
+      (* let HG := proj2_sig (Hcl y _) in *)
+      (* let y_cl := proj1_sig (Hcl y _) in *)
+      (* let y_neq_b := (repr_some_neq _ _ _ _ _) in *)
+      let acc1 := cut acc y b (* _ _ _  *) in
+      (* link y to r *)
+      (* let H_y_in_cl := Hc y _ in *)
+      (* let b_cl_diff := (b_children_repr_diff y H_y_in_cl) in *)
+      (* let acc2 := identify acc1 y r _ (or_intror (cut_a_root _ _ _ _ _ _)) _ in  *)
+      let acc2 :=
+        match repr_res_none_dec uf y with
+        | inright G1 => 
+            identify acc1 y r Elts.empty (or_introl (conj G1 (eq_refl Elts.empty))) (* (union_not_same_class uf a b NEQ) *) _
+        | inleft (exist y_cl G2) =>
+            identify acc1 y r y_cl (or_intror G2) (* (union_not_same_class uf a b NEQ) *) _
+        end in       
+      (* recursion *)
+      link_children_acc cl' acc2 _ _ _ _
+  end.
+Next Obligation.
+  exploit (Hcl y); [econstructor; auto|]; intros (y_cl & HG).
+  rewrite cut_unchanged. rewrite Hacc.
+  edestruct (Hcl y). econstructor. auto.
+  (* repr uf r <> y *)
+  - admit.
+  - (* ~ clos_order (m acc) y r *)
+    admit.    
+Admitted.
+Next Obligation.
+  erewrite repr_identify_1.
+  - erewrite cut_unchanged. auto.
+    (* ~ clos_order (m acc) y r *)
+    admit.
+  - erewrite cut_unchanged.
+    + rewrite Hacc.
+      (* repr uf r <> y *)
+      admit.
+    + (* ~ clos_order (m acc) y r *)
+      admit.
+Admitted.
+Next Obligation.
+  edestruct (Hcl y).
+  (* utilize that c <> y and c <> b with NoDup_cl *)
+Admitted.
+Next Obligation.
+  inv NoDup_cl. auto.
+Defined.
+
+
+Program Definition link_children : t := link_children_acc (Elts.elements b_cl) uf _ _ _ _.
+Next Obligation.
+  eapply (mcon uf) in get_b as (A1 & A2).
+  eapply Elts.elements_2 in H.
+  eapply A1 in H. red in H.
+  destruct (M.get c (m uf)).
+  eapply exists_to_inhabited_sig in H.
+  eapply inhabited_
+  2: { 
+    Set Printing All.
+    existT
+      ex
+  destruct H.
+  exist
+    ex
+    
+(** Delete operation *)
+
+Definition delete (a: elt) (uf: t) : t :=
+  (match M.get a (m uf) as get_a return (M.get a (m uf) = get_a -> t) with
+  | Some (Some b, a_cl) =>
+      fun Hyp =>                   (* Hyp may be used in the cut operation *)
+        let NEQ := repr_some_neq uf a b a_cl Hyp in (* proof of a <> b *)
+        
+        
+  | Some (None, a_cl) =>         (* a is a root with children *)
+      fun Hyp => uf
+  | None =>                      (* a is a root without children, do nothing *)
+      fun _ => uf
+  end) (eq_refl (M.get a (m uf))).
 
 
 (* Path compression *)
