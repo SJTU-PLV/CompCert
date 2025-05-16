@@ -86,11 +86,11 @@ Module Type UNION_FIND_DELETE.
     \/ sameclass uf x b /\ sameclass uf y a.
 
   (** merge and pathlen are not used in our compiler, so we comment them for simplicity  *)
-  (* Parameter merge: t -> elt -> elt -> t. *)
-  (* Axiom repr_merge: *)
-  (*   forall uf a b x, repr (merge uf a b) x = repr (union uf a b) x. *)
-  (* Axiom sameclass_merge: *)
-  (*   forall uf a b x y, sameclass (merge uf a b) x y <-> sameclass (union uf a b) x y. *)
+  Parameter merge: t -> elt -> elt -> t.
+  Axiom repr_merge:
+    forall uf a b x, repr (merge uf a b) x = repr (union uf a b) x.
+  Axiom sameclass_merge:
+    forall uf a b x y, sameclass (merge uf a b) x y <-> sameclass (union uf a b) x y.
 
   (* Parameter path_ord: t -> elt -> elt -> Prop. *)
   (* Axiom path_ord_wellfounded: *)
@@ -713,9 +713,75 @@ Proof.
   repeat rewrite repr_union_1; auto.
 Qed.
 
+
+(* Merge *)
+
+Definition merge (uf: t) (a b: elt) : t :=
+  let a' := repr uf a in
+  let b' := repr uf b in
+  match M.elt_eq a' b' with
+  | left EQ' => uf
+  | right NEQ =>
+      match repr_res_none_dec uf a with
+      | inright G1 => 
+          identify uf a' b Elts.empty (or_introl (conj G1 (eq_refl Elts.empty))) (not_eq_sym NEQ)
+      | inleft (exist a'_cl G2) =>
+          identify uf a' b a'_cl (or_intror G2) (not_eq_sym NEQ)
+      end          
+  end.
+
+Lemma repr_merge:
+  forall uf a b x, repr (merge uf a b) x = repr (union uf a b) x.
+Proof.
+  intros. unfold merge, union. destruct (M.elt_eq (repr uf a) (repr uf b)).
+  auto.
+  destruct (repr_res_none_dec uf a) .
+  - destruct (M.elt_eq (repr uf x) (repr uf a)).
+    + destruct s.
+      repeat rewrite repr_identify_2; auto. rewrite repr_canonical; auto.
+    + destruct s. repeat rewrite repr_identify_1; auto.
+  - destruct (M.elt_eq (repr uf x) (repr uf a)).
+    + repeat rewrite repr_identify_2; auto. rewrite repr_canonical; auto.
+    + repeat rewrite repr_identify_1; auto.
+Qed.
+
+Lemma sameclass_merge:
+  forall uf a b x y, sameclass (merge uf a b) x y <-> sameclass (union uf a b) x y.
+Proof.
+  unfold sameclass; intros. repeat rewrite repr_merge. tauto.
+Qed.
+
 (** Cut operation used in deletion *)
 
-Definition clos_order m := clos_trans_1n elt (order m).
+Definition clos_order m := clos_refl_trans_n1 elt (order m).
+
+(* Decidability of clos_order *)
+
+Lemma clos_order_dec uf r:
+  forall a,
+  {clos_order (m uf) r a} + {~ clos_order (m uf) r a}.
+Proof.
+  apply (well_founded_induction_type (mwf uf)). intros.
+  destruct (M.get x (m uf)) as [(x_par & x_cl)|]eqn: G.
+  - destruct x_par as [x_par |].
+    + edestruct X. red. eauto.
+      * left. red. econstructor. red. eauto. auto.
+      * destruct (M.elt_eq x r).
+        -- subst. left. constructor.
+        -- right. intro. apply n.
+           inv H. congruence. red in H0.
+           destruct H0 as (x_cl' & Gx). rewrite G in Gx. inv Gx.
+           auto.
+    + destruct (M.elt_eq x r).
+      * subst. left. constructor.
+      * right. intro. inv H. congruence.
+        red in H0. destruct H0 as (x_cl' & Gx). congruence.
+  - destruct (M.elt_eq x r).
+    + subst. left. constructor.
+    + right. intro. inv H. congruence.
+      red in H0. destruct H0 as (x_cl' & Gx). congruence.
+Defined.
+
 
 Section CUT_EDGE.
 
@@ -771,15 +837,18 @@ Definition cut : t :=
            fun Hyp =>
              match M.elt_eq b b' with
              | left EQ_bb' =>
-                 cut'  uf a b' a_cl Hyp (not_eq_trans a b b' NEQ_ab EQ_bb')
+                 cut' uf a b' a_cl Hyp (not_eq_trans a b b' NEQ_ab EQ_bb')
              (* a dose not point to b *)
              | right NEQ => uf
              end
        end) (eq_refl (M.get a (m uf)))
   end.
   
-Lemma cut_a_root:
-  {a_cl | M.get a (m cut) = Some (None, a_cl)}.
+Lemma cut_a_root:  
+  match M.get a (m uf) with
+  | None => M.get a (m cut) = None
+  | Some (_, a_cl) => M.get a (m cut) = Some (None, a_cl)
+  end.
 Admitted.
 
 Lemma cut_disjoint: forall x,
@@ -793,11 +862,6 @@ Admitted.
 End CUT.
 
 (** Link the children of the deleted node to a new node *)
-
-(* Lemma order_dec: forall uf x y, *)
-
-(*     ex *)
-(*     {cl | M.get x (m uf) = Some (Some } *)
 
 Section LINK.
   
@@ -815,96 +879,263 @@ Proof.
   intros. intro. subst. contradiction.
 Qed.
 
-Program Fixpoint link_children_acc (cl: list elt) (acc: t)
-  (* invariant of the recursion *)
-  (Hacc: repr acc r = repr uf r)
-  (Hc: forall c, InA eq c cl -> Elts.In c b_cl)
-  (Hcl: forall c, InA eq c cl -> exists c_cl, M.get c (m acc) = Some (Some b, c_cl))
-  (NoDup_cl: NoDup cl) : t :=
+(* For simplicity: we utilize merge instead of identify which requires
+lots of proof effort *)
+Fixpoint link_children_acc (cl: list elt) (acc: t) :=
   match cl with
   | nil => acc
   | y :: cl' =>
-      (* construct the proof of (InA y (y::cl')) *)
-      (* let HIn := InA_cons_hd cl' (eq_refl y) in *)
-      (* let HG := proj2_sig (Hcl y _) in *)
-      (* let y_cl := proj1_sig (Hcl y _) in *)
-      (* let y_neq_b := (repr_some_neq _ _ _ _ _) in *)
-      let acc1 := cut acc y b (* _ _ _  *) in
-      (* link y to r *)
-      (* let H_y_in_cl := Hc y _ in *)
-      (* let b_cl_diff := (b_children_repr_diff y H_y_in_cl) in *)
-      (* let acc2 := identify acc1 y r _ (or_intror (cut_a_root _ _ _ _ _ _)) _ in  *)
-      let acc2 :=
-        match repr_res_none_dec uf y with
-        | inright G1 => 
-            identify acc1 y r Elts.empty (or_introl (conj G1 (eq_refl Elts.empty))) (* (union_not_same_class uf a b NEQ) *) _
-        | inleft (exist y_cl G2) =>
-            identify acc1 y r y_cl (or_intror G2) (* (union_not_same_class uf a b NEQ) *) _
-        end in       
-      (* recursion *)
-      link_children_acc cl' acc2 _ _ _ _
+      let acc1 := cut acc y b in
+      let acc2 := merge acc1 y r in
+      link_children_acc cl' acc2
   end.
-Next Obligation.
-  exploit (Hcl y); [econstructor; auto|]; intros (y_cl & HG).
-  rewrite cut_unchanged. rewrite Hacc.
-  edestruct (Hcl y). econstructor. auto.
-  (* repr uf r <> y *)
-  - admit.
-  - (* ~ clos_order (m acc) y r *)
-    admit.    
+
+(* lots of proofs *)
+(* Program Fixpoint link_children_acc (cl: list elt) (acc: t) *)
+(*   (* invariant of the recursion *) *)
+(*   (* (Hacc: repr acc r = repr uf r) *) *)
+(*   (Hy: forall c, InA eq c cl -> repr acc r <> c) *)
+(*   (Hc: forall c, InA eq c cl -> Elts.In c b_cl) *)
+(*   (Hcl: forall c, InA eq c cl -> exists c_cl, M.get c (m acc) = Some (Some b, c_cl)) *)
+(*   (NoDup_cl: NoDup cl) : t := *)
+(*   match cl with *)
+(*   | nil => acc *)
+(*   | y :: cl' => *)
+(*       (* construct the proof of (InA y (y::cl')) *) *)
+(*       (* let HIn := InA_cons_hd cl' (eq_refl y) in *) *)
+(*       (* let HG := proj2_sig (Hcl y _) in *) *)
+(*       (* let y_cl := proj1_sig (Hcl y _) in *) *)
+(*       (* let y_neq_b := (repr_some_neq _ _ _ _ _) in *) *)
+(*       let acc1 := cut acc y b (* _ _ _  *) in *)
+(*       (* link y to r *) *)
+(*       (* let H_y_in_cl := Hc y _ in *) *)
+(*       (* let b_cl_diff := (b_children_repr_diff y H_y_in_cl) in *) *)
+(*       (* let acc2 := identify acc1 y r _ (or_intror (cut_a_root _ _ _ _ _ _)) _ in  *) *)
+(*       match repr_res_none_dec acc1 y with *)
+(*       | inright G1 =>  *)
+(*           let acc2 := identify acc1 y r Elts.empty (or_introl (conj G1 (eq_refl Elts.empty))) (* (union_not_same_class uf a b NEQ) *) _ in *)
+(*           (* recursion *) *)
+(*           link_children_acc cl' acc2 _ _ _ _  *)
+(*       | inleft (exist y_cl G2) => *)
+(*           let acc2 := identify acc1 y r y_cl (or_intror G2) (* (union_not_same_class uf a b NEQ) *) _ in *)
+(*           link_children_acc cl' acc2 _ _ _ _ *)
+(*       end *)
+(*   end. *)
+(* Obligations. *)
+(* (* inright obligations *) *)
+(* Next Obligation. *)
+(*   (* M.get (repr (cut acc y b) y) (m (cut acc y b)) = M.get y (m (cut acc y b)) *) *)
+(*   rewrite cut_disjoint. auto. constructor. *)
+(* Defined. *)
+(* Next Obligation. *)
+(*   (* inright: repr (cut acc y b) r <> y   *) *)
+(*   rewrite cut_unchanged. eapply Hy. constructor. auto. *)
+(*   union *)
+(*   - admit. *)
+(*   - (* ~ clos_order (m acc) y r *) *)
+(*     admit.     *)
+(* Admitted. *)
+(* Next Obligation. *)
+(*   (* Hacc: repr acc2 r = repr uf r *) *)
+(*   etransitivity. 2: eauto. *)
+(*   repr_identify_1 *)
+(*   repr_identify_2 *)
+  
+(*   (* M.get (repr (cut acc y b) y) (m (cut acc y b)) = M.get y (m (cut acc y b)) *) *)
+(*   rewrite cut_disjoint. auto. constructor. *)
+(* Defined. *)
+(* Next Obligation. *)
+(*   (* inleft: repr (cut acc y b) r <> y *) *)
+(*   generalize G2 as G3. *)
+(*   rewrite cut_disjoint. intros.   *)
+(*   rewrite cut_unchanged. rewrite Hacc. *)
+(*   edestruct (Hcl y). econstructor. auto. *)
+(*   (* repr uf r <> y *) *)
+(*   - admit. *)
+(*   - (* ~ clos_order (m acc) y r *) *)
+(*     admit. *)
+(*   - constructor. *)
+(* Admitted. *)
+(* Next Obligation. *)
+  
+  
+(*   erewrite repr_identify_1. *)
+(*   - erewrite cut_unchanged. auto. *)
+(*     (* ~ clos_order (m acc) y r *) *)
+(*     admit. *)
+(*   - erewrite cut_unchanged. *)
+(*     + rewrite Hacc. *)
+(*       (* repr uf r <> y *) *)
+(*       admit. *)
+(*     + (* ~ clos_order (m acc) y r *) *)
+(*       admit. *)
+(* Admitted. *)
+(* Next Obligation. *)
+(*   edestruct (Hcl y). *)
+(*   (* utilize that c <> y and c <> b with NoDup_cl *) *)
+(* Admitted. *)
+(* Next Obligation. *)
+(*   inv NoDup_cl. auto. *)
+(* Defined. *)
+
+Definition link_children : t := link_children_acc (Elts.elements b_cl) uf.
+
+Lemma repr_link_children_isolate:
+  repr link_children b = b.
+Proof.
+  unfold link_children. 
 Admitted.
-Next Obligation.
-  erewrite repr_identify_1.
-  - erewrite cut_unchanged. auto.
-    (* ~ clos_order (m acc) y r *)
-    admit.
-  - erewrite cut_unchanged.
-    + rewrite Hacc.
-      (* repr uf r <> y *)
-      admit.
-    + (* ~ clos_order (m acc) y r *)
-      admit.
+
+Lemma repr_link_children_unchanged: forall x,    
+    ~ clos_order (m uf) b x ->
+    repr link_children x = repr uf x.
 Admitted.
-Next Obligation.
-  edestruct (Hcl y).
-  (* utilize that c <> y and c <> b with NoDup_cl *)
+
+Lemma repr_link_children_relink: forall x,
+    x <> b ->
+    clos_order (m uf) b x ->
+    repr link_children x = repr uf r.
 Admitted.
-Next Obligation.
-  inv NoDup_cl. auto.
-Defined.
 
 
-Program Definition link_children : t := link_children_acc (Elts.elements b_cl) uf _ _ _ _.
-Next Obligation.
-  eapply (mcon uf) in get_b as (A1 & A2).
-  eapply Elts.elements_2 in H.
-  eapply A1 in H. red in H.
-  destruct (M.get c (m uf)).
-  eapply exists_to_inhabited_sig in H.
-  eapply inhabited_
-  2: { 
-    Set Printing All.
-    existT
-      ex
-  destruct H.
-  exist
-    ex
-    
+End LINK.
+
 (** Delete operation *)
 
-Definition delete (a: elt) (uf: t) : t :=
-  (match M.get a (m uf) as get_a return (M.get a (m uf) = get_a -> t) with
-  | Some (Some b, a_cl) =>
-      fun Hyp =>                   (* Hyp may be used in the cut operation *)
-        let NEQ := repr_some_neq uf a b a_cl Hyp in (* proof of a <> b *)
-        
-        
+Definition delete (uf: t) (a: elt) : t :=
+  match M.get a (m uf) with
+  | Some (Some r, a_cl) =>
+      let uf1 := cut uf a r in (* cut a -> r *)
+      link_children uf1 r a a_cl
   | Some (None, a_cl) =>         (* a is a root with children *)
-      fun Hyp => uf
+      match Elts.choose a_cl with
+      | None => uf
+      | Some r =>
+          let uf1 := cut uf r a in (* cut r -> a *)
+          (* link the remain chidlren of a to the new root. *)
+          link_children uf1 r a (Elts.remove r a_cl)
+      end
   | None =>                      (* a is a root without children, do nothing *)
-      fun _ => uf
-  end) (eq_refl (M.get a (m uf))).
+      uf
+  end.
 
+Lemma delete_repr: forall uf a, repr (delete uf a) a = a.
+Proof.
+  intros. unfold delete.
+  destruct (M.get a (m uf)) as [(r & a_cl) |] eqn: G.
+  - destruct r as [r |].
+    + rewrite repr_link_children_isolate. auto.
+      (* premise of link_children *)
+      1-3: admit.
+    + destruct (Elts.choose a_cl) as [r|] eqn: C.
+      * rewrite repr_link_children_isolate. auto.
+        (* premise of link_children *)
+        1-3: admit.
+      * eapply repr_none2. eauto.
+  - apply repr_none. auto.
+Admitted.
+
+Lemma repr_clos_order: forall uf x y,
+    clos_order (m uf) x y ->
+    repr uf x = repr uf y.
+Admitted.
+
+(** Very difficult and may not be true *)
+Lemma clos_order_antisym: forall m x y,
+    clos_order m x y ->
+    clos_order m y x ->
+    x = y.
+Proof.
+Admitted.
+
+Lemma delete_repr_unchanged1: forall uf b x,
+    repr uf b <> repr uf x ->
+    repr (delete uf b) x = repr uf x.
+Admitted.
+
+Lemma delete_repr_unchanged2: forall uf a b r a_cl,
+    a <> b ->
+    (* a is not a root *)
+    M.get a (m uf) = Some (Some r, a_cl) ->
+    repr (delete uf a) b = repr uf b.
+Proof.
+  intros until a_cl. intros NEQ G. unfold delete.
+  (* destruct (M.get a (m uf)) as [(r & a_cl) |] eqn: G. *)
+  rewrite G.
+  set (uf1 := cut uf a r).
+  destruct (clos_order_dec uf1 a b).
+  (* b ->* a *)
+  * rewrite repr_link_children_relink.
+    unfold uf1.
+    rewrite cut_unchanged. 
+    rewrite <- (repr_clos_order uf a b).
+    symmetry. eapply repr_some. eauto.
+    (* clos_order (m uf1) a b implies clos_order (m uf) a b *)
+    -- admit.
+    (* ~ clos_order (m uf) a r *)
+    -- intro. eapply repr_some_neq. eauto.
+       (** antisym may not be correct ! *)
+       eapply clos_order_antisym. eauto.
+       red. econstructor. red. eauto. constructor.
+    -- generalize (cut_a_root uf a r). rewrite G.
+       auto.
+    -- unfold uf1.
+       rewrite cut_unchanged.
+       eapply repr_some_diff in G. auto.
+       (* ~ clos_order (m uf) a r *)
+       admit.
+    (* r not in a_cl *)
+    -- generalize (mcon uf _ _ _ G). intros (A1 & (b' & b_cl' & A2 & A3)).
+       intro B. eapply A1 in B. red in B. destruct B as (r_cl & G1).
+       (* a -> r and r -> a are impossible *)
+       admit.
+    -- auto.
+    -- auto.
+  (* ~ b ->* a *)
+  * rewrite repr_link_children_unchanged.
+    unfold uf1. rewrite cut_unchanged. auto.
+    (* clos_order (m uf) a b implies clos_order (m uf1) a b *)
+    -- admit.
+    -- generalize (cut_a_root uf a r). rewrite G.
+       auto.
+    -- unfold uf1.
+       rewrite cut_unchanged.
+       eapply repr_some_diff in G. auto.
+       (* ~ clos_order (m uf) a r implied by get a = r?*)
+       admit.
+    -- generalize (mcon uf _ _ _ G). intros (A1 & (b' & b_cl' & A2 & A3)).
+       intro B. eapply A1 in B. red in B. destruct B as (r_cl & G1).
+       (* a -> r and r -> a are impossible *)
+       admit.
+    -- auto.
+Admitted.
+
+  
+Lemma delete_sameclass: forall uf b x y,
+    b <> x ->
+    b <> y ->
+    sameclass uf x y ->
+    sameclass (delete uf b) x y. 
+Proof.
+  intros until y. intros N1 N2 S.
+  destruct (M.elt_eq (repr uf b) (repr uf x)) as [R1| R1];
+  destruct (M.elt_eq (repr uf b) (repr uf y)) as [R2| R2].
+  2,3: red in S; congruence.
+  (* repr x/y = repr b *)
+  - unfold delete.
+    destruct (M.get b (m uf)) as [(r & b_cl) |] eqn: G.
+    + destruct r as [r|].
+      (* a is not a root *)
+      * exploit delete_repr_unchanged2. eapply N1. eauto. intros A1.
+        exploit delete_repr_unchanged2. eapply N2. eauto. intros A2.
+        unfold delete in *. rewrite G in *. red. rewrite A1. rewrite A2.
+        auto.
+      (* a is root with children *)
+      * erewrite repr_none2 in *; eauto.
+        admit.
+    + eapply repr_none in G. red. auto.
+  - red. rewrite !delete_repr_unchanged1; auto.
+Admitted.    
 
 (* Path compression *)
 
