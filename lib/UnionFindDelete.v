@@ -123,11 +123,21 @@ Module Type UNION_FIND_DELETE.
   (*   pathlen (merge uf a b) x > pathlen (merge uf a b) y. *)
   
   (* Delete operation *)
-  Parameter delete: t -> elt -> t.
+  Parameter delete: t -> elt -> (t * option elt).
   Axiom delete_repr:
-    forall uf a, repr (delete uf a) a = a.
-  Axiom delete_unchanged:
-    forall uf a b, a <> b -> repr (delete uf a) b = repr uf b.
+    forall uf a, repr (fst (delete uf a)) a = a.
+  Axiom delete_repr_unchanged1: forall uf b x,
+    repr uf b <> repr uf x ->
+    repr (fst (delete uf b)) x = repr uf x.
+  Axiom delete_repr_unchanged2: forall uf uf1 a b,
+    a <> b ->
+    delete uf a = (uf1, None) ->
+    repr uf1 b = repr uf b.
+  Axiom delete_fresh_repr: forall uf uf1 a b r,
+    a <> b ->
+    repr uf a = repr uf b ->
+    delete uf a = (uf1, Some r) ->
+    repr uf1 b = r.
     
 End UNION_FIND_DELETE.
 
@@ -361,6 +371,23 @@ Lemma sameclass_empty:
 Proof.
   intros. red in H. repeat rewrite repr_empty in H. auto.
 Qed.
+
+(* Decidability of order *)
+
+Lemma order_dec uf a b:
+  {order (m uf) b a} + {~ order (m uf) b a}.
+Proof.
+  destruct (M.get a (m uf)) eqn: Ga.
+  - destruct v. destruct o.
+    + destruct (M.elt_eq e b).
+      * subst. left. red. eauto.
+      * right. intro. eapply n.
+        destruct H. rewrite Ga in H. inv H. auto.
+    + right. intro. 
+      destruct H. congruence.
+  - right. intro. 
+    destruct H. congruence.
+Defined.
 
 (* Reflexive and transitive closure of order relation *)
 
@@ -893,14 +920,124 @@ Definition b_cut :=
 
 Definition cut_ufm := M.set b b_cut (M.set a (None, a_cl) (m uf)).
 
+Lemma cut_ufm_order: forall x y,
+    order (m uf) y x <->
+    order cut_ufm y x \/ (order (m uf) b a /\ x = a /\ y = b).
+Proof.
+  intros x y. split.
+  - intros A. red in A. destruct A as (x_cl & A).
+    unfold cut_ufm, b_cut. simpl.
+    exploit (mcon uf). eapply a_edge. intros (A1 & (c & b_cl & A2 & A3)).
+    rewrite A2.
+    destruct (M.elt_eq x a).
+    ** subst. right.
+       rewrite A in a_edge. inv a_edge.
+       repeat apply conj; auto.
+       red. eauto.
+    ** left. red.
+       rewrite !M.gsspec.
+       destruct M.elt_eq; subst.
+       --- rewrite A in A2. inv A2. eauto.
+       --- rewrite dec_eq_false; eauto.
+  - intros [A|(A1 & A2 & A3)].
+    + red in A. destruct A as (x_cl & A).
+      unfold cut_ufm, b_cut in A. simpl in A.
+      exploit (mcon uf). eapply a_edge. intros (A1 & (c & b_cl & A2 & A3)).
+      rewrite A2 in A.
+      destruct (M.elt_eq x a).
+      --- subst. rewrite !M.gsspec in A.
+          destruct M.elt_eq; subst.
+          +++ congruence.
+          +++ rewrite dec_eq_true in A. inv A.
+      --- rewrite !M.gsspec in A.
+          destruct M.elt_eq; subst.
+          +++ inv A. red. eauto.
+          +++ rewrite dec_eq_false in A; eauto.
+              red. eauto.
+    + subst. auto.
+Qed.
+
+
+Remark cut_ufm_Acc:
+  forall x,
+  Acc (order uf.(m)) x -> Acc (order cut_ufm) x.
+Proof.
+  induction 1. constructor; intros.
+  eapply H0. eapply cut_ufm_order. eauto.
+Qed.
+
 Lemma cut_ufm_well_founded:
   well_founded (order cut_ufm).
-Admitted.
+Proof.
+  red; intros. apply cut_ufm_Acc. apply uf.(mwf).
+Qed.
 
 Lemma cut_ufm_consistent:
   consistent cut_ufm.
-Admitted.
-
+Proof.
+  red. intros x y x_cl Gx.
+  exploit (mcon uf). eapply a_edge.
+  intros (A1 & (b_par & b_cl & A2 & A3)).
+  split.
+  - red. intros z IN. red.
+    unfold cut_ufm, b_cut in *. rewrite A2 in *.
+    rewrite !M.gsspec in *.
+    destruct (M.elt_eq x b).
+    + subst. inv Gx.
+      destruct M.elt_eq.
+      * subst. exfalso.
+        eapply Elts.remove_3 in IN.
+        exploit (mcon uf). eapply A2. intros (B1 & B2).
+        eapply B1 in IN. destruct IN as (b_cl' & Gb).
+        eapply repr_some_neq; eauto.
+      * destruct M.elt_eq.
+        -- subst. exfalso. eapply Elts.remove_1; eauto.
+        -- eapply (mcon uf); eauto.
+           eapply Elts.remove_3. eauto.
+    + destruct (M.elt_eq x a).
+      * inv Gx. destruct M.elt_eq.
+        -- subst. eapply A1 in IN as (b_cl' & Gb).
+           rewrite A2 in Gb. inv Gb. eauto.
+        -- destruct M.elt_eq.
+           ++ subst. eapply A1 in IN as (a_cl' & Ga).
+              exfalso. eapply repr_some_neq; eauto.
+           ++ eapply (mcon uf); eauto.
+      * destruct M.elt_eq.
+        -- subst. exploit (mcon uf). eapply Gx. intros (B1 & B2).
+           eapply B1 in IN. destruct IN as (b_cl' & Gb).
+           rewrite A2 in Gb. inv Gb. eauto.
+        -- destruct M.elt_eq.
+           ++ subst. eapply (mcon uf) in IN. 2: eauto.
+              destruct IN as (a_cl' & Ga). rewrite a_edge in Ga.
+              inv Ga. congruence.
+           ++ eapply (mcon uf); eauto.
+  - destruct y as [y|]; auto.
+    unfold cut_ufm, b_cut in *. rewrite A2 in *.
+    rewrite !M.gsspec in *.
+    destruct (M.elt_eq x b).
+    + inv Gx. destruct M.elt_eq.
+      * subst. exfalso. eapply repr_some_neq; eauto.
+      * destruct M.elt_eq.
+        -- subst. exfalso. eapply n.
+           eapply clos_order_antisym.
+           econstructor. red. eauto. constructor.
+           econstructor. red. eauto. constructor.
+        -- eapply (mcon uf) in A2 as (B1 & B2). eauto.
+    + destruct (M.elt_eq x a).
+      * inv Gx.
+      * destruct M.elt_eq.
+        -- subst.
+           eapply (mcon uf) in Gx as (B1 & (b' & b_cl' & B2 & B3)).
+           rewrite A2 in B2. inv B2. do 2 eexists. split; eauto.
+           eapply Elts.remove_2; eauto.
+        -- destruct M.elt_eq.
+           ++ eapply (mcon uf) in Gx as (B1 & (b' & b_cl' & B2 & B3)).
+              subst. do 2 eexists. split; eauto.
+              rewrite a_edge in B2. inv B2. auto.
+           ++ eapply (mcon uf) in Gx as (B1 & (b' & b_cl' & B2 & B3)).
+              eauto.
+Qed.
+              
 Definition cut' : t := mk cut_ufm cut_ufm_well_founded cut_ufm_consistent.
 
 End CUT_EDGE.
@@ -954,24 +1091,55 @@ Qed.
 
 Lemma cut_b_result: forall c b_cl, 
   M.get b (m uf) = Some (c, b_cl) ->
-  M.get b (m cut) = Some (c, Elts.remove a b_cl).
+  exists b_cl', M.get b (m cut) = Some (c, b_cl') /\ Elts.eq b_cl' (Elts.remove a b_cl).
 Proof.
   intros c b_cl Gb.
   unfold cut.
   destruct (M.elt_eq a b).
-  - subst. rewrite Gb.
-    repeat f_equal.
-    (* if need proof_irr? *)
-    destruct b_cl as (b_cl & P).
-    unfold Elts.remove, Elts.MSet.remove. simpl.
-    Set Printing All.
-    replace (@Elts.MSet.Raw.remove_ok b_cl b P) with P.
-    replace (Elts.MSet.Raw.remove b b_cl) with b_cl.
-    apply f_equal.
-    ProofIrrelevance.proof_irrelevance
--   (* eapply Elts.eq *)
-
-    
+  - subst. exists b_cl.
+    split; auto.
+    exploit (mcon uf). eapply Gb. intros (A1 & A2).    
+    repeat red. intros. split.
+    + intros. eapply Elts.remove_2; auto.
+      eapply A1 in H. destruct H as (a_cl & Ga).
+      eapply not_eq_sym.
+      eapply repr_some_neq. eauto.
+    + intros. eapply Elts.remove_3. eauto.
+  - destruct get_elt_dec.
+    + destruct s as (v & Ga).
+      destruct v as (a_par & a_cl).
+      destruct a_par as [a_par|].
+      * destruct M.elt_eq.
+        -- subst. unfold cut', cut_ufm, b_cut. simpl.
+           rewrite M.gsspec. rewrite dec_eq_true.
+           rewrite Gb. exists (Elts.remove a b_cl). split; auto.
+           reflexivity.
+        -- exists b_cl. split; auto.
+           exploit (mcon uf). eapply Gb. intros (A1 & A2).
+           repeat red. intros. split.
+           ++ intros. eapply Elts.remove_2; auto.
+              intro. subst. 
+              eapply A1 in H. destruct H as (a0_cl & Ga0).
+              rewrite Ga in Ga0. inv Ga0. congruence.
+           ++ intros. eapply Elts.remove_3. eauto.
+      * exists b_cl. split; auto.
+        exploit (mcon uf). eapply Gb. intros (A1 & A2).
+        repeat red. intros. split.
+        -- intros. eapply Elts.remove_2; auto.
+           intro. subst.
+           eapply A1 in H. destruct H as (a0_cl & Ga0).
+           rewrite Ga in Ga0. inv Ga0.
+        -- intros. eapply Elts.remove_3. eauto.
+    + exists b_cl. split; auto.
+        exploit (mcon uf). eapply Gb. intros (A1 & A2).
+        repeat red. intros. split.
+        -- intros. eapply Elts.remove_2; auto.
+           intro. subst.
+           eapply A1 in H. destruct H as (a0_cl & Ga0).
+           rewrite e in Ga0. inv Ga0.
+        -- intros. eapply Elts.remove_3. eauto.
+Qed.           
+          
 Lemma cut_order: forall x y,
     order (m uf) y x <->
     order (m cut) y x \/ (order (m uf) b a /\ x = a /\ y = b).
@@ -984,19 +1152,9 @@ Proof.
       * destruct s as ((ob & a_cl) & Ga).
         destruct ob as [b'| ].
         -- destruct M.elt_eq.
-           ++ subst. unfold cut', cut_ufm, b_cut. simpl.
-              exploit (mcon uf). eauto. intros (A1 & (c & b_cl & A2 & A3)).
-              rewrite A2.
-              destruct (M.elt_eq x a).
-              ** subst. right.
-                 rewrite A in Ga. inv Ga.
-                 repeat apply conj; auto.
-                 red. eauto.
-              ** left. red.
-                 rewrite !M.gsspec.
-                 destruct M.elt_eq; subst.
-                 --- rewrite A in A2. inv A2. eauto.
-                 --- rewrite dec_eq_false; eauto.
+           ++ subst.
+              eapply cut_ufm_order; eauto.
+              red. eauto.
            ++ left. red. eauto.
         -- left. red. eauto.
       * left. red. eauto.
@@ -1008,18 +1166,8 @@ Proof.
         -- destruct s as ((ob & a_cl) & Ga).
            destruct ob as [b'| ].
            ++ destruct M.elt_eq.
-              ** subst. unfold cut', cut_ufm, b_cut in A. simpl in A.
-              exploit (mcon uf). eauto. intros (A1 & (c & b_cl & A2 & A3)).
-              rewrite A2 in A.
-              destruct (M.elt_eq x a).
-              --- subst. rewrite !M.gsspec in A.
-                  destruct M.elt_eq; subst.
-                  +++ congruence.
-                  +++ rewrite dec_eq_true in A. inv A.
-              --- rewrite !M.gsspec in A.
-                  destruct M.elt_eq; subst.
-                  +++ inv A. eauto.
-                  +++ rewrite dec_eq_false in A; eauto.
+              ** subst.
+                 eapply cut_ufm_order; eauto. left. red. eauto.
               ** eauto.
            ++ eauto.
         -- eauto.
@@ -1068,12 +1216,101 @@ Proof.
 Qed.
   
 Lemma cut_disjoint: forall x,
+    order (m uf) b a ->
     clos_order (m uf) a x -> repr cut x = a.
-Admitted.
+Proof.
+  intros x (a_cl & Ga).
+  assert (NEQab: a <> b).
+  { eapply repr_some_neq. eauto. }
+  induction 1.
+  - unfold cut.
+    destruct M.elt_eq; try congruence.
+    destruct get_elt_dec.
+    + destruct s as ((c & a_cl') & Ga'). destruct c as [c|].
+      * destruct M.elt_eq.
+        -- subst. unfold cut', cut_ufm, b_cut. simpl.
+           rewrite repr_unroll. simpl. rewrite !M.gsspec.
+           rewrite dec_eq_false, dec_eq_true; auto.
+        -- rewrite Ga in Ga'. inv Ga'. congruence.
+      * congruence.
+    + eapply repr_none. auto.
+  - destruct H as (z_cl & Gz).
+    assert (ORDyz: order (m uf) y z).
+    { red. eauto. }
+    eapply cut_order in ORDyz as [A|(A1 & A2 & A3)].
+    + destruct A as (y_cl & Gy).
+      erewrite repr_some. 2: eauto. auto.
+    + subst.
+      exfalso. eapply NEQab. eapply clos_order_antisym. eauto.
+      econstructor. eauto. constructor.
+Qed.
+
+Lemma cut_get_not_a: forall x y x_cl,
+    x <> a ->
+    M.get x (m uf) = Some (y, x_cl) ->
+    exists x_cl', M.get x (m cut) = Some (y, x_cl').
+Proof.
+  intros x y x_cl NEQ Gx.
+  unfold cut. destruct M.elt_eq.
+  - subst. eauto.
+  - destruct get_elt_dec.
+    + destruct s as ((c & a_cl') & Ga'). destruct c as [c|].
+      * exploit (mcon uf). eauto.
+        intros (A1 & (c_par & c_cl & A2 & A3)).
+        destruct M.elt_eq.
+        -- subst. unfold cut', cut_ufm, b_cut. simpl.
+           rewrite A2. rewrite !M.gsspec.
+           destruct M.elt_eq.
+           ++ subst. rewrite Gx in A2. inv A2. eauto.
+           ++ rewrite dec_eq_false; eauto.
+        -- eauto.
+      * eauto.
+    + eauto.
+Qed.
+
+Lemma cut_get_none: forall x,
+    M.get x (m uf) = None ->
+    M.get x (m cut) = None.
+Proof.
+  intros x Gx.
+  unfold cut. destruct M.elt_eq.
+  - subst. eauto.
+  - destruct get_elt_dec.
+    + destruct s as ((c & a_cl') & Ga'). destruct c as [c|].
+      * exploit (mcon uf). eauto.
+        intros (A1 & (c_par & c_cl & A2 & A3)).
+        destruct M.elt_eq.
+        -- subst. unfold cut', cut_ufm, b_cut. simpl.
+           rewrite A2. rewrite !M.gsspec.
+           destruct M.elt_eq.
+           ++ subst. rewrite Gx in A2. inv A2. 
+           ++ rewrite dec_eq_false; eauto. intro. subst. congruence.
+        -- eauto.
+      * eauto.
+    + eauto.
+Qed.
+
 
 Lemma cut_unchanged: forall x,
     ~ clos_order (m uf) a x -> repr cut x = repr uf x.
-Admitted.
+Proof.
+  intros x0; pattern x0. apply (well_founded_ind (mwf uf)); intros.
+  rewrite (repr_unroll uf) in *.
+  destruct (M.get x (m uf)) eqn: Gx.
+  - destruct v as (c & x_cl).
+    exploit cut_get_not_a. 2: eauto.
+    intro. subst. eapply H0. constructor.
+    intros (x_cl' & Gx').
+    destruct c as [c|].
+    + erewrite <- H.
+      * eapply repr_some. eauto.
+      * red. eauto.
+      * intro. eapply H0.
+        econstructor. red. eauto. auto.
+    + eapply repr_none2. eauto.
+  - eapply repr_none. eapply cut_get_none. auto.
+Qed.        
+
 
 (* cut operation does not change the path from the children except for
 a of b *)
@@ -1081,8 +1318,25 @@ Lemma cut_local: forall x,
     clos_order (m uf) b x ->
     ~ clos_order (m uf) a x ->
     clos_order (m cut) b x.
-Admitted.
-  
+Proof.
+  intros x R1 R2. eapply cut_clos_order1 in R1.
+  destruct R1 as [R1 | (A1 & A2 & A3)]; auto.
+  exfalso. eapply R2.
+  eapply cut_clos_order2. auto.
+Qed.  
+
+Lemma cut_same:
+  ~ order (m uf) b a ->
+  cut = uf.
+Proof.
+  intros N.
+  unfold cut. destruct M.elt_eq; auto.
+  destruct get_elt_dec; auto.
+  destruct s as ((c & a_cl') & Ga'). destruct c as [c|]; auto.
+  destruct M.elt_eq; auto.
+  subst. exfalso. apply N. red. eauto.
+Qed.
+
 End CUT.
 
 (** Link the children of the deleted node to a new node *)
@@ -1104,103 +1358,17 @@ Fixpoint link_children_acc (cl: list elt) (acc: t) :=
       link_children_acc cl' acc2
   end.
 
-(* lots of proofs *)
-(* Program Fixpoint link_children_acc (cl: list elt) (acc: t) *)
-(*   (* invariant of the recursion *) *)
-(*   (* (Hacc: repr acc r = repr uf r) *) *)
-(*   (Hy: forall c, InA eq c cl -> repr acc r <> c) *)
-(*   (Hc: forall c, InA eq c cl -> Elts.In c b_cl) *)
-(*   (Hcl: forall c, InA eq c cl -> exists c_cl, M.get c (m acc) = Some (Some b, c_cl)) *)
-(*   (NoDup_cl: NoDup cl) : t := *)
-(*   match cl with *)
-(*   | nil => acc *)
-(*   | y :: cl' => *)
-(*       (* construct the proof of (InA y (y::cl')) *) *)
-(*       (* let HIn := InA_cons_hd cl' (eq_refl y) in *) *)
-(*       (* let HG := proj2_sig (Hcl y _) in *) *)
-(*       (* let y_cl := proj1_sig (Hcl y _) in *) *)
-(*       (* let y_neq_b := (repr_some_neq _ _ _ _ _) in *) *)
-(*       let acc1 := cut acc y b (* _ _ _  *) in *)
-(*       (* link y to r *) *)
-(*       (* let H_y_in_cl := Hc y _ in *) *)
-(*       (* let b_cl_diff := (b_children_repr_diff y H_y_in_cl) in *) *)
-(*       (* let acc2 := identify acc1 y r _ (or_intror (cut_a_root _ _ _ _ _ _)) _ in  *) *)
-(*       match repr_res_none_dec acc1 y with *)
-(*       | inright G1 =>  *)
-(*           let acc2 := identify acc1 y r Elts.empty (or_introl (conj G1 (eq_refl Elts.empty))) (* (union_not_same_class uf a b NEQ) *) _ in *)
-(*           (* recursion *) *)
-(*           link_children_acc cl' acc2 _ _ _ _  *)
-(*       | inleft (exist y_cl G2) => *)
-(*           let acc2 := identify acc1 y r y_cl (or_intror G2) (* (union_not_same_class uf a b NEQ) *) _ in *)
-(*           link_children_acc cl' acc2 _ _ _ _ *)
-(*       end *)
-(*   end. *)
-(* Obligations. *)
-(* (* inright obligations *) *)
-(* Next Obligation. *)
-(*   (* M.get (repr (cut acc y b) y) (m (cut acc y b)) = M.get y (m (cut acc y b)) *) *)
-(*   rewrite cut_disjoint. auto. constructor. *)
-(* Defined. *)
-(* Next Obligation. *)
-(*   (* inright: repr (cut acc y b) r <> y   *) *)
-(*   rewrite cut_unchanged. eapply Hy. constructor. auto. *)
-(*   union *)
-(*   - admit. *)
-(*   - (* ~ clos_order (m acc) y r *) *)
-(*     admit.     *)
-(* Admitted. *)
-(* Next Obligation. *)
-(*   (* Hacc: repr acc2 r = repr uf r *) *)
-(*   etransitivity. 2: eauto. *)
-(*   repr_identify_1 *)
-(*   repr_identify_2 *)
-  
-(*   (* M.get (repr (cut acc y b) y) (m (cut acc y b)) = M.get y (m (cut acc y b)) *) *)
-(*   rewrite cut_disjoint. auto. constructor. *)
-(* Defined. *)
-(* Next Obligation. *)
-(*   (* inleft: repr (cut acc y b) r <> y *) *)
-(*   generalize G2 as G3. *)
-(*   rewrite cut_disjoint. intros.   *)
-(*   rewrite cut_unchanged. rewrite Hacc. *)
-(*   edestruct (Hcl y). econstructor. auto. *)
-(*   (* repr uf r <> y *) *)
-(*   - admit. *)
-(*   - (* ~ clos_order (m acc) y r *) *)
-(*     admit. *)
-(*   - constructor. *)
-(* Admitted. *)
-(* Next Obligation. *)
-  
-  
-(*   erewrite repr_identify_1. *)
-(*   - erewrite cut_unchanged. auto. *)
-(*     (* ~ clos_order (m acc) y r *) *)
-(*     admit. *)
-(*   - erewrite cut_unchanged. *)
-(*     + rewrite Hacc. *)
-(*       (* repr uf r <> y *) *)
-(*       admit. *)
-(*     + (* ~ clos_order (m acc) y r *) *)
-(*       admit. *)
-(* Admitted. *)
-(* Next Obligation. *)
-(*   edestruct (Hcl y). *)
-(*   (* utilize that c <> y and c <> b with NoDup_cl *) *)
-(* Admitted. *)
-(* Next Obligation. *)
-(*   inv NoDup_cl. auto. *)
-(* Defined. *)
-
 Definition link_children : t := link_children_acc (Elts.elements b_cl) uf.
 
 End LINK.
 
 Lemma get_merge_cut: forall uf a b c r b_cl,
+    order (m uf) b a ->
     M.get b (m uf) = Some (c, b_cl) ->
     a <> b ->
     b <> r ->
-    M.get b (m (merge (cut uf a b) a r)) = Some (c, Elts.remove a b_cl).
+    exists b_cl', M.get b (m (merge (cut uf a b) a r)) = Some (c, b_cl')
+             /\ Elts.eq b_cl' (Elts.remove a b_cl).
 Proof. 
   intros.
   unfold merge. destruct M.elt_eq.
@@ -1208,12 +1376,12 @@ Proof.
   eapply cut_b_result; eauto.
   destruct repr_res_none_dec. destruct s.
   + unfold identify, identify_ufm. simpl.
-    erewrite cut_disjoint. rewrite !M.gsspec. rewrite !dec_eq_false; auto.
+    erewrite cut_disjoint; auto. rewrite !M.gsspec. rewrite !dec_eq_false; auto.
     (* properties of cut *)
     eapply cut_b_result; eauto.
     constructor.
   + unfold identify, identify_ufm. simpl.
-    erewrite cut_disjoint. rewrite !M.gsspec. rewrite !dec_eq_false; auto.
+    erewrite cut_disjoint; auto. rewrite !M.gsspec. rewrite !dec_eq_false; auto.
     (* properties of cut *)
     eapply cut_b_result; eauto.
     constructor.
@@ -1251,14 +1419,20 @@ Lemma merge_cut_inductive_hyp: forall uf a b r b_cl cl
     (NODUP : NoDupA eq (a :: cl))
     (NEQab : a <> b)
     (NEQbr : b <> r),
-    M.get b (m (merge (cut uf a b) a r)) = Some (None, Elts.remove a b_cl)
+  exists b_cl',
+    M.get b (m (merge (cut uf a b) a r)) = Some (None, b_cl')
+    /\ Elts.eq b_cl' (Elts.remove a b_cl)
     /\ repr (merge (cut uf a b) a r) r <> b
-    /\ (forall y : Elts.elt, InA eq y cl <-> Elts.In y (Elts.remove a b_cl))
-    /\ ~ Elts.In r (Elts.remove a b_cl)
+    /\ (forall y : Elts.elt, InA eq y cl <-> Elts.In y b_cl')
+    /\ ~ Elts.In r b_cl'
     /\ NoDupA eq cl.
 Proof.
-  intros. repeat apply conj.
-  - eapply get_merge_cut; eauto.
+  intros.
+  exploit get_merge_cut; eauto.
+  eapply (mcon uf). eauto. eapply EQV. constructor. auto.
+  intros (b_cl' & Gb' & EQ).
+  exists b_cl'.
+  repeat apply conj; auto.
   - rewrite repr_merge. rewrite repr_union_3.
     rewrite cut_unchanged. auto.
     (* ~ r ->* a *)
@@ -1270,14 +1444,15 @@ Proof.
     intros (a_cl & B).
     erewrite repr_some. eapply repr_none2. eauto. eauto.
   - intros. inv NODUP. split. 
-    + intros IN. eapply Elts.remove_2. intro. subst. contradiction.
+    + intros IN. eapply EQ. eapply Elts.remove_2. intro. subst. contradiction.
       eapply EQV. eapply InA_cons. eauto.
     + intros IN.
       destruct (elt_eq y a). subst. exfalso.
-      eapply Elts.remove_1; eauto.
-      eapply Elts.remove_3 in IN. eapply EQV in IN. inv IN; try congruence.
+      eapply Elts.remove_1; eauto. eapply EQ. auto.
+      eapply EQ in IN. eapply Elts.remove_3 in IN. eapply EQV in IN.
+      inv IN; congruence.
   - intro. eapply RNIN.
-    eapply Elts.remove_3. eauto.
+    eapply EQ in H. eapply Elts.remove_3. eauto.
   - inv NODUP. auto.
 Qed.
     
@@ -1298,8 +1473,10 @@ Proof.
     intros (a_cl & B).
     intro. subst. eapply repr_some_neq. eauto. auto. }
     assert (NEQbr: b <> r).
-  { intro. subst. eapply NEQ. eapply repr_none2. eauto. }  
-  eapply IHcl with (b_cl := Elts.remove a b_cl); try (eapply merge_cut_inductive_hyp; eauto).
+  { intro. subst. eapply NEQ. eapply repr_none2. eauto. }
+  exploit merge_cut_inductive_hyp. 1-7: eauto.
+  intros (b_cl' & A1 & A2 & A3 & A4 & A5 & A6).
+  eapply IHcl with (b_cl := b_cl'); eauto.
 Qed.
 
 Lemma repr_link_children_unchanged_aux: forall cl uf r b b_cl x
@@ -1320,8 +1497,11 @@ Proof.
     intro. subst. eapply repr_some_neq. eauto. auto. }
     assert (NEQbr: b <> r).
   { intro. subst. eapply NEQ. eapply repr_none2. eauto. }
-  erewrite IHcl with (b_cl := Elts.remove a b_cl);
-    try (eapply merge_cut_inductive_hyp; eauto).
+  assert (ORDba: order (m uf) b a).
+  { eapply (mcon uf). eauto. eapply EQV. constructor. auto. }
+  exploit merge_cut_inductive_hyp. 1-7: eauto.
+  intros (b_cl' & A1 & A2 & A3 & A4 & A5 & A6).
+  erewrite IHcl with (b_cl := b_cl'). 2-6: eauto.
   - assert (UNR1: ~ clos_order (m uf) a x).
     { intro. eapply UNREACH.
       eapply clos_rt_rtn1. eapply rt_trans.
@@ -1331,9 +1511,9 @@ Proof.
     rewrite repr_merge. erewrite repr_union_1.
     + rewrite cut_unchanged; auto.       
     + rewrite cut_unchanged; auto.
-      rewrite cut_disjoint. 2: constructor.
-      eapply (mcon uf) in Gb as (A1 & A2).
-      exploit A1. eapply EQV. constructor. eauto.
+      rewrite cut_disjoint; auto. 2: constructor.
+      eapply (mcon uf) in Gb as (B1 & B2).
+      exploit B1. eapply EQV. constructor. eauto.
       intros (a_cl & B). 
       intro. destruct (repr_res_none uf x) as [|(cl' & C)]; try congruence.
   (* ~ clos_order (m (merge (cut uf a b) a r)) b x *)
@@ -1370,10 +1550,11 @@ Proof.
     assert (NEQbr: b <> r).
   { intro. subst. eapply NEQ. eapply repr_none2. eauto. }
   destruct (clos_order_dec (merge (cut uf a b) a r) b x).
-  - erewrite IHcl with (b_cl := Elts.remove a b_cl);
-    try (eapply merge_cut_inductive_hyp; eauto); auto.
-    + exploit (mcon uf). eauto. intros (A1 & A2).
-      exploit A1. eapply EQV. constructor. eauto.
+  - exploit merge_cut_inductive_hyp. 1-7: eauto.
+    intros (b_cl' & A1 & A2 & A3 & A4 & A5 & A6).
+    erewrite IHcl with (b_cl := b_cl'). 2-8: eauto.        
+    + exploit (mcon uf). eauto. intros (B1 & B2).
+      exploit B1. eapply EQV. constructor. eauto.
       intros (a_cl & Ga).
       assert (UNR1: ~ clos_order (m uf) a r).
       { intro. eapply NEQ.
@@ -1383,10 +1564,11 @@ Proof.
       rewrite repr_merge. erewrite repr_union_3.
       rewrite cut_unchanged. auto. auto.
   (* if ~ x ->* b in (merge (cut uf a b) a r) then (x -> * r) *)
-  - erewrite repr_link_children_unchanged_aux;
-      try (eapply merge_cut_inductive_hyp; eauto); auto.
-    exploit (mcon uf). eauto. intros (A1 & A2).
-    exploit A1. eapply EQV. constructor. eauto.
+  - exploit merge_cut_inductive_hyp. 1-7: eauto.
+    intros (b_cl' & A1 & A2 & A3 & A4 & A5 & A6).    
+    erewrite repr_link_children_unchanged_aux. 2-7: eauto.
+    exploit (mcon uf). eauto. intros (C1 & C2).
+    exploit C1. eapply EQV. constructor. eauto.
     intros (a_cl & Ga).
     assert (UNR1: ~ clos_order (m uf) a r).
     { intro. eapply NEQ.
@@ -1419,41 +1601,48 @@ Proof.
   intros. intro. subst. contradiction.
 Qed.
 
-Lemma repr_link_children_isolate:
-  repr (link_children uf r b b_cl) b = b.
+Lemma repr_link_children_isolate: forall b_cl',
+    Elts.eq b_cl' b_cl ->
+    repr (link_children uf r b b_cl') b = b.
 Proof.
+  intros b_cl' EQ.
   unfold link_children.
   eapply repr_link_children_isolate_aux; eauto.
-  intros. split; intros.
-  eapply Elts.elements_2; eauto.
-  eapply Elts.elements_1; eauto.
   eapply Elts.elements_3w.
+  (* intros. split; intros. *)
+  (* eapply Elts.elements_2; eauto. *)
+  (* eapply Elts.elements_1; eauto. *)
+  (* eapply Elts.elements_3w. *)
 Qed.
 
       
-Lemma repr_link_children_unchanged: forall x,    
+Lemma repr_link_children_unchanged: forall x b_cl',
+    Elts.eq b_cl' b_cl ->
     ~ clos_order (m uf) b x ->
-    repr (link_children uf r b b_cl) x = repr uf x.
+    repr (link_children uf r b b_cl') x = repr uf x.
 Proof.
-  intros x R. unfold link_children.
+  intros x b_cl' EQ R. unfold link_children.
   eapply repr_link_children_unchanged_aux; eauto.
-  intros. split; intros.
-  eapply Elts.elements_2; eauto.
-  eapply Elts.elements_1; eauto.
   eapply Elts.elements_3w.
+  (* intros. split; intros.   *)
+  (* eapply Elts.elements_2; eauto. *)
+  (* eapply Elts.elements_1; eauto. *)
+  (* eapply Elts.elements_3w. *)
 Qed.
 
-Lemma repr_link_children_relink: forall x,
+Lemma repr_link_children_relink: forall x b_cl',
+    Elts.eq b_cl' b_cl ->
     x <> b ->
     clos_order (m uf) b x ->
-    repr (link_children uf r b b_cl) x = repr uf r.
+    repr (link_children uf r b b_cl') x = repr uf r.
 Proof.
-  intros x NEQ R. unfold link_children.
+  intros x b_cl' EQ NEQ R. unfold link_children.
   eapply repr_link_children_relink_aux; eauto.
-  intros. split; intros.
-  eapply Elts.elements_2; eauto.
-  eapply Elts.elements_1; eauto.
   eapply Elts.elements_3w.
+  (* intros. split; intros. *)
+  (* eapply Elts.elements_2; eauto. *)
+  (* eapply Elts.elements_1; eauto. *)
+  (* eapply Elts.elements_3w. *)
 Qed.  
 
 End LINK_PROOF.
@@ -1483,7 +1672,7 @@ Proof.
   destruct (M.get a (m uf)) as [(r & a_cl) |] eqn: G.
   - destruct r as [r |].
     + simpl.
-      rewrite repr_link_children_isolate. auto.
+      erewrite repr_link_children_isolate. auto.
       (* premise of link_children *)
       * exploit cut_a_root. eauto. eauto.
       * rewrite cut_unchanged.
@@ -1499,18 +1688,25 @@ Proof.
         eapply clos_order_antisym.
         econstructor. red. eauto. constructor.
         econstructor. red. eauto. constructor.
+      * reflexivity.
     + destruct (Elts.choose a_cl) as [r|] eqn: C.
-      * simpl. rewrite repr_link_children_isolate. auto.
+      * simpl.
+        assert (ORDra: order (m uf) a r).
+        { eapply (mcon uf). eauto. eapply Elts.choose_1. auto. }
+        exploit (cut_b_result uf r a). eauto.
+        intros (a_cl' & Ga & EQ).        
+        erewrite repr_link_children_isolate; eauto. 
         (* premise of link_children *)
-      -- eapply cut_b_result. auto.
-      -- rewrite cut_disjoint.
-         erewrite <- (repr_none2 uf a _); eauto.
-         exploit (mcon uf). eauto. intros (A1 & A2).
-         eapply Elts.choose_1 in C.
-         eapply A1 in C. destruct C as (r_cl' & A4). 
-         eapply repr_some_diff. eauto.
+      -- assert (NEQra: r <> a).
+         { erewrite <- (repr_none2 uf a _); eauto.
+           exploit (mcon uf). eauto. intros (A1 & A2).
+           eapply Elts.choose_1 in C.
+           eapply A1 in C. destruct C as (r_cl' & A4). 
+           eapply repr_some_diff. eauto. }
+         rewrite cut_disjoint; auto.
          constructor.
-      -- eapply Elts.remove_1. auto.
+      -- intro. eapply EQ in H. eapply Elts.remove_1; eauto.
+      -- symmetry. auto.
       * eapply repr_none2. eauto.
   - apply repr_none. auto.
 Qed.
@@ -1537,8 +1733,13 @@ Proof.
         2: { econstructor. red. eauto. constructor. }
         eapply (mcon uf) in Gb as (A1 & A2). eapply A1 in H as (cl & B).
         econstructor. red. eauto. constructor.
+      * reflexivity.
       * intro. eapply R. eapply repr_clos_order. eapply cut_clos_order2. eauto.
     + destruct (Elts.choose b_cl) eqn: C; auto.
+      assert (ORDbe: order (m uf) b e).
+        { eapply (mcon uf). eauto. eapply Elts.choose_1. auto. }
+      exploit (cut_b_result uf e b). eauto.
+      intros (b_cl' & Gb' & EQ).
       simpl. erewrite repr_link_children_unchanged.
       * rewrite cut_unchanged. auto.
         intro. eapply R. eapply repr_clos_order.
@@ -1546,12 +1747,15 @@ Proof.
         eapply Elts.choose_1 in C. eapply A1 in C as (e_cl & C).
         eapply clos_rt_rtn1. eapply rt_trans. econstructor. red. eauto.
         eapply clos_rtn1_rt. eauto.
-      * eapply cut_b_result. auto.
-      * rewrite cut_disjoint. 
-        eapply (mcon uf) in Gb as (A1 & A2).
-        eapply Elts.choose_1 in C. eapply A1 in C as (e_cl & C).
-        eapply repr_some_neq. eauto. constructor.
-      * eapply Elts.remove_1. auto.
+      * eauto.
+      * assert (NEQeb: e <> b).
+        { eapply (mcon uf) in Gb as (A1 & A2).
+          eapply Elts.choose_1 in C. eapply A1 in C as (e_cl & C).
+          eapply repr_some_neq. eauto. }
+        rewrite cut_disjoint; auto.
+        constructor.
+      * intro. eapply EQ in H. eapply Elts.remove_1; eauto.
+      * symmetry. eauto.
       * intro. eapply R. eapply repr_clos_order. eapply cut_clos_order2. eauto.
   - auto.
 Qed.
@@ -1568,7 +1772,7 @@ Proof.
       set (uf1 := (cut uf a r)).
       destruct (clos_order_dec uf1 a b).
       (* b ->* a *)
-      * rewrite repr_link_children_relink.
+      * erewrite repr_link_children_relink.
         unfold uf1.
         rewrite cut_unchanged. 
         rewrite <- (repr_clos_order uf a b).
@@ -1594,16 +1798,17 @@ Proof.
            eapply repr_some_neq. eapply G.
            eapply clos_order_antisym. econstructor. red. eauto.
            constructor. econstructor. red. eauto. constructor.
+        -- reflexivity.
         -- auto.
         -- auto.
       (* ~ b ->* a *)
-      * rewrite repr_link_children_unchanged.
+      * erewrite repr_link_children_unchanged.
         unfold uf1. rewrite cut_unchanged. auto.
         (* clos_order (m uf) a b implies clos_order (m uf1) a b *)
         -- intro. eapply n.
            eapply (cut_clos_order1 uf a r b a) in H.
            destruct H as [A|(A1 & A2 & A3)]; auto.           
-        -- exploit (cut_a_root uf a r). eauto. auto.
+        -- exploit (cut_a_root uf a r). eauto. eauto.
         -- unfold uf1.
            rewrite cut_unchanged.
            eapply repr_some_diff in G. auto.
@@ -1617,6 +1822,7 @@ Proof.
            eapply clos_order_antisym.
            econstructor. red. eauto. constructor.
            econstructor. red. eauto. constructor.
+        -- reflexivity.
         -- auto.
     + destruct (Elts.choose a_cl) as [r|] eqn: C; try congruence.
   - inv DEL. auto.
@@ -1650,19 +1856,24 @@ Proof.
   - destruct r1 as [r1|]; try congruence.
     destruct (Elts.choose a_cl) as [r2|] eqn: C; try congruence.
     inv DEL.
+    assert (ORDra: order (m uf) a r).
+    { eapply (mcon uf). eauto. eapply Elts.choose_1. auto. }
+    assert (NEQra: r <> a).
+    { destruct  ORDra as (r_cl & Gr). eapply repr_some_neq. eauto. }   
     set (uf1 := (cut uf r a)).
     destruct (clos_order_dec uf1 a b).
     (* b ->* a *)
-    * rewrite repr_link_children_relink.
-      -- apply cut_disjoint. constructor.
-      (* properties of cut *)
-      -- unfold uf1. eapply cut_b_result; eauto.
-      -- unfold uf1. rewrite cut_disjoint.
-         eapply (mcon uf) in G as (A1 & A2).
-         exploit A1. eapply Elts.choose_1. eauto.
-         intros (r_cl & A3). eapply repr_some_neq. eauto.
+    * exploit (cut_b_result uf r a). eauto.
+      intros (a_cl' & Ga' & EQ).
+      erewrite repr_link_children_relink.
+      -- apply cut_disjoint. auto.         
          constructor.
-      -- eapply Elts.remove_1. auto.
+      (* properties of cut *)
+      -- eauto. 
+      -- unfold uf1. rewrite cut_disjoint; auto.
+         constructor.
+      -- intro. eapply EQ in H. eapply Elts.remove_1. 2: eapply H. auto.
+      -- symmetry. auto.
       -- auto.
       -- auto.
     (* ~ b ->* a in uf1 *)
@@ -1671,103 +1882,74 @@ Proof.
       -- destruct (clos_order_dec uf r b).
          2: { exfalso. eapply n. eapply cut_local; eauto. }
          unfold uf1.
-         rewrite repr_link_children_unchanged; auto.
-         ++ apply cut_disjoint. auto.
+         exploit (cut_b_result uf r a). eauto.
+         intros (a_cl' & Ga' & EQ).
+         erewrite repr_link_children_unchanged; auto.
+         ++ apply cut_disjoint. auto. auto.
          (* properties of cut *)
-         ++ eapply cut_b_result; eauto.
-         ++ unfold uf1. rewrite cut_disjoint.
-            eapply (mcon uf) in G as (A1 & A2).
-            exploit A1. eapply Elts.choose_1. eauto.
-            intros (r_cl & A3). eapply repr_some_neq. eauto.
+         ++ eauto. 
+         ++ unfold uf1. rewrite cut_disjoint; auto.
             constructor.
-         ++ eapply Elts.remove_1. auto.
+         ++ intro. eapply EQ in H. eapply Elts.remove_1. 2: eapply H. auto.
+         ++ symmetry. auto.
       -- exfalso. eapply n0. eapply repr_clos_order_root.
          rewrite <- RNEQ. eapply repr_none2. eauto.
 Qed.
-
     
-(* Lemma delete_sameclass: forall uf b x y, *)
-(*     b <> x -> *)
-(*     b <> y -> *)
-(*     sameclass uf x y -> *)
-(*     sameclass (delete uf b) x y.  *)
-(* Proof. *)
-(*   intros until y. intros N1 N2 S. *)
-(*   destruct (M.elt_eq (repr uf b) (repr uf x)) as [R1| R1]; *)
-(*   destruct (M.elt_eq (repr uf b) (repr uf y)) as [R2| R2]. *)
-(*   2,3: red in S; congruence. *)
-(*   (* repr x/y = repr b *) *)
-(*   - unfold delete. *)
-(*     destruct (M.get b (m uf)) as [(r & b_cl) |] eqn: G. *)
-(*     + destruct r as [r|]. *)
-(*       (* a is not a root *) *)
-(*       * exploit delete_repr_unchanged2. eapply N1. eauto. intros A1. *)
-(*         exploit delete_repr_unchanged2. eapply N2. eauto. intros A2. *)
-(*         unfold delete in *. rewrite G in *. red. rewrite A1. rewrite A2. *)
-(*         auto. *)
-(*       (* a is root with children *) *)
-(*       * erewrite repr_none2 in *; eauto. *)
-(*         admit. *)
-(*     + eapply repr_none in G. red. auto. *)
-(*   - red. rewrite !delete_repr_unchanged1; auto. *)
-(* Admitted.     *)
 
 (* Path compression *)
 
 Section COMPRESS.
 
 Variable uf: t.
-Variable a b: elt.
+Variable a a' b: elt.
 Hypothesis a_diff_b: a <> b.
 Hypothesis a_repr_b: repr uf a = b.
 
-Lemma compress_order:
-  forall x y,
-  order (M.set a b uf.(m)) y x ->
-  order uf.(m) y x \/ (x = a /\ y = b).
-Proof.
-  intros until y. unfold order. rewrite M.gsspec.
-  destruct (M.elt_eq x a).
-  intuition congruence.
-  auto.
-Qed.
-
-Remark compress_Acc:
-  forall x,
-  Acc (order uf.(m)) x -> Acc (order (M.set a b uf.(m))) x.
-Proof.
-  induction 1. constructor; intros.
-  destruct (compress_order _ _ H1) as [A | [A B]].
-  auto.
-  subst x y. constructor; intros.
-  destruct (compress_order _ _ H2) as [A | [A B]].
-  red in A. generalize (repr_res_none uf a). congruence.
-  congruence.
-Qed.
-
-Lemma compress_wf:
-  well_founded (order (M.set a b uf.(m))).
-Proof.
-  red; intros. apply compress_Acc. apply uf.(mwf).
-Qed.
-
-Definition compress := mk (M.set a b uf.(m)) compress_wf.
+(* To simplify the proof, we reuse merge and cut functions which do
+not depend on any hypothesis *)
+Definition compress := merge (cut uf a a') a b.
 
 Lemma repr_compress:
   forall x, repr compress x = repr uf x.
 Proof.
-  apply (well_founded_ind (mwf compress)); intros.
-  rewrite (repr_unroll compress).
-  destruct (M.get x (m compress)) as [y|] eqn:G.
-  rewrite H; auto.
-  simpl in G. rewrite M.gsspec in G. destruct (M.elt_eq x a).
-  inversion G. subst x y. rewrite <- a_repr_b. apply repr_canonical.
-  symmetry; apply repr_some; auto.
-  simpl in G. rewrite M.gsspec in G. destruct (M.elt_eq x a).
-  congruence.
-  symmetry; apply repr_none; auto.
+  intros x. unfold compress.
+  rewrite repr_merge.
+  destruct (clos_order_dec uf a x).
+  - destruct (order_dec uf a a').
+    + destruct o as (a_cl & Ga).
+      rewrite <- (repr_clos_order uf a x); auto.
+      erewrite repr_union_2.
+      * rewrite cut_unchanged.
+        rewrite <- a_repr_b. eapply repr_canonical.
+        intro. eapply a_diff_b. inv H. auto. 
+        red in H0. destruct H0 as (cl & Gra).
+        destruct (repr_res_none_dec uf a); try congruence.
+        destruct s. congruence.
+      * rewrite !cut_disjoint. auto.
+        red. eauto.
+        constructor. red. eauto. auto.
+    + replace (cut uf a a') with uf.
+      2: symmetry; eapply cut_same; auto.
+      rewrite <- (repr_clos_order uf a x); auto.
+      rewrite repr_union_2. rewrite <- a_repr_b. eapply repr_canonical.
+      symmetry. eapply repr_clos_order. auto.     
+  - rewrite <- (cut_unchanged uf a a' x n).
+    assert (R: ~ clos_order (m (cut uf a a')) a x).
+    { intro. eapply n.
+      eapply cut_clos_order2. eauto. }
+    destruct (order_dec uf a a').
+    + rewrite repr_union_1. auto.
+      rewrite cut_unchanged; auto. rewrite cut_disjoint; auto.
+      intro. eapply n. eapply repr_clos_order_root. auto. constructor.
+    + replace (cut uf a a') with uf.
+      2: symmetry; eapply cut_same; auto.
+      destruct (elt_eq (repr uf a) (repr uf x)).
+      * rewrite repr_union_2. rewrite <- e. rewrite <- a_repr_b.
+        apply repr_canonical. auto.
+      * rewrite repr_union_1; auto.
 Qed.
-
+  
 End COMPRESS.
 
 (* Find with path compression *)
@@ -1779,37 +1961,29 @@ Variable uf: t.
 Program Fixpoint find_x (a: elt) {wf (order uf.(m)) a} :
     { r: elt * t | fst r = repr uf a /\ forall x, repr (snd r) x = repr uf x } :=
   match M.get a uf.(m) with
-  | Some a' =>
+  | Some (Some a', a_cl) =>
       match find_x a' with
-      | pair b uf' => (b, compress uf' a b _ _)
+      | pair b uf' => (b, compress uf' a a' b)
       end
+  | Some (None, _)
   | None => (a, uf)
   end.
 Next Obligation.
-  red. auto.
-Qed.
+  red. rewrite <- Heq_anonymous. eauto.
+Defined.
 Next Obligation.
-  (* a <> b*)
-  destruct (find_x a')
-  as [[b' uf''] [A B]]. simpl in *. inv Heq_anonymous.
-  apply repr_some_diff. auto.
-Qed.
+  destruct (find_x a')  as [[b' uf''] [A B]]. simpl in *. inv Heq_anonymous.
+  split. symmetry. eapply repr_some. eauto.
+  intros. erewrite repr_compress. eauto.
+  eapply repr_some_diff. eauto.
+  erewrite B. eapply repr_some. eauto.
+Defined.
 Next Obligation.
-  destruct (find_x a') as [[b' uf''] [A B]]. simpl in *. inv Heq_anonymous.
-  rewrite B. apply repr_some. auto.
-Qed.
+  split. symmetry. eapply repr_none2. eauto. auto.
+Defined.
 Next Obligation.
-  split.
-  destruct (find_x a')
-  as [[b' uf''] [A B]]. simpl in *. inv Heq_anonymous.
-  symmetry. apply repr_some. auto.
-  intros. rewrite repr_compress.
-  destruct (find_x a')
-  as [[b' uf''] [A B]]. simpl in *. inv Heq_anonymous. auto.
-Qed.
-Next Obligation.
-  split; auto. symmetry. apply repr_none. auto.
-Qed.
+  split. symmetry. eapply repr_none. eauto. auto.
+Defined.
 Next Obligation.
   apply mwf.
 Defined.
@@ -1848,5 +2022,5 @@ Qed.
 
 End FIND.
 
-End UF.
+End UFD.
 

@@ -89,7 +89,7 @@ endif
 
 VLIB=Axioms.v Coqlib.v Intv.v Maps.v Heaps.v Lattice.v Ordered.v \
   Iteration.v Zbits.v Integers.v Archi.v IEEE754_extra.v Floats.v \
-  Parmov.v UnionFind.v Wfsimpl.v \
+  Parmov.v UnionFind.v UnionFindDelete.v Wfsimpl.v \
   Postorder.v FSetAVLplus.v IntvSets.v Decidableplus.v BoolEqual.v \
 
 # Parts common to the front-ends and the back-end (in common/)
