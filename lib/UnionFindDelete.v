@@ -3,6 +3,7 @@ Require Import Coqlib.
 Require Import FSets Equalities.
 Require Import FSetWeakList DecidableType.
 Require Import Relations.
+Require Import Maps.
 
 Open Scope nat_scope.
 Set Implicit Arguments.
@@ -14,19 +15,6 @@ Local Unset Case Analysis Schemes.
 
 (** A persistent union-find-delete data structure derived from the
 UnionFind.v from CompCert. *)
-
-
-Module Type MAP.
-  Parameter elt: Type.
-  Parameter elt_eq: forall (x y: elt), {x=y} + {x<>y}.
-  Parameter t: Type -> Type.
-  Parameter empty: forall (A: Type), t A.
-  Parameter get: forall (A: Type), elt -> t A -> option A.
-  Parameter set: forall (A: Type), elt -> A -> t A -> t A.
-  Axiom gempty: forall (A: Type) (x: elt), get x (empty A) = None.
-  Axiom gsspec: forall (A: Type) (x y: elt) (v: A) (m: t A),
-    get x (set y v m) = if elt_eq x y then Some v else get x m.
-End MAP.
 
 Unset Implicit Arguments.
 
@@ -138,18 +126,80 @@ Module Type UNION_FIND_DELETE.
     repr uf a = repr uf b ->
     delete uf a = (uf1, Some r) ->
     repr uf1 b = r.
-    
+
+  (* Join two union-find structures *)
+  Parameter join: t -> t -> t.
+  Axiom join_sound1: forall uf1 uf2 a b,
+      sameclass uf1 a b ->
+      sameclass (join uf1 uf2) a b.
+  Axiom join_sound2: forall uf1 uf2 a b,
+      sameclass uf2 a b ->
+      sameclass (join uf1 uf2) a b.
+  (* This lemma says that the join operate is not trivial *)
+  (* Axiom join_sound3: forall uf1 uf2 a b, *)
+  (*     sameclass (join uf1 uf2) a b -> *)
+  (*     sameclass uf1 a b \/ sameclass uf1 a b \/ (exists c, sameclass uf1 a c /\ sameclass uf2 b c). *)
+
+  (* Comparison of two union-find structures *)
+  Parameter eq: t -> t -> Prop.
+  Parameter ge: t -> t -> Prop.
+  Axiom eq_refl: forall uf,
+      eq uf uf.
+  Axiom eq_sym: forall uf1 uf2,
+      eq uf1 uf2 -> eq uf2 uf1.
+  Axiom eq_trans: forall uf1 uf2 uf3,
+      eq uf1 uf2 -> eq uf2 uf3 -> eq uf1 uf3.
+  Axiom ge_refl: forall uf,
+      ge uf uf.
+  Axiom ge_trans: forall uf1 uf2 uf3,
+      ge uf1 uf2 -> ge uf2 uf3 -> ge uf1 uf3.
+  Axiom ge_antisym: forall uf1 uf2,
+      ge uf1 uf2 -> ge uf2 uf1 -> eq uf1 uf2.
+
+  Parameter geb: t -> t -> bool.
+  Axiom geb_correct: forall uf1 uf2,
+      geb uf1 uf2 = true ->
+      ge uf1 uf2.
+  Parameter eqb: t -> t -> bool. 
+  Axiom eqb_correct: forall uf1 uf2,
+      eqb uf1 uf2 = true ->
+      eq uf1 uf2.
+  
+  (* (* We may use the representative node as a key in a map and want to *)
+  (* compare the value with a comparison function *) *)
+  (* Parameter geb_cmp : (elt -> elt -> bool) -> t -> t -> bool. *)
+  (* Parameter eqb_cmp : (elt -> elt -> bool) -> t -> t -> bool. *)
+  (* Parameter eq_cmp: (elt -> elt -> bool) -> t -> t -> Prop. *)
+  (* Parameter ge_cmp: (elt -> elt -> bool) -> t -> t -> Prop. *)
+  (* Axiom eq_cmp_refl: forall uf f, *)
+  (*     (forall x, f x x = true) -> *)
+  (*     eq_cmp f uf uf. *)
+  (* Axiom eq_cmp_sym: forall uf1 uf2 f, *)
+  (*     (forall x y, f x y = f y x) -> *)
+  (*     eq_cmp f uf1 uf2 -> eq_cmp f uf2 uf1. *)
+  (* Axiom eq_cmp_trans: forall uf1 uf2 uf3 f, *)
+  (*     (forall x y z, f x y = true -> f y z = true -> f x z = true) -> *)
+  (*     eq_cmp f uf1 uf2 -> eq_cmp f uf2 uf3 -> eq_cmp f uf1 uf3. *)
+  (* Axiom ge_refl: forall uf, *)
+  (*     ge uf uf. *)
+  (* Axiom ge_trans: forall uf1 uf2 uf3, *)
+  (*     ge uf1 uf2 -> ge uf2 uf3 -> ge uf1 uf3. *)
+  (* Axiom ge_antisym: forall uf1 uf2, *)
+  (*     ge uf1 uf2 -> ge uf2 uf1 -> eq uf1 uf2. *)
+
+  
 End UNION_FIND_DELETE.
 
-Module UFD (M: MAP) : UNION_FIND_DELETE with Definition elt := M.elt.
-  
-Definition elt := M.elt.
-Definition elt_eq := M.elt_eq.
+(* For simplicity, we do not paramterize the map in the UFD module *)
+Module UFD <: UNION_FIND_DELETE.
+
+Definition elt := positive.
+Definition elt_eq := peq.
 
 Module Elt <: DecidableType.DecidableType.
-  Definition t := M.elt.
-  Definition eq := @eq M.elt.
-  Definition eq_dec := M.elt_eq.
+  Definition t := elt.
+  Definition eq := @eq elt.
+  Definition eq_dec := elt_eq.
   Definition eq_refl: forall x, eq x x := (@eq_refl t).
   Definition eq_sym: forall x y, eq x y -> eq y x := (@eq_sym t).
   Definition eq_trans: forall x y z, eq x y -> eq y z -> eq x z := (@eq_trans t).
@@ -159,56 +209,56 @@ Module Elts := FSetWeakList.Make(Elt).
 
 (* A set of equivalence classes over elt is represented by a map m.
 
-   M.get a m = Some (a', cl) means that a' is the parent of a and cl
+   PTree.get a m = Some (a', cl) means that a' is the parent of a and cl
    are the children of a. The invariant is that a must be the parent
    of all the elements in cl. For now, we use Elts to represent
    the children set.
 
-   M.get a m = None means that a is the canonical representative for
+   PTree.get a m = None means that a is the canonical representative for
    its equivalence class. *)
 
 (* The ordering over elt induced by such a map.
-   repr_order m a a' iff M.get a' m = Some a.
+   repr_order m a a' iff PTree.get a' m = Some a.
    This ordering must be well founded. *)
 
 Definition vt : Type := option elt * Elts.t.
 
-Definition order (m: M.t vt) (a a': elt) : Prop :=
-  exists (cl: Elts.t), M.get a' m = Some (Some a, cl).
+Definition order (m: PTree.t vt) (a a': elt) : Prop :=
+  exists (cl: Elts.t), PTree.get a' m = Some (Some a, cl).
 
-Definition consistent (m: M.t vt) : Prop :=
+Definition consistent (m: PTree.t vt) : Prop :=
   forall a b_opt a_cl,
-    M.get a m = Some (b_opt, a_cl) ->    
+    PTree.get a m = Some (b_opt, a_cl) ->    
     (* all the children in a_cl points to a *)
     Elts.For_all (order m a) a_cl
     /\ (match b_opt with
        | Some b =>
            (* a is in the children of b *)
-           (exists b' b_cl, M.get b m = Some (b', b_cl) /\ Elts.In a b_cl)
+           (exists b' b_cl, PTree.get b m = Some (b', b_cl) /\ Elts.In a b_cl)
        | None =>
            (* a is the root *)
            True
        end).
              
-Record unionfind : Type := mk { m: M.t vt;
+Record unionfind : Type := mk { m: PTree.t vt;
                                 mwf: well_founded (order m);
                                 mcon: consistent m}.
 
 Definition t := unionfind.
 
-Definition getlink (m: M.t vt) (a: elt) : {a' | exists cl, M.get a m = Some (Some a', cl)} + {M.get a m = None \/ exists cl, M.get a m = Some (None, cl)}.
+Definition getlink (m: PTree.t vt) (a: elt) : {a' | exists cl, PTree.get a m = Some (Some a', cl)} + {PTree.get a m = None \/ exists cl, PTree.get a m = Some (None, cl)}.
 Proof.
-  destruct (M.get a m) eqn: G.
+  destruct (PTree.get a m) eqn: G.
   - destruct v as ([v1 |] & v2).
     + left. exists v1, v2. auto.
     + right. eauto.
   - right; auto.
 Defined.
 
-Lemma get_elt_dec: forall (m: M.t vt) a,
-    {v | M.get a m = Some v} + {M.get a m = None}.
+Lemma get_elt_dec: forall (m: PTree.t vt) a,
+    {v | PTree.get a m = Some v} + {PTree.get a m = None}.
 Proof.
-  intros. destruct (M.get a m0); eauto.
+  intros. destruct (PTree.get a m0); eauto.
 Qed.
 
 (* The canonical representative of an element *)
@@ -226,7 +276,7 @@ Definition F_repr (a: elt) (rec: forall b, order uf.(m) b a -> elt) : elt :=
 Definition repr (a: elt) : elt := Fix uf.(mwf) (fun _ => elt) F_repr a.
 
 Lemma repr_unroll:
-  forall a, repr a = match M.get a uf.(m) with Some (Some a', _) => repr a' | _ => a end.
+  forall a, repr a = match PTree.get a uf.(m) with Some (Some a', _) => repr a' | _ => a end.
 Proof.
   intros. unfold repr at 1. rewrite Fix_eq.
   unfold F_repr. destruct (getlink uf.(m) a) as [[a' (cl & P)] | [Q1 | (cl & Q2)]].
@@ -238,7 +288,7 @@ Qed.
 
 Lemma repr_none:
   forall a,
-  M.get a uf.(m) = None ->
+  PTree.get a uf.(m) = None ->
   repr a = a.
 Proof.
   intros. rewrite repr_unroll. rewrite H; auto.
@@ -246,7 +296,7 @@ Qed.
 
 Lemma repr_none2:
   forall a cl,
-  M.get a uf.(m) = Some (None, cl) ->
+  PTree.get a uf.(m) = Some (None, cl) ->
   repr a = a.
 Proof.
   intros. rewrite repr_unroll. rewrite H; auto.
@@ -254,26 +304,26 @@ Qed.
 
 Lemma repr_some:
   forall a a' cl,
-  M.get a uf.(m) = Some (Some a', cl) ->
+  PTree.get a uf.(m) = Some (Some a', cl) ->
   repr a = repr a'.
 Proof.
   intros. rewrite repr_unroll. rewrite H; auto.
 Qed.
 
 Lemma repr_res_none:
-  forall (a: elt), M.get (repr a) uf.(m) = None \/ exists cl, M.get (repr a) uf.(m) = Some (None, cl).
+  forall (a: elt), PTree.get (repr a) uf.(m) = None \/ exists cl, PTree.get (repr a) uf.(m) = Some (None, cl).
 Proof.
   apply (well_founded_ind (mwf uf)). intros.
-  rewrite repr_unroll. destruct (M.get x (m uf)) as [([y|] & cl) | ] eqn:X; auto.
+  rewrite repr_unroll. destruct (PTree.get x (m uf)) as [([y|] & cl) | ] eqn:X; auto.
   eapply H. red. eauto.
   right. eauto.
 Defined.
 
 Lemma repr_res_none_dec:
-  forall (a: elt), {cl | M.get (repr a) uf.(m) = Some (None, cl)} + {M.get (repr a) uf.(m) = None}.
+  forall (a: elt), {cl | PTree.get (repr a) uf.(m) = Some (None, cl)} + {PTree.get (repr a) uf.(m) = None}.
 Proof.
   apply (well_founded_induction_type (mwf uf)). intros.
-  rewrite repr_unroll. destruct (M.get x (m uf)) as [([y|] & cl) | ] eqn:X1; auto.
+  rewrite repr_unroll. destruct (PTree.get x (m uf)) as [([y|] & cl) | ] eqn:X1; auto.
   eapply X. red. eauto.
   left. eauto.
 Defined.
@@ -287,7 +337,7 @@ Proof.
 Qed.
 
 Lemma repr_some_diff:
-  forall a a' cl, M.get a uf.(m) = Some (Some a', cl) -> a <> repr a'.
+  forall a a' cl, PTree.get a uf.(m) = Some (Some a', cl) -> a <> repr a'.
 Proof.
   intros; red; intros.
   assert (repr a = a). rewrite H0 at 2. apply (repr_some a a' cl); auto.
@@ -296,7 +346,7 @@ Proof.
 Qed.
 
 Lemma repr_some_same:
-  forall a cl, M.get a uf.(m) = Some (Some a, cl) -> a = repr a.
+  forall a cl, PTree.get a uf.(m) = Some (Some a, cl) -> a = repr a.
 Proof.
   intros a cl. generalize (mwf uf a).
   generalize dependent cl.
@@ -306,7 +356,7 @@ Proof.
 Qed.
 
 Lemma repr_some_neq:
-  forall a a' cl, M.get a uf.(m) = Some (Some a', cl) -> a <> a'.
+  forall a a' cl, PTree.get a uf.(m) = Some (Some a', cl) -> a <> a'.
 Proof.
   intros. red. intro. subst. eapply repr_some_diff.
   eauto. eapply repr_some_same; eauto.
@@ -345,25 +395,25 @@ Qed.
 (* The empty unionfind structure (each element in its own class) *)
 
 Lemma wf_empty:
-  well_founded (order (M.empty vt)).
+  well_founded (order (PTree.empty vt)).
 Proof.
   red. intros. apply Acc_intro. intros b RO. red in RO.
   destruct RO as (cl & RO).
-  rewrite M.gempty in RO. discriminate.
+  rewrite PTree.gempty in RO. discriminate.
 Qed.
 
 Lemma consistent_empty:
-  consistent (M.empty vt).
+  consistent (PTree.empty vt).
 Proof.
-  red. intros. rewrite M.gempty in H. discriminate.
+  red. intros. rewrite PTree.gempty in H. discriminate.
 Qed.
 
-Definition empty : t := mk (M.empty vt) wf_empty consistent_empty.
+Definition empty : t := mk (PTree.empty vt) wf_empty consistent_empty.
 
 Lemma repr_empty:
   forall a, repr empty a = a.
 Proof.
-  intros. apply repr_none. simpl. apply M.gempty.
+  intros. apply repr_none. simpl. apply PTree.gempty.
 Qed.
 
 Lemma sameclass_empty:
@@ -377,9 +427,9 @@ Qed.
 Lemma order_dec uf a b:
   {order (m uf) b a} + {~ order (m uf) b a}.
 Proof.
-  destruct (M.get a (m uf)) eqn: Ga.
+  destruct (PTree.get a (m uf)) eqn: Ga.
   - destruct v. destruct o.
-    + destruct (M.elt_eq e b).
+    + destruct (peq e b).
       * subst. left. red. eauto.
       * right. intro. eapply n.
         destruct H. rewrite Ga in H. inv H. auto.
@@ -400,24 +450,24 @@ Lemma clos_order_dec uf r:
   {clos_order (m uf) r a} + {~ clos_order (m uf) r a}.
 Proof.
   apply (well_founded_induction_type (mwf uf)). intros.
-  destruct (M.get x (m uf)) as [(x_par & x_cl)|]eqn: G.
+  destruct (PTree.get x (m uf)) as [(x_par & x_cl)|]eqn: G.
   - destruct x_par as [x_par |].
-    + edestruct X. red. eauto.
+    + rename H into X. edestruct X. red. eauto.
       * left. red. econstructor. red. eauto. auto.
-      * destruct (M.elt_eq x r).
+      * destruct (peq x r).
         -- subst. left. constructor.
         -- right. intro. apply n.
            inv H. congruence. red in H0.
            destruct H0 as (x_cl' & Gx). rewrite G in Gx. inv Gx.
            auto.
-    + destruct (M.elt_eq x r).
+    + destruct (peq x r).
       * subst. left. constructor.
-      * right. intro. inv H. congruence.
-        red in H0. destruct H0 as (x_cl' & Gx). congruence.
-  - destruct (M.elt_eq x r).
+      * right. intro. inv H0. congruence.
+        red in H1. destruct H1 as (x_cl' & Gx). congruence.
+  - destruct (peq x r).
     + subst. left. constructor.
-    + right. intro. inv H. congruence.
-      red in H0. destruct H0 as (x_cl' & Gx). congruence.
+    + right. intro. inv H0. congruence.
+      red in H1. destruct H1 as (x_cl' & Gx). congruence.
 Defined.
 
 Lemma repr_clos_order: forall uf x y,
@@ -466,18 +516,18 @@ Section IDENTIFY.
 Variable uf: t.
 Variables a b: elt.
 Variable a_cl : Elts.t.           (* children of a *)
-Hypothesis a_canon: (M.get a uf.(m) = None /\ a_cl = Elts.empty)
-                    \/ M.get a uf.(m) = Some (None, a_cl).
+Hypothesis a_canon: (PTree.get a uf.(m) = None /\ a_cl = Elts.empty)
+                    \/ PTree.get a uf.(m) = Some (None, a_cl).
 Hypothesis not_same_class: repr uf b <> a.
 
-Definition b_new := match M.get b uf.(m) with
+Definition b_new := match PTree.get b uf.(m) with
             | Some (c, b_cl) =>
                 (c, Elts.add a b_cl)
             | None =>
                 (None, Elts.add a Elts.empty)
             end.
 
-Definition identify_ufm := M.set b b_new (M.set a (Some b, a_cl) uf.(m)).
+Definition identify_ufm := PTree.set b b_new (PTree.set a (Some b, a_cl) uf.(m)).
 
 Remark a_not_eq_b: a <> b.
 Proof.
@@ -492,19 +542,19 @@ Lemma identify_order:
   order identify_ufm y x <->
   order uf.(m) y x \/ (x = a /\ y = b).
 Proof.
-  intros until y. unfold order, identify_ufm. rewrite !M.gsspec.
+  intros until y. unfold order, identify_ufm. rewrite !PTree.gsspec.
   split.
-  - destruct (M.elt_eq x b).
-    + subst. unfold b_new. destruct (M.get b (m uf)) as [(c & b_cl) |] eqn: G1.
+  - destruct (peq x b).
+    + subst. unfold b_new. destruct (PTree.get b (m uf)) as [(c & b_cl) |] eqn: G1.
       * intros (cl & A). inv A. eauto.
       * intros (cl & A). inv A.
-    + destruct (M.elt_eq x a).
+    + destruct (peq x a).
       * subst. intros (cl & A). inv A. eauto.
       * intros (cl & A). eauto.
   - intros [(cl & G) | (A1 & A2)].
-    + destruct (M.elt_eq x b).
+    + destruct (peq x b).
       * subst. unfold b_new. rewrite G. eauto.
-      * destruct (M.elt_eq x a).
+      * destruct (peq x a).
         -- subst. rewrite G in a_canon.
            destruct a_canon as [(A1 & A2)| A3]; try congruence.
         -- eauto.
@@ -582,26 +632,26 @@ Lemma identify_consistent:
 Proof.
   red. intros x x_opt x_cl G.
   unfold identify_ufm in *.
-  rewrite !M.gsspec in G.
-  destruct (M.elt_eq x b).
+  rewrite !PTree.gsspec in G.
+  destruct (peq x b).
   (* x = b *)
   - subst. unfold b_new in *.
-    destruct (M.get b (m uf)) as [(c & b_cl) |] eqn: G1; inv G.
+    destruct (PTree.get b (m uf)) as [(c & b_cl) |] eqn: G1; inv G.
     + split.
       * red. intros x IN. red.
-        destruct (M.elt_eq x a).
-        -- subst. rewrite !M.gsspec.
+        destruct (peq x a).
+        -- subst. rewrite !PTree.gsspec.
            rewrite dec_eq_false, dec_eq_true. eauto.
            apply a_not_eq_b.
         -- 
           apply Elts.add_3 in IN; auto.
            eapply (mcon uf)in IN; eauto. destruct IN as (x_cl & Gx).
            (* if x = b *)
-           destruct (M.elt_eq x b).
+           destruct (peq x b).
            ++ subst. rewrite G1 in Gx. inv Gx.
-              rewrite !M.gsspec. rewrite dec_eq_true. unfold b_new. eauto.
+              rewrite !PTree.gsspec. rewrite dec_eq_true. unfold b_new. eauto.
            (* x <> b *)
-           ++ rewrite !M.gsspec. rewrite !dec_eq_false. eauto. auto. auto.
+           ++ rewrite !PTree.gsspec. rewrite !dec_eq_false. eauto. auto. auto.
       * destruct x_opt as [xb |]; auto.
         eapply (mcon uf) in G1 as G1'. destruct G1' as (A1 & (xb_par & xb_cl & G2 & G3)).
         destruct xb_par as [xb_par|].
@@ -610,26 +660,26 @@ Proof.
            generalize (proj2 (identify_order xb xb_par) (or_introl ORD)). intros (cl' & ORD1).
            unfold identify_ufm, b_new in ORD1.
            rewrite G1 in ORD1. erewrite ORD1. do 2 eexists. split; eauto.
-           rewrite !M.gsspec in ORD1.
+           rewrite !PTree.gsspec in ORD1.
            (* Adhoc *)
-           destruct (M.elt_eq xb b).
+           destruct (peq xb b).
            ++ subst. inv ORD1. rewrite G1 in G2. inv G2.
               eapply Elts.add_2. auto.
-           ++ destruct (M.elt_eq xb a).
+           ++ destruct (peq xb a).
               ** subst. inv ORD1.
                  destruct a_canon as [(A4 & A2)| A3]; try congruence.
               ** setoid_rewrite G2 in ORD1. inv ORD1. auto.
-        -- rewrite !M.gsspec.
-           destruct (M.elt_eq xb b).
+        -- rewrite !PTree.gsspec.
+           destruct (peq xb b).
            ++ subst. congruence.
-           ++ destruct (M.elt_eq xb a).
+           ++ destruct (peq xb a).
               ** subst. eapply repr_some in G1.
                  eapply repr_none2 in G2. congruence.
               ** eauto.
     + split; auto.
       red. intros x IN.
       destruct (elt_eq x a).
-      * subst. red. rewrite !M.gsspec.
+      * subst. red. rewrite !PTree.gsspec.
         rewrite dec_eq_false. rewrite dec_eq_true.
         eauto. apply a_not_eq_b.
       * eapply Elts.add_3 in IN; auto.
@@ -646,14 +696,14 @@ Proof.
          ++ eapply (mcon uf) in A3 as (B1 & B2).
             eapply B1 in IN. red in IN.            
             destruct IN as (cl & G1).
-            rewrite !M.gsspec.
-            destruct (M.elt_eq y b); subst; eauto.
+            rewrite !PTree.gsspec.
+            destruct (peq y b); subst; eauto.
             ** unfold b_new. rewrite G1. eauto.
-            ** destruct (M.elt_eq y a); subst; eauto.
+            ** destruct (peq y a); subst; eauto.
                destruct a_canon as [(A4 & A2)| A3]; try congruence.
-      -- rewrite M.gsspec. rewrite dec_eq_true.
+      -- rewrite PTree.gsspec. rewrite dec_eq_true.
          unfold b_new.
-         destruct (M.get b (m uf)) as [(b_par & b_cl)| ] eqn: Gb.
+         destruct (PTree.get b (m uf)) as [(b_par & b_cl)| ] eqn: Gb.
          ++ do 2 eexists. split; eauto.
             eapply Elts.add_1. auto.
          ++ do 2 eexists. split; eauto.
@@ -662,23 +712,23 @@ Proof.
     * rewrite dec_eq_false in G; auto.
       split.
       -- red. intros y IN. red.
-         rewrite !M.gsspec.
+         rewrite !PTree.gsspec.
          eapply (mcon uf) in G as (B1 & B2).
          eapply B1 in IN. red in IN.            
          destruct IN as (cl & G1).
-         destruct (M.elt_eq y b); subst; eauto.
+         destruct (peq y b); subst; eauto.
          ++ unfold b_new. rewrite G1. eauto.
-         ++ destruct (M.elt_eq y a); subst; eauto.
+         ++ destruct (peq y a); subst; eauto.
             destruct a_canon as [(A4 & A2)| A3]; try congruence.
       -- eapply (mcon uf) in G as (B1 & B2).
          destruct x_opt as [x_par|]; auto.
          destruct B2 as (x_par_par & x_par_cl & C1 & C2).
-         rewrite !M.gsspec. unfold b_new.
-         destruct (M.elt_eq x_par b).
+         rewrite !PTree.gsspec. unfold b_new.
+         destruct (peq x_par b).
          ++ subst. rewrite C1.
             do 2 eexists. split; eauto.
             eapply Elts.add_2. auto.
-         ++ destruct (M.elt_eq x_par a).
+         ++ destruct (peq x_par a).
             ** subst. do 2 eexists. split; eauto.
                destruct a_canon as [(A4 & A2)| A3]; try congruence.
             ** do 2 eexists. split; eauto.
@@ -692,39 +742,39 @@ Lemma repr_identify_1:
 Proof.
   intros x0; pattern x0. apply (well_founded_ind (mwf uf)); intros.
   rewrite (repr_unroll uf) in *.
-  destruct (M.get x (m uf)) as [(a' & a_cl')|] eqn:X.
+  destruct (PTree.get x (m uf)) as [(a' & a_cl')|] eqn:X.
   - destruct a' as [a'|].
     + rewrite <- H; auto.
-      destruct (M.elt_eq x b).
+      destruct (peq x b).
       * subst.         
-        eapply repr_some. simpl. unfold identify_ufm. rewrite M.gsspec.
+        eapply repr_some. simpl. unfold identify_ufm. rewrite PTree.gsspec.
         unfold b_new. rewrite X.
         rewrite dec_eq_true. eauto.
-      * eapply repr_some. simpl. unfold identify_ufm. rewrite M.gsspec.
+      * eapply repr_some. simpl. unfold identify_ufm. rewrite PTree.gsspec.
         rewrite dec_eq_false; auto.
-        destruct (M.elt_eq x a); try congruence.
+        destruct (peq x a); try congruence.
         -- subst. destruct a_canon as [(A4 & A2)| A3]; try congruence.
-        -- rewrite M.gsspec. rewrite dec_eq_false. eauto. auto.
+        -- rewrite PTree.gsspec. rewrite dec_eq_false. eauto. auto.
       * red. eauto.
-    + destruct (M.elt_eq x b).
+    + destruct (peq x b).
       * subst. 
         eapply repr_none2; eauto.      
         unfold identify, identify_ufm. simpl.
-        unfold b_new. rewrite X. rewrite M.gsspec.
+        unfold b_new. rewrite X. rewrite PTree.gsspec.
         rewrite dec_eq_true. eauto.
       * eapply repr_none2; eauto.
         unfold identify, identify_ufm. simpl.
-        rewrite !M.gsspec.
+        rewrite !PTree.gsspec.
         rewrite !dec_eq_false; eauto.
-  - destruct (M.elt_eq x b).
+  - destruct (peq x b).
     * subst. 
       eapply repr_none2; eauto.
       unfold identify, identify_ufm. simpl.
-      unfold b_new. rewrite X. rewrite M.gsspec.
+      unfold b_new. rewrite X. rewrite PTree.gsspec.
       rewrite dec_eq_true. eauto.
     * eapply repr_none; eauto.
       unfold identify, identify_ufm. simpl.
-      rewrite !M.gsspec.
+      rewrite !PTree.gsspec.
       rewrite !dec_eq_false; eauto.
 Qed.
 
@@ -732,30 +782,30 @@ Lemma repr_identify_2:
   forall x, repr uf x = a -> repr identify x = repr uf b.
 Proof.
   intros x0; pattern x0. apply (well_founded_ind (mwf uf)); intros.
-  rewrite (repr_unroll uf) in H0. destruct (M.get x (m uf)) as [(a' & a_cl')|] eqn:X.
+  rewrite (repr_unroll uf) in H0. destruct (PTree.get x (m uf)) as [(a' & a_cl')|] eqn:X.
   - destruct a' as [a'|].
     + exploit H. red. exists a_cl'. eapply X. auto.
       intros A. rewrite <- A. 
-      destruct (M.elt_eq x b). 
+      destruct (peq x b). 
       * subst. eapply repr_some.
         unfold identify, identify_ufm, b_new. simpl.
-        rewrite M.gsspec.
+        rewrite PTree.gsspec.
         rewrite dec_eq_true. rewrite X. eauto.
-      * destruct (M.elt_eq x a).
+      * destruct (peq x a).
         -- subst. eapply repr_some_diff in X. congruence.
         -- eapply repr_some.
            unfold identify, identify_ufm, b_new. simpl.
-           rewrite !M.gsspec.
+           rewrite !PTree.gsspec.
            rewrite !dec_eq_false; auto. eauto.
     + subst.
       rewrite (repr_unroll identify).
       unfold identify, identify_ufm, b_new at 1. simpl.
-      rewrite !M.gsspec. rewrite dec_eq_false. rewrite dec_eq_true.
+      rewrite !PTree.gsspec. rewrite dec_eq_false. rewrite dec_eq_true.
       apply repr_identify_1. auto.
       apply a_not_eq_b.
   - subst. rewrite (repr_unroll identify).
       unfold identify, identify_ufm, b_new at 1. simpl.
-      rewrite !M.gsspec. rewrite dec_eq_false. rewrite dec_eq_true.
+      rewrite !PTree.gsspec. rewrite dec_eq_false. rewrite dec_eq_true.
       apply repr_identify_1. auto.
       apply a_not_eq_b.
 Qed.
@@ -773,7 +823,7 @@ Qed.
 Definition union (uf: t) (a b: elt) : t :=
   let a' := repr uf a in
   let b' := repr uf b in
-  match M.elt_eq a' b' with
+  match peq a' b' with
   | left EQ' => uf
   | right NEQ =>
       match repr_res_none_dec uf a with
@@ -787,7 +837,7 @@ Definition union (uf: t) (a b: elt) : t :=
 Lemma repr_union_1:
   forall uf a b x, repr uf x <> repr uf a -> repr (union uf a b) x = repr uf x.
 Proof.
-  intros. unfold union. destruct (M.elt_eq (repr uf a) (repr uf b)).
+  intros. unfold union. destruct (peq (repr uf a) (repr uf b)).
   auto.
   destruct (repr_res_none_dec uf a).
   - destruct s.
@@ -798,7 +848,7 @@ Qed.
 Lemma repr_union_2:
   forall uf a b x, repr uf x = repr uf a -> repr (union uf a b) x = repr uf b.
 Proof.
-  intros. unfold union. destruct (M.elt_eq (repr uf a) (repr uf b)).
+  intros. unfold union. destruct (peq (repr uf a) (repr uf b)).
   congruence.
   destruct (repr_res_none_dec uf a).
   - destruct s.
@@ -809,7 +859,7 @@ Qed.
 Lemma repr_union_3:
   forall uf a b, repr (union uf a b) b = repr uf b.
 Proof.
-  intros. unfold union. destruct (M.elt_eq (repr uf a) (repr uf b)).
+  intros. unfold union. destruct (peq (repr uf a) (repr uf b)).
   auto. destruct (repr_res_none_dec uf a).
   - destruct s.
     apply repr_identify_1. auto.
@@ -826,8 +876,8 @@ Lemma sameclass_union_2:
   forall uf a b x y, sameclass uf x y -> sameclass (union uf a b) x y.
 Proof.
   unfold sameclass; intros.
-  destruct (M.elt_eq (repr uf x) (repr uf a));
-  destruct (M.elt_eq (repr uf y) (repr uf a)).
+  destruct (peq (repr uf x) (repr uf a));
+  destruct (peq (repr uf y) (repr uf a)).
   repeat rewrite repr_union_2; auto.
   congruence. congruence.
   repeat rewrite repr_union_1; auto.
@@ -841,8 +891,8 @@ Lemma sameclass_union_3:
   \/ sameclass uf x b /\ sameclass uf y a.
 Proof.
   intros until y. unfold sameclass.
-  destruct (M.elt_eq (repr uf x) (repr uf a));
-  destruct (M.elt_eq (repr uf y) (repr uf a)).
+  destruct (peq (repr uf x) (repr uf a));
+  destruct (peq (repr uf y) (repr uf a)).
   intro. left. congruence.
   rewrite repr_union_2; auto. rewrite repr_union_1; auto.
   rewrite repr_union_1; auto. rewrite repr_union_2; auto.
@@ -855,7 +905,7 @@ Qed.
 Definition merge (uf: t) (a b: elt) : t :=
   let a' := repr uf a in
   let b' := repr uf b in
-  match M.elt_eq a' b' with
+  match peq a' b' with
   | left EQ' => uf
   | right NEQ =>
       match repr_res_none_dec uf a with
@@ -869,14 +919,14 @@ Definition merge (uf: t) (a b: elt) : t :=
 Lemma repr_merge:
   forall uf a b x, repr (merge uf a b) x = repr (union uf a b) x.
 Proof.
-  intros. unfold merge, union. destruct (M.elt_eq (repr uf a) (repr uf b)).
+  intros. unfold merge, union. destruct (peq (repr uf a) (repr uf b)).
   auto.
   destruct (repr_res_none_dec uf a) .
-  - destruct (M.elt_eq (repr uf x) (repr uf a)).
+  - destruct (peq (repr uf x) (repr uf a)).
     + destruct s.
       repeat rewrite repr_identify_2; auto. rewrite repr_canonical; auto.
     + destruct s. repeat rewrite repr_identify_1; auto.
-  - destruct (M.elt_eq (repr uf x) (repr uf a)).
+  - destruct (peq (repr uf x) (repr uf a)).
     + repeat rewrite repr_identify_2; auto. rewrite repr_canonical; auto.
     + repeat rewrite repr_identify_1; auto.
 Qed.
@@ -892,7 +942,7 @@ Lemma merge_clos_order1: forall uf a b x y,
     clos_order (m (merge uf a b)) y x.
 Proof.
   intros. unfold merge.
-  destruct M.elt_eq; auto.
+  destruct peq; auto.
   destruct repr_res_none_dec.
   destruct s. eapply identify_clos_order2; eauto.
   eapply identify_clos_order2; eauto.
@@ -906,11 +956,11 @@ Section CUT_EDGE.
 Variable uf: t.
 Variables a b: elt.
 Variable a_cl : Elts.t.           (* children of a *)
-Hypothesis a_edge: M.get a (m uf) = Some (Some b, a_cl).
+Hypothesis a_edge: PTree.get a (m uf) = Some (Some b, a_cl).
 Hypothesis a_not_eq_b: a <> b.
 
 Definition b_cut :=
-  match M.get b uf.(m) with
+  match PTree.get b uf.(m) with
   | Some (c, b_cl) =>
       (c, Elts.remove a b_cl)
   | None =>
@@ -918,7 +968,7 @@ Definition b_cut :=
       (None, Elts.empty)
   end.
 
-Definition cut_ufm := M.set b b_cut (M.set a (None, a_cl) (m uf)).
+Definition cut_ufm := PTree.set b b_cut (PTree.set a (None, a_cl) (m uf)).
 
 Lemma cut_ufm_order: forall x y,
     order (m uf) y x <->
@@ -929,14 +979,14 @@ Proof.
     unfold cut_ufm, b_cut. simpl.
     exploit (mcon uf). eapply a_edge. intros (A1 & (c & b_cl & A2 & A3)).
     rewrite A2.
-    destruct (M.elt_eq x a).
+    destruct (peq x a).
     ** subst. right.
        rewrite A in a_edge. inv a_edge.
        repeat apply conj; auto.
        red. eauto.
     ** left. red.
-       rewrite !M.gsspec.
-       destruct M.elt_eq; subst.
+       rewrite !PTree.gsspec.
+       destruct peq; subst.
        --- rewrite A in A2. inv A2. eauto.
        --- rewrite dec_eq_false; eauto.
   - intros [A|(A1 & A2 & A3)].
@@ -944,13 +994,13 @@ Proof.
       unfold cut_ufm, b_cut in A. simpl in A.
       exploit (mcon uf). eapply a_edge. intros (A1 & (c & b_cl & A2 & A3)).
       rewrite A2 in A.
-      destruct (M.elt_eq x a).
-      --- subst. rewrite !M.gsspec in A.
-          destruct M.elt_eq; subst.
+      destruct (peq x a).
+      --- subst. rewrite !PTree.gsspec in A.
+          destruct peq; subst.
           +++ congruence.
           +++ rewrite dec_eq_true in A. inv A.
-      --- rewrite !M.gsspec in A.
-          destruct M.elt_eq; subst.
+      --- rewrite !PTree.gsspec in A.
+          destruct peq; subst.
           +++ inv A. red. eauto.
           +++ rewrite dec_eq_false in A; eauto.
               red. eauto.
@@ -981,56 +1031,56 @@ Proof.
   split.
   - red. intros z IN. red.
     unfold cut_ufm, b_cut in *. rewrite A2 in *.
-    rewrite !M.gsspec in *.
-    destruct (M.elt_eq x b).
+    rewrite !PTree.gsspec in *.
+    destruct (peq x b).
     + subst. inv Gx.
-      destruct M.elt_eq.
+      destruct peq.
       * subst. exfalso.
         eapply Elts.remove_3 in IN.
         exploit (mcon uf). eapply A2. intros (B1 & B2).
         eapply B1 in IN. destruct IN as (b_cl' & Gb).
         eapply repr_some_neq; eauto.
-      * destruct M.elt_eq.
+      * destruct peq.
         -- subst. exfalso. eapply Elts.remove_1; eauto.
         -- eapply (mcon uf); eauto.
            eapply Elts.remove_3. eauto.
-    + destruct (M.elt_eq x a).
-      * inv Gx. destruct M.elt_eq.
+    + destruct (peq x a).
+      * inv Gx. destruct peq.
         -- subst. eapply A1 in IN as (b_cl' & Gb).
            rewrite A2 in Gb. inv Gb. eauto.
-        -- destruct M.elt_eq.
+        -- destruct peq.
            ++ subst. eapply A1 in IN as (a_cl' & Ga).
               exfalso. eapply repr_some_neq; eauto.
            ++ eapply (mcon uf); eauto.
-      * destruct M.elt_eq.
+      * destruct peq.
         -- subst. exploit (mcon uf). eapply Gx. intros (B1 & B2).
            eapply B1 in IN. destruct IN as (b_cl' & Gb).
            rewrite A2 in Gb. inv Gb. eauto.
-        -- destruct M.elt_eq.
+        -- destruct peq.
            ++ subst. eapply (mcon uf) in IN. 2: eauto.
               destruct IN as (a_cl' & Ga). rewrite a_edge in Ga.
               inv Ga. congruence.
            ++ eapply (mcon uf); eauto.
   - destruct y as [y|]; auto.
     unfold cut_ufm, b_cut in *. rewrite A2 in *.
-    rewrite !M.gsspec in *.
-    destruct (M.elt_eq x b).
-    + inv Gx. destruct M.elt_eq.
+    rewrite !PTree.gsspec in *.
+    destruct (peq x b).
+    + inv Gx. destruct peq.
       * subst. exfalso. eapply repr_some_neq; eauto.
-      * destruct M.elt_eq.
+      * destruct peq.
         -- subst. exfalso. eapply n.
            eapply clos_order_antisym.
            econstructor. red. eauto. constructor.
            econstructor. red. eauto. constructor.
         -- eapply (mcon uf) in A2 as (B1 & B2). eauto.
-    + destruct (M.elt_eq x a).
+    + destruct (peq x a).
       * inv Gx.
-      * destruct M.elt_eq.
+      * destruct peq.
         -- subst.
            eapply (mcon uf) in Gx as (B1 & (b' & b_cl' & B2 & B3)).
            rewrite A2 in B2. inv B2. do 2 eexists. split; eauto.
            eapply Elts.remove_2; eauto.
-        -- destruct M.elt_eq.
+        -- destruct peq.
            ++ eapply (mcon uf) in Gx as (B1 & (b' & b_cl' & B2 & B3)).
               subst. do 2 eexists. split; eauto.
               rewrite a_edge in B2. inv B2. auto.
@@ -1053,13 +1103,13 @@ Variables a b: elt.
 
 (* cut the edge from a to b *)
 Definition cut : t :=
-  match M.elt_eq a b with
+  match peq a b with
   (* a is equal to b *)
   | left EQ_ab => uf
   | right NEQ_ab =>
       match get_elt_dec (m uf) a with
       | inleft (exist (Some b', a_cl) Ga) =>          
-          match M.elt_eq b b' with
+          match peq b b' with
           | left EQ_bb' =>
               cut' uf a b' a_cl Ga (not_eq_trans a b b' NEQ_ab EQ_bb')
           (* a dose not point to b *)
@@ -1073,29 +1123,29 @@ Definition cut : t :=
   end.
 
 Lemma cut_a_root: forall a_cl,
-  M.get a (m uf) = Some (Some b, a_cl) ->
-  M.get a (m cut) = Some (None, a_cl).
+  PTree.get a (m uf) = Some (Some b, a_cl) ->
+  PTree.get a (m cut) = Some (None, a_cl).
 Proof.
   intros a_cl Ga. unfold cut.
-  destruct (M.elt_eq a b).
+  destruct (peq a b).
   - exfalso. subst. eapply repr_some_neq; eauto.
   - destruct get_elt_dec.
     + destruct s. destruct x. rewrite e in Ga. inv Ga.      
-      destruct M.elt_eq; try congruence.
+      destruct peq; try congruence.
       unfold cut', cut_ufm. simpl.
-      rewrite !M.gsspec.
+      rewrite !PTree.gsspec.
       rewrite dec_eq_false, dec_eq_true; auto.
     + congruence.
 Qed.
 
 
 Lemma cut_b_result: forall c b_cl, 
-  M.get b (m uf) = Some (c, b_cl) ->
-  exists b_cl', M.get b (m cut) = Some (c, b_cl') /\ Elts.eq b_cl' (Elts.remove a b_cl).
+  PTree.get b (m uf) = Some (c, b_cl) ->
+  exists b_cl', PTree.get b (m cut) = Some (c, b_cl') /\ Elts.eq b_cl' (Elts.remove a b_cl).
 Proof.
   intros c b_cl Gb.
   unfold cut.
-  destruct (M.elt_eq a b).
+  destruct (peq a b).
   - subst. exists b_cl.
     split; auto.
     exploit (mcon uf). eapply Gb. intros (A1 & A2).    
@@ -1109,9 +1159,9 @@ Proof.
     + destruct s as (v & Ga).
       destruct v as (a_par & a_cl).
       destruct a_par as [a_par|].
-      * destruct M.elt_eq.
+      * destruct peq.
         -- subst. unfold cut', cut_ufm, b_cut. simpl.
-           rewrite M.gsspec. rewrite dec_eq_true.
+           rewrite PTree.gsspec. rewrite dec_eq_true.
            rewrite Gb. exists (Elts.remove a b_cl). split; auto.
            reflexivity.
         -- exists b_cl. split; auto.
@@ -1146,12 +1196,12 @@ Lemma cut_order: forall x y,
 Proof.
   intros x y. split.
   - intros A. red in A. destruct A as (x_cl & A).
-    unfold cut. destruct (M.elt_eq a b).
+    unfold cut. destruct (peq a b).
     + subst. left. red. eauto.
     + destruct get_elt_dec.
       * destruct s as ((ob & a_cl) & Ga).
         destruct ob as [b'| ].
-        -- destruct M.elt_eq.
+        -- destruct peq.
            ++ subst.
               eapply cut_ufm_order; eauto.
               red. eauto.
@@ -1160,12 +1210,12 @@ Proof.
       * left. red. eauto.
   - intros [A|(A1 & A2 & A3)].
     + red in A. destruct A as (x_cl & A).
-      unfold cut in A. red. destruct (M.elt_eq a b).
+      unfold cut in A. red. destruct (peq a b).
       * subst. eauto.
       * destruct get_elt_dec.
         -- destruct s as ((ob & a_cl) & Ga).
            destruct ob as [b'| ].
-           ++ destruct M.elt_eq.
+           ++ destruct peq.
               ** subst.
                  eapply cut_ufm_order; eauto. left. red. eauto.
               ** eauto.
@@ -1224,12 +1274,12 @@ Proof.
   { eapply repr_some_neq. eauto. }
   induction 1.
   - unfold cut.
-    destruct M.elt_eq; try congruence.
+    destruct peq; try congruence.
     destruct get_elt_dec.
     + destruct s as ((c & a_cl') & Ga'). destruct c as [c|].
-      * destruct M.elt_eq.
+      * destruct peq.
         -- subst. unfold cut', cut_ufm, b_cut. simpl.
-           rewrite repr_unroll. simpl. rewrite !M.gsspec.
+           rewrite repr_unroll. simpl. rewrite !PTree.gsspec.
            rewrite dec_eq_false, dec_eq_true; auto.
         -- rewrite Ga in Ga'. inv Ga'. congruence.
       * congruence.
@@ -1247,20 +1297,20 @@ Qed.
 
 Lemma cut_get_not_a: forall x y x_cl,
     x <> a ->
-    M.get x (m uf) = Some (y, x_cl) ->
-    exists x_cl', M.get x (m cut) = Some (y, x_cl').
+    PTree.get x (m uf) = Some (y, x_cl) ->
+    exists x_cl', PTree.get x (m cut) = Some (y, x_cl').
 Proof.
   intros x y x_cl NEQ Gx.
-  unfold cut. destruct M.elt_eq.
+  unfold cut. destruct peq.
   - subst. eauto.
   - destruct get_elt_dec.
     + destruct s as ((c & a_cl') & Ga'). destruct c as [c|].
       * exploit (mcon uf). eauto.
         intros (A1 & (c_par & c_cl & A2 & A3)).
-        destruct M.elt_eq.
+        destruct peq.
         -- subst. unfold cut', cut_ufm, b_cut. simpl.
-           rewrite A2. rewrite !M.gsspec.
-           destruct M.elt_eq.
+           rewrite A2. rewrite !PTree.gsspec.
+           destruct peq.
            ++ subst. rewrite Gx in A2. inv A2. eauto.
            ++ rewrite dec_eq_false; eauto.
         -- eauto.
@@ -1269,20 +1319,20 @@ Proof.
 Qed.
 
 Lemma cut_get_none: forall x,
-    M.get x (m uf) = None ->
-    M.get x (m cut) = None.
+    PTree.get x (m uf) = None ->
+    PTree.get x (m cut) = None.
 Proof.
   intros x Gx.
-  unfold cut. destruct M.elt_eq.
+  unfold cut. destruct peq.
   - subst. eauto.
   - destruct get_elt_dec.
     + destruct s as ((c & a_cl') & Ga'). destruct c as [c|].
       * exploit (mcon uf). eauto.
         intros (A1 & (c_par & c_cl & A2 & A3)).
-        destruct M.elt_eq.
+        destruct peq.
         -- subst. unfold cut', cut_ufm, b_cut. simpl.
-           rewrite A2. rewrite !M.gsspec.
-           destruct M.elt_eq.
+           rewrite A2. rewrite !PTree.gsspec.
+           destruct peq.
            ++ subst. rewrite Gx in A2. inv A2. 
            ++ rewrite dec_eq_false; eauto. intro. subst. congruence.
         -- eauto.
@@ -1296,7 +1346,7 @@ Lemma cut_unchanged: forall x,
 Proof.
   intros x0; pattern x0. apply (well_founded_ind (mwf uf)); intros.
   rewrite (repr_unroll uf) in *.
-  destruct (M.get x (m uf)) eqn: Gx.
+  destruct (PTree.get x (m uf)) eqn: Gx.
   - destruct v as (c & x_cl).
     exploit cut_get_not_a. 2: eauto.
     intro. subst. eapply H0. constructor.
@@ -1330,10 +1380,10 @@ Lemma cut_same:
   cut = uf.
 Proof.
   intros N.
-  unfold cut. destruct M.elt_eq; auto.
+  unfold cut. destruct peq; auto.
   destruct get_elt_dec; auto.
   destruct s as ((c & a_cl') & Ga'). destruct c as [c|]; auto.
-  destruct M.elt_eq; auto.
+  destruct peq; auto.
   subst. exfalso. apply N. red. eauto.
 Qed.
 
@@ -1364,24 +1414,24 @@ End LINK.
 
 Lemma get_merge_cut: forall uf a b c r b_cl,
     order (m uf) b a ->
-    M.get b (m uf) = Some (c, b_cl) ->
+    PTree.get b (m uf) = Some (c, b_cl) ->
     a <> b ->
     b <> r ->
-    exists b_cl', M.get b (m (merge (cut uf a b) a r)) = Some (c, b_cl')
+    exists b_cl', PTree.get b (m (merge (cut uf a b) a r)) = Some (c, b_cl')
              /\ Elts.eq b_cl' (Elts.remove a b_cl).
 Proof. 
   intros.
-  unfold merge. destruct M.elt_eq.
-  (* properties of cut: M.get b (m (cut uf a b)) = Some (None, Elts.remove a b_cl) *)
+  unfold merge. destruct peq.
+  (* properties of cut: PTree.get b (m (cut uf a b)) = Some (None, Elts.remove a b_cl) *)
   eapply cut_b_result; eauto.
   destruct repr_res_none_dec. destruct s.
   + unfold identify, identify_ufm. simpl.
-    erewrite cut_disjoint; auto. rewrite !M.gsspec. rewrite !dec_eq_false; auto.
+    erewrite cut_disjoint; auto. rewrite !PTree.gsspec. rewrite !dec_eq_false; auto.
     (* properties of cut *)
     eapply cut_b_result; eauto.
     constructor.
   + unfold identify, identify_ufm. simpl.
-    erewrite cut_disjoint; auto. rewrite !M.gsspec. rewrite !dec_eq_false; auto.
+    erewrite cut_disjoint; auto. rewrite !PTree.gsspec. rewrite !dec_eq_false; auto.
     (* properties of cut *)
     eapply cut_b_result; eauto.
     constructor.
@@ -1396,7 +1446,7 @@ Lemma merge_cut_clos_order: forall uf a b x r,
     clos_order (m uf) b x.
 Proof.
   intros until r. intros NBR BX NAB.
-  unfold merge in BX. destruct M.elt_eq in BX.
+  unfold merge in BX. destruct peq in BX.
   - eapply cut_clos_order2. eauto.
   - destruct repr_res_none_dec in BX.
     + destruct s as (a_cl & G).
@@ -1412,7 +1462,7 @@ Proof.
 Qed.      
 
 Lemma merge_cut_inductive_hyp: forall uf a b r b_cl cl
-    (Gb : M.get b (m uf) = Some (None, b_cl))
+    (Gb : PTree.get b (m uf) = Some (None, b_cl))
     (NEQ : repr uf r <> b)
     (EQV : forall y : Elts.elt, InA eq y (a :: cl) <-> Elts.In y b_cl)
     (RNIN : ~ Elts.In r b_cl)
@@ -1420,7 +1470,7 @@ Lemma merge_cut_inductive_hyp: forall uf a b r b_cl cl
     (NEQab : a <> b)
     (NEQbr : b <> r),
   exists b_cl',
-    M.get b (m (merge (cut uf a b) a r)) = Some (None, b_cl')
+    PTree.get b (m (merge (cut uf a b) a r)) = Some (None, b_cl')
     /\ Elts.eq b_cl' (Elts.remove a b_cl)
     /\ repr (merge (cut uf a b) a r) r <> b
     /\ (forall y : Elts.elt, InA eq y cl <-> Elts.In y b_cl')
@@ -1457,7 +1507,7 @@ Proof.
 Qed.
     
 Lemma repr_link_children_isolate_aux: forall cl uf r b b_cl
-    (Gb: M.get b (m uf) = Some (None, b_cl))
+    (Gb: PTree.get b (m uf) = Some (None, b_cl))
     (NEQ: repr uf r <> b)
     (EQV: forall y, InA eq y cl <-> Elts.In y b_cl)
     (RNIN: ~ Elts.In r b_cl)
@@ -1480,7 +1530,7 @@ Proof.
 Qed.
 
 Lemma repr_link_children_unchanged_aux: forall cl uf r b b_cl x
-    (Gb: M.get b (m uf) = Some (None, b_cl))
+    (Gb: PTree.get b (m uf) = Some (None, b_cl))
     (NEQ: repr uf r <> b)
     (EQV: forall y, InA eq y cl <-> Elts.In y b_cl)
     (RNIN: ~ Elts.In r b_cl)
@@ -1524,7 +1574,7 @@ Proof.
 Qed.    
 
 Lemma repr_link_children_relink_aux: forall cl uf r b b_cl x
-    (Gb: M.get b (m uf) = Some (None, b_cl))
+    (Gb: PTree.get b (m uf) = Some (None, b_cl))
     (NEQ: repr uf r <> b)
     (EQV: forall y, InA eq y cl <-> Elts.In y b_cl)
     (RNIN: ~ Elts.In r b_cl)
@@ -1591,7 +1641,7 @@ Variable uf : t.
 Variable r b: elt.
 Variable b_cl : Elts.t.
 
-Hypothesis get_b: M.get b (m uf) = Some (None, b_cl).
+Hypothesis get_b: PTree.get b (m uf) = Some (None, b_cl).
 Hypothesis r_not_eq_b: repr uf r <> b.
 Hypothesis r_not_in_cl: ~ Elts.In r b_cl.
 
@@ -1650,7 +1700,7 @@ End LINK_PROOF.
 (** Delete operation: it returns the new union-find and the new root if it is changed *)
 
 Definition delete (uf: t) (a: elt) : t * option elt :=
-  match M.get a (m uf) with
+  match PTree.get a (m uf) with
   | Some (Some r, a_cl) =>
       let uf1 := cut uf a r in (* cut a -> r *)
       (link_children uf1 r a a_cl, None)
@@ -1669,7 +1719,7 @@ Definition delete (uf: t) (a: elt) : t * option elt :=
 Lemma delete_repr: forall uf a, repr (fst (delete uf a)) a = a.
 Proof.
   intros. unfold delete.
-  destruct (M.get a (m uf)) as [(r & a_cl) |] eqn: G.
+  destruct (PTree.get a (m uf)) as [(r & a_cl) |] eqn: G.
   - destruct r as [r |].
     + simpl.
       erewrite repr_link_children_isolate. auto.
@@ -1717,7 +1767,7 @@ Lemma delete_repr_unchanged1: forall uf b x,
     repr (fst (delete uf b)) x = repr uf x.
 Proof.
   intros uf b x R.
-  unfold delete. destruct (M.get b (m uf)) eqn: Gb.
+  unfold delete. destruct (PTree.get b (m uf)) eqn: Gb.
   - destruct v as (y & b_cl). destruct y as [y|].
     + simpl. erewrite repr_link_children_unchanged.
       * rewrite cut_unchanged. auto.
@@ -1766,7 +1816,7 @@ Lemma delete_repr_unchanged2: forall uf uf1 a b,
     repr uf1 b = repr uf b.
 Proof.
   intros until b. intros NEQ DEL. unfold delete in DEL.
-  destruct (M.get a (m uf)) as [(r & a_cl) |] eqn: G.
+  destruct (PTree.get a (m uf)) as [(r & a_cl) |] eqn: G.
   - destruct r as [r|].
     + inv DEL.
       set (uf1 := (cut uf a r)).
@@ -1835,7 +1885,7 @@ Lemma repr_clos_order_root: forall uf x r,
 Proof.
   intros uf.
   intros x0; pattern x0. apply (well_founded_ind (mwf uf)); intros.
-  rewrite (repr_unroll uf) in H0. destruct (M.get x (m uf)) as [(a' & a_cl')|] eqn:X.
+  rewrite (repr_unroll uf) in H0. destruct (PTree.get x (m uf)) as [(a' & a_cl')|] eqn:X.
   - destruct a' as [a'|].
     + econstructor. red. eauto.
       eapply H; eauto. red. eauto.
@@ -1852,7 +1902,7 @@ Lemma delete_fresh_repr: forall uf uf1 a b r,
 Proof.
   intros until r. intros NEQ RNEQ DEL.
   unfold delete in DEL.
-  destruct (M.get a (m uf)) as [(r1 & a_cl) |] eqn: G; try congruence.
+  destruct (PTree.get a (m uf)) as [(r1 & a_cl) |] eqn: G; try congruence.
   - destruct r1 as [r1|]; try congruence.
     destruct (Elts.choose a_cl) as [r2|] eqn: C; try congruence.
     inv DEL.
@@ -1960,7 +2010,7 @@ Variable uf: t.
 
 Program Fixpoint find_x (a: elt) {wf (order uf.(m)) a} :
     { r: elt * t | fst r = repr uf a /\ forall x, repr (snd r) x = repr uf x } :=
-  match M.get a uf.(m) with
+  match PTree.get a uf.(m) with
   | Some (Some a', a_cl) =>
       match find_x a' with
       | pair b uf' => (b, compress uf' a a' b)
@@ -2021,6 +2071,195 @@ Proof.
 Qed.
 
 End FIND.
+
+(** Merging two union-find-delete structure *)
+
+Fixpoint join_elt_acc (uf1 uf2: t) (l: list elt) : t :=
+  match l with
+  | nil => uf1
+  | x :: l' =>
+      let x1 := (repr uf1 x) in
+      let x2 := (repr uf1 (repr uf2 x)) in
+      if elt_eq x1 x2 then
+        join_elt_acc uf1 uf2 l'
+      else
+        join_elt_acc (union uf1 x1 x2) uf2 l'
+  end.
+        
+Definition join (uf1 uf2: t) := join_elt_acc uf1 uf2 (map fst (PTree.elements (m uf2))).
+    
+Lemma join_elt_acc_sound1_aux: forall uf2 l uf1 x y,
+    sameclass uf1 x y ->
+    sameclass (join_elt_acc uf1 uf2 l) x y.
+Proof.
+  induction l; intros until y; intros S.
+  simpl in *. auto.
+  simpl. destruct elt_eq.
+  - auto.
+  - eapply IHl.
+    eapply sameclass_union_2. auto.
+Qed.
+
+Lemma join_sound1: forall uf1 uf2 a b,
+      sameclass uf1 a b ->
+      sameclass (join uf1 uf2) a b.
+Proof.
+  intros. unfold join. eapply join_elt_acc_sound1_aux. auto.
+Qed.
+   
+Lemma join_elt_acc_sound2_aux: forall uf2 l uf1 x y
+    (COM: forall e, In e l -> exists v, PTree.get e (m uf2) = Some v)
+    (COR: forall e v, PTree.get e (m uf2) = Some v ->
+                 In e l
+                 \/ (* It is already added to uf1 *)
+                   sameclass uf1 e (repr uf2 e))
+    (DIS: list_norepet l)
+    (S: sameclass uf2 x y),
+    sameclass (join_elt_acc uf1 uf2 l) x y.
+Proof.
+  induction l; intros.
+  - simpl in *.
+    destruct (peq x y).
+    + subst. eapply sameclass_refl.
+    + unfold sameclass in *.
+      generalize S as S1. intros.
+      rewrite !repr_unroll in S.
+      destruct (PTree.get x (m uf2)) eqn: Gx in S;
+        destruct (PTree.get y (m uf2)) eqn: Gy in S.
+      * exploit COR. eapply Gx. intros [A|B]; try contradiction.
+        exploit COR. eapply Gy. intros [C|D]; try contradiction.
+        rewrite B, D. rewrite S1. auto.
+      * exploit COR. eapply Gx. intros [A|B]; try contradiction.
+        erewrite (repr_none uf2 y) in S1. 2: eauto.
+        destruct v. destruct o.
+        -- rewrite S1 in B. auto.
+        -- erewrite (repr_none2 uf2 x) in S1. 2: eauto. congruence.
+      * exploit COR. eapply Gy. intros [A|B]; try contradiction.
+        erewrite (repr_none uf2 x) in S1. 2: eauto.
+        destruct v. destruct o.
+        -- rewrite <- S1 in B. auto.
+        -- erewrite (repr_none2 uf2 y) in S1. 2: eauto. congruence.
+      * congruence.        
+  - simpl. inv DIS.
+    destruct elt_eq.
+    + eapply IHl; eauto.
+      intros. eapply COM. eapply in_cons. auto.
+      intros. eapply COR in H.
+      destruct (peq e0 a).
+      * subst. right. auto.
+      * destruct H; auto. inv H; try congruence. auto.
+    + eapply IHl; eauto.
+      intros. eapply COM. eapply in_cons. auto.
+      intros. eapply COR in H.
+      destruct (peq e a).
+      * subst. right. red. rewrite repr_union_2.
+        rewrite repr_union_1. rewrite repr_canonical. auto.
+        rewrite repr_canonical. auto.
+        rewrite repr_canonical. auto.
+      * destruct H; auto. inv H; try congruence. auto.
+        right.
+        eapply sameclass_union_2. auto.
+Qed.
+
+(* Comparison of union-find structures *)
+
+  Definition eq uf1 uf2 : Prop := forall a b,
+      sameclass uf1 a b <->
+      sameclass uf2 a b.
+  Definition ge uf1 uf2 : Prop := forall a b,
+      sameclass uf2 a b ->
+      sameclass uf1 a b.
+  Lemma eq_refl: forall uf,
+      eq uf uf.
+  Proof.
+    intros. red. intros. split; auto.
+  Qed.
+  Lemma eq_sym: forall uf1 uf2,
+      eq uf1 uf2 -> eq uf2 uf1.
+  Proof.
+    intros. unfold eq, sameclass in *. intros; split; intros; auto.
+    apply H. auto.
+    apply H. auto.
+  Qed.  
+  Lemma eq_trans: forall uf1 uf2 uf3,
+      eq uf1 uf2 -> eq uf2 uf3 -> eq uf1 uf3.
+  Proof.
+    intros. unfold eq in *. intros. split; unfold sameclass in *; intros; auto.
+    eapply H0. eapply H. auto.
+    eapply H. eapply H0. auto.
+  Qed.
+  Lemma ge_refl: forall uf,
+      ge uf uf.
+  Proof.
+    intros. red. intros. auto.
+  Qed.
+  Lemma ge_trans: forall uf1 uf2 uf3,
+      ge uf1 uf2 -> ge uf2 uf3 -> ge uf1 uf3.
+  Proof.
+    intros. unfold ge in *. intros. unfold sameclass in *; intros; auto.
+  Qed.
+  Lemma ge_antisym: forall uf1 uf2,
+      ge uf1 uf2 -> ge uf2 uf1 -> eq uf1 uf2.
+  Proof.
+    intros. unfold ge, eq, sameclass in *. 
+    intros; split; auto.
+  Qed.
+
+
+Lemma join_sound2: forall uf1 uf2 a b,
+      sameclass uf2 a b ->
+      sameclass (join uf1 uf2) a b.
+Proof.
+  intros. unfold join.
+  eapply join_elt_acc_sound2_aux;
+    auto.
+  intros. eapply in_map_iff in H0 as ((x & v) & A1 & A2).
+  inv A1. eapply PTree.elements_complete in A2. eauto.
+  intros. eapply PTree.elements_correct in H0. left.
+  eapply in_map_iff. exists (e, v). eauto.
+  eapply PTree.elements_keys_norepet.
+Qed.
+
+Definition geb_elt (uf1 uf2: t) a (v: vt) : bool :=
+  proj_sumbool (elt_eq (repr uf1 a) (repr uf1 (repr uf2 a))).
+
+Definition geb (uf1 uf2: t) : bool :=
+  PTree_Properties.for_all (m uf2) (geb_elt uf1 uf2).
+
+Lemma geb_correct: forall uf1 uf2,
+      geb uf1 uf2 = true ->
+      ge uf1 uf2.
+Proof.
+  unfold geb, ge, sameclass.
+  intros.
+  destruct (PTree.get a (m uf2)) eqn: Ga;
+    destruct (PTree.get b (m uf2)) eqn: Gb.
+  - eapply PTree_Properties.for_all_correct in Ga. 2: eauto.
+    unfold geb_elt in Ga. eapply proj_sumbool_true in Ga.
+    eapply PTree_Properties.for_all_correct in Gb. 2: eauto.
+    unfold geb_elt in Gb. eapply proj_sumbool_true in Gb.
+    rewrite Ga, Gb, H0. auto.
+  - eapply PTree_Properties.for_all_correct in Ga. 2: eauto.
+    unfold geb_elt in Ga. eapply proj_sumbool_true in Ga.
+    eapply repr_none in Gb.
+    rewrite Ga, H0, Gb. auto.
+  - eapply PTree_Properties.for_all_correct in Gb. 2: eauto.
+    unfold geb_elt in Gb. eapply proj_sumbool_true in Gb.
+    eapply repr_none in Ga.
+    rewrite Gb, <- H0, Ga. auto.
+  - eapply repr_none in Ga. eapply repr_none in Gb.
+    rewrite Ga, Gb in H0. subst. auto.
+Qed.
+
+Definition eqb uf1 uf2 :=  geb uf1 uf2 && geb uf2 uf1.
+
+Lemma eqb_correct: forall uf1 uf2,
+      eqb uf1 uf2 = true ->
+      eq uf1 uf2.
+  Proof.
+    intros. unfold eqb in H. apply andb_true_iff in H as (A1 & A2).
+    red. intros. split; eapply geb_correct; auto.
+  Qed.
 
 End UFD.
 
