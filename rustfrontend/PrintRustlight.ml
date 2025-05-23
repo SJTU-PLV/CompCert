@@ -145,7 +145,7 @@ let rec print_stmt p (s: Rustlight.statement) =
     (* comment *)
     fprintf p "/*skip*/"
   | Sassign(v, e) ->
-    fprintf p "@[<hv 2>%a =@ %a;@]" print_place v print_expr e
+    fprintf p "@[<hv 2>let %a =@ %a;@]" print_place v print_expr e
   | Sassign_variant (v, enum_id, id, e) ->
     fprintf p "@[<hv 2>%a =@ %s::%s(%a);@]" print_place v (extern_atom enum_id)(extern_atom id) print_expr e
   | Scall(v, e1, el) ->
@@ -192,16 +192,16 @@ let rec print_stmt p (s: Rustlight.statement) =
             print_stmt s
 
 let print_stmt_direct stmt = print_stmt (formatter_of_out_channel stdout) stmt
-
+    
 let print_function p id f =
-  fprintf p "%s@ "
-            (name_rust_decl (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
+  fprintf p "fn%s@ "
+            (name_rust_decl_fn (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
   fprintf p "@[<v 2>{@ ";
     (* Print variables and their types *)
-    List.iter
+    (* List.iter
     (fun (id, ty) ->
       fprintf p "%s;@ " (name_rust_decl (extern_atom id) ty))
-    f.fn_vars;
+    f.fn_vars; *)
     print_stmt p f.fn_body;
   fprintf p "@;<0 -2>}@]@ @ "
 
@@ -215,8 +215,8 @@ let print_fundef p id fd =
 let print_fundecl p id fd =
   match fd with
   | Rusttypes.External(_, _, (AST.EF_external _ | AST.EF_runtime _ | AST.EF_malloc | AST.EF_free), args, res, cconv) ->
-      fprintf p "extern %s;@ "
-                (name_rust_decl (extern_atom id) (Rusttypes.Tfunction([], [], args, res, cconv)))
+      fprintf p "extern \"C\" { %s; }@ "
+                ("fn " ^ name_rust_decl_fn (extern_atom id) (Rusttypes.Tfunction([], [], args, res, cconv)))
   | Rusttypes.External(_, _ ,_, _, _, _) ->
       ()
   | Rusttypes.Internal f ->

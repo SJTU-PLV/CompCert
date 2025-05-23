@@ -82,7 +82,7 @@ let attributes_space a =
   if String.length s = 0 then s else s ^ " "
 
 let name_optid id =
-  if id = "" then "" else " " ^ id
+  if id = "" then " () " else " " ^ id
 
 let rec name_cdecl id ty =
   match ty with

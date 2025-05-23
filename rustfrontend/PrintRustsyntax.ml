@@ -38,6 +38,53 @@ let origin_relations_string (rels: origin_rel list) =
   | _ ->
     "where " ^ origin_relations_string_aux rels
 
+    let rec name_rust_decl_fn id ty =
+      match ty with
+      | Rusttypes.Tunit ->
+          name_optid id 
+      | Rusttypes.Tint(sz, sg) ->
+          name_optid id ^ " -> " ^ name_inttype sz sg
+      | Rusttypes.Tfloat(sz) ->
+          name_optid id  ^ " -> " ^ name_floattype sz
+      | Rusttypes.Tlong(sg) ->
+          name_optid id ^ " -> " ^ name_longtype sg
+      | Rusttypes.Treference(org, mut, t) ->
+          "&" ^ (extern_atom org) ^" "^  string_of_mut mut ^ (name_rust_decl_fn ""  t) ^ name_optid id
+      | Tbox(t) ->
+          "Box<" ^ (name_rust_decl_fn ""  t) ^ ">" ^ name_optid id
+      | Tfunction( _, _, args, res, cconv) ->
+          let b = Buffer.create 20 in
+          if id = ""
+          then Buffer.add_string b "(*)"
+          else Buffer.add_string b id;
+          Buffer.add_char b '(';
+          let rec add_args first = function
+          | Tnil ->
+              if first then
+                Buffer.add_string b
+                   (if cconv.cc_vararg <> None then "..." else "void")
+              else if cconv.cc_vararg <> None then
+                Buffer.add_string b ", ..."
+              else
+                ()
+          | Tcons(t1, tl) ->
+              if not first then Buffer.add_string b ", ";
+              Buffer.add_string b (name_rust_decl_fn "" t1);
+              add_args false tl in
+          if not cconv.cc_unproto then add_args true args;
+          Buffer.add_char b ')';
+          name_rust_decl_fn (Buffer.contents b) res
+      | Tstruct(orgs, name) ->
+          "struct" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      | Tvariant(orgs, name) ->
+          "variant" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      | Traw_pointer(mut, ty) ->
+        "*" ^ (name_rust_decl_fn ""  ty) ^ name_optid id
+      | Tarray(mut, ty, sz) ->
+        (* string_of_mut mut ^ " "^ *)
+        name_rust_decl_fn (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
+      | Tslice(mut, ty) ->
+        "&" ^ string_of_mut mut ^ " " ^ (name_rust_decl_fn ""  ty) ^ name_optid id
 
 let rec name_rust_decl id ty =
   match ty with
