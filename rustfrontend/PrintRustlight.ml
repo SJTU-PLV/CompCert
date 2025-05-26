@@ -192,18 +192,18 @@ let rec print_stmt p (s: Rustlight.statement) =
             print_stmt s
 
 let print_stmt_direct stmt = print_stmt (formatter_of_out_channel stdout) stmt
-    
+
 let print_function p id f =
-  fprintf p "fn%s@ "
-            (name_rust_decl_fn (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
-  fprintf p "@[<v 2>{@ ";
-    (* Print variables and their types *)
-    (* List.iter
-    (fun (id, ty) ->
-      fprintf p "%s;@ " (name_rust_decl (extern_atom id) ty))
-    f.fn_vars; *)
-    print_stmt p f.fn_body;
-  fprintf p "@;<0 -2>}@]@ @ "
+      fprintf p "fn%s@ "
+                (name_rust_decl_fn (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
+      fprintf p "@[<v 2>{@ ";
+        (* Print variables and their types *)
+        (* List.iter
+        (fun (id, ty) ->
+          fprintf p "%s;@ " (name_rust_decl (extern_atom id) ty))
+        f.fn_vars; *)
+        print_stmt p f.fn_body;
+      fprintf p "@;<0 -2>}@]@ @ "
 
 let print_fundef p id fd =
   match fd with
@@ -212,16 +212,23 @@ let print_fundef p id fd =
   | Rusttypes.Internal f ->
       print_function p id f
 
+(* Check whether function id is main_id *)
+let is_main_id id =
+  let fun_name = extern_atom id in
+  fun_name = "main"
+
 let print_fundecl p id fd =
   match fd with
   | Rusttypes.External(_, _, (AST.EF_external _ | AST.EF_runtime _ | AST.EF_malloc | AST.EF_free), args, res, cconv) ->
-      fprintf p "extern \"C\" { %s; }@ "
-                ("fn " ^ name_rust_decl_fn (extern_atom id) (Rusttypes.Tfunction([], [], args, res, cconv)))
+      fprintf p "unsafe extern \"C\" { %s; }@ "
+                (name_rust_decl_fn (extern_atom id) (Rusttypes.Tfunction([], [], args, res, cconv)))
   | Rusttypes.External(_, _ ,_, _, _, _) ->
       ()
   | Rusttypes.Internal f ->
+      (* We should not print fundecl of main function *)
+      if is_main_id id then () else
       fprintf p "%s;@ "
-                (name_rust_decl (extern_atom id) (Rustlight.type_of_function f))
+                (name_rust_decl_fn (extern_atom id) (Rustlight.type_of_function f))
 
 let print_globdef p (id, gd) =
   match gd with

@@ -50,23 +50,23 @@ let name_binop = function
 
 let name_inttype sz sg =
   match sz, sg with
-  | I8, Signed -> "signed char"
-  | I8, Unsigned -> "unsigned char"
-  | I16, Signed -> "short"
-  | I16, Unsigned -> "unsigned short"
-  | I32, Signed -> "int"
-  | I32, Unsigned -> "unsigned int"
-  | IBool, _ -> "_Bool"
+  | I8, Signed -> "i8"
+  | I8, Unsigned -> "u8"
+  | I16, Signed -> "i16"
+  | I16, Unsigned -> "u16"
+  | I32, Signed -> "i32"
+  | I32, Unsigned -> "u32"
+  | IBool, _ -> "bool"
 
 let name_floattype sz =
   match sz with
-  | F32 -> "float"
-  | F64 -> "double"
+  | F32 -> "f32"
+  | F64 -> "f64"
 
 let name_longtype sg =
   match sg with
-  | Signed -> "long long"
-  | Unsigned -> "unsigned long long"
+  | Signed -> "i64"
+  | Unsigned -> "u64"
 
 (* Declarator (identifier + type) *)
 
@@ -82,7 +82,7 @@ let attributes_space a =
   if String.length s = 0 then s else s ^ " "
 
 let name_optid id =
-  if id = "" then " () " else " " ^ id
+  if id = "" then "" else " " ^ id
 
 let rec name_cdecl id ty =
   match ty with

@@ -15,4 +15,4 @@
 ### c语言 -> clight -> rustlight -> clight -> Asm
 由于以前的工作已经完成了rustlight到clight再到Asm的全部流程，目前优先考虑使用如上编译链来完成。
 
-但是，rustlight里面有很多东西是clight中没有的，比如从clight到rustlight的过程中，引入了
+但是，rustlight里面有很多东西是clight中没有的，比如从clight到rustlight的过程中，引入了Pparen,这种表达式在clight中并不存在。同时，rustlight中有着clight中没有的数据类型，比如数组切片（slice）。

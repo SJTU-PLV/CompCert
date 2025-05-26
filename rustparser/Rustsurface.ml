@@ -193,6 +193,7 @@ module To_syntax = struct
     let module T = Rusttypes in
     match t with
     | T.Tunit -> pp_print_string pp "()"
+    | T.Tvoid -> pp_print_string pp "void"
     | T.Tint (s, si) -> (
       match si with
       | Ctypes.Signed -> pp_print_string pp "int"

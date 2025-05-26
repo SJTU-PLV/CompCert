@@ -114,10 +114,10 @@ Definition malloc_decl : (Ctypes.fundef Clight.function) :=
    (Ctypes.External EF_malloc (Ctypes.Tcons Ctyping.size_t Ctypes.Tnil) (Tpointer Ctypes.Tvoid noattr) cc_default).
 
 Definition free_decl : (Ctypes.fundef Clight.function) :=
-  (Ctypes.External EF_free (Ctypes.Tcons (Tpointer Ctypes.Tvoid noattr) Ctypes.Tnil) Tvoid cc_default).
+  (Ctypes.External EF_free (Ctypes.Tcons (Tpointer Ctypes.Tvoid noattr) Ctypes.Tnil) Ctypes.Tvoid cc_default).
 
 Definition free_fun_expr : Clight.expr :=
-  Evar free_id (Ctypes.Tfunction (Ctypes.Tcons (Tpointer Tvoid noattr) Ctypes.Tnil) Ctypes.Tvoid cc_default).
+  Evar free_id (Ctypes.Tfunction (Ctypes.Tcons (Tpointer Ctypes.Tvoid noattr) Ctypes.Tnil) Ctypes.Tvoid cc_default).
 
 (* return [free(arg)], ty is the type arg points to, i.e. [arg: *ty] *)
 Definition call_free (arg: Clight.expr) : Clight.statement :=
@@ -178,7 +178,7 @@ Fixpoint drop_glue_for_box_rec (arg: Clight.expr) (tys: list type) : list Clight
 
 Definition call_composite_drop_glue (arg: Clight.expr) (ty: Ctypes.type) (drop_id: ident) :=
   let ref_arg_ty := (Ctypes.Tpointer ty noattr) in
-  let glue_ty := Ctypes.Tfunction (Ctypes.Tcons ref_arg_ty Ctypes.Tnil) Tvoid cc_default in
+  let glue_ty := Ctypes.Tfunction (Ctypes.Tcons ref_arg_ty Ctypes.Tnil) Ctypes.Tvoid cc_default in
   (* drop_in_place_xxx(&arg) *)
   let call_stmt := Clight.Scall None (Evar drop_id glue_ty) ((Eaddrof arg ref_arg_ty) :: nil) in
   call_stmt.
@@ -252,7 +252,7 @@ Definition drop_glue_for_composite (m: PTree.t ident) (co_id: ident) (sv: struct
   | Struct =>
       let stmt_list := drop_glue_for_members m deref_param ms in
       (* an additonal skip statement to simulate the source semantics *)
-      (Some (Clight.mkfunction Tvoid cc_default ((param_id, param_ty)::nil) nil nil (Clight.Ssequence Clight.Sskip stmt_list)))
+      (Some (Clight.mkfunction Ctypes.Tvoid cc_default ((param_id, param_ty)::nil) nil nil (Clight.Ssequence Clight.Sskip stmt_list)))
   | TaggedUnion =>
       (* check tag and then call corresponded drop glue *)
       match tce ! co_id with
@@ -268,7 +268,7 @@ Definition drop_glue_for_composite (m: PTree.t ident) (co_id: ident) (sv: struct
               let drop_switch_branches := make_labelled_drop_stmts m get_union 0 ms in
               (* generate function *)
               let stmt := Clight.Sswitch get_tag drop_switch_branches in
-              (Some (Clight.mkfunction Tvoid cc_default ((param_id, param_ty)::nil) nil nil stmt))
+              (Some (Clight.mkfunction Ctypes.Tvoid cc_default ((param_id, param_ty)::nil) nil nil stmt))
           (* This is impossible if tce is generated correctly *)
           | _, _ => None (* Error (msg "Variant is not correctly converted to C struct: drop_glue_for_composite") *)
           end
@@ -295,7 +295,7 @@ Definition drop_glue_fundef (f: Clight.function) : (Ctypes.fundef Clight.functio
 (* Definition generate_drops (l: list composite_definition) (dropm: PTree.t ident) : PTree.t Clight.function := *)
 (*   PTree_Properties.of_list (generate_drops_list l dropm). *)
 
-Definition empty_drop := Clight.mkfunction Tvoid cc_default nil nil nil Clight.Sskip.
+Definition empty_drop := Clight.mkfunction Ctypes.Tvoid cc_default nil nil nil Clight.Sskip.
 
 Definition generate_drops_acc (dropm: PTree.t ident) (id: ident) (co: composite) : Clight.function :=
   let glue := drop_glue_for_composite dropm id co.(co_sv) co.(co_members) in
@@ -585,7 +585,7 @@ Definition expand_drop (temp: ident) (ty: type) : option Clight.statement :=
       | Some id' =>
           (* temp has type [ref_cty] *)
           let ref_cty := Tpointer (to_ctype ty) noattr in
-          let glue_ty := Ctypes.Tfunction (Ctypes.Tcons ref_cty Ctypes.Tnil) Tvoid cc_default in
+          let glue_ty := Ctypes.Tfunction (Ctypes.Tcons ref_cty Ctypes.Tnil) Ctypes.Tvoid cc_default in
           (* drop_in_place_xxx(temp) *)
           let call_stmt := Clight.Scall None (Evar id' glue_ty) ((Clight.Etempvar temp ref_cty) :: nil) in
           Some call_stmt

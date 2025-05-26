@@ -607,6 +607,7 @@ Proof.
   - econstructor; simpl; eauto.
   - inv H. eapply deref_loc_copy; eauto.
   - inv H. eapply deref_loc_copy; eauto.
+  - inv H.
 Qed.
 
 (* copy from Cexe *)

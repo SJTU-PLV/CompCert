@@ -82,6 +82,7 @@ Definition typeof_aexpr a :=
 Fixpoint sizeof (env: composite_env) (t: type) : Z :=
   match t with
   | Tunit => 1
+  | Tvoid => 1
   | Tint I8 _ => 1
   | Tint I16 _ => 2
   | Tint I32 _ => 4

@@ -480,6 +480,9 @@ Proof.
     exists (Vptr b2 (Ptrofs.add ofs1 (Ptrofs.repr delta))).
     destruct (ident_eq i 1). split. auto.  
     TrivialInject. eapply Val.inject_ptr; eauto. inv H2.
+  - destruct t2; simpl in H; destruct v1; inv H0;
+      try (destruct i; simpl in *);
+           try (destruct f0; simpl in *); TrivialInject.
 Qed. 
 
 

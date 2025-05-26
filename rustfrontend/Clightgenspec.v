@@ -447,7 +447,7 @@ Lemma complete_type_match: forall ce tce m,
       Ctypes.complete_type tce (Ctypes.type_member (transl_composite_member m)) = true.
 Proof.
   destruct m; simpl;intros TR TCOMP.
-  induction t;simpl in *; auto; destruct (ce ! i) eqn: CO; try congruence.
+  induction t;simpl in *; auto; try destruct (ce ! i) eqn: CO; try congruence.
   eapply TR in CO. destruct (co_sv c).
   destruct CO. intuition. rewrite H0. auto.
   destruct CO as (a & b & d & e & f & g & h). rewrite g. auto.
@@ -968,7 +968,7 @@ Lemma generate_drops_inv: forall ce tce dropm id co f,
     match co.(co_sv) with
     | Struct =>
         let stmt_list := drop_glue_for_members ce dropm deref_param co.(co_members) in
-        f = {| Clight.fn_return := Tvoid;
+        f = {| Clight.fn_return := Ctypes.Tvoid;
               Clight.fn_callconv := cc_default;
               Clight.fn_params := [(param_id, param_ty)];
               Clight.fn_vars := [];
@@ -981,7 +981,7 @@ Lemma generate_drops_inv: forall ce tce dropm id co f,
         let drop_switch_branches :=
           (make_labelled_drop_stmts ce dropm get_union 0 co.(co_members)) in
         let stmt := Sswitch get_tag drop_switch_branches in
-        f = {| Clight.fn_return := Tvoid;
+        f = {| Clight.fn_return := Ctypes.Tvoid;
               Clight.fn_callconv := cc_default;
               Clight.fn_params := [(param_id, param_ty)];
               Clight.fn_vars := [];

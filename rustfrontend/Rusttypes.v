@@ -66,6 +66,8 @@ Inductive type : Type :=
 | Tslice: mutkind -> type -> type  
 | Tstruct: list origin -> ident -> type                              (**r struct types  *)
 | Tvariant: list origin -> ident -> type                             (**r tagged variant types *)
+(* unsafe rust: *)
+| Tvoid: type (**r the void type in C *)
 with typelist : Type :=
 | Tnil: typelist
 | Tcons: type -> typelist -> typelist.
@@ -200,6 +202,7 @@ Definition access_mode (ty: type) : mode :=
   | Tslice _ _ => By_value Mptr
   | Tstruct _ _ => By_copy
   | Tvariant _ _ => By_copy
+  | Tvoid => By_nothing
 end.
 
 (* Used to indicate which places need to be dropped *)
@@ -246,6 +249,7 @@ Fixpoint to_ctype (ty: type) : Ctypes.type :=
   | Tslice _ ty  => Ctypes.Tarray (to_ctype ty) 0%Z noattr
   | Tfunction _ _ tyl ty cc =>
       Ctypes.Tfunction (to_ctypelist tyl) (to_ctype ty) cc
+  | Tvoid => Ctypes.Tvoid
   end
     
 with to_ctypelist (tyl: typelist) : Ctypes.typelist :=
@@ -326,6 +330,7 @@ Definition composite_env : Type := PTree.t composite.
 Fixpoint complete_type (env: composite_env) (t: type) : bool :=
   match t with
   | Tunit => true
+  | Tvoid => false
   | Tint _ _ => true
   | Tlong _ => true
   | Tfloat _ => true
@@ -356,6 +361,7 @@ Definition complete_or_function_type (env: composite_env) (t: type) : bool :=
 Fixpoint alignof (env: composite_env) (t: type) : Z :=
    (match t with
     | Tunit => 4
+    | Tvoid => 1
     | Tint I8 _ => 1
     | Tint I16 _ => 2
     | Tint I32 _ => 4
@@ -397,6 +403,7 @@ Proof.
     apply IHt.
     destruct (env!i). apply co_alignof_two_p. exists 0%nat; auto.
     destruct (env!i). apply co_alignof_two_p. exists 0%nat; auto.
+    exists 0%nat; auto.
 Qed.
 
 Lemma alignof_pos:
@@ -524,6 +531,7 @@ Definition own_type (ce: composite_env) ty : bool :=
 Fixpoint sizeof (env: composite_env) (t: type) : Z :=
   match t with
   | Tunit => 4
+  | Tvoid => 1
   | Tint I8 _ => 1
   | Tint I16 _ => 2
   | Tint I32 _
@@ -562,11 +570,13 @@ Proof.
 - destruct Archi.ptr64; lia.
 - destruct (env!i). apply co_sizeof_pos. lia.
 - destruct (env!i). apply co_sizeof_pos. lia.
+- lia.
 Qed.
 
 Fixpoint alignof_blockcopy (env: composite_env) (t: type) : Z :=
   match t with
   | Tunit => 1
+  | Tvoid => 1
   | Tint I8 _ => 1
   | Tint I16 _ => 2
   | Tint I32 _
@@ -616,6 +626,7 @@ Proof.
   destruct Archi.ptr64; auto.
   destruct (env!i); auto.
   destruct (env!i); auto.
+  auto.
 Qed.
 
 Lemma sizeof_alignof_blockcopy_compat:
@@ -648,6 +659,7 @@ Proof.
   destruct Archi.ptr64; apply Z.divide_refl.
   destruct (env!i). apply X. apply Z.divide_0_r.
   destruct (env!i). apply X. apply Z.divide_0_r.
+  exists 1. auto.
 Qed.
 
 
@@ -994,6 +1006,7 @@ Fixpoint type_of_params (params: list (ident * type)) : typelist :=
 Definition typ_of_type (t: type) : AST.typ :=
   match t with
   | Tunit => AST.Tint
+  | Tvoid => AST.Tint
   | Tint _ _ => AST.Tint
   | Tlong _ => AST.Tlong
   | Tfloat F32 => AST.Tsingle
@@ -1011,6 +1024,7 @@ Definition typ_of_type (t: type) : AST.typ :=
 Definition rettype_of_type (t: type) : AST.rettype :=
   match t with
   | Tunit => AST.Tint
+  | Tvoid => AST.Tvoid
   | Tint I32 _ => AST.Tint
   | Tint I8 Signed => AST.Tint8signed
   | Tint I8 Unsigned => AST.Tint8unsigned
