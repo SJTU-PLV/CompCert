@@ -13,6 +13,11 @@ Local Open Scope error_monad_scope.
 
 (** * High-level Rust-like language  *)
 
+(** A mark to indicate which element is valid in the tuple *)
+Inductive pmark : Type :=
+| first
+| second
+| third.
 
 (** ** Place (used to build lvalue expression) *)
 
@@ -23,7 +28,8 @@ Inductive place : Type :=
 | Pderef : place -> type -> place
 | Pdowncast: place -> ident -> type -> place 
 (**r represent the location of a constructor *)
-| Pparenthesize: ident -> type -> list int -> list (ident * type) -> place
+| Pparenthesize: ident -> type -> list ((int * type) * 
+    (ident * type) * (binary_operation * type) * pmark) -> place
 | ParrayIndex : place -> ident -> type -> place
 .
 
@@ -34,7 +40,12 @@ Proof.
   decide equality.
   decide equality.
   decide equality.
-  apply Int.eq_dec.
+  decide equality.
+  decide equality.
+  decide equality.
+  - decide equality.
+    decide equality.
+    decide equality. apply Int.eq_dec.
 Defined.
 
 Global Opaque place_eq.
@@ -45,7 +56,7 @@ Definition typeof_place p :=
   | Pfield _ _ ty => ty
   | Pderef _ ty => ty
   | Pdowncast _ _ ty => ty
-  | Pparenthesize _ ty _ _ => ty
+  | Pparenthesize _ ty _ => ty
   | ParrayIndex _ _ ty => ty
   end.
 
@@ -251,7 +262,7 @@ Fixpoint parent_paths (p: place) : list place :=
   | Pderef p' _ =>  p' :: parent_paths p'
   | Pdowncast p' _ _ => p' :: parent_paths p'
   | ParrayIndex p' _ _ => p' :: parent_paths p'
-  | Pparenthesize  _ _ _ _=> nil
+  | Pparenthesize  _ _ _ => nil
   end.
 
 Fixpoint shallow_parent_paths (p: place) : list place :=
@@ -262,7 +273,7 @@ Fixpoint shallow_parent_paths (p: place) : list place :=
   (** FIXMEL: how to handle downcast, ParrayIndex and Pparenthesize? *)
   | Pdowncast p' _ _ => p' :: shallow_parent_paths p'
   | ParrayIndex p' _ _ => nil
-  | Pparenthesize _ _ _ _=> nil
+  | Pparenthesize _ _ _ => nil
   end.
 
 Fixpoint support_parent_paths (p: place) : list place :=
@@ -279,7 +290,7 @@ Fixpoint support_parent_paths (p: place) : list place :=
       end
   | Pdowncast p' _ _ => p' :: support_parent_paths p'
   | ParrayIndex p' _ _ => p' :: support_parent_paths p'
-  | Pparenthesize _ _ _ _=> nil
+  | Pparenthesize _ _ _ => nil
   end.
 
 
@@ -319,7 +330,7 @@ Fixpoint path_of_place (p: place) : paths :=
   | Pdowncast p1 fid fty =>
       let (id, phl) := path_of_place p1 in
       (id, phl ++ [ph_downcast (typeof_place p1) fid (* fty *)])
-  | Pparenthesize id ty _ _ =>
+  | Pparenthesize id ty _  =>
       (id, nil)
   | ParrayIndex p1 aid ty =>
       let (id, phl) := path_of_place p1 in
@@ -393,7 +404,7 @@ Fixpoint local_of_place (p: place) :=
   | Pderef p' _ => local_of_place p'
   | Pdowncast p' _ _ => local_of_place p'
   (* FIXME *)
-  | Pparenthesize id _ _ _ => id
+  | Pparenthesize id _ _ => id
   | ParrayIndex p' _ _ => local_of_place p'
   end.
 
@@ -1255,7 +1266,7 @@ Fixpoint local_type_of_place (p: place) :=
   | Pfield p' ty _ => local_type_of_place p'
   | Pderef p' ty => local_type_of_place p'
   | Pdowncast p' _ _ => local_type_of_place p'
-  | Pparenthesize _ ty _ _ => ty
+  | Pparenthesize _ ty _ => ty
   | ParrayIndex p' _ ty => local_type_of_place p'
   end.
   

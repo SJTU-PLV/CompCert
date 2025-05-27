@@ -113,24 +113,17 @@ with to_rusttypelist (tyl: Ctypes.typelist) : Rusttypes.typelist :=
        end.
 
 
-Section MEMORY.
+Parameter (malloc_id free_id: ident).
 
-  Parameter (malloc_id free_id: ident).
-
-  Definition malloc_decl : (Ctypes.fundef Clight.function) :=
-    (Ctypes.External EF_malloc (Ctypes.Tcons Ctyping.size_t Ctypes.Tnil) (Tpointer Ctypes.Tvoid noattr) cc_default).
-
-  Definition free_decl : (Ctypes.fundef Clight.function) :=
-    (Ctypes.External EF_free (Ctypes.Tcons (Tpointer Ctypes.Tvoid noattr) Ctypes.Tnil) Ctypes.Tvoid cc_default).
-
-  Definition free_fun_expr : Clight.expr :=
-    Evar free_id (Ctypes.Tfunction (Ctypes.Tcons (Tpointer Ctypes.Tvoid noattr) Ctypes.Tnil) Ctypes.Tvoid cc_default).
-
-  (* return [free(arg)], ty is the type arg points to, i.e. [arg: *ty] *)
-  Definition call_free (arg: Clight.expr) : Clight.statement :=
-    Clight.Scall None free_fun_expr (arg :: nil).
-
-End MEMORY.
+Definition malloc_decl : (Ctypes.fundef Clight.function) :=
+  (Ctypes.External EF_malloc (Ctypes.Tcons Ctyping.size_t Ctypes.Tnil) (Tpointer Ctypes.Tvoid noattr) cc_default).
+Definition free_decl : (Ctypes.fundef Clight.function) :=
+  (Ctypes.External EF_free (Ctypes.Tcons (Tpointer Ctypes.Tvoid noattr) Ctypes.Tnil) Ctypes.Tvoid cc_default).
+(* Definition free_fun_expr : Clight.expr :=
+  Evar free_id (Ctypes.Tfunction (Ctypes.Tcons (Tpointer Ctypes.Tvoid noattr) Ctypes.Tnil) Ctypes.Tvoid cc_default).
+(* return [free(arg)], ty is the type arg points to, i.e. [arg: *ty] *)
+Definition call_free (arg: Clight.expr) : Clight.statement :=
+  Clight.Scall None free_fun_expr (arg :: nil). *)
 
 Section TRANSL.
 
@@ -140,50 +133,65 @@ Section TRANSL.
   (* Local Open Scope string_scope. *)
   Local Open Scope gensym_monad_scope.
 
-  Fixpoint binary_to_place (e: Clight.expr) : mon ((list int) * (list (ident * type))) :=
-    match e with
-    | Clight.Econst_int offset _ => 
-        ret ([offset], nil)
-    | Clight.Econst_long offset64 _ => 
-        ret ([Int.repr (Int64.unsigned offset64)],nil)
-    | Clight.Evar id ty2 =>
-        ret (nil,[(id,(to_rusttype ty2))])
-    | Clight.Etempvar id ty2 =>
-        (* match ty2 with
-            | Ctypes.Tint _ _ _ 
-            | Ctypes.Tlong _ _ => *)
-        ret (nil,[(id,(to_rusttype ty2))])
-    (* | _ => error (msg "In binary_to_place(tempvar) : index of pointer add can only be int or long")
-            end *)
-    | Clight.Econst_float _ _ =>
-        error (msg "In binary_to_place : Unsupported index expression in pointer addition: float constant")
-    | Clight.Econst_single _ _ =>
-        error (msg "In binary_to_place : Unsupported index expression in pointer addition: single-precision float constant")
-    | Clight.Ederef _ _ =>
-        error (msg "In binary_to_place : Unsupported index expression in pointer addition: dereference")
-    | Clight.Eaddrof _ _ =>
-        error (msg "In binary_to_place : Unsupported index expression in pointer addition: address-of")
-    | Clight.Eunop op _ _ =>
-        error (msg "In binary_to_place : Unsupported index expression in pointer addition: unary operation")
-    | Clight.Ecast _ _ =>
-        error (msg "In binary_to_place : Unsupported index expression in pointer addition: cast operation")
-    | Clight.Efield _ _ _ =>
-        error (msg "In binary_to_place : Unsupported index expression in pointer addition: field operation")
-    | Clight.Esizeof _ _ =>
-        error (msg "In binary_to_place : Unsupported index expression in pointer addition: sizeof operation")
-    | Clight.Ealignof _ _ =>
-        error (msg "In binary_to_place : Unsupported index expression in pointer addition: alignof operation")
-    | Clight.Ebinop op e1' e2' ty' =>
-        match op with
-        | Oadd =>
-            do r1 <- binary_to_place e1';
-            do r2 <- binary_to_place e2';
-            let (LIntL, LL) := r1 in
-            let (LIntR, LR) := r2 in
-            ret (LIntL ++ LIntR, LL ++ LR)
-        | _ => error (msg "In binary_to_place: pointer only support add op")
-        end
-    end.
+  Fixpoint binary_to_place (e: Clight.expr) :
+    mon ( list ((int * type) * (ident * type) * (binary_operation * type) * pmark)) :=
+      match e with
+      | Clight.Econst_int offset ty => 
+          ret [((offset,to_rusttype ty),(1%positive,Tunit),(Omod,ty),first)]
+      | Clight.Econst_long offset64 ty => 
+          ret [(((Int.repr (Int64.unsigned offset64)),to_rusttype ty),(1%positive,Tunit),(Omod,ty),first)]
+      | Clight.Evar id ty2 =>
+          ret [((Int.repr 1,Tint I32 Signed),(id,(to_rusttype ty2)),(Omod,ty2),second)]
+      | Clight.Etempvar id ty2 =>
+          (* match ty2 with
+              | Ctypes.Tint _ _ _ 
+              | Ctypes.Tlong _ _ => *)
+          ret [((Int.repr 1,Tint I32 Signed),(id,(to_rusttype ty2)),(Omod,ty2),second)]
+      (* | _ => error (msg "In binary_to_place(tempvar) : index of pointer add can only be int or long")
+              end *)
+      | Clight.Ebinop op e1' e2' ty' =>
+          match op with
+          | Oadd 
+          | Osub
+          | Oand
+          | Oor 
+          | Oxor 
+          | Oshl 
+          | Oshr 
+          (* | Oshru 
+          | Oaddl
+          | Osubl
+          | Oandl
+          | Oorl
+          | Oxorl
+          | Oshll
+          | Oshrl
+          | Oshrlu  *)
+            =>
+              do r1 <- binary_to_place e1';
+              do r2 <- binary_to_place e2';
+              ret (((Int.repr 1,Tint I32 Signed),(1%positive,Tunit),(op,ty'),third)::r1 ++ r2)
+          | _ => error (msg "In binary_to_place: pointer only support operation: add sub shl shr and or xor")
+          end
+      | Clight.Econst_float _ _ =>
+          error (msg "In binary_to_place : Unsupported index expression in pointer addition: float constant")
+      | Clight.Econst_single _ _ =>
+          error (msg "In binary_to_place : Unsupported index expression in pointer addition: single-precision float constant")
+      | Clight.Ederef _ _ =>
+          error (msg "In binary_to_place : Unsupported index expression in pointer addition: dereference")
+      | Clight.Eaddrof _ _ =>
+          error (msg "In binary_to_place : Unsupported index expression in pointer addition: address-of")
+      | Clight.Eunop op _ _ =>
+          error (msg "In binary_to_place : Unsupported index expression in pointer addition: unary operation")
+      | Clight.Ecast _ _ =>
+          error (msg "In binary_to_place : Unsupported index expression in pointer addition: cast operation")
+      | Clight.Efield _ _ _ =>
+          error (msg "In binary_to_place : Unsupported index expression in pointer addition: field operation")
+      | Clight.Esizeof _ _ =>
+          error (msg "In binary_to_place : Unsupported index expression in pointer addition: sizeof operation")
+      | Clight.Ealignof _ _ =>
+          error (msg "In binary_to_place : Unsupported index expression in pointer addition: alignof operation")
+      end.
 
   (** Convert Clight expression to Rustlight place *)
   Fixpoint cexpr_to_place (e: Clight.expr): mon Rustlight.place :=
@@ -199,7 +207,7 @@ Section TRANSL.
     | Clight.Ebinop op e1 e2 ty => 
         match ty with
         | Ctypes.Tpointer _ _ =>
-            match op with
+            (* match op with
             | Oadd =>
                 do r1 <- binary_to_place e1;
                 do r2 <- binary_to_place e2;
@@ -213,7 +221,10 @@ Section TRANSL.
                 | nil => error (msg "array pointer cannot be null")  
                 end                
             | _ => error (msg "pointer only support add op")
-            end
+            end *)
+            do i <- gensym (to_rusttype ty);
+            do res <- binary_to_place e;
+            ret (Rustlight.Pparenthesize i (to_rusttype ty) res)
         | _ =>
             error (msg "not pointer, Unsupported lvalue expression")
         end
@@ -479,7 +490,7 @@ Section TRANSL.
   Definition transf_globvar (i: ident) (g: globvar Ctypes.type) : res (globvar type) :=
     do info' <- transf_var i g.(gvar_info);
     OK (mkglobvar info' g.(gvar_init) g.(gvar_readonly) g.(gvar_volatile)). 
-  
+
   Definition transl_program (p: Clight.program): res program :=
     let initial_gen := initial_generator tt in
     match convert_composite_definition (Ctypes.prog_types p) initial_gen with
@@ -501,7 +512,11 @@ Section TRANSL.
                (* transfer all def *)
                let transf_def := fun def => transl_def (Ctypes.prog_main p) def in
                do defs <- mmap transf_def (Ctypes.prog_defs p);
-               OK {| Rusttypes.prog_defs := defs;
+               OK {| Rusttypes.prog_defs := 
+               (* add malloc and free, to pass check_malloc_free_existence in Clightgen.v *)
+               (malloc_id, Gfun (Rusttypes.External [] [] AST.EF_malloc Rusttypes.Tnil Rusttypes.Tunit AST.cc_default))::
+               (free_id, Gfun (Rusttypes.External [] [] AST.EF_free Rusttypes.Tnil Rusttypes.Tunit AST.cc_default))::
+                defs;
                     Rusttypes.prog_public := AST.prog_public p;
                     Rusttypes.prog_main := AST.prog_main p;
                     Rusttypes.prog_types := co_defs;

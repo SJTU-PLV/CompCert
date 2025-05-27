@@ -424,6 +424,75 @@ Variable dropm: PTree.t ident.  (* map from composite id to its drop glue id *)
 Local Open Scope gensym_monad_scope.
 Local Open Scope error_monad_scope.
 
+Require Import Program.Wf.
+
+Program Fixpoint find_first_part 
+  (l: list ((int * type) * (ident * type) * (binary_operation * type) * pmark))
+  {measure (length l)} : 
+  (list _ * list _) :=
+  match l with
+  | [] => ([], [])
+  | h :: t => 
+    match h with
+      | ((_,_), (_,_), _, first) 
+      | ((_,_), (_,_), _, second) => ([h], t)
+      | ((_,_), (_,_), _, third) => 
+        let '(fp, sp) := find_first_part t in
+        let '(sp', res) := find_first_part sp in
+        (h :: fp ++ sp', res)
+    end
+  end.
+Next Obligation.
+  assert (Heq:le (Init.Nat.add (length fp) (length sp)) (length t)).
+  {
+    subst. simpl in *.
+    auto. admit.
+  }
+  simpl. lia.
+Admitted.
+  
+(* Fixpoint find_first_part 
+(l: list ((int * type) * (ident * type) * binary_operation * pmark)) 
+  : (list ((int * type) * (ident * type) * binary_operation * pmark)) * 
+    (list ((int * type) * (ident * type) * binary_operation * pmark)) :=
+  match l with
+  | [] => ([], [])
+  | h :: t => 
+    match h with
+      | ((i,tyi), (id,ty), bop, first) 
+      | ((i,tyi), (id,ty), bop, second) => ([h],t)
+      | ((i,tyi), (id,ty), bop, third) => 
+        let '(fp, sp) := find_first_part t in
+        let '(sp', res) := find_first_part sp in
+        ([h] ++ fp ++ sp', res)
+    end
+  end. *)
+
+Program Fixpoint get_binary
+(bl:list ((int * type) * (ident * type) * (binary_operation * type) * pmark))
+{measure (length bl)}  : res Clight.expr :=
+  match bl with
+  | nil => Error (msg "args should not be nil in get_binary")
+  | [((i,tyi),(id,ty),(bop,tye),pm)] =>
+      match pm with
+      | first => OK (Clight.Econst_int i (to_ctype tyi))
+      | second => OK (Evar id (to_ctype ty))
+      | third => Error (msg "args wrong occurs in get_binary")
+      end
+  | ((i,tyi),(id,ty),(bop,tye),pm) :: t => 
+      match pm with
+      | first => Error (msg "args wrong occurs in get_binary")
+      | second => Error (msg "args wrong occurs in get_binary")
+      | third => let (f1,r1) := find_first_part t in
+                 let (f2,r2) := find_first_part r1 in
+                 do e1 <- get_binary f1;
+                 do e2 <- get_binary f2;
+                 OK (Clight.Ebinop bop e1 e2 (to_ctype tye))
+      end
+  end.
+Next Obligation.
+Admitted.
+
 Fixpoint place_to_cexpr (p: place) : res Clight.expr :=
   match p with
   | Plocal id ty =>      
@@ -442,8 +511,7 @@ Fixpoint place_to_cexpr (p: place) : res Clight.expr :=
         | _ => Error [CTX id; MSG ": Cannot find its composite in Rust composite environment : place_to_cexpr"]
         end
       | _ => Error (msg "Type error in Pfield: place_to_cexpr ")
-      end
-      
+      end    
   | Pderef p' ty =>
     do e <- place_to_cexpr p';
     OK (Ederef e (to_ctype ty))
@@ -465,6 +533,9 @@ Fixpoint place_to_cexpr (p: place) : res Clight.expr :=
           end
       | _ => Error (msg "Type error in Pdowncast: place_to_cexpr ")
       end
+  | Pparenthesize id ty ls =>
+      do e <- get_binary ls;
+      OK (Ederef e (to_ctype ty))
   | _ => Error (msg "place_to_cexpr not support in clightgen")
   end.
   
