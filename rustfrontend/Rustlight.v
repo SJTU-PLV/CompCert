@@ -285,6 +285,23 @@ Fixpoint paths_shallow_contain (phl1 phl2: list path) : bool :=
   | _, _ => false
   end.
 
+(** TODO: add mutability into path definition *)
+Definition is_support_prefix_paths (phl: list path) : bool :=
+  match phl with
+  | ph_deref (* Imutable *) :: _  => false
+  | _ => true
+  end.
+
+Fixpoint paths_support_contain (phl1 phl2: list path) : bool :=
+  match phl1, phl2 with
+  | nil, _ => is_support_prefix_paths phl2
+  | ph1 :: phl1', ph2 :: phl2' =>
+      if path_eq ph1 ph2 then
+        paths_support_contain phl1' phl2'
+      else false
+  | _, _ => false
+  end.
+
 (** Experiment code for new is_prefix  *)
 
 (* The definition of is_prefix does not consider the type information
@@ -300,7 +317,14 @@ Definition is_shallow_prefix (p1 p2: place) : bool :=
   let (id2, phl2) := path_of_place p2 in
   ident_eq id1 id2 && paths_shallow_contain phl1 phl2.
 
-(** TODO: change this definition *)
+(** TODO: It requires the typing information (i.e., mutability)! So we
+need to add the mutability into the path? For testing, we use the old
+version. *)
+(* Definition is_support_prefix (p1 p2: place) : bool := *)
+(*   let (id1, phl1) := path_of_place p1 in *)
+(*   let (id2, phl2) := path_of_place p2 in *)
+(*   ident_eq id1 id2 && paths_support_contain phl1 phl2. *)
+
 Definition is_support_prefix (p1 p2: place) : bool :=
   place_eq p1 p2 || in_dec place_eq p1 (support_parent_paths p2).
 

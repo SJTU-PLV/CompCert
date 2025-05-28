@@ -55,11 +55,35 @@ Module LOrgSt <: SEMILATTICE_WITH_TOP.
   
 Definition t := origin_state.
 
-Definition eq (x y: t) := (x = y).
-Definition eq_refl: forall x, eq x x := (@eq_refl t).
-Definition eq_sym: forall x y, eq x y -> eq y x := (@eq_sym t).
-Definition eq_trans: forall x y z, eq x y -> eq y z -> eq x z := (@eq_trans t).
+Definition eq (x y: t) :=
+  match x, y with
+  | Live ls1, Live ls2 => LoanSetL.eq ls1 ls2
+  | Dead, Dead => True
+  | _, _ => False
+  end.
 
+  
+Lemma eq_refl: forall x, eq x x.
+Proof.
+  intros. red. destruct x; auto.
+  apply LoanSet.eq_refl.
+Qed.
+
+Lemma eq_sym: forall x y, eq x y -> eq y x.
+Proof.
+  intros. red in *.
+  destruct x, y; auto.
+  apply LoanSet.eq_sym. auto.
+Qed.
+
+Lemma eq_trans: forall x y z, eq x y -> eq y z -> eq x z.
+Proof.
+  intros; red in *.
+  destruct x, y, z; auto.
+  eapply LoanSet.eq_trans; eauto.
+  contradiction.
+Qed.
+  
 Definition beq (s1 s2 : t) : bool :=
   match s1, s2 with
   | Live ls1, Live ls2 => LoanSetL.beq ls1 ls2
@@ -67,8 +91,12 @@ Definition beq (s1 s2 : t) : bool :=
   | _, _ => false
   end.
 
-Axiom beq_correct: forall x y, beq x y = true -> eq x y.
-
+Lemma beq_correct: forall x y, beq x y = true -> eq x y.
+Proof.
+  intros. destruct x, y; red; simpl in *; auto; try congruence.
+  eapply LoanSetL.beq_correct. auto.
+Qed.  
+  
 Definition ge (x y: t) : Prop :=
   match x, y with
   | Dead, _ => True
@@ -76,17 +104,36 @@ Definition ge (x y: t) : Prop :=
   | Live ls1, Live ls2 => LoanSetL.ge ls1 ls2
   end.
 
-Axiom ge_refl: forall x y, eq x y -> ge x y.
+Lemma ge_refl: forall x y, eq x y -> ge x y.
+Proof.
+  intros; red in *; destruct x,y; auto.
+  eapply LoanSetL.ge_refl. auto.
+Qed.
 
-Axiom ge_trans: forall x y z, ge x y -> ge y z -> ge x z.
+Lemma ge_trans: forall x y z, ge x y -> ge y z -> ge x z.
+Proof.
+  intros. red in *.
+  destruct x, y, z; auto.
+  eapply LoanSetL.ge_trans; eauto.
+  contradiction.
+Qed.
 
 Definition bot := Live LoanSetL.bot.
 
-Axiom ge_bot: forall x, ge x bot.
+Lemma ge_bot: forall x, ge x bot.
+Proof.
+  intros. red. destruct x. simpl.
+  eapply LoanSetL.ge_bot.
+  auto.
+Qed.
 
 Definition top := Dead.
 
-Axiom ge_top: forall x, ge top x.
+Lemma ge_top: forall x, ge top x.
+Proof.
+  intros. red. destruct x; simpl; auto.
+Qed.
+
 
 Definition lub (x y: t) :=
   match x, y with
@@ -95,9 +142,18 @@ Definition lub (x y: t) :=
   | Live ls1, Live ls2 => Live(LoanSetL.lub ls1 ls2)
   end.
 
-Axiom ge_lub_left: forall x y, ge (lub x y) x.
+Lemma ge_lub_left: forall x y, ge (lub x y) x.
+Proof.
+  intros. destruct x, y; simpl; auto.
+  apply LoanSetL.ge_lub_left.
+Qed.
 
-Axiom ge_lub_right: forall x y, ge (lub x y) y.
+Lemma ge_lub_right: forall x y, ge (lub x y) y.
+Proof.
+  intros. destruct x, y; simpl; auto.
+  apply LoanSetL.ge_lub_right.
+Qed.
+
 
 End LOrgSt.
 
@@ -407,6 +463,20 @@ Proof.
   rewrite G1. auto.
 Qed.
 
+(* Map functions for origin environment *)
+
+Definition map1 (f: L.t -> L.t) (dm: t) :=
+  mk (PTree.map1 f (m dm)) (uf dm).
+
+Lemma gmap1: forall (f: L.t -> L.t) (i: positive) (dm: t),
+    f L.bot = L.bot ->
+    get i (map1 f dm) = f (get i dm).
+Proof.
+  intros. unfold get, map1. simpl.
+  rewrite !PTree.gmap1.
+  destruct PTree.get eqn: G; simpl; auto.
+Qed.
+  
 End LUFMap.
 
   
@@ -414,107 +484,15 @@ End LUFMap.
 
 Module LOrgEnv := LUFMap(LOrgSt).
 
-Module LOrgEnv := LPMap1(LOrgSt).
 
-(** Alias graph *)
-
-Module OriginSet := FSetAVL.Make(OrderedPositive).
-
-Module LOriginSet := LFSet(OriginSet).
-
-Module LAliasGraph := LPMap1(LOriginSet).
-
-
-(** Top level environment for dataflow analysis *)
-
-(* Define equality for errcode *)
-
-Lemma errcode_eq : forall (c1 c2: errcode), {c1 = c2} + {c1 <> c2}.
-  generalize string_dec Pos.eq_dec.
-  decide equality.
-Qed.
-
-Module AE <: SEMILATTICE.
-  
-  Inductive t' := | Bot | Err (loc: node) (msg: errmsg) | State (live_loans: LoanSetL.t) (org_env: LOrgEnv.t) (alias: LAliasGraph.t).
-  
-  Definition t := t'.
- 
-  Definition eq (x y: t) : Prop :=
-    match x, y with
-    | Bot, Bot => True
-    | State ls1 oe1 a1, State ls2 oe2 a2 =>
-        LoanSetL.eq ls1 ls2 /\
-        LOrgEnv.eq oe1 oe2 /\
-        LAliasGraph.eq a1 a2          
-    | Err pc1 msg1, Err pc2 msg2 =>
-        Pos.eq pc1 pc2 /\ list_forall2 eq msg1 msg2
-    | _, _ => False
-    end.
-
-  Definition beq (x y: t) : bool :=
-    match x, y with
-    | Bot, Bot => false
-    | State ls1 oe1 a1, State ls2 oe2 a2 =>
-        LoanSetL.beq ls1 ls2 &&
-        LOrgEnv.beq oe1 oe2 &&
-        LAliasGraph.beq a1 a2          
-    | Err pc1 msg1, Err pc2 msg2 =>
-        Pos.eqb pc1 pc2 && List.list_eq_dec errcode_eq msg1 msg2
-    | _, _ => false
-    end.
-
-  Definition ge (x y: t) : Prop :=
-    match x, y with
-    | _, Bot => True
-    | Bot, _ => False
-    (* Err is the top *)
-    | Err pc1 _, Err pc2 _ => Pos.ge pc1 pc2
-    | Err _ _, _ => True
-    | _, Err _ _ => False
-    | State ls1 oe1 a1, State ls2 oe2 a2 =>
-        LoanSetL.ge ls1 ls2 /\
-        LOrgEnv.ge oe1 oe2 /\
-        LAliasGraph.ge a1 a2          
-    end.
-
-  Definition bot := Bot.
-
-  Definition lub (x y: t) :=
-    match x,y with
-    | _, Bot => x
-    | Bot, _ => y
-    | Err pc1 msg1, Err pc2 msg2 =>
-        if Pos.ltb pc1 pc2 then Err pc2 msg2 else Err pc1 msg1
-    | Err _ _, State _ _ _ => x
-    | State _ _ _, Err _ _ => y
-    | State ls1 oe1 a1, State ls2 oe2 a2 =>
-        State (LoanSetL.lub ls1 ls2) (LOrgEnv.lub oe1 oe2) (LAliasGraph.lub a1 a2)
-    end.
-
-  (** TODO  *)
-  Axiom eq_refl: forall x, eq x x.
-  Axiom eq_sym: forall x y, eq x y -> eq y x.
-  Axiom eq_trans: forall x y z, eq x y -> eq y z -> eq x z.
-
-  Axiom beq_correct: forall x y, beq x y = true -> eq x y.
-
-  Axiom ge_refl: forall x y, eq x y -> ge x y.
-  Axiom ge_trans: forall x y z, ge x y -> ge y z -> ge x z.
-
-  Axiom ge_bot: forall x, ge x bot.
-
-  Axiom ge_lub_left: forall x y, ge (lub x y) x.
-  Axiom ge_lub_right: forall x y, ge (lub x y) y.
-
-End AE.
-
-
-(** Auxilary defintions and functions *)
+(** Auxilary defintions and functions used for updating origin environment *)
 
 Inductive access_kind : Type :=
 | Aread
 | Awrite.
+
+Inductive access_mode_bor := Ashallow | Adeep.
+
 
 Definition conflict_access (a: access_kind) (mut: mutkind) : bool :=
   match a, mut with
@@ -523,37 +501,45 @@ Definition conflict_access (a: access_kind) (mut: mutkind) : bool :=
   | Aread, Immutable => false
   end.
 
-(* Access loan [l] with [a] would invalidate [ls] *)
-Definition conflict_loan (ls: LoanSet.t) (a: access_kind) (l: loan) : bool :=
-  if LoanSet.mem l ls then
-    match l with
-    | Lintern mut _ =>
-        conflict_access a mut
-    | Lextern _ =>
-        (* It is impossible to access a external loan *)
-        false
-    end
-  else false.
+(* Definition of relevant loan between the accessed place p with
+access mode am and the place p1 in some loan set *)
+Definition relevant_place (p p1: place) am :=
+  match am with
+  | Ashallow =>
+      is_prefix_strict p1 p || is_shallow_prefix p p1
+  | Adeep =>
+      is_prefix_strict p1 p || is_support_prefix p p1
+  end.
 
-(* Access ls1 with [a] as access kind, if there is any loan in ls2
-that is conflict with this access, return true *)
-Definition conflict (ls1 ls2 : LoanSet.t) (a: access_kind) : bool :=
-  LoanSet.fold (fun elt acc => orb acc (conflict_loan ls2 a elt)) ls1 false.
+(* Definition of the conflict relation between a place p and a set of
+loan ls. It is used in the invalidation of ls when accessing *)
+Definition conflict_loan p (am: access_mode_bor) (ak: access_kind) (l: loan) : bool :=
+  match l with
+  | Lintern mut p1 =>
+      relevant_place p p1 am && conflict_access ak mut
+  | Lextern _ =>
+      (* It is impossible to access a external loan *)
+      false
+  end.
+
+(* Accessing p is conflict with the origin state os *)
+Definition conflict p (ls: LoanSet.t) am ak :=
+  LoanSet.exists_ (conflict_loan p am ak) ls.
+
 
 (* Invalidate an origin *)
-Definition invalidate_origin (ls1: LoanSet.t) (a: access_kind) (os: origin_state) : origin_state :=
+Definition invalidate_origin (p: place) (am: access_mode_bor) (ak: access_kind) (os: origin_state) : origin_state :=
   match os with
-  | Obot => Obot
-  | Live ls2 =>
-      if conflict ls1 ls2 a then Dead
+  | Live ls =>
+      if conflict p ls am ak then Dead
       else os
   | Dead => Dead
   end.
 
-(* Check whether we should invalidate each origin in the origin
-environment *)
-Definition invalidate_origins (ls: LoanSet.t) (a: access_kind) (oe: LOrgEnv.t) : LOrgEnv.t :=
-  PTree.map1 (invalidate_origin ls a) oe.
+(* Check whether we should invalidate each origin in the origin *)
+(* environment *)
+Definition invalidate_origins (oe: LOrgEnv.t) (p: place) (am: access_mode_bor) (ak: access_kind) : LOrgEnv.t :=
+  LOrgEnv.map1 (invalidate_origin p am ak) oe.
 
 
 (* All the origins appear in the type [ty] *)
@@ -564,95 +550,170 @@ Fixpoint origins_of_type (ty: type) : list origin :=
   | Tstruct orgs _ => orgs
   | Tvariant orgs _ => orgs
   | _ => []
-  end.       
+  end.
 
-(* Definition of valid access of a place: check whether there is any
-dead origin in the type of the place. Return an error report if
-invalid access happens *)
+(* Definition of valid access of a place: check whether there is any *)
+(* dead origin in the type of the place. Return an error report if *)
+(* invalid access happens *)
 Definition valid_access (oe: LOrgEnv.t) (p: place) : bool :=
   let ty := local_type_of_place p in
   let orgs := origins_of_type ty in
-  let check org :=    
+  let check org :=
     match LOrgEnv.get org oe with
-    (* It is impossible that an origin has not origin state *)
-    | Obot => false
     | Live _ => true
     | Dead => false
     end in
   forallb check orgs.
 
+(* Deletion of an origin from the origin state *)
 
-(* Relevant loans for a place [p] in the live loan set. The result
-depends on the access access_mode *)
 
-Inductive access_mode := Ashallow | Adeep.
 
-(* relevant borrows as shown in NLL *)
-Definition relevant_place (p: place) (am: access_mode) (p': place) : bool :=
-  match am with
-  | Ashallow =>
-      is_prefix p' p || is_shallow_prefix p p'
-  | Adeep =>
-      is_prefix p' p || is_support_prefix p p'
-  end.
+
+(** The following code is unused in the new Origin state  *)
+
+(* Module LOrgEnv := LPMap1(LOrgSt). *)
+
+(* (** Alias graph *) *)
+
+(* Module OriginSet := FSetAVL.Make(OrderedPositive). *)
+
+(* Module LOriginSet := LFSet(OriginSet). *)
+
+(* Module LAliasGraph := LPMap1(LOriginSet). *)
+
+
+(* (** Top level environment for dataflow analysis *) *)
+
+(* (* Define equality for errcode *) *)
+
+(* Lemma errcode_eq : forall (c1 c2: errcode), {c1 = c2} + {c1 <> c2}. *)
+(*   generalize string_dec Pos.eq_dec. *)
+(*   decide equality. *)
+(* Qed. *)
+
+(* Module AE <: SEMILATTICE. *)
   
-Definition relevant_loan (p: place) (am: access_mode) (l: loan) : bool :=
-  match l with
-  | Lintern mut p' =>
-      relevant_place p am p'
-  | Lextern _ =>
-      false
-  end.
-
-Definition relevant_loans (live_loans: LoanSet.t) (p: place) (am: access_mode) : LoanSet.t :=
-  LoanSet.filter (fun elt => relevant_loan p am elt) live_loans.
-
-(* Update Alias graph *)
-
-Definition set_alias (org1 org2: origin) (g: LAliasGraph.t) : LAliasGraph.t :=
-  match g!org1, g!org2 with
-  | Some ls1, Some ls2 =>
-      (* merge two cliques *)
-      let ls := OriginSet.add org2 (OriginSet.add org1 (OriginSet.union ls1 ls2)) in
-      PTree.map (fun id ls' => if OriginSet.mem id ls then
-                              OriginSet.union ls' (OriginSet.remove id ls)
-                            else ls') g
-  | Some ls1, None =>
-      let ls := OriginSet.add org2 (OriginSet.add org1 ls1) in
-      let g0 := PTree.set org2 OriginSet.empty g in
-      PTree.map (fun id ls' => if OriginSet.mem id ls then
-                              OriginSet.union ls' (OriginSet.remove id ls)
-                            else ls') g0                          
-  | None, Some ls2 =>
-      let ls := OriginSet.add org2 (OriginSet.add org1 ls2) in
-      let g0 := PTree.set org1 OriginSet.empty g in
-      PTree.map (fun id ls' => if OriginSet.mem id ls then
-                              OriginSet.union ls' (OriginSet.remove id ls)
-                            else ls') g0
-  | None, None =>
-      let g0 := PTree.set org1 (OriginSet.singleton org2) g in
-      PTree.set org2 (OriginSet.singleton org1) g0
-  end.
-
-(* Set loans to an origin and then update all the alias origin *)
-
-Definition set_loans_with_alias (org: origin) (ls: LoanSet.t) (oe: LOrgEnv.t) (a: LAliasGraph.t) : LOrgEnv.t :=
-  let os := Live ls in
-  let oe1 := LOrgEnv.set org os oe in
-  match a!org with
-  | Some orgs =>
-      OriginSet.fold (fun elt oe' => LOrgEnv.set elt os oe') orgs oe1
-  | None =>
-      oe1
-  end.
+(*   Inductive t' := | Bot | Err (loc: node) (msg: errmsg) | State (live_loans: LoanSetL.t) (org_env: LOrgEnv.t) (alias: LAliasGraph.t). *)
   
-(* Remove alias of org in the alias graph, i.e., remove a node in a clique *)
-Definition remove_alias (org: origin) (g: LAliasGraph.t) : LAliasGraph.t :=
-  match g!org with
-  | Some orgs =>
-      let g' := PTree.map (fun id s => if OriginSet.mem id orgs then
-                                      OriginSet.remove org s
-                                    else s) g in
-      PTree.remove org g'
-  | _ => g
-  end.
+(*   Definition t := t'. *)
+ 
+(*   Definition eq (x y: t) : Prop := *)
+(*     match x, y with *)
+(*     | Bot, Bot => True *)
+(*     | State ls1 oe1 a1, State ls2 oe2 a2 => *)
+(*         LoanSetL.eq ls1 ls2 /\ *)
+(*         LOrgEnv.eq oe1 oe2 /\ *)
+(*         LAliasGraph.eq a1 a2           *)
+(*     | Err pc1 msg1, Err pc2 msg2 => *)
+(*         Pos.eq pc1 pc2 /\ list_forall2 eq msg1 msg2 *)
+(*     | _, _ => False *)
+(*     end. *)
+
+(*   Definition beq (x y: t) : bool := *)
+(*     match x, y with *)
+(*     | Bot, Bot => false *)
+(*     | State ls1 oe1 a1, State ls2 oe2 a2 => *)
+(*         LoanSetL.beq ls1 ls2 && *)
+(*         LOrgEnv.beq oe1 oe2 && *)
+(*         LAliasGraph.beq a1 a2           *)
+(*     | Err pc1 msg1, Err pc2 msg2 => *)
+(*         Pos.eqb pc1 pc2 && List.list_eq_dec errcode_eq msg1 msg2 *)
+(*     | _, _ => false *)
+(*     end. *)
+
+(*   Definition ge (x y: t) : Prop := *)
+(*     match x, y with *)
+(*     | _, Bot => True *)
+(*     | Bot, _ => False *)
+(*     (* Err is the top *) *)
+(*     | Err pc1 _, Err pc2 _ => Pos.ge pc1 pc2 *)
+(*     | Err _ _, _ => True *)
+(*     | _, Err _ _ => False *)
+(*     | State ls1 oe1 a1, State ls2 oe2 a2 => *)
+(*         LoanSetL.ge ls1 ls2 /\ *)
+(*         LOrgEnv.ge oe1 oe2 /\ *)
+(*         LAliasGraph.ge a1 a2           *)
+(*     end. *)
+
+(*   Definition bot := Bot. *)
+
+(*   Definition lub (x y: t) := *)
+(*     match x,y with *)
+(*     | _, Bot => x *)
+(*     | Bot, _ => y *)
+(*     | Err pc1 msg1, Err pc2 msg2 => *)
+(*         if Pos.ltb pc1 pc2 then Err pc2 msg2 else Err pc1 msg1 *)
+(*     | Err _ _, State _ _ _ => x *)
+(*     | State _ _ _, Err _ _ => y *)
+(*     | State ls1 oe1 a1, State ls2 oe2 a2 => *)
+(*         State (LoanSetL.lub ls1 ls2) (LOrgEnv.lub oe1 oe2) (LAliasGraph.lub a1 a2) *)
+(*     end. *)
+
+(*   (** TODO  *) *)
+(*   Axiom eq_refl: forall x, eq x x. *)
+(*   Axiom eq_sym: forall x y, eq x y -> eq y x. *)
+(*   Axiom eq_trans: forall x y z, eq x y -> eq y z -> eq x z. *)
+
+(*   Axiom beq_correct: forall x y, beq x y = true -> eq x y. *)
+
+(*   Axiom ge_refl: forall x y, eq x y -> ge x y. *)
+(*   Axiom ge_trans: forall x y z, ge x y -> ge y z -> ge x z. *)
+
+(*   Axiom ge_bot: forall x, ge x bot. *)
+
+(*   Axiom ge_lub_left: forall x y, ge (lub x y) x. *)
+(*   Axiom ge_lub_right: forall x y, ge (lub x y) y. *)
+
+(* End AE. *)
+
+
+(* (* Update Alias graph *) *)
+
+(* Definition set_alias (org1 org2: origin) (g: LAliasGraph.t) : LAliasGraph.t := *)
+(*   match g!org1, g!org2 with *)
+(*   | Some ls1, Some ls2 => *)
+(*       (* merge two cliques *) *)
+(*       let ls := OriginSet.add org2 (OriginSet.add org1 (OriginSet.union ls1 ls2)) in *)
+(*       PTree.map (fun id ls' => if OriginSet.mem id ls then *)
+(*                               OriginSet.union ls' (OriginSet.remove id ls) *)
+(*                             else ls') g *)
+(*   | Some ls1, None => *)
+(*       let ls := OriginSet.add org2 (OriginSet.add org1 ls1) in *)
+(*       let g0 := PTree.set org2 OriginSet.empty g in *)
+(*       PTree.map (fun id ls' => if OriginSet.mem id ls then *)
+(*                               OriginSet.union ls' (OriginSet.remove id ls) *)
+(*                             else ls') g0                           *)
+(*   | None, Some ls2 => *)
+(*       let ls := OriginSet.add org2 (OriginSet.add org1 ls2) in *)
+(*       let g0 := PTree.set org1 OriginSet.empty g in *)
+(*       PTree.map (fun id ls' => if OriginSet.mem id ls then *)
+(*                               OriginSet.union ls' (OriginSet.remove id ls) *)
+(*                             else ls') g0 *)
+(*   | None, None => *)
+(*       let g0 := PTree.set org1 (OriginSet.singleton org2) g in *)
+(*       PTree.set org2 (OriginSet.singleton org1) g0 *)
+(*   end. *)
+
+(* (* Set loans to an origin and then update all the alias origin *) *)
+
+(* Definition set_loans_with_alias (org: origin) (ls: LoanSet.t) (oe: LOrgEnv.t) (a: LAliasGraph.t) : LOrgEnv.t := *)
+(*   let os := Live ls in *)
+(*   let oe1 := LOrgEnv.set org os oe in *)
+(*   match a!org with *)
+(*   | Some orgs => *)
+(*       OriginSet.fold (fun elt oe' => LOrgEnv.set elt os oe') orgs oe1 *)
+(*   | None => *)
+(*       oe1 *)
+(*   end. *)
+  
+(* (* Remove alias of org in the alias graph, i.e., remove a node in a clique *) *)
+(* Definition remove_alias (org: origin) (g: LAliasGraph.t) : LAliasGraph.t := *)
+(*   match g!org with *)
+(*   | Some orgs => *)
+(*       let g' := PTree.map (fun id s => if OriginSet.mem id orgs then *)
+(*                                       OriginSet.remove org s *)
+(*                                     else s) g in *)
+(*       PTree.remove org g' *)
+(*   | _ => g *)
+(*   end. *)

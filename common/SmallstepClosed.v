@@ -103,7 +103,7 @@ Hypothesis QINV: forall q, init_q (skel s) = Some q ->
                               /\ symtbl_inv IB w se).
 
 
-Theorem closed_open_safety_sound:
+Theorem closed_open_safety_adequacy:
   module_type_safe inv_bot IB s SIF ->
   closed_safety L.
 Proof.
