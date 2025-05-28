@@ -426,30 +426,25 @@ Local Open Scope error_monad_scope.
 
 Require Import Program.Wf.
 
-Program Fixpoint find_first_part 
+Fixpoint find_first_part (max_step: nat)
   (l: list ((int * type) * (ident * type) * (binary_operation * type) * pmark))
-  {measure (length l)} : 
-  (list _ * list _) :=
-  match l with
-  | [] => ([], [])
-  | h :: t => 
-    match h with
-      | ((_,_), (_,_), _, first) 
-      | ((_,_), (_,_), _, second) => ([h], t)
-      | ((_,_), (_,_), _, third) => 
-        let '(fp, sp) := find_first_part t in
-        let '(sp', res) := find_first_part sp in
-        (h :: fp ++ sp', res)
-    end
+  : (list _ * list _) :=
+  match max_step with
+  | 0%nat => (nil,nil)
+  | S n =>
+      match l with
+      | [] => ([], [])
+      | h :: t => 
+        match h with
+          | ((_,_), (_,_), _, first) 
+          | ((_,_), (_,_), _, second) => ([h], t)
+          | ((_,_), (_,_), _, third) => 
+            let '(fp, sp) := find_first_part n t in
+            let '(sp', res) := find_first_part n sp in
+            (h :: fp ++ sp', res)
+        end
+      end
   end.
-Next Obligation.
-  assert (Heq:le (Init.Nat.add (length fp) (length sp)) (length t)).
-  {
-    subst. simpl in *.
-    auto. admit.
-  }
-  simpl. lia.
-Admitted.
   
 (* Fixpoint find_first_part 
 (l: list ((int * type) * (ident * type) * binary_operation * pmark)) 
@@ -468,30 +463,32 @@ Admitted.
     end
   end. *)
 
-Program Fixpoint get_binary
+Fixpoint get_binary (max_step: nat)
 (bl:list ((int * type) * (ident * type) * (binary_operation * type) * pmark))
-{measure (length bl)}  : res Clight.expr :=
-  match bl with
-  | nil => Error (msg "args should not be nil in get_binary")
-  | [((i,tyi),(id,ty),(bop,tye),pm)] =>
-      match pm with
-      | first => OK (Clight.Econst_int i (to_ctype tyi))
-      | second => OK (Evar id (to_ctype ty))
-      | third => Error (msg "args wrong occurs in get_binary")
+: res Clight.expr :=
+  match max_step with
+  | 0%nat => Error (msg "step is not enough in get_binary")
+  | S n =>
+      match bl with
+      | nil => Error (msg "args should not be nil in get_binary")
+      | [((i,tyi),(id,ty),(bop,tye),pm)] =>
+          match pm with
+          | first => OK (Clight.Econst_int i (to_ctype tyi))
+          | second => OK (Evar id (to_ctype ty))
+          | third => Error (msg "args wrong occurs in get_binary")
+          end
+      | ((i,tyi),(id,ty),(bop,tye),pm) :: t => 
+          match pm with
+          | first => Error (msg "args wrong occurs in get_binary")
+          | second => Error (msg "args wrong occurs in get_binary")
+          | third => let (f1,r1) := find_first_part n t in
+                     let (f2,r2) := find_first_part n r1 in
+                     do e1 <- get_binary n f1;
+                     do e2 <- get_binary n f2;
+                     OK (Clight.Ebinop bop e1 e2 (to_ctype tye))
+          end
       end
-  | ((i,tyi),(id,ty),(bop,tye),pm) :: t => 
-      match pm with
-      | first => Error (msg "args wrong occurs in get_binary")
-      | second => Error (msg "args wrong occurs in get_binary")
-      | third => let (f1,r1) := find_first_part t in
-                 let (f2,r2) := find_first_part r1 in
-                 do e1 <- get_binary f1;
-                 do e2 <- get_binary f2;
-                 OK (Clight.Ebinop bop e1 e2 (to_ctype tye))
-      end
-  end.
-Next Obligation.
-Admitted.
+    end.
 
 Fixpoint place_to_cexpr (p: place) : res Clight.expr :=
   match p with
@@ -534,7 +531,8 @@ Fixpoint place_to_cexpr (p: place) : res Clight.expr :=
       | _ => Error (msg "Type error in Pdowncast: place_to_cexpr ")
       end
   | Pparenthesize id ty ls =>
-      do e <- get_binary ls;
+      (* the Ebinop has no more than 50 binary operation *)
+      do e <- get_binary 50%nat ls;
       OK (Ederef e (to_ctype ty))
   | _ => Error (msg "place_to_cexpr not support in clightgen")
   end.

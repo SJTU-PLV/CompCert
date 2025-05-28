@@ -14,13 +14,8 @@ let temp_name (id: AST.ident) =
     "$" ^ Hashtbl.find string_of_atom id
   with Not_found ->
     Printf.sprintf "$%d" (P.to_int id)
-
-let print_int_list out loffset =
-  match loffset with
-  | [] -> ()
-  | _ -> List.iter (fun e -> fprintf out ".offset(%d)" (coq_z_to_ocaml_int e)) loffset 
   
-let print_ident_list out ll =
+let print_paren_list out ll =
   match ll with
   | [] -> ()
   | _ -> List.iter (fun (eid, _) -> fprintf out ".offset(%s)" (extern_atom eid)) ll
@@ -37,8 +32,7 @@ let rec print_place out (p: place) =
     fprintf out "(%a as %s)" print_place p' (extern_atom fid)
   | Pparenthesize(pid, _, loffset, ll) ->
     fprintf out "%s.as_mut_ptr()" (extern_atom pid);
-    print_ident_list out ll;
-    print_int_list out loffset
+    print_paren_list out ll;
   | ParrayIndex(p', aid, _) ->
       fprintf out "(%a as %s)" print_place p' (extern_atom aid)
 

@@ -137,16 +137,16 @@ Section TRANSL.
     mon ( list ((int * type) * (ident * type) * (binary_operation * type) * pmark)) :=
       match e with
       | Clight.Econst_int offset ty => 
-          ret [((offset,to_rusttype ty),(1%positive,Tunit),(Omod,ty),first)]
+          ret [((offset,to_rusttype ty),(1%positive,Tunit),(Omod,to_rusttype ty),first)]
       | Clight.Econst_long offset64 ty => 
-          ret [(((Int.repr (Int64.unsigned offset64)),to_rusttype ty),(1%positive,Tunit),(Omod,ty),first)]
+          ret [(((Int.repr (Int64.unsigned offset64)),to_rusttype ty),(1%positive,Tunit),(Omod,to_rusttype ty),first)]
       | Clight.Evar id ty2 =>
-          ret [((Int.repr 1,Tint I32 Signed),(id,(to_rusttype ty2)),(Omod,ty2),second)]
+          ret [((Int.repr 1,Tint I32 Signed),(id,(to_rusttype ty2)),(Omod,to_rusttype ty2),second)]
       | Clight.Etempvar id ty2 =>
           (* match ty2 with
               | Ctypes.Tint _ _ _ 
               | Ctypes.Tlong _ _ => *)
-          ret [((Int.repr 1,Tint I32 Signed),(id,(to_rusttype ty2)),(Omod,ty2),second)]
+          ret [((Int.repr 1,Tint I32 Signed),(id,(to_rusttype ty2)),(Omod,to_rusttype ty2),second)]
       (* | _ => error (msg "In binary_to_place(tempvar) : index of pointer add can only be int or long")
               end *)
       | Clight.Ebinop op e1' e2' ty' =>
@@ -170,7 +170,7 @@ Section TRANSL.
             =>
               do r1 <- binary_to_place e1';
               do r2 <- binary_to_place e2';
-              ret (((Int.repr 1,Tint I32 Signed),(1%positive,Tunit),(op,ty'),third)::r1 ++ r2)
+              ret (((Int.repr 1,Tint I32 Signed),(1%positive,Tunit),(op,to_rusttype ty'),third)::r1 ++ r2)
           | _ => error (msg "In binary_to_place: pointer only support operation: add sub shl shr and or xor")
           end
       | Clight.Econst_float _ _ =>

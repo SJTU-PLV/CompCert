@@ -338,7 +338,7 @@ Fixpoint replace_binder_in_place (id: ident) (p1: place) (p2: place) : place :=
       Pfield (replace_binder_in_place id p1 p') fid ty
   | Pdowncast p' fid ty =>
       Pdowncast (replace_binder_in_place id p1 p') fid ty
-  | Pparenthesize id' _ _ _=>
+  | Pparenthesize id' _ _ =>
       if ident_eq id id' then p1 else p2
   | ParrayIndex p' aid ty =>
       ParrayIndex (replace_binder_in_place id p1 p') aid ty
