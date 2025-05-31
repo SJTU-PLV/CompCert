@@ -223,8 +223,20 @@ Section TRANSL.
             | _ => error (msg "pointer only support add op")
             end *)
             do i <- gensym (to_rusttype ty);
-            do res <- binary_to_place e;
-            ret (Rustlight.Pparenthesize i (to_rusttype ty) res)
+            match op with
+            | Oadd 
+            | Osub
+            | Oand
+            | Oor 
+            | Oxor 
+            | Oshl 
+            | Oshr =>
+                do e1' <- binary_to_place e1;
+                do e2' <- binary_to_place e2;
+                let lop := [((Int.repr 1,Tint I32 Signed),(1%positive,Tunit),(op,to_rusttype ty),third)] in
+                ret (Rustlight.Pparenthesize i (to_rusttype ty) (lop ++ e1' ++ e2'))
+            | _ => error (msg "other opertion not support in cexpr_to_place")
+            end
         | _ =>
             error (msg "not pointer, Unsupported lvalue expression")
         end
@@ -384,11 +396,32 @@ Section TRANSL.
      rust: fn main() {}  *)
     if ident_eq main_id id then
       match f.(Clight.fn_body) with
+      (* match transl_stmt locals (Clight.fn_body f) (initial_generator tt) with
+      | Err msg => Error msg
+      | Res body g i =>
+          match body with
+          | Rustlight.Ssequence inner_stmt _ =>  
+          (* delete Ssequence (return 0) *)
+              (* match inner_stmt with
+              | Rustlight.Ssequence inner_stmt' _ =>   *)
+                  OK {| Rustlight.fn_generic_origins := [];
+                  Rustlight.fn_origins_relation := [];
+                  Rustlight.fn_drop_glue := None;
+                  Rustlight.fn_return := Tunit;  
+                  (* In rust, return value of main is Tunit *)
+                  Rustlight.fn_callconv := (Clight.fn_callconv f);
+                  Rustlight.fn_vars := (List.map (fun '(id, ty) => (id, to_rusttype ty)) 
+                                        (Clight.fn_vars f ++ Clight.fn_temps f)) ++ g.(gen_trail);
+                  Rustlight.fn_params := List.map (fun '(id, ty) => (id, to_rusttype ty)) 
+                                           (Clight.fn_params f);
+                  Rustlight.fn_body := inner_stmt
+                |} (* delete Ssequence (return 0) again, I don't know why clight has two return 0; *)
+              (* | _ => Error (msg "error main function in transl_function in Clight2Rustlight.v")
+              end *)
+          | _ => Error (msg "error main function in transl_function in Clight2Rustlight.v")
+          end *)
       | Clight.Ssequence inner_stmt _ =>  (* delete Ssequence (return 0) *)
-          match inner_stmt with
-          | Clight.Ssequence inner_stmt' _ =>  (* delete Ssequence (return 0) again, 
-              I don't know why clight has two return 0; *)
-              match transl_stmt locals inner_stmt' (initial_generator tt) with
+              match transl_stmt locals inner_stmt (initial_generator tt) with
               | Err msg => Error msg
               | Res body g i =>
                   OK {| Rustlight.fn_generic_origins := [];
@@ -404,8 +437,6 @@ Section TRANSL.
                        Rustlight.fn_body := body
                      |}
               end
-          | _ => Error (msg "Main function has unexpected structure")
-          end
       | _ => Error (msg "Main function has unexpected structure")
       end
     else

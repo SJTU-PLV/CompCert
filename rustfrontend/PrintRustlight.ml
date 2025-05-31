@@ -63,7 +63,6 @@ let rec print_place out (p: place) =
   | Pdowncast(p',fid, _) ->
     fprintf out "(%a as %s)" print_place p' (extern_atom fid)
   | Pparenthesize(pid, _, ll) ->
-    fprintf out "%s.as_mut_ptr()" (extern_atom pid);
     let b = Buffer.create 50 in
       let rec aux = function
       | [] -> ()
@@ -75,15 +74,26 @@ let rec print_place out (p: place) =
           Buffer.add_string b (extern_atom id);
         | Coq_third ->
           let op_str = string_of_op op in
-          Buffer.add_char b '(';
+          Buffer.add_string b "(";
           let (p1,r1) = find_first_part rest in
           aux p1;
           Buffer.add_string b op_str;
           let (p2,r2) = find_first_part r1 in
           aux p2;
+          Buffer.add_string b ")";
       in
-      aux ll;
-      fprintf out "%s" (Buffer.contents b)
+      begin
+      match ll with
+      | (((((_, _), (_, _)), (Oadd, _)), Coq_third) :: rest) ->
+        begin
+        match rest with
+        | (((((num, _), (id, _)), (op, _)), mark) :: rest_ll) ->
+          aux rest_ll;
+          fprintf out "%s.as_mut_ptr().offset(%s)" (extern_atom id) (Buffer.contents b)
+        |_ -> fprintf err_formatter "@[<2>Error place list in print_place@]@."
+        end
+      | _ -> fprintf err_formatter "@[<2>Error place list in print_place@]@."
+      end
     (* print_paren_list out ll; *)
   | ParrayIndex(p', aid, _) ->
       fprintf out "(%a as %s)" print_place p' (extern_atom aid)
