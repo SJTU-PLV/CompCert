@@ -640,7 +640,7 @@ Qed.
 Lemma place_to_cexpr_type: forall p e,
     place_to_cexpr ce tce p = OK e ->
     to_ctype (typeof_place p) = Clight.typeof e.
-    Proof.
+    (* Proof.
     induction p; simpl; intros; simpl in *.
   -  monadInv H. auto.
   - destruct (typeof_place _); inversion H. 
@@ -656,7 +656,7 @@ Lemma place_to_cexpr_type: forall p e,
     destruct m;
     destruct m0; inversion H;
     try destruct m; try destruct m0;
-    monadInv H4; try monadInv H; auto.  
+    monadInv H4; try monadInv H; auto.   *)
 Admitted.
 
 Lemma expr_to_cexpr_type: forall e e' ls,

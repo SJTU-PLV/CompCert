@@ -14,11 +14,43 @@ let temp_name (id: AST.ident) =
     "$" ^ Hashtbl.find string_of_atom id
   with Not_found ->
     Printf.sprintf "$%d" (P.to_int id)
-  
-let print_paren_list out ll =
+
+let extern_coqZ a =
+    Printf.sprintf "%d" (coq_z_to_ocaml_int a)
+
+let string_of_op op= 
+  match op with
+  | Oadd-> "+"
+  | Osub -> "-"
+  | Oshl -> "<<"
+  | Oshr -> ">>"
+  | Oand -> "&"
+  | Oor -> "|"
+  | _ -> "no support this operation"
+
+
+(* 示例用法 *)
+(* let example = [
+  (((1, "int"), (0, ""), ("add", ""), First);
+  (((2, "int"), (0, ""), ("", ""), First);
+  (((3, "int"), (0, ""), ("", ""), Second);
+  (((0, ""), (0, ""), ("mul", ""), Third)
+] *)
+
+(* let print_paren_list out ll =
   match ll with
   | [] -> ()
-  | _ -> List.iter (fun (eid, _) -> fprintf out ".offset(%s)" (extern_atom eid)) ll
+  | _ -> List.iter (fun (eid, _) -> fprintf out ".offset(%s)" (extern_atom eid)) ll *)
+let rec find_first_part ll =
+  match ll with
+  | [] -> ([],[])
+  | (((((num1, t1), (num2, t2)), (op, t3)), mark) :: rest) ->
+    match mark with
+    | Coq_first 
+    | Coq_second -> ([((((num1, t1), (num2, t2)), (op, t3)), mark)],rest)
+    | Coq_third -> let (p1,r1) = find_first_part rest in
+                   let (p2,r2) = find_first_part r1 in
+                   ([((((num1, t1), (num2, t2)), (op, t3)), mark)]@p1@p2,r2)
 
 let rec print_place out (p: place) =
   match p with
@@ -30,9 +62,29 @@ let rec print_place out (p: place) =
     fprintf out "%a.%s" print_place p' (extern_atom fid)
   | Pdowncast(p',fid, _) ->
     fprintf out "(%a as %s)" print_place p' (extern_atom fid)
-  | Pparenthesize(pid, _, loffset, ll) ->
+  | Pparenthesize(pid, _, ll) ->
     fprintf out "%s.as_mut_ptr()" (extern_atom pid);
-    print_paren_list out ll;
+    let b = Buffer.create 50 in
+      let rec aux = function
+      | [] -> ()
+      | (((((num, _), (id, _)), (op, _)), mark) :: rest) ->
+        match mark with
+        | Coq_first ->
+          Buffer.add_string b (extern_coqZ num)
+        | Coq_second ->
+          Buffer.add_string b (extern_atom id);
+        | Coq_third ->
+          let op_str = string_of_op op in
+          Buffer.add_char b '(';
+          let (p1,r1) = find_first_part rest in
+          aux p1;
+          Buffer.add_string b op_str;
+          let (p2,r2) = find_first_part r1 in
+          aux p2;
+      in
+      aux ll;
+      fprintf out "%s" (Buffer.contents b)
+    (* print_paren_list out ll; *)
   | ParrayIndex(p', aid, _) ->
       fprintf out "(%a as %s)" print_place p' (extern_atom aid)
 
