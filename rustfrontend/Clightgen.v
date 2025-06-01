@@ -424,8 +424,6 @@ Variable dropm: PTree.t ident.  (* map from composite id to its drop glue id *)
 Local Open Scope gensym_monad_scope.
 Local Open Scope error_monad_scope.
 
-Require Import Program.Wf.
-
 Fixpoint find_first_part (max_step: nat)
   (l: list ((int * type) * (ident * type) * (binary_operation * type) * pmark))
   : (list _ * list _) :=

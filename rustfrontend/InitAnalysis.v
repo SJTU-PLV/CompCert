@@ -1557,7 +1557,7 @@ Lemma analyze_successor: forall f initMap uninitMap (* mayinit1 *) mayinit2 (* m
     IM.ge (initMap !! pc2) mayinit2
     /\ IM.ge (uninitMap !! pc2) mayuninit2
 .
-Proof.  (* use fixpoint_solution *)
+Proof.  (* use fixpoint_solution *) 
   unfold analyze; intros. 
   Errors.monadInv AN.
   set (params_init := (add_place_list x (places_of_locals (fn_params f))

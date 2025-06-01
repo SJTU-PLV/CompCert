@@ -271,16 +271,14 @@ Section TRANSL.
         do pe2 <- cexpr_to_pexpr locals e2;
         ret (Rustlight.Ebinop op pe1 pe2 (to_rusttype ty))
     | Clight.Evar id ty => 
-        if in_dec ident_eq id locals then
+        (* if in_dec ident_eq id locals then *)
           do p <- cexpr_to_place (Clight.Evar id ty);
           ret (Eplace p (to_rusttype ty))
-        else
-          ret (Eglobal id (to_rusttype ty))
+        (* else
+          let locals := [id] ++ locals in
+          ret (Eglobal id (to_rusttype ty)) *)
     | Clight.Etempvar id ty =>
-        (* if in_dec ident_eq id locals then
-          do p <- cexpr_to_place (Clight.Evar id ty);
-          ret (Eplace p (to_rusttype ty))
-        else *)
+        (* let locals := if in_dec ident_eq id locals then locals else id :: locals in *)
         do p <- cexpr_to_place (Clight.Evar id ty);
         ret (Eplace p (to_rusttype ty))
     | Clight.Eaddrof e' ty => 
@@ -313,8 +311,9 @@ Section TRANSL.
   Definition pexpr_to_expr (pe: Rustlight.pexpr): Rustlight.expr :=
     Rustlight.Epure pe.
 
-  Definition empty_place : Rustlight.place := 
-    Rustlight.Plocal 1%positive Rusttypes.Tunit. 
+  Definition empty_place : mon Rustlight.place := 
+    do i <- gensym Rusttypes.Tunit;
+    ret (Rustlight.Plocal i Rusttypes.Tunit). 
   
 
   Fixpoint transl_stmt (locals: list ident) (s: Clight.statement): mon Rustlight.statement :=
@@ -349,7 +348,7 @@ Section TRANSL.
         match optid with
         | None => 
             (* without return value *)
-            let dummy_place := empty_place in
+            do dummy_place <- empty_place;
             ret (Rustlight.Scall dummy_place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
         | Some id => 
             (* with return value *)
@@ -359,11 +358,13 @@ Section TRANSL.
         end
     | Clight.Sreturn None => 
         (* no return value*)
-        ret (Rustlight.Sreturn empty_place)
+        do dummy_place <- empty_place;
+        ret (Rustlight.Sreturn dummy_place)
     | Clight.Sreturn (Some e) => 
         do pe <- cexpr_to_pexpr locals e;
         (* create a temp variable to store return value *)
-        let ret_place := Rustlight.Plocal 2%positive (to_rusttype (Clight.typeof e)) in
+        do i <- gensym (to_rusttype (Clight.typeof e));
+        let ret_place := Rustlight.Plocal i (to_rusttype (Clight.typeof e)) in
         (* assign the return value to the temp variable and return *)
         ret (Rustlight.Ssequence
                (Rustlight.Sassign ret_place (Rustlight.Epure pe))
@@ -390,7 +391,7 @@ Section TRANSL.
 
   (** Convert Clight function to Rustlight function *)
   Definition transl_function (main_id: ident) (id: ident) (f: Clight.function): res Rustlight.function :=
-    let locals := List.map (@fst ident _) (Clight.fn_params f ++ Clight.fn_vars f) in
+    let locals := List.map (@fst ident _) (Clight.fn_params f ++ Clight.fn_vars f ++ Clight.fn_temps f) in
     (* main function in rust is different in c 
      c:    int main() { ...; return 0; }
      rust: fn main() {}  *)
@@ -430,6 +431,7 @@ Section TRANSL.
                        Rustlight.fn_return := Tunit;  
                        (* In rust, return value of main is Tunit *)
                        Rustlight.fn_callconv := (Clight.fn_callconv f);
+                       (* Rustlight.fn_vars := locals ++ g.(gen_trail); *)
                        Rustlight.fn_vars := (List.map (fun '(id, ty) => (id, to_rusttype ty)) 
                                                (Clight.fn_vars f ++ Clight.fn_temps f)) ++ g.(gen_trail);
                        Rustlight.fn_params := List.map (fun '(id, ty) => (id, to_rusttype ty)) 

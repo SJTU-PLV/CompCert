@@ -7067,7 +7067,6 @@ Proof.
     econstructor; eauto.
 Qed.
 
-
 Lemma initial_state_sound: forall q s,
     query_inv rs_own (se, w) q ->
     initial_state ge q s ->
