@@ -18,6 +18,7 @@ int f1(int a,int c,int base[]){
 }
 int* f2(int a,int c){
     int b[20];
+    b[((a+c+2)|2)<<3]=2;
     a=c;
     return a;
 }
