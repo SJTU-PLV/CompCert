@@ -112,6 +112,11 @@ with to_rusttypelist (tyl: Ctypes.typelist) : Rusttypes.typelist :=
            Rusttypes.Tcons (to_rusttype ty) (to_rusttypelist tyl)
        end.
 
+Definition get_return_type (ty: type) : option type :=
+  match ty with
+  | Tfunction _ _ _ ty' _ => Some ty'
+  | _ => None
+  end.
 
 Parameter (malloc_id free_id: ident).
 
@@ -352,9 +357,14 @@ Section TRANSL.
             ret (Rustlight.Scall dummy_place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
         | Some id => 
             (* with return value *)
-            let ret_ty := to_rusttype (Clight.typeof e) in
-            let place := Rustlight.Plocal id ret_ty in
-            ret (Rustlight.Scall place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
+            let func_ty := to_rusttype (Clight.typeof e) in
+            match get_return_type func_ty with
+            | Some ty' =>
+                let place := Rustlight.Plocal id ty' in
+                ret (Rustlight.Scall place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
+            | None => 
+                error (msg "Cannot get return type of function in transl_stmt: Clight2Rustlight")
+            end
         end
     | Clight.Sreturn None => 
         (* no return value*)
@@ -545,11 +555,14 @@ Section TRANSL.
                (* transfer all def *)
                let transf_def := fun def => transl_def (Ctypes.prog_main p) def in
                do defs <- mmap transf_def (Ctypes.prog_defs p);
-               OK {| Rusttypes.prog_defs := 
                (* add malloc and free, to pass check_malloc_free_existence in Clightgen.v *)
-               (malloc_id, Gfun (Rusttypes.External [] [] AST.EF_malloc Rusttypes.Tnil Rusttypes.Tunit AST.cc_default))::
-               (free_id, Gfun (Rusttypes.External [] [] AST.EF_free Rusttypes.Tnil Rusttypes.Tunit AST.cc_default))::
-                defs;
+               let defs := if in_dec ident_eq malloc_id (List.map (fun '(id, ty) => id) defs)
+                 then defs else (malloc_id, Gfun (Rusttypes.External [] [] AST.EF_malloc 
+                  Rusttypes.Tnil Rusttypes.Tunit AST.cc_default)) :: defs in
+               let defs := if in_dec ident_eq free_id (List.map (fun '(id, ty) => id) defs)
+                then defs else (free_id, Gfun (Rusttypes.External [] [] AST.EF_free 
+                  Rusttypes.Tnil Rusttypes.Tunit AST.cc_default)):: defs in
+               OK {| Rusttypes.prog_defs := defs;
                     Rusttypes.prog_public := AST.prog_public p;
                     Rusttypes.prog_main := AST.prog_main p;
                     Rusttypes.prog_types := co_defs;

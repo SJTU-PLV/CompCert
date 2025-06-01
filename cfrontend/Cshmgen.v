@@ -761,7 +761,7 @@ Definition transl_function (ce: composite_env) (f: Clight.function) : res functi
        tvars
        (map fst (Clight.fn_temps f))
        tbody).
-Locate composite_env.
+
 Definition transl_fundef (ce: composite_env) (id: ident) (f: Clight.fundef) : res fundef :=
   match f with
   | Internal g =>
