@@ -732,6 +732,166 @@ Qed.
 (** Closed safety for the hash map *)
 Require Import SmallstepClosed.
 
+(* We try to give a common pattern for closing an assembly program
+(which is compiled from C) and proving its closed safety. We require
+the source language for the main function (not the source language of
+M_asm) is C language as we want to use the source safety condition to
+prove that its initialization satisfies the valid_query and
+pre-condition of the main function, which is language-specific. If the
+main function is written in other language (e.g., Rust), we need to
+write a new proof pattern but it should be similar to the following
+code. *)
+Section CLOSED_ASM_SAFE.
+
+Variable M_asm : Asm.program.
+Variable incoming_cond : invariant li_c.
+
+
+Let L_asm := Asm.semantics M_asm.
+Let se := Asm.initial_se (erase_program M_asm).
+
+Hypothesis M_open_safe: module_type_safe inv_bot (incoming_cond @! cc_compcert) L_asm SIF.
+
+Lemma asm_valid_se : Genv.valid_for (skel L_asm) se.
+Proof.
+  unfold se. unfold Asm.initial_se. red.
+  intros.
+  apply Genv.find_info_symbol in H. destruct H as [b [A B]].
+  exists b,g. split. auto. split. auto.
+  apply Linking.linkorder_refl.
+Qed.
+
+
+Section Initial.
+     
+  Variable m m1: mem.
+  Variable b : block.           (* main block *)
+  Variable sb : block.           (* asm dummy stack block *)
+  
+  Let main_id := AST.prog_main (skel L_asm).
+                               
+  Hypothesis INITM: Genv.init_mem (skel L_asm) = Some m.
+  Hypothesis FINDMAIN: Genv.find_symbol se main_id = Some b.
+  Hypothesis DUMMYSP: Mem.alloc m 0 0 = (m1, sb).
+  
+  Lemma INJ1 : Mem.inject (Mem.flat_inj (Mem.support m)) m m.
+  Proof.
+    eapply Genv.initmem_inject. eauto. Qed.
+
+  Lemma INJ2 : Mem.inject (Mem.flat_inj (Mem.support m)) m m1.
+  Proof.
+    eapply Mem.alloc_right_inject; eauto. eapply INJ1. Qed.
+
+  Let rs0 := Asm.initial_regset (Vptr b Ptrofs.zero) (Vptr sb Ptrofs.zero).
+  Let caw := CA.cajw (InjectFootprint.injpw (Mem.flat_inj (Mem.support m)) m m1 INJ2) signature_main rs0.
+  (* (Genv.symtbl * ValueAnalysis.ro_world * (Genv.symtbl * (Genv.symtbl * signature) * (Genv.symtbl * CA.cc_cainjp_world * unit))) *)
+  Definition rca_w := ((se, ValueAnalysis.row se m), (se, (se, signature_main), (se, caw, tt))).
+  Let q0 := (cq (Vptr b Ptrofs.zero) signature_main nil m).
+  
+  Lemma SUP : (Genv.genv_sup (Asm.initial_se (erase_program M_asm))) = Mem.support m.
+  Proof.
+    eapply Genv.init_mem_genv_sup. eauto.
+  Qed.  
+
+  Lemma MQ: match_query cc_compcert
+              rca_w
+              q0
+              (Asm.initial_regset (Vptr b Ptrofs.zero) (Vptr sb Ptrofs.zero), m1).
+  Proof.
+    simpl. exists q0. split.
+    - econstructor. econstructor. red. split.
+      (* ro memory *)
+      + eapply ValueAnalysis.initial_romatch; eauto.
+      + unfold se. rewrite SUP. eapply Mem.sup_include_refl.
+    - exists q0. split.
+      econstructor. split. eauto. constructor.
+      exists (Asm.initial_regset (Vptr b Ptrofs.zero) (Vptr sb Ptrofs.zero), m1).        
+      split.
+      (* cainjp (important) *)
+      + exploit Genv.find_symbol_not_fresh; eauto. intros BV.
+        econstructor.
+        * rewrite Conventions1.loc_arguments_main. econstructor.
+        * econstructor.
+          unfold Mem.flat_inj. unfold Mem.valid_block in BV.
+          destruct Mem.sup_dec; try congruence.
+          eauto. reflexivity.
+        * intros. unfold Conventions.size_arguments in H.
+          rewrite Conventions1.loc_arguments_main in H. simpl in H.
+          inv H. lia.
+        * econstructor.
+        * econstructor.
+        * econstructor. eapply Mem.valid_new_block. eauto.
+        * econstructor. red. unfold Conventions.size_arguments.
+          rewrite Conventions1.loc_arguments_main. reflexivity.
+        * congruence.
+        * vm_compute. congruence.            
+      + red. repeat apply conj.
+        * intros. simpl. eapply Valuesrel.val_inject_refl.
+        * vm_compute. congruence.
+        * simpl. eapply Mem.extends_refl.
+  Qed.
+  
+  
+    (* Prove [match_senv cc_compcert rca_w se0 se0] which is useful for the following proof*)
+    Lemma MSENV: match_senv cc_compcert rca_w se se.
+    Proof.
+      econstructor. econstructor. simpl. auto.
+      econstructor. simpl. econstructor. auto.
+      econstructor. simpl. econstructor.
+      (* match_stbls_flat_id in Globalenv *)
+      + rewrite <- SUP. eapply Genv.match_stbls_flat_id.
+      + unfold se. setoid_rewrite SUP. eapply Mem.sup_include_refl.
+      + unfold se. setoid_rewrite SUP.
+        erewrite Mem.support_alloc with (m2 := m1).
+        eapply Mem.sup_incr_in2. eauto.
+      + simpl. auto. 
+    Qed.
+
+    Variable incoming_w : inv_world incoming_cond.
+      (** This hypothesis is specific to the definition of programs *)
+    Hypothesis VQ0: query_inv incoming_cond incoming_w q0.
+    Hypothesis SYMINV: symtbl_inv incoming_cond incoming_w se.
+
+    (* Lemma asm_query_inv: query_inv (incoming_cond @! cc_compcert) (incoming_w, rca_w) (rs0, m1). *)
+    (* Proof. *)
+    (*   econstructor. split; eauto. *)
+    (*   eapply MQ. *)
+    (* Qed. *)
+
+    (* Lemma asm_symtbl_inv: symtbl_inv (incoming_cond @! cc_compcert) (incoming_w, rca_w) se. *)
+    (* Proof. *)
+    (*   econstructor. instantiate (1:=se). split. auto. *)
+    (*   eapply MSENV. *)
+    (* Qed. *)
+
+    Hypothesis incoming_cond_retval:
+      forall r, reply_inv incoming_cond incoming_w r ->
+           exists retval, cr_retval r = Vint retval.
+    
+    Lemma asm_reply_inv: forall r,
+        reply_inv (incoming_cond @! cc_compcert) (incoming_w, rca_w) r ->
+        exists retval : int, Asm.final_reply r = Vint retval.
+    Proof.
+      (* post-condition can guarantee that the return value is an integer *)
+      intros r RINV.
+      inv RINV. destruct H.
+      exploit incoming_cond_retval. eauto. intros (retval & RV).
+      inv H0. destruct H1. inv H0. inv H2. inv H1.
+      destruct H2. inv H1. inv H2. destruct H1. inv H2. inv H1.
+      destruct r. 
+      unfold Asm.final_reply.
+      vm_compute in tres. unfold tres in *.
+      simpl in RV. subst.
+      inv H12. destruct H4. inv H2.
+      simpl in H4. specialize (H4 (Asm.IR Asm.RAX)). rewrite <- H5 in H4.
+      inv H4. eauto.
+    Qed.
+
+End Initial.
+
+End CLOSED_ASM_SAFE.
+    
+
 Theorem hash_map_closed_safety: forall linked_list_asm hash_map_asm linked_mod,
     (* Compilation for the two modules *)
     transf_rustlight_program linked_list_mod = OK linked_list_asm ->
@@ -742,149 +902,84 @@ Theorem hash_map_closed_safety: forall linked_list_asm hash_map_asm linked_mod,
 Proof.
   intros ? ? ? C1 C2 LINK. exploit link_linked_list_hash_map_safe_1; eauto.
   intros OPEN_SAFE.
-  assert (VALID_SE: Genv.valid_for (skel (Asm.semantics linked_mod))
-                      (Asm.initial_se (skel (Asm.semantics linked_mod)))).
-  { admit. }
+  exploit link_linked_list_hash_map_safe_1; eauto. intros SAFE.
   eapply closed_open_safety_adequacy with
     (IB := (((hmap_rs_cond @@ rs_own) @! cc_rust_compcert)
-              ⊎ hmap_process_cond hmap_size @! cc_compcert)).
-  (* The initialized symbol table is valid *)
-  - auto.
-  (* The safety interface for the main function is valid *)
-  - intros q IQ. unfold Asm.init_query in IQ.
-    destruct Genv.find_symbol eqn: FSYM in IQ; try congruence.
-    destruct Genv.init_mem eqn: INITM in IQ; try congruence.
-    destruct Mem.alloc as [m1 sb] eqn: ALLOCSB in IQ. inv IQ.
-    (* The proof of valid_query: use fsim_match_valid_query and show
-    that hmap.c has an internal main function. Therefore, we first
-    need to prove match_query *)
-    exploit Genv.initmem_inject. eauto. intros INJ1.
-    exploit Mem.alloc_right_inject; eauto. intros INJ2.
-    exploit Genv.init_mem_genv_sup. eauto. intros SUP.
-    set (se0 := (Asm.initial_se (skel (Asm.semantics linked_mod)))) in *.
-    set (main_id := Asm.main_id (skel (Asm.semantics linked_mod))) in *.
-    set (rs0 := Asm.initial_regset (Vptr b Ptrofs.zero) (Vptr sb Ptrofs.zero)) in *.
-    set (caw := CA.cajw (InjectFootprint.injpw (Mem.flat_inj (Mem.support m)) m m1 INJ2) signature_main rs0).
-    (* (Genv.symtbl * ValueAnalysis.ro_world * (Genv.symtbl * (Genv.symtbl * signature) * (Genv.symtbl * CA.cc_cainjp_world * unit))) *)
-    set (rca_w := ((se0, ValueAnalysis.row se0 m), (se0, (se0, signature_main), (se0, caw, tt)))).
-    set (q0 := (cq (Vptr b Ptrofs.zero) signature_main nil m)).
-    assert (MQ: match_query cc_compcert
-                  rca_w
-                  q0
-                  (Asm.initial_regset (Vptr b Ptrofs.zero) (Vptr sb Ptrofs.zero), m1)).
-    { simpl. exists q0. split.
-      - econstructor. econstructor. red. split.
-        (* ro memory: it should be correct *)
-        + admit.          
-        + admit.
-      - exists q0. split.
-        econstructor. split. eauto. constructor.
-        exists (Asm.initial_regset (Vptr b Ptrofs.zero) (Vptr sb Ptrofs.zero), m1).        
-        split.
-        (* cainjp (important) *)
-        + exploit Genv.find_symbol_not_fresh; eauto. intros BV.
-          econstructor.
-          * rewrite Conventions1.loc_arguments_main. econstructor.
-          * econstructor.
-            unfold Mem.flat_inj. unfold Mem.valid_block in BV.
-            destruct Mem.sup_dec; try congruence.
-            eauto. reflexivity.
-          * intros. unfold Conventions.size_arguments in H.
-            rewrite Conventions1.loc_arguments_main in H. simpl in H.
-            inv H. lia.
-          * econstructor.
-          * econstructor.
-          * econstructor. eapply Mem.valid_new_block. eauto.
-          * econstructor. red. unfold Conventions.size_arguments.
-            rewrite Conventions1.loc_arguments_main. reflexivity.
-          * congruence.
-          * vm_compute. congruence.            
-        + red. repeat apply conj.
-          * intros. simpl. eapply Valuesrel.val_inject_refl.
-          * vm_compute. congruence.
-          * simpl. eapply Mem.extends_refl. }
-    (* q0 is a valid pre-condition for hmap_process_cond *)
-    set (hmap_w := Build_hmap_world_int (Build_list_world_ext main_id se0) None None).
-    assert (VQ0: query_inv (hmap_process_cond hmap_size) hmap_w q0).
+              ⊎ hmap_process_cond hmap_size @! cc_compcert)); auto. 
+  eapply asm_valid_se; auto.
+  (* Safety of intitialization *)
+  intros q IQ. unfold Asm.init_query in IQ.
+  destruct Genv.find_symbol eqn: FSYM in IQ; try congruence.
+  destruct Genv.init_mem eqn: INITM in IQ; try congruence.
+  destruct Mem.alloc as [m1 sb] eqn: ALLOCSB in IQ. inv IQ.
+  exploit Genv.initmem_inject. eauto. intros INJ1.
+  exploit Mem.alloc_right_inject; eauto. intros INJ2.
+  exploit Genv.init_mem_genv_sup. eauto. intros SUP.
+  set (se0 := (Asm.initial_se (skel (Asm.semantics linked_mod)))) in *.
+  set (main_id := Asm.main_id (skel (Asm.semantics linked_mod))) in *.
+  set (rs0 := (Asm.initial_regset (Vptr b Ptrofs.zero) (Vptr sb Ptrofs.zero))) in *.
+  (* q0 is a valid pre-condition for hmap_process_cond *)
+  set (hmap_w := Build_hmap_world_int (Build_list_world_ext main_id se0) None None).
+  set (q0 := (cq (Vptr b Ptrofs.zero) signature_main nil m)).
+  split.
+  (* valid_query: The proof of valid_query: use fsim_match_valid_query and show
+    that hmap.c has an internal main function. *)
+  - exploit AsmLinking.asm_linking. eauto.
+    intros [FSIM].
+    erewrite <- fsim_match_valid_query.
+    2: { eapply fsim_lts with (ccB:= cc_id) (wB := tt) (se2:= se0).
+         simpl. auto. unfold se0. eapply asm_valid_se. }
+    instantiate (1 := (rs0, m1)). instantiate (1 := (SmallstepLinking.semantics
+                                                       (fun i : bool => Asm.semantics (if i then hash_map_asm else linked_list_asm))
+                                                       (erase_program linked_mod))).
+    2: econstructor.
+    simpl. unfold SmallstepLinking.valid_query. eapply orb_true_iff.
+    left.
+    (* The left proof goal is: valid_query (Asm.semantics
+      hash_map_asm se0) (rs0, m1) = true. It is proved by the
+      fsim_match_valid_query of the CompCertO compiler *)
+    exploit clight_semantic_preservation.
+    eapply transf_clight_program_match. eauto.
+    intros ([FSIM1] & [BSIM1]).
+    erewrite fsim_match_valid_query.
+    2: { eapply fsim_lts with (ccB := cc_compcert) (* (wB := rca_w)  *) (se1 := se0) (L1 := (Clight.semantics1 hash_map_prog)).
+         (* match_senv cc_compcert rca_w se0 se0 *)
+         - eapply MSENV.
+         - erewrite fsim_skel. 2: eapply FSIM1.
+           eapply Genv.valid_for_linkorder. 2: eapply asm_valid_se.
+           eapply Linking.link_erase_program in LINK. 
+           eapply Linking.link_linkorder in LINK as (A1 & A2). auto. }
+    2: { eapply MQ. eauto. }
+    instantiate (1 := m). 
+    (* The left proof goal is to prove q0 is valid in hash_map_prog
+      which is specific to the definition of hash_map_prog which we
+      can expand *)
+    simpl. unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr.
+    rewrite dec_eq_true.
+    rewrite Genv.find_def_spec. erewrite Genv.find_invert_symbol.
+    2: eauto.
+    (** TODO: add the (main_id, main_func) in the hash_map_prog *)
+    admit.
+  - assert (VQ0: query_inv (hmap_process_cond hmap_size) hmap_w q0).
     { simpl. red. unfold q0. simpl. rewrite dec_eq_true.
       erewrite Genv.find_invert_symbol. 2: eauto.
       red.
       (** TODO: add the pre-condition of main function in cq_hmap_process *)
       admit. }
-    (* Prove [match_senv cc_compcert rca_w se0 se0] which is useful for the following proof*)
-    assert (MSENV: match_senv cc_compcert rca_w se0 se0).
-    { econstructor. econstructor. simpl. auto.
-      econstructor. simpl. econstructor. auto.
-      econstructor. simpl. econstructor.
-      (* TODO: use match_stbls_flat_id in Globalenv *)
-      + admit.
-      + unfold se0. setoid_rewrite SUP. eapply Mem.sup_include_refl.
-      + unfold se0. setoid_rewrite SUP.
-        erewrite Mem.support_alloc with (m2 := m1).
-        eapply Mem.sup_incr_in2. eauto.
-      + simpl. auto. }
-    split.
-    (* valid_query: The proof of valid_query: use fsim_match_valid_query and show
-    that hmap.c has an internal main function. *)
-    + exploit AsmLinking.asm_linking. eauto.
-      intros [FSIM].
-      erewrite <- fsim_match_valid_query.
-      2: { eapply fsim_lts with (ccB:= cc_id) (wB := tt) (se2:= se0).
-           simpl. auto. unfold se0. auto. }
-      instantiate (1 := (rs0, m1)). instantiate (1 := (SmallstepLinking.semantics
-              (fun i : bool => Asm.semantics (if i then hash_map_asm else linked_list_asm))
-              (erase_program linked_mod))).
-      2: econstructor.
-      simpl. unfold SmallstepLinking.valid_query. eapply orb_true_iff.
-      left.
-      (* The left proof goal is: valid_query (Asm.semantics
-      hash_map_asm se0) (rs0, m1) = true. It is proved by the
-      fsim_match_valid_query of the CompCertO compiler *)
-      exploit clight_semantic_preservation.
-      eapply transf_clight_program_match. eauto.
-      intros ([FSIM1] & [BSIM1]).
-      erewrite fsim_match_valid_query.
-      2: { eapply fsim_lts with (ccB := cc_compcert) (wB := rca_w) (se1 := se0) (L1 := (Clight.semantics1 hash_map_prog)).
-           (* match_senv cc_compcert rca_w se0 se0 *)
-           - auto.
-           - erewrite fsim_skel. 2: eapply FSIM1.
-             eapply Genv.valid_for_linkorder. 2: eauto.
-             eapply Linking.link_erase_program in LINK. 
-             eapply Linking.link_linkorder in LINK as (A1 & A2). auto. }
-      instantiate (1 := q0). 2: auto.
-      (* The left proof goal is to prove q0 is valid in hash_map_prog
-      which is specific to the definition of hash_map_prog which we
-      can expand *)
-      simpl. unfold Genv.is_internal, Genv.find_funct, Genv.find_funct_ptr.
-      rewrite dec_eq_true.
-      rewrite Genv.find_def_spec. erewrite Genv.find_invert_symbol.
-      2: eauto.
-      (** TODO: add the (main_id, main_func) in the hash_map_prog *)
+    assert (SYMINV: symtbl_inv (hmap_process_cond hmap_size) hmap_w se0).
+    { econstructor. 
+      econstructor.  unfold wf_senv.
+      (** TODO: wf_senv can be proved by Genv.valid_for ? Or maybe we can change the definition of wf_senv *)
+      admit. }
+    exists (inr (hmap_w, (rca_w linked_mod m m1 b sb INITM ALLOCSB))).
+    repeat apply conj.
+    + exists q0. split. eauto.
+      eapply MQ. auto.
+    + exists se0. split; auto.
+      eapply MSENV.
+    + intros. inv H. eapply asm_reply_inv; eauto.
+      2: { econstructor. eauto. }
+      intros rc RINV. simpl in RINV. do 2 red in RINV.
+      (** TODO: add the post-condition for the main function in hash_map program *)
       admit.
-    (* Prove that the pre- and post-condition of the main function can be satisfied *)
-    + exists (inr (hmap_w, rca_w)).
-      repeat apply conj.
-      * econstructor. split; eauto.
-      * econstructor. instantiate (1:=se0). split.
-        econstructor. reflexivity. unfold wf_senv.
-        (** TODO: wf_senv can be proved by Genv.valid_for ? Or maybe we can change the definition of wf_senv *)
-        admit.
-        auto.
-      (* post-condition can guarantee that the return value is an integer *)
-      * intros r RINV.
-        inv RINV. destruct H.
-        simpl in H. red in H. red in H.
-        (** TODO: add the post-condition for the main function in hash_map program *)
-        assert (RV: exists retval, cr_retval x = Vint retval).
-        { admit. }
-        inv H0. destruct H1. inv H0. inv H2. inv H1.
-        destruct H2. inv H1. inv H2. destruct H1. inv H2. inv H1.
-        destruct r. 
-        unfold Asm.final_reply.
-        vm_compute in tres. unfold tres in *.
-        destruct RV as (retval & RV). simpl in RV. subst.
-        inv H12. destruct H4. inv H2.
-        simpl in H4. specialize (H4 (Asm.IR Asm.RAX)). rewrite <- H5 in H4.
-        inv H4. eauto.
-  - eapply link_linked_list_hash_map_safe_1; eauto.
 Admitted.

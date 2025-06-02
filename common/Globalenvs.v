@@ -2120,11 +2120,6 @@ Qed.
 
 End TRANSFORM_TOTAL.
 
-(** Genv.is_internal is irrelevant to the internal of F *)
-
-Lemma erase_program_is_internal p:
-  is_internal
-
 End Genv.
 
 Coercion Genv.to_senv : Genv.t >-> Genv.symtbl.
