@@ -1659,6 +1659,17 @@ Proof.
   - inversion 1. reflexivity.
 Qed.
 
+Theorem match_stbls_flat_id ge:  
+  match_stbls (Mem.flat_inj (genv_sup ge)) ge ge.
+Proof.
+  split; intros; eauto; intros; unfold Mem.flat_inj in *.
+  - destruct Mem.sup_dec; try congruence. eauto.
+  - exists b2. destruct Mem.sup_dec; try congruence.
+  - destruct Mem.sup_dec; try congruence. inv H. reflexivity.
+  - destruct Mem.sup_dec; try congruence.
+  - destruct Mem.sup_dec; try congruence. inv H. reflexivity.
+Qed.
+
 Theorem match_stbls_compose f g ge1 ge2 ge3:
   match_stbls f ge1 ge2 ->
   match_stbls g ge2 ge3 ->
@@ -2108,6 +2119,11 @@ Proof.
 Qed.
 
 End TRANSFORM_TOTAL.
+
+(** Genv.is_internal is irrelevant to the internal of F *)
+
+Lemma erase_program_is_internal p:
+  is_internal
 
 End Genv.
 

@@ -13,18 +13,19 @@ Import Values Maps Memory AST.
 
 Set Implicit Arguments.
 
-(* Definitions. *)
+(* Definitions of closed semantics which is the same as that of
+CompCert *)
 
 Record semantics := ClosedSemantics_gen {
   state: Type;
   genvtype: Type;
   step : genvtype -> state -> trace -> state -> Prop;
   initial_state: state -> Prop;
-  final_state: state -> val -> Prop; (* For closed safety, we should make
-  the return value to be val instead of int *)
+  final_state: state -> int -> Prop;
   globalenv: genvtype;
   symbolenv: Genv.symtbl
 }.
+
 
 Declare Scope closed_smallstep_scope.
 
@@ -49,7 +50,7 @@ Variable init_q : program unit unit -> option (query liB). (* a function from
 program to initial query *)
 Variable final_r : reply liB -> val. (* a function from reply to return value *)
 
-Definition close_semantics :=
+Definition close_semantics : semantics :=
   let lts := Smallstep.activate s se in
   {|
     state := Smallstep.state s;
@@ -62,7 +63,9 @@ Definition close_semantics :=
       | None => fun _ => False
       end;
     final_state := fun state retval =>
-                     exists r, Smallstep.final_state lts state r /\ retval = final_r r;
+                     (* The return value must be an integer otherwise
+                     the program gets stuck *)
+                     exists r, Smallstep.final_state lts state r /\ final_r r = Vint retval;
     globalenv := Smallstep.globalenv lts;
     symbolenv := se;
   |}.
@@ -92,16 +95,20 @@ Variable final_r : reply liB -> val. (* a function from reply to return value *)
 Definition lts := (Smallstep.activate s se).
 Definition L := close_semantics s se init_q final_r.
 
+(* Can be proved by Genv.find_info_symbol *)
 Hypothesis VSE: Genv.valid_for (skel s) se.
 
 (* The query must satisfy the pre-condition if it can be
 constructed. Most of the time we just set the query_inv and symtbl_inv
 to be True for the main function *)
-Hypothesis QINV: forall q, init_q (skel s) = Some q ->
-                      valid_query lts q = true
-                      /\ (exists w, query_inv IB w q
-                              /\ symtbl_inv IB w se).
-
+Hypothesis valid_main_interface:
+  forall q, init_q (skel s) = Some q ->
+       valid_query lts q = true
+       /\ exists w, query_inv IB w q
+              /\ symtbl_inv IB w se
+              (* valid post-condition *)
+              /\ (forall r, reply_inv IB w r ->
+                      exists retval, final_r r = Vint retval).
 
 Theorem closed_open_safety_adequacy:
   module_type_safe inv_bot IB s SIF ->
@@ -111,9 +118,8 @@ Proof.
   red. intros inits INIT.
   simpl in INIT.
   destruct (init_q (skel s)) eqn: INIQ; try contradiction.
-  exploit QINV; eauto. intros (VQ & (w & HQ & SYM)).
+  exploit valid_main_interface; eauto. intros (VQ & (w & HQ & SYM & HR)).
   specialize (SAFE se w SYM VSE).
-
   exploit @initial_preserves_progress; eauto.
   intros (inits' & INIT' & INIT_SAFE).
   specialize (INIT_SAFE inits INIT).
@@ -121,7 +127,13 @@ Proof.
   exploit @lts_preserves_progress_internal_safe; eauto.
   intros [(r & FINAL)|[(q1 & EXT)|(t1 & s1 & STEP1)]]; eauto.
   - left. simpl.
-    exists (final_r r), r. eauto.
+    exploit @lts_preserves_progress_star. eauto.
+    simpl in STAR. eauto. auto.
+    intros SINV.
+    exploit @final_state_preserves; eauto.
+    intros RINV.
+    exploit HR; eauto. intros (retval & RV).
+    exists retval, r. eauto.
   - exploit @lts_preserves_progress_star. eauto.
     simpl in STAR. eauto. auto.
     intros SINV.

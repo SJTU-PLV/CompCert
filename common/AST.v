@@ -707,6 +707,9 @@ Proof.
     + rewrite !PTree.gso by auto. apply IHdefs.
 Qed.
 
+Lemma erase_program_is_internal p:
+ 
+
 End ERASE_PROGRAM.
 
 (** * Arguments and results to builtin functions *)
