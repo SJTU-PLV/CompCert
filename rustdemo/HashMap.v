@@ -20,7 +20,6 @@ Definition hmap : ident := 146%positive.
 Definition find_bucket : ident := 45%positive.
 Definition index : ident := 145%positive.
 Definition buk : ident := 90%positive.
-Definition main : ident := 23%positive.
 Definition delete_hmap : ident := 190%positive.
 Definition hmap_process : ident := 33%positive.
 
@@ -101,6 +100,18 @@ Definition process_func := {|
 |}.
 
 
+(* main function *)
+
+Definition main_func := {|
+  fn_return := tint;
+  fn_callconv := cc_default;
+  fn_params := nil;
+  fn_vars := nil;
+  fn_temps := nil;
+  fn_body := (Sreturn (Some (Econst_int Int.zero tint)));
+|}.
+
+
 (* Definition of hash_map program *)
 
 Definition composites : list composite_definition := nil.
@@ -119,6 +130,7 @@ Definition global_definitions : list (ident * globdef fundef type) :=
   (find_bucket, Gfun(Internal find_bucket_func)) ::
   (process, Gfun(Internal process_func)) ::
   (hmap_process, Gfun(Internal hmap_operate_on_func)) ::
+  (main, Gfun (Internal main_func)) ::
   (hash, Gfun hash_ext) ::
   (find, Gfun find_ext) :: nil.
 

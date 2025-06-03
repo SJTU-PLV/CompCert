@@ -55,6 +55,7 @@ Definition _41 : ident := 43%positive.
 Definition _42 : ident := 10%positive.
 Definition _43 : ident := 174%positive.
 Definition wildcard : ident := 106%positive.
+Definition main : ident := 23%positive.
 
 (* type declaration *)
 Definition List_ty : type := Tvariant nil List.
@@ -307,7 +308,7 @@ Definition linked_list_mod : program :=
                    (malloc, Gfun (External [] [] AST.EF_malloc Tnil Tunit cc_default));
                    (free, Gfun (External [] [] AST.EF_free Tnil Tunit cc_default))];
     prog_public := [hash; find; (* empty_list; insert; remove; *) process; malloc; free];
-    prog_main := 201%positive;
+    prog_main := main;
     prog_types := composite_types;
     prog_comp_env := proj1_sig build_ce_ok;
     prog_comp_env_eq := proj2_sig build_ce_ok; |}.

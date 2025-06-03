@@ -602,6 +602,21 @@ Inductive call_find_bucket: state -> Prop :=
  
 
 Inductive sound_state : state -> Prop :=
+(* Invariants for the main function *)
+| hmap_call_main: forall bf m
+    (SYMB: Genv.invert_symbol se bf = Some main)
+    (FUNID: list_callee_ext (hmap_list_ext w) = main),
+    sound_state (Callstate (Vptr bf Ptrofs.zero) nil Kstop m)
+| hmap_main_internal: forall t s n m
+    (STAR: starNf step1 num_frames ge n (State main_func (fn_body main_func) Kstop empty_env (PTree.empty Values.val) m) t s)
+    (NOTCALLRET: not_call_return_state s)
+    (FUNID: list_callee_ext (hmap_list_ext w) = main)
+    (RAN: (0<= n <=1)%nat),
+    sound_state s
+| hmap_return_main: forall m
+    (FUNID: list_callee_ext (hmap_list_ext w) = main),
+    sound_state (Returnstate (Vint Int.zero) Kstop m)
+                
 (* callstate in process function *)
 | hmap_call_process: forall bf b rwm rwfp
     (SYMB: Genv.invert_symbol se bf = Some process)
@@ -918,6 +933,15 @@ Proof.
     + destruct H0. congruence.
 Qed.
 
+(** TODO: add local variable for the hash map *)
+Lemma function_entry_main: forall m,
+    function_entry1 ge main_func nil m empty_env (PTree.empty Values.val) m.
+      (* /\ m' |= process_val_pred b1 0 fp ** rs_own_acc_pred m fp Hm. *)
+Proof.
+  intros. econstructor. simpl. constructor.
+  econstructor. econstructor. reflexivity.
+Qed.
+
 (* Soundness of at_external, using (I @@ rs_own @! cc_rust_c) as the interface *)
 
 Definition find_rs_sig :=
@@ -945,6 +969,12 @@ Lemma hash_map_external: forall s q,
 Proof.
   intros s q_c SINV ATEXT. inv ATEXT. unfold f in *.
   inv SINV; try simpl in NOTCALLRET; try contradiction.
+  - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal main_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYMB.
+      reflexivity. }
+    rewrite H in FIND. inv FIND.    
   - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal process_func)).
     { simpl. destruct Ptrofs.eq_dec; try congruence.
       eapply Genv.find_funct_ptr_iff.
@@ -1122,7 +1152,7 @@ Proof.
   destruct Ptrofs.eq_dec in HQ; try contradiction. subst.
   destruct Genv.invert_symbol eqn: SYM in HQ; try contradiction.
   red in HQ.
-  (* two cases of i *)  
+  (* Three cases of i *)  
   repeat destruct ident_eq in HQ; try contradiction; subst.   
   Strategy opaque [linked_list_mod].
   (* call process *)
@@ -1177,6 +1207,17 @@ Proof.
     + intros. inv H.
       eapply hmap_operate_on_callstate; eauto.
       econstructor; eauto. econstructor.
+  (* call main function *)
+  - simpl in HQ. destruct HQ as (A1 & A2 & A3). subst.
+    exploit Genv.find_def_spec. erewrite SYM. instantiate (1 := hash_map_prog).
+    intros FINDF. rewrite SEEQ in *.
+    eexists. split.
+    + replace signature_main with (signature_of_type Tnil tint cc_default) by reflexivity.
+      econstructor. simpl. rewrite dec_eq_true. eapply Genv.find_funct_ptr_iff.
+      instantiate (1 := main_func). eauto. reflexivity.
+      econstructor.
+    + intros s INIT. inv INIT.
+      eapply hmap_call_main. auto. auto.
 Qed.
 
 Lemma final_progress: forall s r,
@@ -1185,6 +1226,9 @@ Lemma final_progress: forall s r,
     reply_inv (hmap_int_inv N) w r.
 Proof.
   intros. inv H0. inv H; try (simpl in NOTCALLRET; contradiction).
+  (* return from main *)
+  + simpl. red. red. rewrite FUNID.
+    reflexivity.
   (* return from process *)
   + simpl. red. red.
     rewrite FUNID. rewrite dec_eq_true. 
@@ -1232,6 +1276,38 @@ Lemma step_preservation_progress: forall s,
                sound_state s').
 Proof.
   intros s INV. inv INV.
+  (* call main *)
+  - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal main_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYMB.
+      auto. }
+    generalize (function_entry_main m). intros ENTRY.
+    split.
+    + red. do 2 right.
+      do 2 eexists. econstructor; eauto.
+    + intros. inv H; rewrite FIND in FIND0; inv FIND0.
+      exploit function_entry1_det. eauto. eapply ENTRY.
+      intros (A1 & A2 & A3). subst.
+      eapply hmap_main_internal.
+      econstructor. reflexivity. auto. lia.
+  (* Internal steps of main *)
+  - generalize STAR as STAR1. intros.
+    inv STAR1. 
+    (* evaluate Sreturn *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+        econstructor. reflexivity. reflexivity.
+      + intros. inv H. inv H8. 2: inv H. inv H9. eapply hmap_return_main; eauto. }
+    inv STEP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    inv NOTCALLRET. lia.
+  (* return from main *)
+  - split.
+    + red. left. eexists. econstructor.
+    + intros. inv H.
+    
   (* call process *)
   - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal process_func)).
     { simpl. destruct Ptrofs.eq_dec; try congruence.
@@ -1460,8 +1536,9 @@ Proof.
     2: { destruct H7; try congruence. }
     2: { destruct H7; try congruence. }
     inv STAR0; cbn [num_frames num_frames_cont] in *.
-    { generalize (wf_senv find_bucket). intros FINDF.
-      simpl in FINDF. destruct FINDF as (?b & FINDF).
+    { generalize ((proj1 wf_senv) find_bucket). intros FINDF.
+      exploit FINDF. reflexivity. clear FINDF.
+      intros (?b & PRO_G & FINDF & FINDINFO & LINKORD).
       exploit load_rule. eapply sep_proj1. eapply MPRED.
       intros (v1 & LOAD1 & SPEC1). subst.
       exploit load_rule. eapply sep_proj1. eapply sep_proj2. eapply MPRED.
@@ -1641,8 +1718,9 @@ Proof.
           1-2: inv H; simpl; auto. lia. }
       inv STEP; try (destruct H7; congruence).
       (* evaluate the call step *)
-      generalize (wf_senv find). intros FINDF.
-      simpl in FINDF. destruct FINDF as (?b & FINDF).
+      generalize ((proj2 wf_senv) find). intros FINDF.
+      exploit FINDF. reflexivity. clear FINDF.
+      intros (?b & PRO_G & FINDF & FINDINFO & LINKORD).
       assert (FINDFUN: Genv.find_funct (Smallstep.globalenv (hash_map_sem se)) (Vptr b0 Ptrofs.zero) = Some find_ext).
       { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
         rewrite Genv.find_def_spec.
@@ -1875,8 +1953,9 @@ Proof.
     2: { destruct H7; try congruence. }
     2: { destruct H7; try congruence. }
     inv STAR0; cbn [num_frames num_frames_cont] in *.
-    { generalize (wf_senv hash). intros FINDF.
-      simpl in FINDF. destruct FINDF as (?b & FINDF).
+    { generalize ((proj2 wf_senv) hash). intros FINDF.
+      exploit FINDF. reflexivity. clear FINDF.
+      intros (?b & PRO_G & FINDF & FINDINFO & LINKORD).
       exploit load_rule. eapply sep_proj1. eapply sep_proj2. eapply MPRED.
       intros (v1 & LOAD1 & SPEC1). subst.
       split.

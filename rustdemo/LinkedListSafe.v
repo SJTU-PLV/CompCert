@@ -722,6 +722,7 @@ Proof.
       rewrite Genv.find_def_spec. rewrite PROC.
       auto. }
     exists (Build_list_world_ext process se).
+    split. simpl. split; auto.
     repeat apply conj; auto.
     + replace (genv_cenv ge) with (prog_comp_env linked_list_mod) by auto.
       simpl. red. simpl.
@@ -1867,8 +1868,9 @@ Proof.
             destruct (sem_cast v3 Tbox_int Tbox_int) eqn: ?CAST.
             * left. red. do 2 right.
               (* construct the block of process *)
-              generalize (wf_senv process). intros FINDPRO.
-              simpl in FINDPRO. destruct FINDPRO as (?b & FINDPRO).
+              generalize ((proj1 wf_senv) process). intros FINDPRO.
+              exploit FINDPRO. reflexivity. clear FINDPRO.
+              intros (?b & PRO_G & FINDPRO & FINDINFO & LINKORD).
               do 2 eexists. econstructor. econstructor.
               reflexivity. reflexivity.
               econstructor. econstructor. eauto.
@@ -1887,8 +1889,9 @@ Proof.
               reflexivity. reflexivity.
               simpl. auto.
             (* eval_exprlist sem_cast fails *)
-            * generalize (wf_senv process). intros FINDPRO.
-              simpl in FINDPRO. destruct FINDPRO as (?b & FINDPRO).
+            * generalize ((proj1 wf_senv) process). intros FINDPRO.
+              exploit FINDPRO. reflexivity. clear FINDPRO.
+              intros (?b & PRO_G & FINDPRO & FINDINFO & LINKORD).
               right. econstructor.
               eapply step_dropinsert_call_error2.
               econstructor. econstructor. eauto.
@@ -1902,8 +1905,9 @@ Proof.
               eauto. eauto.
           (* load fails *)
           + right.
-            generalize (wf_senv process). intros FINDPRO.
-            simpl in FINDPRO. destruct FINDPRO as (?b & FINDPRO).
+            generalize ((proj1 wf_senv) process). intros FINDPRO.
+            exploit FINDPRO. reflexivity. clear FINDPRO.
+            intros (?b & PRO_G & FINDPRO & FINDINFO & LINKORD).
             econstructor.
             eapply step_dropinsert_call_error2.   
             econstructor. econstructor. eauto.
@@ -1919,8 +1923,9 @@ Proof.
           (* show arguments are casted*)
           inv H23. inv H12. inv H20.
           exploit cast_val_is_casted. eapply H3. intros CASTED.
-          generalize (wf_senv process). intros FINDPRO.
-          simpl in FINDPRO. destruct FINDPRO as (?b & FINDPRO). 
+          generalize ((proj1 wf_senv) process). intros FINDPRO.
+          exploit FINDPRO. reflexivity. clear FINDPRO.
+          intros (?b & PRO_G & FINDPRO & FINDINFO & LINKORD).
           simpl in GADDR. rewrite GADDR in FINDPRO. inv FINDPRO.
           eapply find_state_call_process.
           (* invert_symbol *)
@@ -2005,8 +2010,9 @@ Proof.
       (* evaluate Dcall *)
       { split.
         - (* construct the block of find *)
-          generalize (wf_senv find). intros FINDF.
-          simpl in FINDF. destruct FINDF as (?b & FINDF).
+          generalize ((proj2 wf_senv) find). intros FINDF.
+          exploit FINDF. reflexivity. clear FINDF.
+          intros (?b & PRO_G & FINDF & FINDINFO & LINKORD).
           destruct (Mem.valid_access_dec m7 Mptr b3 16 Readable).
           + exploit Mem.valid_access_load. eauto.
             intros (?v & ?LOAD).

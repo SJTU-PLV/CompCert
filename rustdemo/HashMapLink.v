@@ -38,7 +38,7 @@ Definition hmap_size : nat := 10%nat.
 (* The hash_map module is totally safe after the compilation.
 
 ⟦hmap.s⟧ ⊩ {find_process ↦ ⊤, hash ↦ P} ⋅ I_rs⋅R_rc⋅R_ca
-             ↠ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q} ⋅ R_ca
+             ↠ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q, main ↦ ⊤} ⋅ R_ca
  *)
 Lemma compiled_hash_map_safe: forall hash_map_asm,
   transf_clight_program hash_map_prog = OK hash_map_asm ->
@@ -52,35 +52,24 @@ Proof.
   eapply hash_map_module_safe.
 Qed.
 
-(*   eapply open_safety_inv_ref. *)
-(*   3: { eapply transf_clight_total_safety_preservation. eauto. *)
-(*        eapply hash_map_module_safe. } *)
-(*   rewrite invcc_compose_assoc. *)
-(*   eapply cc_inv_ref. reflexivity. *)
-(*   eapply cc_rust_compcert_eqv. *)
-(*   red. *)
-(*   rewrite invcc_compose_assoc. *)
-(*   eapply cc_inv_ref. reflexivity. *)
-(*   eapply cc_rust_compcert_eqv. *)
-(* Qed. *)
 
 (** The syntactic linked assembly module (linked_list_asm +
 hash_map_asm) is totally safe with the following safety interfaces.
 
  ⟦hmap.s + list.s⟧ ⊩ ({find_process ↦ ⊤⋅I_rs⋅R_rc, hash ↦ P⋅I_rs⋅R_rc}
-                    ⊎ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q}) ⋅ R_ca
+                    ⊎ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q, main ↦ ⊤}) ⋅ R_ca
                     ↠ 
                     ({find_process ↦ ⊤⋅I_rs⋅R_rc, hash ↦ P⋅I_rs⋅R_rc}
-                    ⊎ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q}) ⋅ R_ca
+                    ⊎ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q, main ↦ ⊤}) ⋅ R_ca
 
-We want to separate the hmap_process from functions those have rust
+We want to separate the hmap_process and main from functions those have rust
 interfaces.
 
  ⟦hmap.s + list.s⟧ ⊩ {find_process ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra
-                     ⊎ {hmap_process ↦ Q}⋅ R_ca
+                     ⊎ {hmap_process ↦ Q, main ↦ ⊤}⋅ R_ca
                      ↠ 
                      {find_process ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra
-                     ⊎ {hmap_process ↦ Q}⋅ R_ca
+                     ⊎ {hmap_process ↦ Q, main ↦ ⊤}⋅ R_ca
 
  *)
 
@@ -88,19 +77,27 @@ interfaces.
 Definition hmap_rs_cond :=
   hmap_ext_inv ⊎ list_ext_inv.
 
-(* {hmap_process ↦ Q} *)
+(** TODO: we may also need to add hmap_init and hmap_set here  *)
+(* {hmap_process ↦ Q, main ↦ ⊤} *)
 Definition cq_hmap_process N (w: hmap_world_int) (q: c_query) (fid: ident) : Prop :=
   if ident_eq fid hmap_process then
     vq_hmap_process N w q
+  else if ident_eq fid main then
+         list_callee_ext (hmap_list_ext w) = main /\
+           cq_args q = nil /\
+           cq_sg q = signature_main   
   else False.
 
 Definition cr_hmap_process N (w: hmap_world_int) (r: c_reply) (fid: ident) : Prop :=
   if ident_eq fid hmap_process then
     vr_hmap_process N w r
+  else if ident_eq fid main then
+         (* The return value of the main function is zero *)
+         cr_retval r = Vint Int.zero
   else False.
 
 
-(* {hmap_process ↦ Q} *)
+(* {hmap_process ↦ Q, main ↦ ⊤} *)
 Definition hmap_process_cond N : invariant li_c :=
   {| inv_world := hmap_world_int;
     symtbl_inv w se := (list_senv_ext (hmap_list_ext w)) = se
@@ -223,6 +220,7 @@ Lemma hmap_inv_inv_ref: invref ((list_ext_inv @@ rs_own) @! cc_rust_c) (hmap_int
   destruct (Genv.invert_symbol) eqn: SYM; try contradiction.
   red in Q11. 
   exists (Build_hmap_world_int w1 (Some w2) None).
+  split. auto.
   repeat apply conj; auto.
   + simpl. red. simpl. rewrite dec_eq_true.
     rewrite SYM. red.
@@ -236,6 +234,7 @@ Lemma hmap_inv_inv_ref: invref ((list_ext_inv @@ rs_own) @! cc_rust_c) (hmap_int
     * simpl in R. destruct R as (r1 & (R1 & (w' & ACC & ROWN)) & R2).
       simpl. exists r1. repeat apply conj; eauto.
     (* impossible *)
+    * subst. inv Q11. congruence.
     * subst. inv Q11. congruence.
 Qed.        
 
@@ -341,6 +340,20 @@ Proof.
            inv Q1.
            simpl. red. red. rewrite CALLEE in *.
            rewrite dec_eq_false; auto.
+      (* call main *)
+      * destruct Q1 as (Q11 & Q12 & Q13).
+        exists (inr (w1, w2)). repeat apply conj.
+        -- econstructor. split; eauto.
+        -- econstructor. split; eauto.
+           simpl. red. simpl. 
+           rewrite dec_eq_true. rewrite SYM.
+           red. simpl. auto.
+        -- intros r (r1 & (R1 & R2)).
+           simpl in R1. red in R1. red in R1.
+           rewrite Q11 in *. simpl in R1.
+           red. red. econstructor.
+           split; eauto.
+           simpl. red. red. rewrite Q11. simpl. auto.           
   - red. intros [w1 | w1].
     + destruct w1 as (((w1 & w2) & w3) & w4).
       intros se q (se1 & (se2 & ((S1 & S2) & S3)) & S4) (q1 & (q2 & ((Q1 & Q2) & Q3)) & Q4).
@@ -420,26 +433,37 @@ Proof.
       destruct Genv.invert_symbol eqn: SYM in Q1; try contradiction.
       red in Q1. 
       repeat destruct ident_eq in Q1; try contradiction; subst.
-      (* call hmap_process *)
-      exists (inr (w1, w2)). repeat apply conj.
-      * econstructor. split; eauto.
-      * econstructor. split; eauto.
-        simpl. red. simpl. 
-        rewrite dec_eq_true. rewrite SYM. auto.
-      * intros r (r1 & (R1 & R2)).
-        simpl in R1. red in R1.
-        econstructor. split; eauto.
-        inv Q1.
-        simpl. red. red. rewrite CALLEE in *.
-        rewrite dec_eq_true; auto.
+      (* call hmap_process or call main*)
+      * exists (inr (w1, w2)). repeat apply conj.
+        -- econstructor. split; eauto.
+        -- econstructor. split; eauto.
+           simpl. red. simpl. 
+           rewrite dec_eq_true. rewrite SYM. auto.
+        -- intros r (r1 & (R1 & R2)).
+           simpl in R1. red in R1.
+           econstructor. split; eauto.
+           inv Q1.
+           simpl. red. red. rewrite CALLEE in *.
+           rewrite dec_eq_true; auto.
+      * exists (inr (w1, w2)). repeat apply conj.
+        -- econstructor. split; eauto.
+        -- econstructor. split; eauto.
+           simpl. red. simpl. 
+           rewrite dec_eq_true. rewrite SYM. auto.
+        -- intros r (r1 & (R1 & R2)).
+           simpl in R1. red in R1.
+           econstructor. split; eauto.
+           inv Q1.
+           simpl. red. red. rewrite H in *.
+           rewrite dec_eq_true; auto.           
 Qed.
 
               
 (*  ⟦hmap.s + list.s⟧ ⊩ {find_process ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra
-                     ⊎ {hmap_process ↦ Q}⋅ R_ca
+                     ⊎ {hmap_process ↦ Q, main ↦ ⊤}⋅ R_ca
                      ↠ 
                      {find_process ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra
-                     ⊎ {hmap_process ↦ Q}⋅ R_ca
+                     ⊎ {hmap_process ↦ Q, main ↦ ⊤}⋅ R_ca
  *)
 Theorem compose_linked_list_hash_map_safe: forall linked_list_asm hash_map_asm composed_mod linked_mod,
     transf_rustlight_program linked_list_mod = OK linked_list_asm ->
@@ -921,28 +945,40 @@ Proof.
   (* q0 is a valid pre-condition for hmap_process_cond *)
   set (hmap_w := Build_hmap_world_int (Build_list_world_ext main_id se0) None None).
   set (q0 := (cq (Vptr b Ptrofs.zero) signature_main nil m)).
+  (* To prove valid_query and valid_for (skel hash_map/linked_list)
+  se0, we need to following code *)
+  exploit AsmLinking.asm_linking. eauto.
+  intros [FSIM].
+  erewrite fsim_match_valid_query with (ccA := cc_id).
+  2: { eapply fsim_lts with (ccB:= cc_id) (wB := tt) (se2:= se0) (f:= FSIM).
+       simpl. auto. unfold se0. eapply asm_valid_se. }
+  instantiate (1 := (rs0, m1)).
+  2: econstructor.
+  exploit clight_semantic_preservation.
+  eapply transf_clight_program_match. eauto.
+  intros ([FSIM1] & [BSIM1]).
+  exploit rustlight_semantic_preservation.
+  eapply transf_rustlight_program_match. eauto.
+  intros ([FSIM2] & [BSIM2]).
+  assert (SK1: skel (Clight.semantics1 hash_map_prog) = skel (Asm.semantics hash_map_asm)).
+  { eapply fsim_skel; eauto. }
+  assert (SK2: skel (Rustlightown.semantics linked_list_mod) = skel (Asm.semantics linked_list_asm)).
+  { eapply fsim_skel; eauto. }
+  assert (MAIN_EQ: main_id = main).
+  { unfold main_id. eapply Linking.link_prog_inv in LINK. destruct LINK as (A1 & A2 & A3).
+    subst. simpl.
+    simpl in SK1. unfold erase_program in SK1. inv SK1.
+    reflexivity. }
   split.
   (* valid_query: The proof of valid_query: use fsim_match_valid_query and show
     that hmap.c has an internal main function. *)
-  - exploit AsmLinking.asm_linking. eauto.
-    intros [FSIM].
-    erewrite <- fsim_match_valid_query.
-    2: { eapply fsim_lts with (ccB:= cc_id) (wB := tt) (se2:= se0).
-         simpl. auto. unfold se0. eapply asm_valid_se. }
-    instantiate (1 := (rs0, m1)). instantiate (1 := (SmallstepLinking.semantics
-                                                       (fun i : bool => Asm.semantics (if i then hash_map_asm else linked_list_asm))
-                                                       (erase_program linked_mod))).
-    2: econstructor.
-    simpl. unfold SmallstepLinking.valid_query. eapply orb_true_iff.
+  - simpl. unfold SmallstepLinking.valid_query. eapply orb_true_iff.
     left.
     (* The left proof goal is: valid_query (Asm.semantics
       hash_map_asm se0) (rs0, m1) = true. It is proved by the
-      fsim_match_valid_query of the CompCertO compiler *)
-    exploit clight_semantic_preservation.
-    eapply transf_clight_program_match. eauto.
-    intros ([FSIM1] & [BSIM1]).
+      fsim_match_valid_query of the CompCertO compiler *)    
     erewrite fsim_match_valid_query.
-    2: { eapply fsim_lts with (ccB := cc_compcert) (* (wB := rca_w)  *) (se1 := se0) (L1 := (Clight.semantics1 hash_map_prog)).
+    2: { eapply fsim_lts with (ccB := cc_compcert) (wB := rca_w linked_mod m m1 b sb INITM ALLOCSB) (se1 := se0) (L1 := (Clight.semantics1 hash_map_prog)) (f:= FSIM1).
          (* match_senv cc_compcert rca_w se0 se0 *)
          - eapply MSENV.
          - erewrite fsim_skel. 2: eapply FSIM1.
@@ -950,7 +986,6 @@ Proof.
            eapply Linking.link_erase_program in LINK. 
            eapply Linking.link_linkorder in LINK as (A1 & A2). auto. }
     2: { eapply MQ. eauto. }
-    instantiate (1 := m). 
     (* The left proof goal is to prove q0 is valid in hash_map_prog
       which is specific to the definition of hash_map_prog which we
       can expand *)
@@ -958,19 +993,25 @@ Proof.
     rewrite dec_eq_true.
     rewrite Genv.find_def_spec. erewrite Genv.find_invert_symbol.
     2: eauto.
-    (** TODO: add the (main_id, main_func) in the hash_map_prog *)
-    admit.
+    (* Use (main_id, main_func) in the hash_map_prog *)
+    rewrite MAIN_EQ. reflexivity.
   - assert (VQ0: query_inv (hmap_process_cond hmap_size) hmap_w q0).
     { simpl. red. unfold q0. simpl. rewrite dec_eq_true.
       erewrite Genv.find_invert_symbol. 2: eauto.
       red.
-      (** TODO: add the pre-condition of main function in cq_hmap_process *)
-      admit. }
+      (* use the pre-condition of main function in cq_hmap_process *)
+      rewrite MAIN_EQ. simpl. auto. }
     assert (SYMINV: symtbl_inv (hmap_process_cond hmap_size) hmap_w se0).
     { econstructor. 
       econstructor.  unfold wf_senv.
-      (** TODO: wf_senv can be proved by Genv.valid_for ? Or maybe we can change the definition of wf_senv *)
-      admit. }
+      (* wf_senv can be proved by Genv.valid_for *)
+      eapply Linking.link_erase_program in LINK.
+      eapply Linking.link_linkorder in LINK as (A1 & A2).
+      split.
+      eapply Genv.valid_for_linkorder. 2: eapply asm_valid_se.
+      rewrite SK1. auto.
+      eapply Genv.valid_for_linkorder. 2: eapply asm_valid_se.
+      rewrite SK2. auto. }
     exists (inr (hmap_w, (rca_w linked_mod m m1 b sb INITM ALLOCSB))).
     repeat apply conj.
     + exists q0. split. eauto.
@@ -980,6 +1021,6 @@ Proof.
     + intros. inv H. eapply asm_reply_inv; eauto.
       2: { econstructor. eauto. }
       intros rc RINV. simpl in RINV. do 2 red in RINV.
-      (** TODO: add the post-condition for the main function in hash_map program *)
-      admit.
-Admitted.
+      (* use the post-condition for the main function in hash_map program *)
+      rewrite MAIN_EQ in *. simpl in RINV. eauto.
+Qed.

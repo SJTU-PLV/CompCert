@@ -190,11 +190,14 @@ Record hmap_world_ext :=
     hmap_hash_range_ext : int }.
 
 Definition wf_senv se :=
-  forall id,
-    if in_dec ident_eq id (prog_defs_names hash_map_prog ++ prog_defs_names linked_list_mod)
-    then
-      exists b, Genv.find_symbol se id = Some b
-    else True.
+  Genv.valid_for (skel (Clight.semantics1 hash_map_prog)) se
+  /\ Genv.valid_for (skel (Rustlightown.semantics linked_list_mod)) se.
+  
+  (* forall id, *)
+  (*   if in_dec ident_eq id (prog_defs_names hash_map_prog ++ prog_defs_names linked_list_mod) *)
+  (*   then *)
+  (*     exists b, Genv.find_symbol se id = Some b *)
+  (*   else True. *)
 
 
 (** Pre- and Post- conditions for hash function *)
@@ -492,7 +495,7 @@ Inductive vr_hmap_process N (w: hmap_world_int) : c_reply -> Prop :=
     vr_hmap_process N w (cr Vundef m).
 
 
-(* {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q} *)
+(* {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q, main ↦ ⊤ } *)
 Definition cq_inv_hmap_int N (w: hmap_world_int) (q: c_query) (fid: ident) : Prop :=
   if ident_eq fid process then
     (* process ↦ ⊤⋅I_rs⋅R_rc. ⊤ requires us to consider the length of
@@ -505,6 +508,11 @@ Definition cq_inv_hmap_int N (w: hmap_world_int) (q: c_query) (fid: ident) : Pro
     end
   else if ident_eq fid hmap_process then
          vq_hmap_process N w q
+       else if ident_eq fid main then
+              (* We still need to require that the size of argument is zero and the signature is main_signature *)
+              list_callee_ext (hmap_list_ext w) = main /\
+                cq_args q = nil /\
+                cq_sg q = signature_main              
        else False.
 
 Definition cr_inv_hmap_int N (w: hmap_world_int) (r: c_reply) (fid: ident) : Prop :=
@@ -519,6 +527,9 @@ Definition cr_inv_hmap_int N (w: hmap_world_int) (r: c_reply) (fid: ident) : Pro
     end
   else if ident_eq fid hmap_process then
          vr_hmap_process N w r
+       else if ident_eq fid main then
+              (* The return value of the main function is zero *)
+              cr_retval r = Vint Int.zero
        else False.
 
 (* Pre-conditions of rust query composed of the conditions of each
@@ -542,7 +553,7 @@ Definition cr_inv {W: Type} (w: W) (r: c_reply) callee (fn_pred: W -> c_reply ->
 .
 
 (* Safety interfaces for incoming calls of hmap.c,
-   i.e., {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q} *)
+   i.e., {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q, main ↦ ⊤} *)
 Definition hmap_int_inv N : invariant li_c :=
   {| inv_world := hmap_world_int;
     symtbl_inv w se := (list_senv_ext (hmap_list_ext w)) = se
