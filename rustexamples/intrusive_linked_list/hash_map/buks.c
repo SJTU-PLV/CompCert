@@ -43,15 +43,6 @@ void hmap_set(HashMap hmap, int key, int* val){
     else{
         *buk = insert(*buk, key, val);
     }
-    // int index = hash(key);
-    // if(hmap[index] == NULL){
-    //     List* list = empty_list(); // do we need to check the malloc result?
-    //     list = insert(list, key, val);
-    //     hmap[index] = list;
-    // }
-    // else{
-    //     hmap[index] = insert(hmap[index], key, val);
-    // }
 }
 
 int process(int val){

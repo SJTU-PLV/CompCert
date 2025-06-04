@@ -514,6 +514,52 @@ Proof.
 - auto.
 Qed.
 
+(** An alternative definition of contains which supports nagative memory location (used for malloc for now) *)
+
+Program Definition contains_neg (chunk: memory_chunk) (b: block) (ofs: Z) (spec: val -> Prop) : massert := {|
+  m_pred := fun m =>
+              Mem.valid_access m chunk b ofs Freeable
+    /\ exists v, Mem.load chunk m b ofs = Some v /\ spec v;
+  m_footprint := fun b' ofs' => b' = b /\ ofs <= ofs' < ofs + size_chunk chunk
+|}.
+Next Obligation.
+  rename H1 into v. split.
+- destruct H; split; auto. red; intros; eapply Mem.perm_unchanged_on; eauto. simpl; auto.
+- exists v. split; auto. eapply Mem.load_unchanged_on; eauto. simpl; auto.
+Qed.
+Next Obligation.
+  eauto with mem.
+Qed.
+
+
+Lemma load_rule_neg:
+  forall spec m chunk b ofs,
+  m |= contains_neg chunk b ofs spec ->
+  exists v, Mem.load chunk m b ofs = Some v /\ spec v.
+Proof.
+  intros. destruct H as (E & v & F & G).
+  exists v; auto.
+Qed.
+
+Lemma store_rule_neg:
+  forall chunk m b ofs v (spec1 spec: val -> Prop) P,
+  m |= contains chunk b ofs spec1 ** P ->
+  spec (Val.load_result chunk v) ->
+  exists m',
+  Mem.store chunk m b ofs v = Some m' /\ m' |= contains chunk b ofs spec ** P.
+Proof.
+  intros. destruct H as (A & B & C). destruct A as (D & E & v0 & F & G).
+  assert (H: Mem.valid_access m chunk b ofs Writable) by eauto with mem.
+  destruct (Mem.valid_access_store _ _ _ _ v H) as [m' STORE].
+  exists m'; split; auto. simpl. intuition auto.
+- eapply Mem.store_valid_access_1; eauto.
+- exists (Val.load_result chunk v); split; auto. eapply Mem.load_store_same; eauto.
+- apply (m_invar P) with m; auto.
+  eapply Mem.store_unchanged_on; eauto.
+  intros; red; intros. apply (C b i); simpl; auto.
+Qed.
+
+
 (** A memory area that contains a given value *)
 
 Definition hasvalue (chunk: memory_chunk) (b: block) (ofs: Z) (v: val) : massert :=

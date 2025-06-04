@@ -470,7 +470,7 @@ Fixpoint hmap_pred_rec (num: nat) (fpl: list footprint) (b: block) (pos: Z) : ma
 (* [m|= (hmap_pred b fpl)] means that the memory contents in block b is
 the list of the buckets occupying the footprint fpl *)
 Definition hmap_pred N (b: block) (fpl: list footprint) : massert :=
-  contains Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
+  contains_neg Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
     ** hmap_pred_rec N fpl b 0.
 
 
@@ -512,7 +512,7 @@ Definition cq_inv_hmap_int N (w: hmap_world_int) (q: c_query) (fid: ident) : Pro
               (* We still need to require that the size of argument is zero and the signature is main_signature *)
               list_callee_ext (hmap_list_ext w) = main /\
                 cq_args q = nil /\
-                cq_sg q = signature_main              
+                cq_sg q = signature_main
        else False.
 
 Definition cr_inv_hmap_int N (w: hmap_world_int) (r: c_reply) (fid: ident) : Prop :=

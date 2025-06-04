@@ -7,7 +7,7 @@ Require Import Values.
 Require Import AST.
 Require Import Cop.
 Require Import Rusttypes Ctypes Clight.
-Require Import Clightdefs.
+Require Import Clightdefs Clightgen.
 Require Import LinkedList.
 
 Local Open Scope error_monad_scope.
@@ -32,6 +32,8 @@ Definition hmap_ty : type := Tpointer (to_ctype List_box) noattr.
 Definition List_box_ptr : type := Tpointer (to_ctype List_box) noattr.
 Definition List_ptr : type := Tpointer (to_ctype List_ty) noattr.
 
+Definition buk_size : Z := 10.
+
 (* find_bucket function *)
 
 Definition find_bucket_func : function := {|
@@ -45,7 +47,7 @@ Definition find_bucket_func : function := {|
 (Ssequence  
    (Scall (Some index)
       (Evar hash (Tfunction (Tcons tint (Tcons tuint Tnil)) tuint cc_default))
-      ((Evar key tint) :: (Econst_int (Int.repr 10) tuint) :: nil))
+      ((Evar key tint) :: (Econst_int (Int.repr buk_size) tuint) :: nil))
    (Sreturn (Some (Ebinop Oadd
                    (Evar hmap List_box_ptr)
                    (Etempvar index tuint)
@@ -99,6 +101,57 @@ Definition process_func := {|
                (Sreturn (Some (Evar val (tptr tint))));
 |}.
 
+(* Initialzation function for the hash map *)
+
+Definition malloc_ty := Tfunction (Ctypes.Tcons Ctyping.size_t Ctypes.Tnil) (Tpointer Ctypes.Tvoid noattr)  cc_default.
+
+Definition init_hmap_loop_cond := 
+  (Sifthenelse
+     (Ebinop Olt (Etempvar tmp tuint) (Econst_int (Int.repr buk_size) tuint) tint) (* loop cond: tmp < buk_size *)
+     Sskip Sbreak).
+
+Definition init_hmap_loop_body :=
+  (Sassign      (* loop body: hmap[tmp] = NULL *)
+     (Ederef (Ebinop Oadd (Etempvar hmap hmap_ty) (Etempvar tmp tuint) hmap_ty) List_box_ptr)
+     (Ecast (Econst_long (Int64.repr 0) tlong) (tptr tvoid))).
+
+Definition init_hmap_after_loop :=
+  (* tmp++ *)
+  (Sset tmp (Ebinop Oadd (Etempvar tmp tuint) (Econst_int Int.one tuint) tuint)).
+
+Definition init_hmap_loop :=
+  (Sloop (Ssequence init_hmap_loop_cond init_hmap_loop_body) init_hmap_after_loop).
+
+
+(* HashMap init_hmap(){
+    HashMap hmap = malloc(sizeof(List_ptr) * buk_size);
+    for(int i = 0; i < buk_size; ++i){
+        hmap[i] = NULL;
+    }
+    return hmap; }
+ *)
+Definition init_hmap_func := {|
+  fn_return := hmap_ty;
+  fn_callconv := cc_default;
+  fn_params := nil;
+  fn_vars := nil;
+  fn_temps := (hmap, hmap_ty) :: (tmp, tuint) :: nil; 
+  fn_body := Ssequence
+               (* call malloc *)
+               (Scall (Some hmap) (Evar malloc malloc_ty) [Ebinop Omul (Esizeof List_ptr Ctyping.size_t) (Econst_int (Int.repr buk_size) tuint) Ctyping.size_t])               
+               (* for loop used to initialize the hash map *)
+               (Ssequence
+                  (* If we use Sfor we need to unfold Sfor to define
+                  the safety invariant, so we just directly use Sloop *)
+                  (Ssequence
+                     (Sset tmp (Econst_int Int.zero tuint)) (* loop init: tmp = 0 *)
+                     init_hmap_loop)
+                  (* return hmap *)
+                  (Sreturn (Some (Etempvar hmap hmap_ty))));
+|}.
+
+
+Definition init_hmap_ty := Tfunction Tnil hmap_ty cc_default.
 
 (* main function *)
 
@@ -107,8 +160,10 @@ Definition main_func := {|
   fn_callconv := cc_default;
   fn_params := nil;
   fn_vars := nil;
-  fn_temps := nil;
-  fn_body := (Sreturn (Some (Econst_int Int.zero tint)));
+  fn_temps := (hmap, hmap_ty) :: nil;
+  fn_body := Ssequence
+               (Scall (Some hmap) (Evar init_hmap init_hmap_ty) nil)
+               (Sreturn (Some (Econst_int Int.zero tint)));
 |}.
 
 
@@ -130,13 +185,15 @@ Definition global_definitions : list (ident * globdef fundef type) :=
   (find_bucket, Gfun(Internal find_bucket_func)) ::
   (process, Gfun(Internal process_func)) ::
   (hmap_process, Gfun(Internal hmap_operate_on_func)) ::
+  (init_hmap, Gfun (Internal init_hmap_func)) ::
   (main, Gfun (Internal main_func)) ::
+  (malloc, Gfun malloc_decl) ::       (* Declaration of malloc *)
   (hash, Gfun hash_ext) ::
   (find, Gfun find_ext) :: nil.
 
 
 Definition public_idents : list ident :=
-  (hmap_process :: process :: find_bucket :: hash :: find :: nil).
+  (hmap_process :: process :: find_bucket :: hash :: find :: init_hmap :: main :: malloc :: nil).
 
 Definition hash_map_prog : Clight.program :=
   mkprogram composites global_definitions public_idents main Logic.I.
