@@ -22,7 +22,7 @@ Definition index : ident := 145%positive.
 Definition buk : ident := 90%positive.
 Definition delete_hmap : ident := 190%positive.
 Definition hmap_process : ident := 33%positive.
-
+Definition hmap_set : ident := 44%positive.
 
 (** Type definitions  *)
 
@@ -56,7 +56,9 @@ Definition find_bucket_func : function := {|
 
 
 (* hmap_process function *)
-  
+
+Definition hmap_operate_on_ty := Tfunction (Tcons hmap_ty (Tcons tint Tnil)) Tvoid cc_default.
+
 Definition hmap_operate_on_func := {|
   fn_return := tvoid;
   fn_callconv := cc_default;
@@ -153,7 +155,80 @@ Definition init_hmap_func := {|
 
 Definition init_hmap_ty := Tfunction Tnil hmap_ty cc_default.
 
+(* set function *)
+
+Definition find_bucket_ty := (Tfunction (Tcons hmap_ty (Tcons tint Tnil)) List_box_ptr cc_default).
+
+Definition val_ty := tptr tint.
+
+Definition insert_ty := (Tfunction (Tcons List_ptr (Tcons tint (Tcons val_ty Tnil))) List_ptr cc_default).
+
+Definition empty_list_ty := Tfunction Tnil List_ptr cc_default.
+
+(* void hmap_set(HashMap hmap, int key, int* val){
+    List_ptr* buk = find_bucket(hmap, key);
+    List_ptr tmp;
+    if ( *buk == NULL){
+        tmp = empty_list();
+    }
+    else{
+        tmp = *buk;
+    }
+    * buk = insert(tmp, key, val);
+} *)
+
+Definition hmap_set_cond :=
+  (Sifthenelse (Ebinop Oeq
+                  (Ederef (Etempvar buk List_box_ptr)
+                     List_ptr)
+                  (Ecast (Econst_long (Int64.repr 0) tlong) (tptr tvoid)) tint)
+     (* tmp = empty_list() *)
+     (Scall (Some tmp)
+        (Evar empty_list empty_list_ty) nil)
+     (* tmp = *buk *)
+     (Sset tmp (Ederef (Etempvar buk List_box_ptr) List_ptr))).
+  
+
+Definition hmap_set_after_cond := (Ssequence
+    (Scall (Some tmp) (Evar insert insert_ty)
+        (Etempvar tmp List_ptr :: (Evar key tint) :: (Evar val val_ty) :: nil))
+    (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr))).
+
+Definition hmap_set_func := {|
+  fn_return := tvoid;
+  fn_callconv := cc_default;
+  fn_params := ((hmap, hmap_ty) ::
+                (key, tint) ::
+                (val, val_ty) :: nil);
+  fn_vars := nil;
+  fn_temps := ((buk, List_box_ptr) ::
+               (tmp, List_ptr) :: nil); (* tmp is used to store the
+               empty and the list after insertion *)
+  fn_body :=
+(Ssequence  
+ (Scall (Some buk)
+    (Evar find_bucket find_bucket_ty)
+    ((Evar hmap hmap_ty) :: (Evar key tint) :: nil))
+ (Ssequence
+    hmap_set_cond
+    (* *buk = insert(tmp, key, val) *)
+    hmap_set_after_cond))
+|}.
+
+
 (* main function *)
+
+(* int main(){ *)
+(*     HashMap hmap = init_hmap(); *)
+(*     hmap_process(hmap, 1); *)
+(*     return 0; *)
+(* } *)
+
+Definition main_after_init_hmap :=
+  (Ssequence
+     (Scall None (Evar hmap_process hmap_operate_on_ty)
+        [Etempvar hmap hmap_ty; Econst_int Int.one tint])
+     (Sreturn (Some (Econst_int Int.zero tint)))).
 
 Definition main_func := {|
   fn_return := tint;
@@ -163,7 +238,8 @@ Definition main_func := {|
   fn_temps := (hmap, hmap_ty) :: nil;
   fn_body := Ssequence
                (Scall (Some hmap) (Evar init_hmap init_hmap_ty) nil)
-               (Sreturn (Some (Econst_int Int.zero tint)));
+                       (* Find value in the empty hash map *)
+               main_after_init_hmap;
 |}.
 
 
@@ -185,6 +261,7 @@ Definition global_definitions : list (ident * globdef fundef type) :=
   (find_bucket, Gfun(Internal find_bucket_func)) ::
   (process, Gfun(Internal process_func)) ::
   (hmap_process, Gfun(Internal hmap_operate_on_func)) ::
+  (hmap_set, (Gfun (Internal hmap_set_func))) ::
   (init_hmap, Gfun (Internal init_hmap_func)) ::
   (main, Gfun (Internal main_func)) ::
   (malloc, Gfun malloc_decl) ::       (* Declaration of malloc *)

@@ -569,17 +569,18 @@ Definition return_find_bucket_cont k :=
               [Ederef (Etempvar buk List_box_ptr) List_ptr; Evar key tint])
            (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr)))) k).
 
-Inductive hmap_operate_on_cont: cont -> Prop :=
-| hmap_operate_on_cont_intro:
-    (** For now, we leave the hash map implemented in C as an open
-    module. We do not support insert, init and remove for simplicity
-    as it may require lots of effort or manual proofs. hmap_operate_on
-    is not an external function (we specify that the query_inv of
-    hash_map does not allow external call of hmap_operate_on). To
-    support init, insert or remove to build a complete hash map, we
-    need to first compose the C modules and then compose them with
-    Rust modules. *)
-    hmap_operate_on_cont Kstop.
+(* We call hmap_operate_on from the main function. [b_hmap] is used to
+record the value of the hmap in main *)
+Inductive hmap_operate_on_cont b_hmap : cont -> Prop :=
+(* from main function *)
+| hmap_operate_on_cont_intro1: forall le
+    (GETHMAP: PTree.get hmap le = Some (Vptr b_hmap Ptrofs.zero))
+    (FUNID: list_callee_ext (hmap_list_ext w) = main),    
+    hmap_operate_on_cont b_hmap (Kcall None main_func empty_env le (Kseq (Sreturn (Some (Econst_int Int.zero tint))) Kstop))
+(* from environment *)
+| hmap_operate_on_cont_intro2: forall
+  (HMLOC: hmap_location w = Some b_hmap),
+  hmap_operate_on_cont b_hmap Kstop.
 
 (* The continuation (that inside Kcall) of calling find_bucket. The
 caller can be hmap_process, hmap_set, hmap_remove. It outputs a
@@ -589,26 +590,62 @@ Inductive call_find_bucket_from_operate_on (b: block) : cont -> massert -> Prop 
 | call_find_bucket_from_operate_on_intro: forall k e le b_hmap b_key ki
     (ENV: e = PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
     (LENV: le = create_undef_temps (fn_temps hmap_operate_on_func))
-    (CONT: hmap_operate_on_cont k),
+    (CONT: hmap_operate_on_cont b k),
     call_find_bucket_from_operate_on b (Kcall (Some buk) hmap_operate_on_func e le (return_find_bucket_cont k))
                                      (contains Mptr b_hmap 0 (eq (Vptr b Ptrofs.zero))
                                         ** contains Mint32 b_key 0 (eq (Vint ki)))
 .
+
+(** TODO *)
+Definition find_bucket_return_to_hmap_set_cont k :=
+  (Kseq
+     (Sifthenelse
+        (Ebinop Oeq (Ederef (Etempvar buk List_box_ptr) List_ptr)
+           (Ecast (Econst_long (Int64.repr 0) tlong) (tptr tvoid)) tint) 
+        (Sreturn None)
+        (Ssequence
+           (Scall (Some tmp)
+              (Evar find
+                 (Tfunction (Tcons List_ptr (Tcons tint Tnil)) List_ptr cc_default))
+              [Ederef (Etempvar buk List_box_ptr) List_ptr; Evar key tint])
+           (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr)))) k).
+
+(** TODO  *)
+Inductive hmap_set_cont : cont -> Prop :=
+| hmap_set_cont_intro: forall k,
+    hmap_set_cont k.
+
+Inductive call_find_bucket_from_hmap_set (b: block) : cont -> massert -> Prop :=
+| call_find_bucket_from_hmap_set_intro: forall k e le sb_hmap sb_key sb_v kv fp
+    (CONT: hmap_set_cont k)
+    (ENV: e = PTree.set val (sb_v, val_ty)
+                (PTree.set key (sb_key, tint)
+                (PTree.set hmap (sb_hmap, hmap_ty) empty_env)))
+    (LENV: le = create_undef_temps (fn_temps hmap_set_func))
+    (CONT: hmap_operate_on_cont b k),
+    call_find_bucket_from_hmap_set b (Kcall (Some buk) hmap_set_func e le (find_bucket_return_to_hmap_set_cont k))
+      (contains Mptr sb_hmap 0 (eq (Vptr sb_hmap Ptrofs.zero))
+         ** contains Mint32 sb_key 0 (eq (Vint kv))
+         ** process_val_pred sb_v 0 fp)
+.
+
 
 Inductive call_find_bucket_cont (b: block) : cont -> massert -> Prop :=
 (* from hmap_process *)
 | call_find_bucket_cont_intro1: forall k MP
     (CONT: call_find_bucket_from_operate_on b k MP),
     call_find_bucket_cont b k MP
-(* TODO: from hmap_set *)
+(** Uncomment it when we want to support hmap_set *)
+(* | call_find_bucket_cont_intro2: forall k MP *)
+(*     (CONT: call_find_bucket_from_hmap_set b k MP), *)
+(*     call_find_bucket_cont b k MP     *)
 .
 
 Lemma call_find_bucket_cont_eq_call_cont: forall b k MP,
     call_find_bucket_cont b k MP ->
     k = call_cont k.
 Proof.
-  intros. inv H. inv CONT. simpl.
-  f_equal.
+  intros. inv H; inv CONT; simpl; f_equal.
 Qed.
 
   
@@ -617,7 +654,7 @@ specifies the stack contents in find_bucket and the contents in the
 caller of find_bucket *)
 Inductive call_hash_cont : cont -> massert -> Prop :=
 | call_hash_cont_intro: forall k MP b_key b_hmap ki b fpl
-    (HMLOC: hmap_location w = Some b)
+    (* (HMLOC: forall b', hmap_location w = Some b' -> b' = b) *)
     (CONT: call_find_bucket_cont b k MP),
     call_hash_cont (Kcall (Some index) find_bucket_func
                       (PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
@@ -636,8 +673,8 @@ Inductive call_find_cont : cont -> massert -> Prop :=
 | call_find_cont_intro: forall k idx fpl1 fpl2 b b_hmap b_key ki vspec
     (MAXRAN: Int.unsigned idx < (Z.of_nat N))
     (FPLEN: S (length (fpl1 ++ fpl2)) = N)
-    (CONT: hmap_operate_on_cont k)
-    (HMLOC: hmap_location w = Some b),
+    (CONT: hmap_operate_on_cont b k),
+    (* (HMLOC: hmap_location w = Some b), *)
     call_find_cont (Kcall (Some tmp) hmap_operate_on_func
        (PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
        (PTree.set buk (Vptr b (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx)))
@@ -657,8 +694,10 @@ Inductive call_hmap_operate_on: state -> Prop :=
 | call_hmap_operate_on_intro: forall b1 b2 kv m fpl k
     (SYM: Genv.invert_symbol se b1 = Some hmap_process)
     (** specify the cont *)
-    (** b2 must be the hmap_location of the world *)
-    (HMLOC: hmap_location w = Some b2)
+    (* b2 must be the hmap_location of the world, if hmap_location is
+    None, it means that hmap_operate is called from internal function
+    instead of environment *)
+    (* (HMLOC: forall b, hmap_location w = Some b -> b = b2) *)
     (HMAP: m |= hmap_pred b2 fpl),    
     call_hmap_operate_on (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m).
     
@@ -666,7 +705,7 @@ Inductive call_find_bucket: state -> Prop :=
 | call_find_bucket_intro: forall b1 b2 kv k m fpl MP
     (SYM: Genv.invert_symbol se b1 = Some find_bucket)
     (CONT: call_find_bucket_cont b2 k MP)
-    (HMLOC: hmap_location w = Some b2)
+    (* (HMLOC: hmap_location w = Some b2) *)
     (* MP is the predicate for the stack frames *)
     (HMAP: m |= hmap_pred b2 fpl ** MP),
     call_find_bucket (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m).
@@ -692,8 +731,17 @@ Inductive sound_state_init : state -> Prop :=
     (FUNID: list_callee_ext (hmap_list_ext w) = main)
     (RAN: (0<= n <=1)%nat),
     sound_state_init s
-(* After calling init_map *)
+(* After calling init_map and before calling hmap_operate *)
 | hmap_main_internal2: forall t s n m le b fpl
+    (STAR: starNf step1 num_frames ge n (State main_func Sskip (Kseq main_after_init_hmap Kstop) empty_env le m) t s)
+    (GETHMAP: PTree.get hmap le = Some (Vptr b Ptrofs.zero))
+    (MPRED : m |= hmap_pred b fpl)
+    (NOTCALLRET: not_call_return_state s)
+    (FUNID: list_callee_ext (hmap_list_ext w) = main)
+    (RAN: (0<= n <=2)%nat),
+    sound_state_init s
+(* After calling hmap_operate and before returning *)
+| hmap_main_internal3: forall t s n m le b fpl
     (STAR: starNf step1 num_frames ge n (State main_func Sskip (Kseq (Sreturn (Some (Econst_int Int.zero tint))) Kstop) empty_env le m) t s)
     (GETHMAP: PTree.get hmap le = Some (Vptr b Ptrofs.zero))
     (MPRED : m |= hmap_pred b fpl)
@@ -786,117 +834,145 @@ Inductive sound_state_init : state -> Prop :=
     (MPRED: m |= hmap_pred b fpl),
     sound_state_init (Returnstate (Vptr b Ptrofs.zero) k m).
 
+(** TODO: we only define the invariants for hmap_set but does not
+prove its safety for now. It is ok as we do not use hmap_set in the
+main function *)
+Inductive sound_state_set : state -> Prop :=
+(* callstate of hmap_set *)
+| hmap_set_call: forall bf b_hmap b_v kv k m v_fp fpl
+    (SYMB: Genv.invert_symbol se bf = Some hmap_set)
+    (CONT: hmap_set_cont k)
+    (BVSPEC: process_val_spec m v_fp (Vptr b_v Ptrofs.zero))
+    (MPRED: m |= hmap_pred b_hmap fpl)
+    (DISJOINT: forall b ofs, m_footprint (hmap_pred b_hmap fpl) b ofs ->
+                        In b (footprint_flat v_fp) -> False),
+    sound_state_set (Callstate (Vptr bf Ptrofs.zero) [Vptr b_hmap Ptrofs.zero; Vint kv; Vptr b_v Ptrofs.zero] k m)
+(* Before calling find_bucket *)
+| hmap_set_internal1: forall k n m t s fpl b_hmap sb_hmap sb_key sb_v e kv v_fp
+    (CONT: hmap_set_cont k)
+    (STAR: starNf step1 num_frames ge n (State hmap_set_func (fn_body hmap_set_func) k e (create_undef_temps (fn_temps hmap_set_func)) m) t s)
+    (ENV: e = PTree.set val (sb_v, val_ty)
+                (PTree.set key (sb_key, tint)
+                (PTree.set hmap (sb_hmap, hmap_ty) empty_env)))
+    (NOTCALLRET: not_call_return_state s)
+    (MPRED: m |= contains Mptr sb_hmap 0 (eq (Vptr b_hmap Ptrofs.zero))
+              ** contains Mint32 sb_key 0 (eq (Vint kv))
+              ** process_val_pred sb_v 0 v_fp
+              ** hmap_pred b_hmap fpl)
+    (RAN: (0<= n <=1)%nat),
+    sound_state_set s
+(* Invariant of callstate of find_bucket is defined by
+find_bucket_callstate *)                    
+(* After returning from find_bucket *)
+| hmap_set_internal2: forall k n m t s fp fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le v_fp
+    (CONT: hmap_set_cont k)
+    (STAR: starNf step1 num_frames ge n
+             (State hmap_set_func Sskip
+                (Kseq (Ssequence hmap_set_cond hmap_set_after_cond) k)
+                e le m) t s)
+    (ENV: e = PTree.set val (sb_v, val_ty)
+                (PTree.set key (sb_key, tint)
+                   (PTree.set hmap (sb_hmap, hmap_ty) empty_env)))
+    (LENV: le = (set_opttemp (Some buk)
+                     (Vptr b_hmap (Ptrofs.repr ((size_chunk Mptr) * (Int.unsigned idx))))
+                     (PTree.set buk Vundef (PTree.set tmp Vundef (PTree.empty Values.val)))))
+    (NOTCALLRET: not_call_return_state s)
+    (MPRED: m |= contains_neg Mptr b_hmap (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
+              ** hmap_pred_rec (int_to_nat idx) fpl1 b_hmap 0
+              ** bucket_pred b_hmap ((size_chunk Mptr) * (Int.unsigned idx)) fp
+              ** hmap_pred_rec (N - 1 - (int_to_nat idx))%nat fpl2 b_hmap (((size_chunk Mptr) * (Int.unsigned idx)) + size_chunk Mptr)
+              (* local stack of hmap_set *)
+              ** contains Mptr sb_hmap 0 (eq (Vptr b_hmap Ptrofs.zero))
+              ** contains Mint32 sb_key 0 (eq (Vint kv))
+              ** process_val_pred sb_v 0 v_fp)
+    (MAXRAN: Int.unsigned idx < (Z.of_nat N))
+    (FPLEN: length (fpl1 ++ fp :: fpl2) = N)
+    (RAN: (0<= n <=4)%nat),           
+    sound_state_set s
+(* Before calling empty_list *)
+| hmap_set_call_empty_list: forall k bf m fp fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le v_fp
+    (SYMB: Genv.invert_symbol se bf = Some empty_list)
+    (CONT: hmap_set_cont k)
+    (* copy from hmap_set_internal2 *)
+    (ENV: e = PTree.set val (sb_v, val_ty)
+                (PTree.set key (sb_key, tint)
+                   (PTree.set hmap (sb_hmap, hmap_ty) empty_env)))
+    (LENV: le = (set_opttemp (Some buk)
+                     (Vptr b_hmap (Ptrofs.repr ((size_chunk Mptr) * (Int.unsigned idx))))
+                     (PTree.set buk Vundef (PTree.set tmp Vundef (PTree.empty Values.val)))))
+    (MPRED: m |= contains_neg Mptr b_hmap (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
+              ** hmap_pred_rec (int_to_nat idx) fpl1 b_hmap 0
+              ** bucket_pred b_hmap ((size_chunk Mptr) * (Int.unsigned idx)) fp
+              ** hmap_pred_rec (N - 1 - (int_to_nat idx))%nat fpl2 b_hmap (((size_chunk Mptr) * (Int.unsigned idx)) + size_chunk Mptr)
+              (* local stack of hmap_set *)
+              ** contains Mptr sb_hmap 0 (eq (Vptr b_hmap Ptrofs.zero))
+              ** contains Mint32 sb_key 0 (eq (Vint kv))
+              ** process_val_pred sb_v 0 v_fp)
+    (MAXRAN: Int.unsigned idx < (Z.of_nat N))
+    (FPLEN: length (fpl1 ++ fp :: fpl2) = N),
+    sound_state_set (Callstate (Vptr bf Ptrofs.zero) nil (Kcall (Some tmp) hmap_set_func e le (Kseq hmap_set_after_cond k)) m)
+(* After returning from empty_list *)
+| hmap_set_return_empty_list: forall k m fp fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le MP  v_fp l_fp b_l
+    (CONT: hmap_set_cont k)
+    (* copy from hmap_set_internal2 *)
+    (ENV: e = PTree.set val (sb_v, val_ty)
+                (PTree.set key (sb_key, tint)
+                   (PTree.set hmap (sb_hmap, hmap_ty) empty_env)))
+    (LENV: le = (set_opttemp (Some buk)
+                     (Vptr b_hmap (Ptrofs.repr ((size_chunk Mptr) * (Int.unsigned idx))))
+                     (PTree.set buk Vundef (PTree.set tmp Vundef (PTree.empty Values.val)))))
+    (MPEQ: MP = contains_neg Mptr b_hmap (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
+              ** hmap_pred_rec (int_to_nat idx) fpl1 b_hmap 0
+              ** bucket_pred b_hmap ((size_chunk Mptr) * (Int.unsigned idx)) fp
+              ** hmap_pred_rec (N - 1 - (int_to_nat idx))%nat fpl2 b_hmap (((size_chunk Mptr) * (Int.unsigned idx)) + size_chunk Mptr)
+              (* local stack of hmap_set *)
+              ** contains Mptr sb_hmap 0 (eq (Vptr b_hmap Ptrofs.zero))
+              ** contains Mint32 sb_key 0 (eq (Vint kv))
+              ** process_val_pred sb_v 0 v_fp)
+    (MPRED: m |= MP)
+    (MAXRAN: Int.unsigned idx < (Z.of_nat N))
+    (FPLEN: length (fpl1 ++ fp :: fpl2) = N)
+    (* l_fp is the footprint of the empty list *)
+    (RETV_SPEC: bucket_val_spec m l_fp (Vptr b_l Ptrofs.zero))
+    (* disjointness is used to prove bucket_pred_intro which embeds
+    the return value into the MP *)
+    (DISJOINT: forall b1 ofs1, m_footprint MP b1 ofs1 ->
+                In b1 (footprint_flat l_fp) -> False),
+    sound_state_set (Returnstate (Vptr b_l Ptrofs.zero) (Kcall (Some tmp) hmap_set_func e le (Kseq hmap_set_after_cond k)) m)
+(* Execution of hmap_set_after_cond before calling insert *)
+| hmap_set_internal3: forall k n m t s fp fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le b_l MP v_fp l_fp
+    (CONT: hmap_set_cont k)
+    (STAR: starNf step1 num_frames ge n
+             (State hmap_set_func Sskip
+                (Kseq hmap_set_after_cond k) e le m) t s)
+    (ENV: e = PTree.set val (sb_v, val_ty)
+                (PTree.set key (sb_key, tint)
+                   (PTree.set hmap (sb_hmap, hmap_ty) empty_env)))
+    (GETBUK: le ! buk = Some (Vptr b_hmap (Ptrofs.repr ((size_chunk Mptr) * (Int.unsigned idx)))))
+    (GETTMP: le ! tmp = Some (Vptr b_l Ptrofs.zero))
+    (MPEQ: MP = contains_neg Mptr b_hmap (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
+              ** hmap_pred_rec (int_to_nat idx) fpl1 b_hmap 0
+              ** bucket_pred b_hmap ((size_chunk Mptr) * (Int.unsigned idx)) fp
+              ** hmap_pred_rec (N - 1 - (int_to_nat idx))%nat fpl2 b_hmap (((size_chunk Mptr) * (Int.unsigned idx)) + size_chunk Mptr)
+              (* local stack of hmap_set *)
+              ** contains Mptr sb_hmap 0 (eq (Vptr b_hmap Ptrofs.zero))
+              ** contains Mint32 sb_key 0 (eq (Vint kv))
+              ** process_val_pred sb_v 0 v_fp)
+    (MPRED: m |= MP)
+    (RETV_SPEC: bucket_val_spec m l_fp (Vptr b_l Ptrofs.zero))
+    (DISJOINT: forall b1 ofs1, m_footprint MP b1 ofs1 ->
+                In b1 (footprint_flat l_fp) -> False)
+    (NOTCALLRET: not_call_return_state s),
+    sound_state_set s
+(* TODO: Call insert function, Return from insert and return to main *)
+.
+ 
 
 Inductive sound_state : state -> Prop :=
+(* Invariant for the initialization of the hash_map *)
 | hmap_init_inv: forall s
     (SINV_INIT: sound_state_init s),
     sound_state s
-  
-(* (* Invariants for the main function *) *)
-(* | hmap_call_main: forall bf m *)
-(*     (SYMB: Genv.invert_symbol se bf = Some main) *)
-(*     (FUNID: list_callee_ext (hmap_list_ext w) = main), *)
-(*     sound_state (Callstate (Vptr bf Ptrofs.zero) nil Kstop m) *)
-(* (* Before calling init_hmap *) *)
-(* | hmap_main_internal1: forall t s n m *)
-(*     (STAR: starNf step1 num_frames ge n (State main_func (fn_body main_func) Kstop empty_env (create_undef_temps (fn_temps main_func)) m) t s) *)
-(*     (NOTCALLRET: not_call_return_state s) *)
-(*     (FUNID: list_callee_ext (hmap_list_ext w) = main) *)
-(*     (RAN: (0<= n <=1)%nat), *)
-(*     sound_state s *)
-(* (* After calling init_map *) *)
-(* | hmap_main_internal2: forall t s n m le b fpl *)
-(*     (STAR: starNf step1 num_frames ge n (State main_func Sskip (Kseq (Sreturn (Some (Econst_int Int.zero tint))) Kstop) empty_env le m) t s) *)
-(*     (GETHMAP: PTree.get hmap le = Some (Vptr b Ptrofs.zero)) *)
-(*     (MPRED : m |= hmap_pred b fpl) *)
-(*     (NOTCALLRET: not_call_return_state s) *)
-(*     (FUNID: list_callee_ext (hmap_list_ext w) = main) *)
-(*     (RAN: (0<= n <=1)%nat), *)
-(*     sound_state s                 *)
-(* | hmap_return_main: forall m *)
-(*     (FUNID: list_callee_ext (hmap_list_ext w) = main), *)
-(*     sound_state (Returnstate (Vint Int.zero) Kstop m) *)
-                
-(* (* Invariant for the init_hmap function *) *)
-(* | hmap_call_init_hmap: forall bf m k *)
-(*     (CONT: init_hmap_cont k) *)
-(*     (SYMB: Genv.invert_symbol se bf = Some init_hmap), *)
-(*     sound_state (Callstate (Vptr bf Ptrofs.zero) nil k m) *)
-(* (* Before the loop in init_hmap (i.e., it executes the [malloc] and *)
-(* the [tmp = 0] of the loop initialization *) *)
-(* | hmap_init_hmap_internal1: forall t s n m k *)
-(*     (STAR: starNf step1 num_frames ge n (State init_hmap_func (fn_body init_hmap_func) k empty_env (create_undef_temps (fn_temps init_hmap_func)) m) t s) *)
-(*     (CONT: init_hmap_cont k) *)
-(*     (NOTCALLRET: not_call_return_state s) *)
-(*     (RAN: (0<= n <= 1)%nat),     *)
-(*     sound_state s *)
-(* (* Before calling malloc in init_hmap *) *)
-(* | hmap_init_hmap_call_malloc: forall m k bf sz *)
-(*     (CONT: init_hmap_cont k)                                 *)
-(*     (FINDF: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some Clightgen.malloc_decl) *)
-(*     (SZEQ: sz = Vlong (Int64.repr (Z.of_nat N * (size_chunk Mptr)))), *)
-(*     sound_state (Callstate (Vptr bf Ptrofs.zero) [sz] *)
-(*                    (Kcall (Some hmap) init_hmap_func empty_env *)
-(*                       (PTree.set hmap Vundef (PTree.set tmp Vundef (PTree.empty Values.val))) *)
-(*                       (Kseq *)
-(*                          (Ssequence (Ssequence (Sset tmp (Econst_int Int.zero tuint)) init_hmap_loop) *)
-(*                             (Sreturn (Some (Etempvar hmap hmap_ty)))) k)) *)
-(*                    m) *)
-(* | hmap_init_hmap_return_malloc: forall m k b *)
-(*     (CONT: init_hmap_cont k) *)
-(*     (MPRED: m |= contains_neg Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))               *)
-(*               ** range b 0 (Z_of_nat N * size_chunk Mptr)), *)
-(*     sound_state (Returnstate (Vptr b Ptrofs.zero) *)
-(*                    (Kcall (Some hmap) init_hmap_func empty_env *)
-(*                       (PTree.set hmap Vundef (PTree.set tmp Vundef (PTree.empty Values.val))) *)
-(*                       (Kseq *)
-(*                          (Ssequence (Ssequence (Sset tmp (Econst_int Int.zero tuint)) init_hmap_loop) *)
-(*                             (Sreturn (Some (Etempvar hmap hmap_ty)))) k)) m) *)
-(* (* Before entering the loop of init_hmap *) *)
-(* | hmap_init_hmap_before_loop: forall t s n m k b le *)
-(*     (CONT: init_hmap_cont k) *)
-(*     (STAR: starNf step1 num_frames ge n *)
-(*              (State init_hmap_func Sskip *)
-(*                 (Kseq (Ssequence (Ssequence (Sset tmp (Econst_int Int.zero tuint)) init_hmap_loop) *)
-(*                          (Sreturn (Some (Etempvar hmap hmap_ty)))) k) empty_env *)
-(*                 le m) t s) *)
-(*     (RAN: (0<= n <= 4)%nat) *)
-(*     (GETHMAP: PTree.get hmap le = Some (Vptr b Ptrofs.zero)) *)
-(*     (MPRED: m |= contains_neg Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr)))) *)
-(*               (* The rest memory location *) *)
-(*               ** range b 0 (Z_of_nat N * size_chunk Mptr)) *)
-(*     (NOTCALLRET: not_call_return_state s), *)
-(*     sound_state s *)
-(* (* Invariant for the loop *) *)
-(* | hmap_init_hmap_loop: forall t s n m fpl idx k b le *)
-(*     (CONT: init_hmap_cont k) *)
-(*     (STAR: starNf step1 num_frames ge n *)
-(*              (State init_hmap_func init_hmap_loop *)
-(*                          (Kseq (Sreturn (Some (Etempvar hmap hmap_ty))) k) empty_env *)
-(*                 le m) t s) *)
-(*     (* The loop body have 3 steps of execution before entering the next loop *) *)
-(*     (RAN: if Int.ltu idx (Int.repr buk_size) then (0 <= n <= 7)%nat else (0<= n <= 5)%nat) *)
-(*     (** loop invariants: the location hmap points to *)
-(*     partially satisfies the hmap_pred *) *)
-(*     (GETTMP2: PTree.get tmp le = Some (Vint idx)) *)
-(*     (GETHMAP: PTree.get hmap le = Some (Vptr b Ptrofs.zero)) *)
-(*     (IDXVAL: if Int.ltu idx (Int.repr buk_size) then True else Int.eq idx (Int.repr buk_size) = true) *)
-(*     (MPRED: m |= contains_neg Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr)))) *)
-(*               (* The location of b from 0 to idx is initialized *) *)
-(*               ** hmap_pred_rec (int_to_nat idx) fpl b 0 *)
-(*               (* The rest memory location *) *)
-(*               ** range b (Int.unsigned idx * size_chunk Mptr) (Z_of_nat N * size_chunk Mptr)) *)
-(*     (NOTCALLRET: not_call_return_state s), *)
-(*     sound_state s *)
-(* | hmap_init_hmap_after_loop: forall m fpl k b le *)
-(*     (CONT: init_hmap_cont k) *)
-(*     (GETHMAP: PTree.get hmap le = Some (Vptr b Ptrofs.zero)) *)
-(*     (MPRED: m |= hmap_pred b fpl), *)
-(*     sound_state (State init_hmap_func (Sreturn (Some (Etempvar hmap hmap_ty))) k empty_env le m) *)
-(* | hmap_init_hmap_return: forall m fpl k b *)
-(*     (CONT: init_hmap_cont k) *)
-(*     (MPRED: m |= hmap_pred b fpl), *)
-(*     sound_state (Returnstate (Vptr b Ptrofs.zero) k m) *)
     
 (* callstate in process function *)
 | hmap_call_process: forall bf b rwm rwfp
@@ -938,17 +1014,17 @@ Inductive sound_state : state -> Prop :=
 | hmap_operate_on_callstate: forall b1 b2 kv k m
     (CALL: call_hmap_operate_on (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m))
     (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
-    (CONT: hmap_operate_on_cont k),
+    (CONT: hmap_operate_on_cont b2 k),
     sound_state (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m)
 | hmap_operate_on_internal1: forall t s b_hmap b_key fpl ki b m e le k n
     (MPRED: m |= contains Mptr b_hmap 0 (eq (Vptr b Ptrofs.zero))
               ** contains Mint32 b_key 0 (eq (Vint ki))
               ** hmap_pred b fpl)
-    (HMLOC: hmap_location w = Some b)
+    (* (HMLOC: forall b', hmap_location w = Some b' -> b' = b) *)
     (ENV: e = PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
     (LENV: le = create_undef_temps (fn_temps hmap_operate_on_func))
     (STAR: starNf step1 num_frames ge n (State hmap_operate_on_func (fn_body hmap_operate_on_func) k e le m) t s)
-    (CONT: hmap_operate_on_cont k)
+    (CONT: hmap_operate_on_cont b k)
     (NOTCALLRET: not_call_return_state s)
     (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
     (RAN: (0<= n <=1)%nat),
@@ -968,8 +1044,8 @@ Inductive sound_state : state -> Prop :=
               (* stack frame *)
               ** contains Mptr b_hmap 0 (eq (Vptr b Ptrofs.zero))
               ** contains Mint32 b_key 0 (eq (Vint ki)))
-    (HMLOC: hmap_location w = Some b)
-    (CONT: hmap_operate_on_cont k)
+    (* (HMLOC: forall b', hmap_location w = Some b' -> b' = b) *)
+    (CONT: hmap_operate_on_cont b k)
     (MAXRAN: Int.unsigned idx < (Z.of_nat N))
     (FPLEN: length (fpl1 ++ fp :: fpl2) = N)
     (NOTCALLRET: not_call_return_state s2)
@@ -999,14 +1075,14 @@ Inductive sound_state : state -> Prop :=
                   (Kseq (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr)) k) (PTree.set key (b_key, tint) (PTree.set hmap (b_hmap, hmap_ty) empty_env))
                   (set_opttemp (Some tmp) v (PTree.set buk (Vptr b (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx))) (PTree.set buk Vundef (PTree.set tmp Vundef (PTree.empty Values.val)))))
                   m))
-    (CONT: hmap_operate_on_cont k)
+    (CONT: hmap_operate_on_cont b k)
     (MPEQ: MP = contains Mptr b (size_chunk Mptr * Int.unsigned idx) vspec **
               contains_neg Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z.of_nat N * size_chunk Mptr)))) **
               hmap_pred_rec (int_to_nat idx) fpl1 b 0 **
               hmap_pred_rec (N - 1 - int_to_nat idx) fpl2 b (size_chunk Mptr * Int.unsigned idx + size_chunk Mptr) **
               contains Mptr b_hmap 0 (eq (Vptr b Ptrofs.zero)) **
               contains Mint32 b_key 0 (eq (Vint ki)))
-    (HMLOC: hmap_location w = Some b)
+    (* (HMLOC: forall b', hmap_location w = Some b' -> b' = b) *)
     (MPRED: m |= MP)
     (DISJOINT: forall b ofs, m_footprint MP b ofs -> In b (footprint_flat fp) -> False)
     (VSPEC: bucket_val_spec m fp v)
@@ -1020,9 +1096,9 @@ Inductive sound_state : state -> Prop :=
 (*     sound_state s *)
 | hmap_operate_on_returnstate: forall k m b fpl
     (** TODO: specify the cont *)
-    (CONT: hmap_operate_on_cont k)
+    (CONT: hmap_operate_on_cont b k)
     (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
-    (HMLOC: hmap_location w = Some b)
+    (* (HMLOC: forall b', hmap_location w = Some b' -> b' = b) *)
     (MPRED: m |= hmap_pred b fpl),
     sound_state (Returnstate Vundef k m)
 | find_bucket_callstate: forall b1 b2 kv k m
@@ -1037,7 +1113,7 @@ Inductive sound_state : state -> Prop :=
               ** contains Mint32 b_key 0 (eq (Vint ki))
               ** hmap_pred b fpl
               ** MP)
-    (HMLOC: hmap_location w = Some b)
+    (* (HMLOC: forall b, hmap_location w = Some b -> b = b2) *)
     (CONT: call_find_bucket_cont b k MP)
     (STAR: starNf step1 num_frames ge n s0 t s)
     (NOTCALLRET: not_call_return_state s)
@@ -1066,7 +1142,7 @@ Inductive sound_state : state -> Prop :=
               ** contains Mint32 b_key 0 (eq (Vint ki))
               ** hmap_pred b fpl
               ** MP)
-    (HMLOC: hmap_location w = Some b)
+    (* (HMLOC: forall b, hmap_location w = Some b -> b = b2) *)
     (CONT: call_find_bucket_cont b k MP)
     (STAR: starNf step1 num_frames ge n s0 t s)
     (NOTCALLRET: not_call_return_state s)
@@ -1079,7 +1155,7 @@ Inductive sound_state : state -> Prop :=
               ** bucket_pred b (size_chunk Mptr * Int.unsigned idx) fp
               ** hmap_pred_rec (N - 1 - (int_to_nat idx))%nat fpl2 b ((size_chunk Mptr * Int.unsigned idx) + size_chunk Mptr)
               ** MP)
-    (HMLOC: hmap_location w = Some b)
+    (* (HMLOC: forall b, hmap_location w = Some b -> b = b2) *)
     (MAXRAN: Int.unsigned idx < Z.of_nat N)
     (FPLEN: length (fpl1 ++ fp :: fpl2) = N)
     (CONT: call_find_bucket_cont b k MP)

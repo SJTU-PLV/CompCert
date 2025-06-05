@@ -35,14 +35,14 @@ List_ptr* find_bucket(HashMap hmap, int key){
 
 void hmap_set(HashMap hmap, int key, int* val){
     List_ptr* buk = find_bucket(hmap, key);
-    if(*buk == NULL){
-        List_ptr l = empty_list(); // do we need to check the malloc result?
-        l = insert(l, key, val);
-        *buk = l;
+    List_ptr l;
+    if (*buk == NULL){
+        l = empty_list();
     }
     else{
-        *buk = insert(*buk, key, val);
+        l = *buk;
     }
+    *buk = insert(l, key, val);
 }
 
 int process(int val){
