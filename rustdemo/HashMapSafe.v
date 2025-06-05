@@ -579,8 +579,9 @@ Inductive hmap_operate_on_cont b_hmap : cont -> Prop :=
     hmap_operate_on_cont b_hmap (Kcall None main_func empty_env le (Kseq (Sreturn (Some (Econst_int Int.zero tint))) Kstop))
 (* from environment *)
 | hmap_operate_on_cont_intro2: forall
-  (HMLOC: hmap_location w = Some b_hmap),
-  hmap_operate_on_cont b_hmap Kstop.
+  (HMLOC: hmap_location w = Some b_hmap)
+  (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
+    hmap_operate_on_cont b_hmap Kstop.
 
 (* The continuation (that inside Kcall) of calling find_bucket. The
 caller can be hmap_process, hmap_set, hmap_remove. It outputs a
@@ -715,7 +716,7 @@ Inductive init_hmap_cont: cont -> Prop :=
 | init_hmap_cont_intro: forall le
     (FUNID: list_callee_ext (hmap_list_ext w) = main)
     (GETHMAP: PTree.get hmap le = Some Vundef),
-    init_hmap_cont (Kcall (Some hmap) main_func empty_env le (Kseq (Sreturn (Some (Econst_int Int.zero tint))) Kstop)).
+    init_hmap_cont (Kcall (Some hmap) main_func empty_env le (Kseq main_after_init_hmap Kstop)).
 
 
 Inductive sound_state_init : state -> Prop :=
@@ -1013,7 +1014,7 @@ Inductive sound_state : state -> Prop :=
 (* We need to maintain an invariant that hmap_operate_on is an internal function *) 
 | hmap_operate_on_callstate: forall b1 b2 kv k m
     (CALL: call_hmap_operate_on (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m))
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process) *)
     (CONT: hmap_operate_on_cont b2 k),
     sound_state (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m)
 | hmap_operate_on_internal1: forall t s b_hmap b_key fpl ki b m e le k n
@@ -1026,7 +1027,7 @@ Inductive sound_state : state -> Prop :=
     (STAR: starNf step1 num_frames ge n (State hmap_operate_on_func (fn_body hmap_operate_on_func) k e le m) t s)
     (CONT: hmap_operate_on_cont b k)
     (NOTCALLRET: not_call_return_state s)
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process) *)
     (RAN: (0<= n <=1)%nat),
     sound_state s
 (* return from find_bucket *)
@@ -1049,7 +1050,7 @@ Inductive sound_state : state -> Prop :=
     (MAXRAN: Int.unsigned idx < (Z.of_nat N))
     (FPLEN: length (fpl1 ++ fp :: fpl2) = N)
     (NOTCALLRET: not_call_return_state s2)
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process) *)
     (RAN: (0 <= n <= 10)%nat),
     sound_state s2
 | hmap_operate_on_call_find: forall m k MP fp ki bf v
@@ -1058,15 +1059,15 @@ Inductive sound_state : state -> Prop :=
     (VSPEC: bucket_val_spec m fp v)
     (FINDSYM: Genv.invert_symbol se bf = Some find)
     (CONT: call_find_cont k MP)
-    (SUP: Mem.sup_include (footprint_flat fp) (Mem.support m))
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
+    (SUP: Mem.sup_include (footprint_flat fp) (Mem.support m)),
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process), *)
     (** TODO: specify the query_inv of (I @@ rs_own) *)
     sound_state (Callstate (Vptr bf Ptrofs.zero) [v; Vint ki] k m)
 | hmap_operate_on_return_find: forall m k MP fp v
     (MPRED: m |= MP)
     (DISJOINT: forall b ofs, m_footprint MP b ofs -> In b (footprint_flat fp) -> False)
     (VSPEC: bucket_val_spec m fp v)
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process) *)
     (CONT: call_find_cont k MP),
     sound_state (Returnstate v k m)
 (* execution after returning from find *)
@@ -1088,22 +1089,22 @@ Inductive sound_state : state -> Prop :=
     (VSPEC: bucket_val_spec m fp v)
     (STAR: starNf step1 num_frames ge n s0 t s)
     (NOTCALLRET: not_call_return_state s)
-    (RAN: (0 <= n <= 3)%nat)
+    (RAN: (0 <= n <= 2)%nat)
     (MAXRAN: Int.unsigned idx < (Z.of_nat N))
-    (FPLEN: length (fpl1 ++ fp :: fpl2) = N)
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
+    (FPLEN: length (fpl1 ++ fp :: fpl2) = N),
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process), *)
     sound_state s
 (*     sound_state s *)
 | hmap_operate_on_returnstate: forall k m b fpl
     (** TODO: specify the cont *)
     (CONT: hmap_operate_on_cont b k)
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process) *)
     (* (HMLOC: forall b', hmap_location w = Some b' -> b' = b) *)
     (MPRED: m |= hmap_pred b fpl),
     sound_state (Returnstate Vundef k m)
 | find_bucket_callstate: forall b1 b2 kv k m
-    (CALL: call_find_bucket (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m))    
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
+    (CALL: call_find_bucket (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m)) ,
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process), *)
     sound_state (Callstate (Vptr b1 Ptrofs.zero) [Vptr b2 Ptrofs.zero; Vint kv] k m)
 | find_bucket_internal1: forall s0 t s n b_key b_hmap m k b fpl ki MP
     (SEQ: s0 = (State find_bucket_func (fn_body find_bucket_func) k
@@ -1117,22 +1118,22 @@ Inductive sound_state : state -> Prop :=
     (CONT: call_find_bucket_cont b k MP)
     (STAR: starNf step1 num_frames ge n s0 t s)
     (NOTCALLRET: not_call_return_state s)
-    (RAN: (0 <= n <= 1)%nat)
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
+    (RAN: (0 <= n <= 1)%nat),
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process), *)
     sound_state s
 (* at_external state calling hash function in the Rust side *)
 | find_bucket_call_hash: forall ki b k m MP
     (COND: hash_pre_cond_args Ni [Vint ki; Vint Ni])
     (FINDSYM: Genv.invert_symbol se b = Some hash)
     (CONT: call_hash_cont k MP)
-    (MPRED: m |= MP)
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
+    (MPRED: m |= MP),
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process), *)
     sound_state (Callstate (Vptr b Ptrofs.zero) [Vint ki; Vint Ni] k m)
 | find_bucket_return_hash: forall v k m MP
     (COND: hash_post_cond_retv Ni v)
     (CONT: call_hash_cont k MP)
-    (MPRED: m |= MP)
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
+    (MPRED: m |= MP), 
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process), *)
     sound_state (Returnstate v k m)
 | find_bucket_internal2: forall s0 t s n b_key b_hmap m k b fpl ki MP r
     (SEQ: s0 = (State find_bucket_func Sskip
@@ -1146,7 +1147,7 @@ Inductive sound_state : state -> Prop :=
     (CONT: call_find_bucket_cont b k MP)
     (STAR: starNf step1 num_frames ge n s0 t s)
     (NOTCALLRET: not_call_return_state s)
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process)
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process) *)
     (RAN: (0 <= n <= 1)%nat),
     sound_state s
 | find_bucket_returnstate: forall idx fpl1 fpl2 b fp m k MP
@@ -1158,8 +1159,8 @@ Inductive sound_state : state -> Prop :=
     (* (HMLOC: forall b, hmap_location w = Some b -> b = b2) *)
     (MAXRAN: Int.unsigned idx < Z.of_nat N)
     (FPLEN: length (fpl1 ++ fp :: fpl2) = N)
-    (CONT: call_find_bucket_cont b k MP)
-    (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process),
+    (CONT: call_find_bucket_cont b k MP),
+    (* (FUNID: list_callee_ext (hmap_list_ext w) = hmap_process), *)
     sound_state (Returnstate (Vptr b (Ptrofs.repr (size_chunk Mptr * Int.unsigned idx))) k m)
 .
 
@@ -1578,7 +1579,7 @@ Proof.
     + econstructor; eauto.
     + intros. inv H.
       eapply hmap_operate_on_callstate; eauto.
-      econstructor; eauto. econstructor.
+      econstructor; eauto. econstructor. auto. auto.
   (* call main function *)
   - simpl in HQ. destruct HQ as (A1 & A2 & A3). subst.
     exploit Genv.find_def_spec. erewrite SYM. instantiate (1 := hash_map_prog).
@@ -1627,7 +1628,7 @@ Proof.
   + inv CONT.
   (** How to prevent returning from hmap_operate_on  *)
   (* return from hmap_process *)
-  + simpl. red. red. 
+  + simpl. red. red. inv CONT.
     rewrite FUNID. rewrite dec_eq_false. rewrite dec_eq_true.
     econstructor; eauto.
     intro. inv H.    
@@ -1736,6 +1737,61 @@ Lemma step_hmap_init_preservation_progress: forall s,
       + intros.
         eapply hmap_init_inv.
         eapply hmap_main_internal2 with (n:=1%nat).
+        eapply starNf_step_right; eauto. 
+        1, 4: inv H; simpl; auto. eauto. eauto. auto. lia. }
+    inv STEP.
+    2: { simpl in H6. contradiction. }
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluete Ssequence *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+      + intros.
+        eapply hmap_init_inv.
+        eapply hmap_main_internal2 with (n:=2%nat).
+        eapply starNf_step_right; eauto. 
+        1, 4: inv H; simpl; auto. eauto. eauto. auto. lia. }
+    inv STEP.
+    generalize ((proj1 wf_senv) hmap_process). intros FINDF.
+    exploit FINDF. reflexivity. clear FINDF.
+    intros (?b & PRO_G & FINDF & FINDINFO & LINKORD).
+    assert (FINDFUN: Genv.find_funct (Smallstep.globalenv (hash_map_sem se)) (Vptr b0 Ptrofs.zero) = Some (Internal hmap_operate_on_func)).
+    { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
+      rewrite Genv.find_def_spec.
+      erewrite Genv.find_invert_symbol; eauto.
+      reflexivity. }    
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Scall *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+        reflexivity.
+        econstructor. eapply eval_Evar_global. reflexivity.
+        eauto. eapply deref_loc_reference. reflexivity.       
+        econstructor. econstructor. eauto. reflexivity.
+        econstructor. econstructor. reflexivity.
+        econstructor. reflexivity.                                             
+      + intros. inv H.        
+        inv H10. inv H11. inv H. inv H6.
+        inv H0; try inv H. simpl in H7. rewrite FINDF in H7. inv H7.
+        simpl in H13. setoid_rewrite FINDFUN in H13. inv H13.
+        inv H12. inv H4. 2: inv H. rewrite GETHMAP in H2. inv H2.
+        inv H6. inv H7. inv H4. 2: inv H. inv H6. inv H8.        
+        eapply hmap_operate_on_callstate.
+        econstructor. eapply Genv.find_invert_symbol. auto.
+        eauto. 
+        econstructor. auto. auto.  }
+    lia.
+  (* after returning from hmap_operate_on  *)
+  - generalize STAR as STAR1. intros.
+    inv STAR1.
+    (* evaluate Kseq *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+      + intros.
+        eapply hmap_init_inv.
+        eapply hmap_main_internal3 with (n:=1%nat).        
         eapply starNf_step_right; eauto. 
         1, 4: inv H; simpl; auto. eauto. eauto. auto. lia. }
     inv STEP.
@@ -2423,9 +2479,9 @@ Proof.
     + intros. inv H; rewrite FIND in FIND0; inv FIND0.
       exploit function_entry1_det. eauto. eapply ENTRY.
       intros (A1 & A2 & A3). subst.
-      eapply hmap_operate_on_internal1. eauto. eauto.
+      eapply hmap_operate_on_internal1. eauto. 
       reflexivity. reflexivity. econstructor. auto.
-      simpl. auto. auto. lia.
+      simpl. auto. lia.
   (* hmap_operate_on_internal1 *)
   - generalize MPRED as MPRED1. intros.
     generalize STAR as STAR1. intros.
@@ -2603,7 +2659,8 @@ Proof.
         simpl in H7. setoid_rewrite FREE1 in H7. setoid_rewrite FREE2 in H7.
         inv H7.
         eapply hmap_operate_on_returnstate.
-        inv CONT. simpl. econstructor. auto. eauto. eauto. }
+        instantiate (1 := b).
+        inv CONT; simpl; econstructor; auto. eauto. }
     inv STEP.
     1,3: destruct H7; congruence.
     inv STAR0; cbn [num_frames num_frames_cont] in *.
@@ -2686,7 +2743,7 @@ Proof.
           red. intros.
           eapply m_valid. eapply MPRED1.
           instantiate (1 := 0).
-          simpl. left. eauto. auto. }
+          simpl. left. eauto. }
       inv STEP.
       exploit eval_expr_det. eapply EVALFUN. eauto.
       intros. subst.      
@@ -2758,9 +2815,9 @@ Proof.
         econstructor. reflexivity. reflexivity.
         econstructor. reflexivity. simpl. rewrite OFSEQ. eauto.
       - intros. eapply hmap_operate_on_internal3 with (n:=2%nat).
-        reflexivity. eauto. reflexivity. eauto. eapply MPRED1. eauto. eauto.
+        reflexivity. eauto. reflexivity. eapply MPRED1. eauto. eauto. 
         eapply starNf_step_right; eauto.
-        1-2: inv H; simpl; auto. lia. eauto. eauto. auto. }
+        1-2: inv H; simpl; auto. lia. eauto. eauto. }
     inv STEP.
     2: { destruct H7; congruence. }
     2: { destruct H7; congruence. }
@@ -2792,8 +2849,9 @@ Proof.
       rewrite L1. unfold int_to_nat. rewrite Z2Nat.id. reflexivity.
       eapply Int.unsigned_range. unfold int_to_nat. lia. }    
     inv STAR; cbn [num_frames num_frames_cont] in *.
-    (* return from hmap_operate_on *)
-    { inv CONT.
+    (* return from hmap_operate_on (may return to main or return to
+    the environment *)
+    { 
       (* free blocks *)
       rewrite sep_swap12 in MPRED4.
       exploit free_rule. eapply MPRED4.
@@ -2802,30 +2860,45 @@ Proof.
       exploit free_rule. eapply MP1.
       intros (m2 & FREE2 & MP2).
       simpl in FREE1, FREE2.
-      split.
-      - red. do 2 right.
-        do 2 eexists. econstructor. econstructor.
-        simpl. setoid_rewrite FREE1. setoid_rewrite FREE2. eauto.
-      - intros.
-        inv H.
-        simpl in H8. setoid_rewrite FREE1 in H8. setoid_rewrite FREE2 in H8.
-        inv H8.
-        eapply hmap_operate_on_returnstate.
-        econstructor. auto. eauto. eauto. }
+      inv CONT.
+      (* return to the environment *)
+      { split.
+        - red. do 2 right.
+          do 2 eexists. econstructor. econstructor.
+          simpl. setoid_rewrite FREE1. setoid_rewrite FREE2. eauto.
+        - intros. inv H.
+          simpl in H8. setoid_rewrite FREE1 in H8. setoid_rewrite FREE2 in H8.
+          inv H8.
+          eapply hmap_operate_on_returnstate.
+          econstructor.  eauto. eauto. eauto. }
+      (* return to main function *)
+      { split.
+        - red. do 2 right.
+          do 2 eexists. econstructor. econstructor.
+          simpl. setoid_rewrite FREE1. setoid_rewrite FREE2. eauto.
+        - intros. inv H.
+          simpl in H8. setoid_rewrite FREE1 in H8. setoid_rewrite FREE2 in H8.
+          inv H8.
+          eapply hmap_operate_on_returnstate.
+          econstructor. eauto. eauto. eauto. }
+    }
     (* return from hmap_process (we need to specify the cont of hmap_process) *)
-    inv CONT. inv STEP.
     inv STAR0; try lia.
-    { split.
-      - red. left. eexists. econstructor.
-      - intros. inv H. }
         
   (*  TODO: show returnstate in hmap_process is not stuck. We
     need to specify the continuation. *)
   - inv CONT.
-    split.
-    + red. left. eexists. econstructor.
-    + intros. inv H. 
-    
+    + split.
+      * red. do 2 right. do 2 eexists. econstructor.
+      * intros. inv H.
+        eapply hmap_init_inv.
+        eapply hmap_main_internal3 with (n:=0%nat).
+        econstructor. eauto. eauto. simpl. auto.
+        auto. lia.
+    + split.
+      * red. left. eexists. econstructor.
+      * intros. inv H.
+        
   (* call find_bucket *)
   - inv CALL. 
     assert (FIND: Genv.find_funct ge (Vptr b1 Ptrofs.zero) = Some (Internal find_bucket_func)).
@@ -2842,7 +2915,7 @@ Proof.
       exploit function_entry1_det. eauto. eapply ENTRY.
       intros (A1 & A2 & A3). subst.
       eapply find_bucket_internal1 with (n:=0%nat). reflexivity. eauto. auto. eauto.
-      econstructor. simpl. auto. lia. auto. 
+      econstructor. simpl. auto. lia. 
   (* find_bucket_internal1  *)
   - generalize MPRED as MPRED1. intros.
     generalize STAR as STAR1. intros.
@@ -2906,7 +2979,7 @@ Proof.
         (* find_funct *)
         eapply Genv.find_invert_symbol. eauto.
         (* cont *)
-        econstructor. eauto. auto. }
+        econstructor. eauto. }
     lia.
   (* call hash function *)
   - assert (FINDFUN: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some hash_ext).
@@ -2926,7 +2999,7 @@ Proof.
       econstructor.
     + intros. inv H.
       eapply find_bucket_internal2; eauto.
-      econstructor. simpl. auto.
+      econstructor. simpl. auto. 
   (* execution after returning from hash *)
   - generalize MPRED as MPRED1. intros.
     generalize STAR as STAR1. intros.
@@ -3014,7 +3087,7 @@ Proof.
           unfold int_to_nat. lia.
           unfold int_to_nat. rewrite LEN. lia.
           unfold int_to_nat. rewrite LEN. lia. }           
-        erewrite <- call_find_bucket_cont_eq_call_cont; eauto. auto. }
+        erewrite <- call_find_bucket_cont_eq_call_cont; eauto. }
     lia.
   (* return from find_bucket *)
   - inv CONT. inv CONT0.
