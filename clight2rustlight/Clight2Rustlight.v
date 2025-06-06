@@ -156,27 +156,29 @@ Section TRANSL.
               end *)
       | Clight.Ebinop op e1' e2' ty' =>
           match op with
-          | Oadd 
+          | Oadd
           | Osub
+          | Omul
+          | Odiv
+          | Omod
           | Oand
-          | Oor 
-          | Oxor 
-          | Oshl 
-          | Oshr 
-          (* | Oshru 
-          | Oaddl
-          | Osubl
-          | Oandl
-          | Oorl
-          | Oxorl
-          | Oshll
-          | Oshrl
-          | Oshrlu  *)
+          | Oor
+          | Oxor
+          | Oshl
+          | Oshr
+          | Oeq
+          | One
+          | Olt
+          | Ogt
+          | Ole
+          | Oge
             =>
               do r1 <- binary_to_place e1';
               do r2 <- binary_to_place e2';
               ret (((Int.repr 1,Tint I32 Signed),(1%positive,Tunit),(op,to_rusttype ty'),third)::r1 ++ r2)
-          | _ => error (msg "In binary_to_place: pointer only support operation: add sub shl shr and or xor")
+          (* | _ => error (msg "In binary_to_place: pointer only support operation: 
+                  Oadd, Osub, Omul, Odiv, Omod, Oand, Oor, Oxor, Oshl, Oshr, Oeq, One, Olt, 
+                  Ogt, Ole and Oge") *)
           end
       | Clight.Econst_float _ _ =>
           error (msg "In binary_to_place : Unsupported index expression in pointer addition: float constant")
@@ -229,13 +231,23 @@ Section TRANSL.
             end *)
             do i <- gensym (to_rusttype ty);
             match op with
-            | Oadd 
-            | Osub
+            | Oadd
+            (* | Osub
+            | Omul
+            | Odiv
+            | Omod
             | Oand
-            | Oor 
-            | Oxor 
-            | Oshl 
-            | Oshr =>
+            | Oor
+            | Oxor
+            | Oshl
+            | Oshr
+            | Oeq
+            | One
+            | Olt
+            | Ogt
+            | Ole
+            | Oge *)
+              =>
                 do e1' <- binary_to_place e1;
                 do e2' <- binary_to_place e2;
                 let lop := [((Int.repr 1,Tint I32 Signed),(1%positive,Tunit),(op,to_rusttype ty),third)] in

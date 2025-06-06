@@ -20,22 +20,23 @@ let extern_coqZ a =
 
 let string_of_op op= 
   match op with
-  | Oadd-> "+"
+  | Oadd -> "+"
   | Osub -> "-"
-  | Oshl -> "<<"
-  | Oshr -> ">>"
+  | Omul -> "*"
+  | Odiv -> "/"
+  | Omod -> "%"
   | Oand -> "&"
   | Oor -> "|"
-  | _ -> "no support this operation"
-
-
-(* 示例用法 *)
-(* let example = [
-  (((1, "int"), (0, ""), ("add", ""), First);
-  (((2, "int"), (0, ""), ("", ""), First);
-  (((3, "int"), (0, ""), ("", ""), Second);
-  (((0, ""), (0, ""), ("mul", ""), Third)
-] *)
+  | Oxor -> "^"
+  | Oshl -> "<<"
+  | Oshr -> ">>"
+  | Oeq -> "=="
+  | One -> "!="
+  | Olt -> "<"
+  | Ogt -> ">"
+  | Ole -> "<="
+  | Oge -> ">="
+  (* | _ -> "no support this operation" *)
 
 (* let print_paren_list out ll =
   match ll with
