@@ -26,7 +26,7 @@
     upset the balance of the universe or otherwise cause planets to impact
     upon one another.
 */
-
+#define _Float16 double
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>

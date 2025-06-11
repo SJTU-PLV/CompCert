@@ -255,10 +255,10 @@ let print_function p id f =
                 (name_rust_decl_fn (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
       fprintf p "@[<v 2>{@ ";
         (* Print variables and their types *)
-        (* List.iter
+        List.iter
         (fun (id, ty) ->
           fprintf p "%s;@ " (name_rust_decl (extern_atom id) ty))
-        f.fn_vars; *)
+        f.fn_vars;
         print_stmt p f.fn_body;
       fprintf p "@;<0 -2>}@]@ @ "
 

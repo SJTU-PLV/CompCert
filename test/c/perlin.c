@@ -1,6 +1,6 @@
 // perlin noise, derived from the Java reference implementation at 
 // http://mrl.nyu.edu/~perlin/noise/
-
+#define _Float16 double
 #include <math.h>
 #include <stdio.h>
 

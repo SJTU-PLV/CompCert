@@ -6,7 +6,7 @@
        gcc -O3 -fomit-frame-pointer -funroll-loops -static binary-trees.c -lm
        icc -O3 -ip -unroll -static binary-trees.c -lm
 */
-
+#define _Float16 double
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>

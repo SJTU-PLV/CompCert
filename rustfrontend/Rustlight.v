@@ -110,7 +110,7 @@ Fixpoint sizeof (env: composite_env) (t: type) : Z :=
   | Tstruct _ id | Tvariant _ id =>
       match env!id with Some co => co_sizeof co | None => 0 end
   end.
-
+Locate unary_operation.
 (** ** Expression *)
 Inductive pexpr : Type :=
 | Eunit                                 (**r unit value  *)

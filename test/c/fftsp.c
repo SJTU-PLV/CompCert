@@ -4,7 +4,7 @@
 */
 
 /* Like fft.c, but using single-precision floats */
-
+#define _Float16 double
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>

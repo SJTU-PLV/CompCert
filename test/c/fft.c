@@ -2,7 +2,7 @@
  C Program: Test_Fast_Fourier_Transform_in_Double_Precision (TFFTDP.c)
  by: Dave Edelblute, edelblut@cod.nosc.mil, 05 Jan 1993
 */
-
+#define _Float16 double
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>

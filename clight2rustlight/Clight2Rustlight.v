@@ -78,10 +78,8 @@ Notation "'do' ( X , Y ) <- A ; B" := (bind2 A (fun X Y => B))
                                         (at level 200, X ident, Y ident, A at level 100, B at level 200)
     : gensym_monad_scope.
 
-Parameter first_unused_ident: unit -> ident.
-
-Definition initial_generator (x: unit) : generator :=
-  mkgenerator (first_unused_ident x) nil.
+Definition initial_generator (max_id: ident) : generator :=
+  mkgenerator max_id nil.
 
 Definition gensym (ty: type): mon ident :=
   fun (g: generator) =>
@@ -231,23 +229,7 @@ Section TRANSL.
             end *)
             do i <- gensym (to_rusttype ty);
             match op with
-            | Oadd
-            (* | Osub
-            | Omul
-            | Odiv
-            | Omod
-            | Oand
-            | Oor
-            | Oxor
-            | Oshl
-            | Oshr
-            | Oeq
-            | One
-            | Olt
-            | Ogt
-            | Ole
-            | Oge *)
-              =>
+            | Oadd =>
                 do e1' <- binary_to_place e1;
                 do e2' <- binary_to_place e2;
                 let lop := [((Int.repr 1,Tint I32 Signed),(1%positive,Tunit),(op,to_rusttype ty),third)] in
@@ -411,9 +393,71 @@ Section TRANSL.
     | _ => error (msg "Unsupported statement type")
     end.
 
+    (* get most largest id in id list *)
+  Fixpoint max_pos (l: list positive) : positive :=
+    match l with
+    | nil => 1%positive (* 默认最小值 *)
+    | hd :: tl => Pos.max hd (max_pos tl)
+    end.
+  
+  (* get all id from expr in clight *)
+  Fixpoint get_ids_expr (e: Clight.expr) : list positive :=
+    match e with
+    | Clight.Evar id _ => [id]
+    | Clight.Etempvar id _ => [id]
+    | Clight.Ederef e1 _ => get_ids_expr e1
+    | Clight.Eaddrof e1 _ => get_ids_expr e1
+    | Clight.Eunop _ e1 _ => get_ids_expr e1
+    | Clight.Ebinop _ e1 e2 _ => get_ids_expr e1 ++ get_ids_expr e2
+    | Clight.Ecast e1 _ => get_ids_expr e1
+    | Clight.Efield e1 _ _ => get_ids_expr e1
+    | _ => []
+    end.
+
+  (* get all id from statement in clight *)
+  Fixpoint get_ids_stmt (s: Clight.statement) : list positive :=
+    match s with
+    | Clight.Sskip => []
+    | Clight.Sassign e1 e2 => get_ids_expr e1 ++ get_ids_expr e2
+    | Clight.Ssequence s1 s2 => get_ids_stmt s1 ++ get_ids_stmt s2
+    | Clight.Sset id e => id :: get_ids_expr e
+    | Clight.Scall optid e args =>
+        match optid with
+        | None => get_ids_expr e ++ List.flat_map get_ids_expr args
+        | Some id => id :: (get_ids_expr e ++ List.flat_map get_ids_expr args)
+        end
+    | Clight.Sbuiltin optid _ _ le =>
+        match optid with
+        | None => List.flat_map get_ids_expr le
+        | Some id => id :: (List.flat_map get_ids_expr le)
+        end
+    | Clight.Sifthenelse e s1 s2 => get_ids_expr e ++ get_ids_stmt s1 ++ get_ids_stmt s2
+    | Clight.Sloop s1 s2 => get_ids_stmt s1 ++ get_ids_stmt s2
+    (* | Clight.Swhile e s1 s2 => get_ids_expr e ++ get_ids_stmt s1 ++ get_ids_stmt s2 *)
+    | Clight.Sbreak => []
+    | Clight.Scontinue => []
+    | Clight.Sreturn None => []
+    | Clight.Sreturn (Some e) => get_ids_expr e
+    | Clight.Sswitch e ls => get_ids_expr e ++ get_ids_labeled_statements ls
+    | Clight.Slabel _ s => get_ids_stmt s
+    | Clight.Sgoto _ => []
+    end
+  with get_ids_labeled_statements (ls: Clight.labeled_statements) : list positive :=
+    match ls with
+    | Clight.LSnil => []
+    | Clight.LScons _ st ls => 
+        get_ids_stmt st ++ get_ids_labeled_statements ls
+    end.
+
+  (* get all id from function in clight *)
+  Definition get_max_id_function (f: Clight.function) : positive :=
+  max_pos (get_ids_stmt f.(Clight.fn_body)).
+
   (** Convert Clight function to Rustlight function *)
   Definition transl_function (main_id: ident) (id: ident) (f: Clight.function): res Rustlight.function :=
     let locals := List.map (@fst ident _) (Clight.fn_params f ++ Clight.fn_vars f ++ Clight.fn_temps f) in
+    (* let max_id := Pos.succ (get_max_id_function f) in *)
+    let max_id := Pos.succ (max_pos locals) in
     (* main function in rust is different in c 
      c:    int main() { ...; return 0; }
      rust: fn main() {}  *)
@@ -444,7 +488,7 @@ Section TRANSL.
           | _ => Error (msg "error main function in transl_function in Clight2Rustlight.v")
           end *)
       | Clight.Ssequence inner_stmt _ =>  (* delete Ssequence (return 0) *)
-              match transl_stmt locals inner_stmt (initial_generator tt) with
+              match transl_stmt locals inner_stmt (initial_generator max_id) with
               | Err msg => Error msg
               | Res body g i =>
                   OK {| Rustlight.fn_generic_origins := [];
@@ -465,7 +509,7 @@ Section TRANSL.
       end
     else
       (* other function *)
-      match transl_stmt locals (Clight.fn_body f) (initial_generator tt) with
+      match transl_stmt locals (Clight.fn_body f) (initial_generator max_id) with
       | Err msg => Error msg
       | Res body g i =>
           OK {| Rustlight.fn_generic_origins := [];
@@ -480,6 +524,11 @@ Section TRANSL.
                Rustlight.fn_body := body
              |}
       end.
+  
+
+
+  (* Local Open Scope string_scope. *)
+  
 
   Local Open Scope error_monad_scope.
 
@@ -513,6 +562,35 @@ Section TRANSL.
 
   Local Open Scope gensym_monad_scope.
 
+  (* get id from Ctype member *)
+  Fixpoint get_member_id (m: Ctypes.member) : ident :=
+    match m with
+    | Ctypes.Member_plain id _ => id
+    | Ctypes.Member_bitfield id _ _ _ _ _ => id
+    end.
+
+  (* get id from Ctype members *)
+  Definition get_members_id (ms: Ctypes.members) : list ident :=
+    List.map get_member_id ms.
+
+  (* get id from Ctype composite_definition *)
+  Definition get_composite_definition_id (cd: Ctypes.composite_definition) : list ident :=
+    match cd with
+    | Ctypes.Composite id _ ms _ => id :: get_members_id ms
+    end.
+  
+  (* get id from Ctype composite_definition list *)
+  Fixpoint get_composite_definition_ids (cd: list Ctypes.composite_definition) : list ident :=
+    match cd with
+    | nil => nil
+    | h::t => get_composite_definition_id h ++ get_composite_definition_ids t
+    end.
+
+  (* get max id from Ctype composite_definition list *)
+  Definition get_max_composite_definition_id (cd: list Ctypes.composite_definition) : ident :=
+    max_pos (get_composite_definition_ids cd).
+    
+  (* convert Ctype member to Rusttype member *)
   Fixpoint convert_members (ms:Ctypes.members) : mon Rusttypes.members :=
     match ms with
     | nil => ret (nil)
@@ -547,7 +625,9 @@ Section TRANSL.
     OK (mkglobvar info' g.(gvar_init) g.(gvar_readonly) g.(gvar_volatile)). 
 
   Definition transl_program (p: Clight.program): res program :=
-    let initial_gen := initial_generator tt in
+    let max_composite_definition_id := get_max_composite_definition_id (Ctypes.prog_types p) in
+    (* create initial generator with max id *)
+    let initial_gen := initial_generator (Pos.succ max_composite_definition_id) in
     match convert_composite_definition (Ctypes.prog_types p) initial_gen with
     | Res co_defs g i =>
         let tce := Rusttypes.build_composite_env co_defs in

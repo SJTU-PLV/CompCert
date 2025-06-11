@@ -91,9 +91,6 @@ Extract Constant Allocation.regalloc => "Regalloc.regalloc".
 (* Linearize *)
 Extract Constant Linearize.enumerate_aux => "Linearizeaux.enumerate_aux".
 
-(* Clight2Rustlight *)
-Extract Constant Clight2Rustlight.first_unused_ident => "Camlcoq.first_unused_ident".
-
 (* SimplExpr *)
 Extract Constant SimplExpr.first_unused_ident => "Camlcoq.first_unused_ident".
 Extraction Inline SimplExpr.ret SimplExpr.error SimplExpr.bind SimplExpr.bind2.
@@ -122,7 +119,7 @@ Extract Constant Compopts.debug =>
 
 (* Compiler *)
 Extract Constant Compiler.print_Clight => "PrintClight.print_if".
-Extract Constant Compiler.print_Clight0 => "PrintClight.print_if".
+Extract Constant Compiler.print_Clight0 => "PrintClight0.print_if".
 Extract Constant Compiler.print_Cminor => "PrintCminor.print_if".
 Extract Constant Compiler.print_RTL => "PrintRTL.print_if".
 Extract Constant Compiler.print_LTL => "PrintLTL.print_if".
