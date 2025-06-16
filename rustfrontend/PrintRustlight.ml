@@ -42,16 +42,6 @@ let string_of_op op=
   match ll with
   | [] -> ()
   | _ -> List.iter (fun (eid, _) -> fprintf out ".offset(%s)" (extern_atom eid)) ll *)
-let rec find_first_part ll =
-  match ll with
-  | [] -> ([],[])
-  | (((((num1, t1), (num2, t2)), (op, t3)), mark) :: rest) ->
-    match mark with
-    | Coq_first 
-    | Coq_second -> ([((((num1, t1), (num2, t2)), (op, t3)), mark)],rest)
-    | Coq_third -> let (p1,r1) = find_first_part rest in
-                   let (p2,r2) = find_first_part r1 in
-                   ([((((num1, t1), (num2, t2)), (op, t3)), mark)]@p1@p2,r2)
 
 let rec print_place out (p: place) =
   match p with
@@ -64,7 +54,8 @@ let rec print_place out (p: place) =
   | Pdowncast(p',fid, _) ->
     fprintf out "(%a as %s)" print_place p' (extern_atom fid)
   | Pparenthesize(pid, _, ll) ->
-    let b = Buffer.create 50 in
+    fprintf out "(arrayParen %s)" (extern_atom pid)
+    (* let b = Buffer.create 50 in
       let rec aux = function
       | [] -> ()
       | (((((num, _), (id, _)), (op, _)), mark) :: rest) ->
@@ -94,7 +85,7 @@ let rec print_place out (p: place) =
         |_ -> fprintf err_formatter "@[<2>Error place list in print_place@]@."
         end
       | _ -> fprintf err_formatter "@[<2>Error place list in print_place@]@."
-      end
+      end *)
     (* print_paren_list out ll; *)
   | ParrayIndex(p', aid, _) ->
       fprintf out "(%a as %s)" print_place p' (extern_atom aid)
@@ -122,6 +113,7 @@ let precedence' = function
   | Eref(_, _, _, _) -> (15, RtoL)
   | Eas(_, _) -> (16, NA)
   | Esizeof(_, _) -> (16, NA)
+  | Ederef(_, _) -> (15, RtoL)
 
 let precedence = function
   | Emoveplace(_,_) -> (16,NA)
@@ -171,6 +163,8 @@ let rec pexpr p (prec, e) =
       fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty)
   | Esizeof(ty1, ty2) ->
       fprintf p "::core::mem::size_of::<%s>()" (name_rust_type ty1)
+  | Ederef(pe, ty) ->
+      fprintf p "*(%a)" pexpr (prec', pe)
   end;
   if prec' < prec then fprintf p ")@]" else fprintf p "@]"
 

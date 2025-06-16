@@ -136,173 +136,160 @@ Section TRANSL.
   (* Local Open Scope string_scope. *)
   Local Open Scope gensym_monad_scope.
 
-  Fixpoint binary_to_place (e: Clight.expr) :
-    mon ( list ((int * type) * (ident * type) * (binary_operation * type) * pmark)) :=
-      match e with
-      | Clight.Econst_int offset ty => 
-          ret [((offset,to_rusttype ty),(1%positive,Tunit),(Omod,to_rusttype ty),first)]
-      | Clight.Econst_long offset64 ty => 
-          ret [(((Int.repr (Int64.unsigned offset64)),to_rusttype ty),(1%positive,Tunit),(Omod,to_rusttype ty),first)]
-      | Clight.Evar id ty2 =>
-          ret [((Int.repr 1,Tint I32 Signed),(id,(to_rusttype ty2)),(Omod,to_rusttype ty2),second)]
-      | Clight.Etempvar id ty2 =>
-          (* match ty2 with
-              | Ctypes.Tint _ _ _ 
-              | Ctypes.Tlong _ _ => *)
-          ret [((Int.repr 1,Tint I32 Signed),(id,(to_rusttype ty2)),(Omod,to_rusttype ty2),second)]
-      (* | _ => error (msg "In binary_to_place(tempvar) : index of pointer add can only be int or long")
-              end *)
-      | Clight.Ebinop op e1' e2' ty' =>
-          match op with
-          | Oadd
-          | Osub
-          | Omul
-          | Odiv
-          | Omod
-          | Oand
-          | Oor
-          | Oxor
-          | Oshl
-          | Oshr
-          | Oeq
-          | One
-          | Olt
-          | Ogt
-          | Ole
-          | Oge
-            =>
-              do r1 <- binary_to_place e1';
-              do r2 <- binary_to_place e2';
-              ret (((Int.repr 1,Tint I32 Signed),(1%positive,Tunit),(op,to_rusttype ty'),third)::r1 ++ r2)
-          (* | _ => error (msg "In binary_to_place: pointer only support operation: 
-                  Oadd, Osub, Omul, Odiv, Omod, Oand, Oor, Oxor, Oshl, Oshr, Oeq, One, Olt, 
-                  Ogt, Ole and Oge") *)
-          end
-      | Clight.Econst_float _ _ =>
-          error (msg "In binary_to_place : Unsupported index expression in pointer addition: float constant")
-      | Clight.Econst_single _ _ =>
-          error (msg "In binary_to_place : Unsupported index expression in pointer addition: single-precision float constant")
-      | Clight.Ederef _ _ =>
-          error (msg "In binary_to_place : Unsupported index expression in pointer addition: dereference")
-      | Clight.Eaddrof _ _ =>
-          error (msg "In binary_to_place : Unsupported index expression in pointer addition: address-of")
-      | Clight.Eunop op _ _ =>
-          error (msg "In binary_to_place : Unsupported index expression in pointer addition: unary operation")
-      | Clight.Ecast _ _ =>
-          error (msg "In binary_to_place : Unsupported index expression in pointer addition: cast operation")
-      | Clight.Efield _ _ _ =>
-          error (msg "In binary_to_place : Unsupported index expression in pointer addition: field operation")
-      | Clight.Esizeof _ _ =>
-          error (msg "In binary_to_place : Unsupported index expression in pointer addition: sizeof operation")
-      | Clight.Ealignof _ _ =>
-          error (msg "In binary_to_place : Unsupported index expression in pointer addition: alignof operation")
-      end.
-
-  (** Convert Clight expression to Rustlight place *)
-  Fixpoint cexpr_to_place (e: Clight.expr): mon Rustlight.place :=
+  Fixpoint expr_depth (e: Clight.expr) : nat :=
     match e with
-    | Clight.Evar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
-    | Clight.Etempvar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
-    | Clight.Ederef e' ty=>
-        do p <- cexpr_to_place e';
-        ret (Rustlight.Pderef p (to_rusttype ty))
-    | Clight.Efield e' id ty => 
-        do p <- cexpr_to_place e';
-        ret (Rustlight.Pfield p id (to_rusttype ty))
-    | Clight.Ebinop op e1 e2 ty => 
-        match ty with
-        | Ctypes.Tpointer _ _ =>
-            (* match op with
-            | Oadd =>
-                do r1 <- binary_to_place e1;
-                do r2 <- binary_to_place e2;
-                let (LI1,LP1) := r1 in
-                let (LI2,LP2) := r2 in
-                let LI := LI1 ++ LI2 in
-                let LP := LP1 ++ LP2 in
-                (* drop out the name of array, for example: int a[2]; we not need offset(a)*)
-                match LP with
-                | (i, _) :: t => ret (Rustlight.Pparenthesize i (to_rusttype ty) LI t)
-                | nil => error (msg "array pointer cannot be null")  
-                end                
-            | _ => error (msg "pointer only support add op")
-            end *)
-            do i <- gensym (to_rusttype ty);
-            match op with
-            | Oadd =>
-                do e1' <- binary_to_place e1;
-                do e2' <- binary_to_place e2;
-                let lop := [((Int.repr 1,Tint I32 Signed),(1%positive,Tunit),(op,to_rusttype ty),third)] in
-                ret (Rustlight.Pparenthesize i (to_rusttype ty) (lop ++ e1' ++ e2'))
-            | _ => error (msg "other opertion not support in cexpr_to_place")
-            end
-        | _ =>
-            error (msg "not pointer, Unsupported lvalue expression")
-        end
-    (* FIXME: support Pdowncast *)
-    | Clight.Econst_int _ _ => error (msg "Unsupported lvalue expression: constant integer")
-    | Clight.Econst_float _ _ => error (msg "Unsupported lvalue expression: constant float")
-    | Clight.Eunop op e ty => error (msg ("Unsupported lvalue expression: unary operation "))
-    | Clight.Esizeof ty' ty => error (msg "Unsupported lvalue expression: sizeof")
-    | Clight.Ealignof ty' ty => error (msg "Unsupported lvalue expression: alignof")
-    | Clight.Ecast e ty => 
-        match ty with
-        | Ctypes.Tpointer _ _ => 
-            do i <- gensym (to_rusttype ty);
-            ret (Rustlight.Plocal i (to_rusttype ty))
-        | _ => error (msg "lvalue cast only support pointer")
-        end
-    | _ => error (msg "Unsupported lvalue expression: unknown expression")
+    | Clight.Evar _ _ => 2
+    | Clight.Ederef e' _ => 2 + 2 * expr_depth e'
+    | Clight.Ebinop _ e1 e2 _ => 2 + 2 * ((expr_depth e1) + (expr_depth e2))
+    | Clight.Eunop _ e' _ => 2 + 2 * expr_depth e'
+    | Clight.Efield e' _ _ => 2 + 2 * expr_depth e'
+    | Clight.Eaddrof e' _ => 2 + 2 * expr_depth e'
+    | Clight.Ecast e' _ => 2 + 2 * expr_depth e'
+    | Clight.Econst_int _ _ => 2
+    | Clight.Econst_float _ _ => 2
+    | Clight.Econst_single _ _ => 2
+    | Clight.Econst_long _ _ => 2
+    | Clight.Esizeof _ _ => 2
+    | Clight.Ealignof _ _ => 2
+    | Clight.Etempvar _ _ => 2
     end.
 
+  Fixpoint sub_cexpr_to_place (depth: nat) (e: Clight.expr): mon Rustlight.place :=
+    let sub_cexpr_to_place := sub_cexpr_to_place depth in
+    match depth with
+    | 0%nat => error (msg "Unsupported lvalue expression: depth is 0")
+    | S d =>
+      (* let cexpr_to_place := cexpr_to_place d in *)
+      let cexpr_to_pexpr := cexpr_to_pexpr d in
+      match e with
+      | Clight.Evar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
+      | Clight.Etempvar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
+      | Clight.Ederef e' ty =>
+          do p <- sub_cexpr_to_place e';
+          ret (Rustlight.Pderef p (to_rusttype ty))
+      | Clight.Efield e' id ty =>
+          do p <- sub_cexpr_to_place e';
+          ret (Rustlight.Pfield p id (to_rusttype ty))
+      | Clight.Ebinop op e1 e2 ty => 
+            match ty with
+            | Ctypes.Tpointer _ _ =>
+                do i <- gensym (to_rusttype ty);
+                do e1' <- cexpr_to_pexpr e1;
+                do e2' <- cexpr_to_pexpr e2;
+                let rty := to_rusttype ty in
+                let re := Rustlight.Ebinop op e1' e2' rty in
+                ret (Rustlight.Pparenthesize i (to_rusttype ty) re)
+            | _ =>
+                error (msg "not pointer, Unsupported lvalue binary operation")
+            end
+      (* | Clight.Ecast e' ty => 
+            match ty with
+            | Ctypes.Tpointer _ _ => 
+                do i <- gensym (to_rusttype ty);
+                do e'' <- cexpr_to_pexpr e';
+                let rty := to_rusttype ty in
+                let re := Rustlight.Eas e'' rty in
+                ret (Rustlight.Pparenthesize i (to_rusttype ty) re)
+            | _ => error (msg "lvalue cast only support pointer")
+            end *)
+      | _ => error (msg "Unsupported lvalue expression in sub_cexpr_to_place")
+      end
+    end
+
+  (** Convert Clight expression to Rustlight place *)
+  with cexpr_to_place (depth: nat) (e: Clight.expr): mon Rustlight.place :=
+    match depth with
+    | 0%nat => error (msg "Unsupported lvalue expression: depth is 0")
+    | S d =>
+      let cexpr_to_place := cexpr_to_place d in
+      let sub_cexpr_to_place := sub_cexpr_to_place d in
+      (* let cexpr_to_pexpr := cexpr_to_pexpr d in *)
+      match e with
+      | Clight.Evar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
+      | Clight.Etempvar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
+      | Clight.Ederef e' ty=>
+          match e' with
+          | Clight.Ebinop op e1 e2 ty =>
+              match op with
+              | Oadd => 
+                  do p <- sub_cexpr_to_place e';
+                  ret (Rustlight.Pderef p (to_rusttype ty))
+              | _ =>
+                  error (msg "Unsupported lvalue expression: binary operation in dereference")
+              end
+          | _ =>
+              do p <- sub_cexpr_to_place e';
+              ret (Rustlight.Pderef p (to_rusttype ty))
+          end
+      | Clight.Efield e' id ty => 
+          do p <- cexpr_to_place e';
+          ret (Rustlight.Pfield p id (to_rusttype ty))
+      | Clight.Ebinop op e1 e2 ty => 
+          error (msg "Unsupported lvalue expression: binary operation")
+      (* FIXME: support Pdowncast *)
+      | Clight.Econst_int _ _ => error (msg "Unsupported lvalue expression: constant integer")
+      | Clight.Econst_float _ _ => error (msg "Unsupported lvalue expression: constant float")
+      | Clight.Econst_single _ _ => error (msg "Unsupported lvalue expression: constant single")
+      | Clight.Econst_long _ _ => error (msg "Unsupported lvalue expression: constant long")
+      | Clight.Eunop op e' ty => error (msg ("Unsupported lvalue expression: unary operation "))
+      | Clight.Esizeof ty' ty => error (msg "Unsupported lvalue expression: sizeof")
+      | Clight.Ealignof ty' ty => error (msg "Unsupported lvalue expression: alignof")
+      | Clight.Ecast e' ty => 
+          error (msg "Unsupported lvalue expression: cast")
+      | _ => error (msg "Unsupported lvalue expression: unknown expression")
+      end
+    end
   (** Convert Clight expression to Rustlight pure expression *)
-  Fixpoint cexpr_to_pexpr (locals: list ident) (e: Clight.expr): mon Rustlight.pexpr :=
-    match e with
-    | Clight.Econst_int i ty => ret (Rustlight.Econst_int i (to_rusttype ty))
-    | Clight.Econst_float f ty => ret (Rustlight.Econst_float f (to_rusttype ty))
-    | Clight.Econst_single f ty => ret (Rustlight.Econst_single f (to_rusttype ty))
-    | Clight.Econst_long l ty => ret (Rustlight.Econst_long l (to_rusttype ty))
-    | Clight.Eunop op e' ty => 
-        do pe <- cexpr_to_pexpr locals e';
-        ret (Rustlight.Eunop op pe (to_rusttype ty))
-    | Clight.Ebinop op e1 e2 ty => 
-        do pe1 <- cexpr_to_pexpr locals e1;
-        do pe2 <- cexpr_to_pexpr locals e2;
-        ret (Rustlight.Ebinop op pe1 pe2 (to_rusttype ty))
-    | Clight.Evar id ty => 
-        (* if in_dec ident_eq id locals then *)
-          do p <- cexpr_to_place (Clight.Evar id ty);
+  with cexpr_to_pexpr (depth: nat) (e: Clight.expr): mon Rustlight.pexpr :=
+    match depth with
+    | 0%nat => error (msg "Unsupported rvalue expression: depth is 0")
+    | S d =>
+      let cexpr_to_place := cexpr_to_place d in
+      let cexpr_to_pexpr := cexpr_to_pexpr d in
+      match e with
+      | Clight.Econst_int i ty => ret (Rustlight.Econst_int i (to_rusttype ty))
+      | Clight.Econst_float f ty => ret (Rustlight.Econst_float f (to_rusttype ty))
+      | Clight.Econst_single f ty => ret (Rustlight.Econst_single f (to_rusttype ty))
+      | Clight.Econst_long l ty => ret (Rustlight.Econst_long l (to_rusttype ty))
+      | Clight.Eunop op e' ty => 
+          do pe <- cexpr_to_pexpr e';
+          ret (Rustlight.Eunop op pe (to_rusttype ty))
+      | Clight.Ebinop op e1 e2 ty => 
+          do pe1 <- cexpr_to_pexpr e1;
+          do pe2 <- cexpr_to_pexpr e2;
+          ret (Rustlight.Ebinop op pe1 pe2 (to_rusttype ty))
+      | Clight.Evar id ty => 
+          let p := Rustlight.Plocal id (to_rusttype ty) in
+          (* ret (Eplace p (to_rusttype ty)) *)
           ret (Eplace p (to_rusttype ty))
-        (* else
-          let locals := [id] ++ locals in
-          ret (Eglobal id (to_rusttype ty)) *)
-    | Clight.Etempvar id ty =>
-        (* let locals := if in_dec ident_eq id locals then locals else id :: locals in *)
-        do p <- cexpr_to_place (Clight.Evar id ty);
-        ret (Eplace p (to_rusttype ty))
-    | Clight.Eaddrof e' ty => 
-        do i <- gensym (to_rusttype ty);
-        do p <- cexpr_to_place e';
-        ret (Eref i Mutable p (to_rusttype ty))
-    | Clight.Ederef e' ty => 
-        do p <- cexpr_to_place e';
-        ret (Rustlight.Eplace (Rustlight.Pderef p (to_rusttype ty)) (to_rusttype ty))
-    | Clight.Efield e' id ty => 
-        do p <- cexpr_to_place e';
-        ret (Rustlight.Eplace (Rustlight.Pfield p id (to_rusttype ty)) (to_rusttype ty))
-    | Clight.Esizeof ty ty' => ret (Rustlight.Esizeof (to_rusttype ty) (to_rusttype ty'))
-    | Clight.Ecast e' ty => 
-        do pe <- cexpr_to_pexpr locals e';
-        ret (Rustlight.Eas pe (to_rusttype ty))
-    (* | Clight.Ealignof ty ty' => ret (Rustlight.Ealignof (to_rusttype ty) (to_rusttype ty')) *)
-    | _ => error (msg "Unsupported rvalue expression")
+      | Clight.Etempvar id ty =>
+          let p := Rustlight.Plocal id (to_rusttype ty) in
+          (* ret (Eplace p (to_rusttype ty)) *)
+          ret (Eplace p (to_rusttype ty))
+      | Clight.Eaddrof e' ty => 
+          do i <- gensym (to_rusttype ty);
+          do p <- cexpr_to_place e';
+          ret (Eref i Mutable p (to_rusttype ty))
+      | Clight.Ederef e' ty => 
+          do e'' <- cexpr_to_pexpr e';
+          ret (Rustlight.Ederef e'' (to_rusttype ty))
+      | Clight.Efield e' id ty => 
+          do p <- cexpr_to_place e';
+          ret (Rustlight.Eplace (Rustlight.Pfield p id (to_rusttype ty)) (to_rusttype ty))
+      | Clight.Esizeof ty ty' => ret (Rustlight.Esizeof (to_rusttype ty) (to_rusttype ty'))
+      | Clight.Ecast e' ty => 
+          do pe <- cexpr_to_pexpr e';
+          ret (Rustlight.Eas pe (to_rusttype ty))
+      (* | Clight.Ealignof ty ty' => ret (Rustlight.Ealignof (to_rusttype ty) (to_rusttype ty')) *)
+      | _ => error (msg "Unsupported rvalue expression")
+      end
     end.
 
   Fixpoint transl_expr_list (locals: list ident) (el: list Clight.expr) : mon (list Rustlight.pexpr) :=
     match el with
     | nil => ret nil
     | e :: rest =>
-        do pe <- cexpr_to_pexpr locals e;
+        do pe <- cexpr_to_pexpr (expr_depth e) e;
         do rest' <- transl_expr_list locals rest;
         ret (pe :: rest')
     end.
@@ -324,25 +311,27 @@ Section TRANSL.
         do rs2 <- transl_stmt s2;
         ret (Rustlight.Ssequence rs1 rs2)
     | Clight.Sifthenelse e s1 s2 => 
-        do pe <- cexpr_to_pexpr locals e;
+        do pe <- cexpr_to_pexpr (expr_depth e) e;
         do rs1 <- transl_stmt s1;
         do rs2 <- transl_stmt s2;
         ret (Rustlight.Sifthenelse (Rustlight.Epure pe) rs1 rs2)
     | Clight.Sloop s1 s2 => 
         do rs1 <- transl_stmt s1;
-        ret (Rustlight.Sloop rs1)
+        do set2 <- transl_stmt s2;
+        let rs2 := (Rustlight.Ssequence rs1 set2) in
+        ret (Rustlight.Sloop rs2)
     | Clight.Sbreak => ret Rustlight.Sbreak
     | Clight.Scontinue => ret Rustlight.Scontinue
     | Clight.Sassign e1 e2 => 
-        do p <- cexpr_to_place e1;
-        do pe <- cexpr_to_pexpr locals e2;
+        do p <- cexpr_to_place (expr_depth e1) e1;
+        do pe <- cexpr_to_pexpr (expr_depth e2) e2;
         ret (Rustlight.Sassign p (Rustlight.Epure pe))
     | Clight.Sset id e => 
-        do pe <- cexpr_to_pexpr locals e;
+        do pe <- cexpr_to_pexpr (expr_depth e) e;
         ret (Rustlight.Sassign (Rustlight.Plocal id (to_rusttype (Clight.typeof e))) 
                (Rustlight.Epure pe))
     | Clight.Scall optid e args =>
-        do pe <- cexpr_to_pexpr locals e;
+        do pe <- cexpr_to_pexpr (expr_depth e) e;
         do pargs <- transl_expr_list locals args;
         match optid with
         | None => 
@@ -365,7 +354,7 @@ Section TRANSL.
         do dummy_place <- empty_place;
         ret (Rustlight.Sreturn dummy_place)
     | Clight.Sreturn (Some e) => 
-        do pe <- cexpr_to_pexpr locals e;
+        do pe <- cexpr_to_pexpr (expr_depth e) e;
         (* create a temp variable to store return value *)
         do i <- gensym (to_rusttype (Clight.typeof e));
         let ret_place := Rustlight.Plocal i (to_rusttype (Clight.typeof e)) in
@@ -563,7 +552,7 @@ Section TRANSL.
   Local Open Scope gensym_monad_scope.
 
   (* get id from Ctype member *)
-  Fixpoint get_member_id (m: Ctypes.member) : ident :=
+  Definition get_member_id (m: Ctypes.member) : ident :=
     match m with
     | Ctypes.Member_plain id _ => id
     | Ctypes.Member_bitfield id _ _ _ _ _ => id

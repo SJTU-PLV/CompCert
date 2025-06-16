@@ -135,7 +135,7 @@ Fixpoint deref_arg_rec (headty: type) (arg: Clight.expr) (tys: list type) : Clig
   | nil => arg
   | ty :: tys' =>
       (* load the value of ty *)
-      (Ederef (deref_arg_rec ty arg tys') (to_ctype headty))
+      (Clight.Ederef (deref_arg_rec ty arg tys') (to_ctype headty))
   end.
 
 Lemma last_default_unrelate: forall A (l: list A) a d1 d2,
@@ -247,7 +247,7 @@ Definition drop_glue_for_composite (m: PTree.t ident) (co_id: ident) (sv: struct
   (* The only function parameter *)
   let co_ty := (Ctypes.Tstruct co_id noattr) in
   let param_ty := Tpointer co_ty noattr in
-  let deref_param := Ederef (Evar param_id param_ty) co_ty in
+  let deref_param := Clight.Ederef (Evar param_id param_ty) co_ty in
   match sv with
   | Struct =>
       let stmt_list := drop_glue_for_members m deref_param ms in
@@ -424,7 +424,7 @@ Variable dropm: PTree.t ident.  (* map from composite id to its drop glue id *)
 Local Open Scope gensym_monad_scope.
 Local Open Scope error_monad_scope.
 
-Fixpoint find_first_part (max_step: nat)
+(* Fixpoint find_first_part (max_step: nat)
   (l: list ((int * type) * (ident * type) * (binary_operation * type) * pmark))
   : (list _ * list _) :=
   match max_step with
@@ -442,26 +442,9 @@ Fixpoint find_first_part (max_step: nat)
             (h :: fp ++ sp', res)
         end
       end
-  end.
-  
-(* Fixpoint find_first_part 
-(l: list ((int * type) * (ident * type) * binary_operation * pmark)) 
-  : (list ((int * type) * (ident * type) * binary_operation * pmark)) * 
-    (list ((int * type) * (ident * type) * binary_operation * pmark)) :=
-  match l with
-  | [] => ([], [])
-  | h :: t => 
-    match h with
-      | ((i,tyi), (id,ty), bop, first) 
-      | ((i,tyi), (id,ty), bop, second) => ([h],t)
-      | ((i,tyi), (id,ty), bop, third) => 
-        let '(fp, sp) := find_first_part t in
-        let '(sp', res) := find_first_part sp in
-        ([h] ++ fp ++ sp', res)
-    end
   end. *)
-
-Fixpoint get_binary (max_step: nat)
+  
+(* Fixpoint get_binary (max_step: nat)
 (bl:list ((int * type) * (ident * type) * (binary_operation * type) * pmark))
 : res Clight.expr :=
   match max_step with
@@ -486,9 +469,38 @@ Fixpoint get_binary (max_step: nat)
                      OK (Clight.Ebinop bop e1 e2 (to_ctype tye))
           end
       end
-    end.
+    end. *)
 
-Fixpoint place_to_cexpr (p: place) : res Clight.expr :=
+(* The depth of the expression is the maximum depth of its sub-expressions *)
+Fixpoint pexpr_depth (e: pexpr) : nat :=
+  match e with
+  | Eunit => 1
+  | Econst_int _ _ => 1
+  | Econst_float _ _ => 1
+  | Econst_single _ _ => 1
+  | Econst_long _ _ => 1
+  | Eglobal _ _ => 1
+  | Eplace p _ => place_depth p
+  | Eref _ _ p _ => place_depth p + 1
+  | Ecktag p _ => place_depth p + 1
+  | Eunop _ e' _ => pexpr_depth e' + 1
+  | Ebinop _ e1 e2 _ => (pexpr_depth e1) + (pexpr_depth e2) + 1
+  | Esizeof _ _ => 1
+  | Eas e _ => pexpr_depth e + 1
+  | Ederef e _ => pexpr_depth e + 1
+  end
+with place_depth (p: place) : nat :=
+  match p with
+  | Plocal _ _ => 1
+  | Pfield p' _ _ => place_depth p' + 1
+  | Pderef p' _ => place_depth p' + 1
+  | Pdowncast p' _ _ => place_depth p' + 1
+  | Pparenthesize _ _ ls => pexpr_depth ls + 1
+  | ParrayIndex p' _ _ => place_depth p' + 1
+  end.
+
+
+Fixpoint place_to_cexpr (p: place): res Clight.expr :=
   match p with
   | Plocal id ty =>      
       OK (Evar id (to_ctype ty))
@@ -509,7 +521,7 @@ Fixpoint place_to_cexpr (p: place) : res Clight.expr :=
       end    
   | Pderef p' ty =>
     do e <- place_to_cexpr p';
-    OK (Ederef e (to_ctype ty))
+    OK (Clight.Ederef e (to_ctype ty))
   | Pdowncast p fid ty =>
       (** FIXME: how to translate the get expression? *)
       match typeof_place p with
@@ -530,14 +542,17 @@ Fixpoint place_to_cexpr (p: place) : res Clight.expr :=
       end
   | Pparenthesize id ty ls =>
       (* the Ebinop has no more than 50 binary operation *)
-      do e <- get_binary 50%nat ls;
-      OK (Ederef e (to_ctype ty))
+      do e <- pexpr_to_cexpr (id :: nil) ls;
+      if type_eq ty (typeof_pexpr ls) then
+        OK e 
+      else
+        Error (msg "type error in Pparenthesize: place_to_cexpr")
   | _ => Error (msg "place_to_cexpr not support in clightgen")
-  end.
+  end
   
 (* locals are used to check that global variables are disjoint with
 locals to match the eval_Evar_global semantics in Clight *)
-Fixpoint pexpr_to_cexpr (locals: list ident) (e: pexpr) : Errors.res Clight.expr :=
+with pexpr_to_cexpr (locals: list ident) (e: pexpr): Errors.res Clight.expr :=
   match e with
   | Eunit => OK (Clight.Econst_int Int.zero Ctypes.type_int32s)
   | Econst_int i ty => OK (Clight.Econst_int i (to_ctype ty))
@@ -586,6 +601,9 @@ Fixpoint pexpr_to_cexpr (locals: list ident) (e: pexpr) : Errors.res Clight.expr
       OK (Clight.Ecast pe' (to_ctype ty))
   | Esizeof ty ty' =>
       OK (Clight.Esizeof (to_ctype ty) (to_ctype ty')) 
+  | Ederef e ty =>
+      do e' <- pexpr_to_cexpr locals e;
+      OK (Clight.Ederef e' (to_ctype ty))
   end.
 
 Definition expr_to_cexpr locals (e: expr) : res Clight.expr :=
@@ -622,7 +640,7 @@ Definition transl_Sbox locals (temp: ident) (temp_ty: Ctypes.type) (deref_ty: Ct
                      then Clight.Econst_long (Ptrofs.to_int64 (Ptrofs.repr sz)) Ctyping.size_t
                      else Clight.Econst_int (Ptrofs.to_int (Ptrofs.repr sz)) Ctyping.size_t in
       let call_malloc:= (Clight.Scall (Some temp) malloc (sz_expr :: nil)) in
-      let assign_deref_temp := Clight.Sassign (Ederef tempvar deref_ty) e' in
+      let assign_deref_temp := Clight.Sassign (Clight.Ederef tempvar deref_ty) e' in
       OK (Clight.Ssequence call_malloc assign_deref_temp, tempvar)
     else Error (msg "Size of type is not in range (transl_Sbox)")
   else Error (msg "malloc type is not complete (transl_Sbox)").
@@ -643,7 +661,7 @@ Definition expand_drop (temp: ident) (ty: type) : option Clight.statement :=
       (* free(cty (deref temp)), deref temp has type [cty] and [deref
       temp] points to type [cty'] *)      
       let cty := to_ctype ty in
-      let deref_temp := Ederef (Clight.Etempvar temp (Tpointer cty noattr)) cty in
+      let deref_temp := Clight.Ederef (Clight.Etempvar temp (Tpointer cty noattr)) cty in
       Some (call_free deref_temp)
   | Tstruct _ id 
   | Tvariant _ id  =>

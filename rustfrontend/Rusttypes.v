@@ -40,6 +40,7 @@ end.
 (** ** Origins  *)
 
 Definition origin : Type := positive.
+Definition origin_eq_dec:= Pos.eq_dec.
 
 Definition origin_rel : Type := origin * origin.
 

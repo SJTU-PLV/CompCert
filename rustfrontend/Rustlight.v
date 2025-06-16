@@ -13,74 +13,6 @@ Local Open Scope error_monad_scope.
 
 (** * High-level Rust-like language  *)
 
-(** A mark to indicate which element is valid in the tuple *)
-Inductive pmark : Type :=
-| first
-| second
-| third.
-
-(** ** Place (used to build lvalue expression) *)
-
-Inductive place : Type :=
-| Plocal : ident -> type -> place
-| Pfield : place -> ident -> type -> place 
-(**r access a field of struct: p.(id)  *)
-| Pderef : place -> type -> place
-| Pdowncast: place -> ident -> type -> place 
-(**r represent the location of a constructor *)
-| Pparenthesize: ident -> type -> list ((int * type) * 
-    (ident * type) * (binary_operation * type) * pmark) -> place
-| ParrayIndex : place -> ident -> type -> place
-.
-
-Lemma place_eq: forall (p1 p2: place), {p1=p2} + {p1<>p2}.
-Proof.
-  generalize type_eq ident_eq. intros.
-  decide equality.
-  decide equality.
-  decide equality.
-  decide equality.
-  decide equality.
-  decide equality.
-  decide equality.
-  - decide equality.
-    decide equality.
-    decide equality. apply Int.eq_dec.
-Defined.
-
-Global Opaque place_eq.
-
-Definition typeof_place p :=
-  match p with
-  | Plocal _ ty => ty
-  | Pfield _ _ ty => ty
-  | Pderef _ ty => ty
-  | Pdowncast _ _ ty => ty
-  | Pparenthesize _ ty _ => ty
-  | ParrayIndex _ _ ty => ty
-  end.
-
-(* assignee expression 
-  An assignee expression is an expression that appears in the left operand of
-  an assignment expression. Explicitly, the assignee expressions are:
-    Place expressions.
-    Underscores.
-    Tuples of assignee expressions.
-    Slices of assignee expressions.
-    Tuple structs of assignee expressions.
-    Structs of assignee expressions (with optionally named fields).
-    Unit structs.*)
-Inductive aexpr : Type :=
-| Aplace: place -> aexpr
-| Aslice: aexpr -> ident -> type -> aexpr
-.
-
-Definition typeof_aexpr a :=
-  match a with
-  | Aplace p => typeof_place p
-  | Aslice _ _ ty => ty
-  end.
-
 (** ** Size of a type *)
 
 (** In the ISO C standard, size is defined only for complete
@@ -110,7 +42,7 @@ Fixpoint sizeof (env: composite_env) (t: type) : Z :=
   | Tstruct _ id | Tvariant _ id =>
       match env!id with Some co => co_sizeof co | None => 0 end
   end.
-Locate unary_operation.
+
 (** ** Expression *)
 Inductive pexpr : Type :=
 | Eunit                                 (**r unit value  *)
@@ -125,7 +57,164 @@ Inductive pexpr : Type :=
 | Ebinop: binary_operation -> pexpr -> pexpr -> type -> pexpr (**r binary operation *)
 | Eglobal: ident -> type -> pexpr                          (**r constant global variable, we do not give it semantics for now *)
 | Eas: pexpr -> type -> pexpr   (**r type cast (e as ty) *)
-| Esizeof: type -> type -> pexpr.        (**r size of a type *)
+| Esizeof: type -> type -> pexpr     (**r size of a type *)
+| Ederef: pexpr -> type -> pexpr   (**r hold some pexpr converted from Ederef *)
+
+(** ** Place (used to build lvalue expression) *)
+
+with place : Type :=
+| Plocal : ident -> type -> place
+| Pfield : place -> ident -> type -> place 
+(**r access a field of struct: p.(id)  *)
+| Pderef : place -> type -> place
+| Pdowncast: place -> ident -> type -> place 
+(**r represent the location of a constructor *)
+| Pparenthesize: ident -> type -> pexpr -> place
+| ParrayIndex : place -> ident -> type -> place
+.
+
+
+Lemma unary_operation_eq: forall (op1 op2: unary_operation), {op1=op2} + {op1<>op2}.
+Proof.
+  decide equality.
+Qed.
+
+Lemma  binary_operation_eq: forall (op1 op2: binary_operation), {op1=op2} + {op1<>op2}.
+Proof.
+  decide equality.
+Qed.
+
+Scheme pexpr_eq_dec := Induction for pexpr Sort Type
+with place_eq_dec := Induction for place Sort Type.
+Combined Scheme pexpr_place_eq_dec from pexpr_eq_dec, place_eq_dec.
+
+(** The decidable equality for place and pexpr is defined by the
+  decidable equality of their components. *)
+Lemma pexpr_place_eq: (forall (pe1 pe2: pexpr), {pe1=pe2} + {pe1<>pe2})
+  * (forall (p1 p2: place), {p1=p2} + {p1<>p2}).
+Proof.
+  eapply pexpr_place_eq_dec with 
+  (P:=fun pe1 => forall pe2, {pe1 = pe2} + {pe1 <> pe2})
+  (P0:=fun p1 => forall p2, {p1 = p2} + {p1 <> p2}); intros;
+  try (destruct pe2);try (left; reflexivity);
+    try (right; congruence);
+  try (destruct p2);try (left; reflexivity);
+  try (right; congruence);
+  try (destruct (ident_eq i i0); subst; try (right; congruence);
+      destruct (type_eq t t0); subst; auto;
+      try (right; congruence)).
+  -
+    try (left; reflexivity); try (right; congruence).
+    destruct (Int.eq i i0) eqn:EI; subst; try (right; congruence);
+    assert (if Int.eq i i0 then i = i0 else i <> i0) as Hspec by apply Int.eq_spec;
+      rewrite EI in Hspec;
+      try (apply Int.same_if_eq in EI);
+      destruct (type_eq t t0) eqn:ET; subst; auto;
+      try (right; congruence).
+    - destruct (Float.eq_dec f f0) eqn:EF;
+      destruct (type_eq t t0) eqn:ET; subst; auto;
+      try (right; congruence).
+    - destruct (Float32.eq_dec f f0) eqn:EF;
+      destruct (type_eq t t0) eqn:ET; subst; auto;
+      try (right; congruence).
+    - destruct (Int64.eq i i0) eqn:EI;
+      assert (if Int64.eq i i0 then i = i0 else i <> i0) as Hspec by apply Int64.eq_spec;
+      rewrite EI in Hspec;
+      try (apply Int64.same_if_eq in EI);
+      destruct (type_eq t t0) eqn:ET; subst; auto;
+      try (right; congruence).
+    - try(specialize (X p0); destruct X as [HX|HX0]; subst;
+      try (right; congruence);
+      destruct (type_eq t t0); subst; auto;
+      try (right; congruence)).
+     (* destruct (place_eq p p0); subst; try (right; congruence).
+      destruct (type_eq t t0); subst; auto. *)
+      (* right. congruence. *)
+    - specialize (X p0). destruct X as [HX|HX0]; 
+      subst; try (right; congruence).
+      destruct (ident_eq i i0); subst; try (right; congruence).
+      left. auto.
+    - destruct (origin_eq_dec o o0); subst; try (right; congruence).
+      destruct (mutkind_eq m m0); subst; try (right; congruence).
+      specialize (X p0). destruct X as [HX|HX0];
+      subst; try (right; congruence).
+      destruct (type_eq t t0); subst; auto.
+      right. congruence.
+    - destruct (unary_operation_eq u u0); subst; try (right; congruence).
+      destruct (X pe2); subst; try (right; congruence).
+      destruct (type_eq t t0); subst; try (right; congruence); auto.
+      (* right. congruence. *)
+    - destruct (binary_operation_eq b b0); subst; try (right; congruence).
+      destruct (X pe2_1); subst; try (right; congruence).
+      destruct (X0 pe2_2); subst; try (right; congruence).
+      destruct (type_eq t t0); subst; try (right; congruence); auto.
+      (* right. congruence. *)
+    - specialize (X pe2). destruct X as [HX|HX0]; subst;
+      destruct (type_eq t t0); subst; try (right; congruence); auto.
+    - destruct (type_eq t t1); subst; try (right; congruence); auto.
+      destruct (type_eq t0 t2); subst; try (right; congruence); auto.
+    - specialize (X pe2). destruct X as [HX|HX0]; subst;
+      destruct (type_eq t t0); subst; try (right; congruence); auto.
+    - specialize (X p2). destruct X as [HX|HX0]; subst;
+      try (destruct (ident_eq i i0); subst; try (right; congruence);
+      destruct (type_eq t t0); subst; try (right; congruence)); auto.
+      try (right; congruence).
+    - specialize (X p2). destruct X as [HX|HX0]; subst;
+      destruct (type_eq t t0); subst; try (right; congruence); auto.
+    - specialize (X p2). destruct X as [HX|HX0]; subst;
+      try (destruct (ident_eq i i0); subst; try (right; congruence);
+      destruct (type_eq t t0); subst; try (right; congruence)); auto.
+      try (right; congruence).
+    - specialize (X p0). destruct X as [HX|HX0]; subst;
+      try (destruct (ident_eq i i0); subst; try (right; congruence);
+      destruct (type_eq t t0); subst; try (right; congruence)); auto.
+      try (right; congruence).
+    - specialize (X p2). destruct X as [HX|HX0]; subst;
+      try (destruct (type_eq t t0); subst; try (right; congruence)); 
+      auto. try (right; congruence).
+Defined.
+
+Lemma place_eq: forall (p1 p2: place), {p1=p2} + {p1<>p2}.
+Proof.
+  apply (snd pexpr_place_eq).
+Qed.
+
+Lemma pexpr_eq: forall (pe1 pe2: pexpr), {pe1 = pe2} + {pe1 <> pe2}.
+Proof.
+  apply (fst pexpr_place_eq).
+Qed.
+
+
+Definition typeof_place p :=
+  match p with
+  | Plocal _ ty => ty
+  | Pfield _ _ ty => ty
+  | Pderef _ ty => ty
+  | Pdowncast _ _ ty => ty
+  | Pparenthesize _ ty _ => ty
+  | ParrayIndex _ _ ty => ty
+  end.
+
+(* assignee expression 
+  An assignee expression is an expression that appears in the left operand of
+  an assignment expression. Explicitly, the assignee expressions are:
+    Place expressions.
+    Underscores.
+    Tuples of assignee expressions.
+    Slices of assignee expressions.
+    Tuple structs of assignee expressions.
+    Structs of assignee expressions (with optionally named fields).
+    Unit structs.*)
+(* Inductive aexpr : Type :=
+| Aplace: place -> aexpr
+| Aslice: aexpr -> ident -> type -> aexpr
+.
+
+Definition typeof_aexpr a :=
+  match a with
+  | Aplace p => typeof_place p
+  | Aslice _ _ ty => ty
+  end. *)
 
 (* The evaluaiton of expr may produce a moved-out place *)
 Inductive expr : Type :=
@@ -148,6 +237,7 @@ Definition typeof_pexpr (pe: pexpr) : type :=
   | Eglobal _ ty => ty
   | Esizeof _ ty => ty
   | Eas _ ty => ty
+  | Ederef _ ty => ty
   end.
 
 Definition typeof (e: expr) : type :=

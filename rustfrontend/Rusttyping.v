@@ -746,6 +746,13 @@ Fixpoint type_check_pexpr (pe: pexpr) : res unit :=
       Error (msg "Global variables are restricted to be used")
   | Eas _ _
   | Esizeof _ _ => OK tt
+  | Rustlight.Ederef pe ty =>
+      do _ <- type_check_pexpr pe;
+      do ty1 <- type_deref (typeof_pexpr pe);
+      if type_eq ty ty1 then
+        OK tt
+      else
+        Error (msg "Ederef type error")
   end.
 
 Definition type_check_expr (e: expr) : res unit :=

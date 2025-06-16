@@ -198,7 +198,7 @@ Fixpoint transl_value_expr (e: Rustsyntax.expr) : mon (list statement * expr) :=
         ret (nil, Emoveplace p ty)
       else
         ret (nil, Eplace p ty)
-  | Ederef e ty =>
+  | Rustsyntax.Ederef e ty =>
       (* consider *call_allocate_box() *)
       do (sl, p) <- transl_place_expr e;
       let p' := Pderef p ty in

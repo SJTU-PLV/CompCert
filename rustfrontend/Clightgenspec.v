@@ -963,7 +963,7 @@ Lemma generate_drops_inv: forall ce tce dropm id co f,
     (generate_drops ce tce dropm) ! id = Some f ->
     let co_ty := Ctypes.Tstruct id noattr in
     let param_ty := Tpointer co_ty noattr in
-    let deref_param := Ederef (Evar param_id param_ty) co_ty in
+    let deref_param := Clight.Ederef (Evar param_id param_ty) co_ty in
     (* list_disjoint [param_id] (malloc_id :: free_id :: (map snd (PTree.elements dropm))) /\ *)
     match co.(co_sv) with
     | Struct =>

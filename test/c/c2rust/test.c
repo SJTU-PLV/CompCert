@@ -1,40 +1,53 @@
-// #define __FLOAT16_TYPE__ double
-// #define __FLOAT32_TYPE__ double 
-// #define __FLOAT64_TYPE__ double
-
-// #pragma clang float_control(disable)
-// #define _Float16 double
-// #define _Float32 double
-// #define _Float64 double
-
-// #include <math.h>
 #include <stdlib.h>
-// #include <stdio.h>
-// #include <string.h>
-// static inline double eval_A(int i, int j) { return 1.0/((i+j)*(i+j+1)/2+i+1); }
+#include <stdio.h>
+#include <string.h>
 
-// void eval_A_times_u(int N, const double u[], double Au[])
-// {
-//   int i,j;
-//   for(i=0;i<N;i++)
-//     {
-//       Au[i]=0;
-//       for(j=0;j<N;j++) Au[i]+=eval_A(i,j)*u[j];
-//     }
-// }
-void eval_AtA_times_u(int N, const double u[], double AtAu[])
-{
-  double *v = (double *)malloc(N * sizeof(double));
- // for (int i = 0; i < N; i++) v[i] = 0; // 初始化所有元素
-//   eval_A_times_u(N,u,v);
-//   eval_At_times_u(N,v,AtAu);
-  free(v);
+void quicksort(int lo, int hi, int base[])
+{ 
+  int i,j;
+  int pivot,temp;
+    
+  if (lo<hi) {
+    for (i=lo,j=hi,pivot=base[hi];i<j;) {
+      while (i<hi && base[i]<=pivot) i++;
+      while (j>lo && base[j]>=pivot) j--;
+      if (i<j) { temp=base[i]; base[i]=base[j]; base[j]=temp; }
+    }
+    temp=base[i]; base[i]=base[hi]; base[hi]=temp;
+    quicksort(lo,i-1,base);  quicksort(i+1,hi,base);
+  }
 }
-int main(int argc, char ** argv){
-    // #ifdef __STDC_NO_FLOAT64__
-    // printf("_Float64 is disabled\n");
-    // #else
-    // printf("_Float64 is enabled\n");
-    // #endif
-    return 0;
+
+int cmpint(const void * i, const void * j)
+{
+  int vi = *((int *) i);
+  int vj = *((int *) j);
+  if (vi == vj) return 0;
+  if (vi < vj) return -1;
+  return 1;
+}
+
+#define NITER 10
+
+int main(int argc, char ** argv)
+{
+  int n, i, j;
+  int * a, * b;
+
+  if (argc >= 2) n = atoi(argv[1]); else n = 100000;
+  a = malloc(n * sizeof(int));
+  b = malloc(n * sizeof(int));
+  for (j = 0; j < NITER; j++) {
+    for (i = 0; i < n; i++) b[i] = a[i] = rand() & 0xFFFF;
+    quicksort(0, n - 1, a);
+  }
+  qsort(b, n, sizeof(int), cmpint);
+  for(int i = 0; i < n; i++) {
+    printf("a:%d, b:%d \n", a[i], b[i]);
+  }
+//   for (i = 0; i < n; i++) {
+//     if (a[i] != b[i]) { printf("Bug!\n"); return 2; }
+//   }
+//   printf("OK\n");
+  return 0;
 }
