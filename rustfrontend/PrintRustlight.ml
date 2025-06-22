@@ -251,8 +251,12 @@ let print_function p id f =
         (* Print variables and their types *)
         List.iter
         (fun (id, ty) ->
-          fprintf p "%s;@ " (name_rust_decl (extern_atom id) ty))
+          fprintf p "fn_vars: %s;@ " (name_rust_decl (extern_atom id) ty))
         f.fn_vars;
+        List.iter
+        (fun (id, ty) ->
+          fprintf p "fn_param: %s;@ " (name_rust_decl (extern_atom id) ty))
+        f.fn_params;
         print_stmt p f.fn_body;
       fprintf p "@;<0 -2>}@]@ @ "
 

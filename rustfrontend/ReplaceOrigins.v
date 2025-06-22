@@ -184,6 +184,12 @@ Section TYPE_ENV.
         do pe1' <- replace_origin_pure_expr pe1;
         do pe2' <- replace_origin_pure_expr pe2;
         OK (Ebinop bop pe1' pe2' ty)
+    | Eas asop pe ty =>
+        do pe' <- replace_origin_pure_expr pe;
+        OK (Eas asop pe' ty)
+    | Rustlight.Ederef p ty =>
+        do p' <- replace_origin_place p;
+        OK (Rustlight.Ederef p' ty)
     | _ => OK pe
     end.
 

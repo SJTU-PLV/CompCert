@@ -110,9 +110,15 @@ with to_rusttypelist (tyl: Ctypes.typelist) : Rusttypes.typelist :=
            Rusttypes.Tcons (to_rusttype ty) (to_rusttypelist tyl)
        end.
 
-Definition get_return_type (ty: type) : option type :=
-  match ty with
-  | Tfunction _ _ _ ty' _ => Some ty'
+Definition get_return_type fe : option type :=
+  match fe with
+  | Evar _ fty 
+  | Etempvar _ fty=>
+      match fty with
+      | Tpointer (Ctypes.Tfunction _ ty' _) _
+      | Ctypes.Tfunction _ ty' _=> Some (to_rusttype ty')
+      | _ => None
+      end
   | _ => None
   end.
 
@@ -178,7 +184,7 @@ Section TRANSL.
                 do e2' <- cexpr_to_pexpr e2;
                 let rty := to_rusttype ty in
                 let re := Rustlight.Ebinop op e1' e2' rty in
-                ret (Rustlight.Pparenthesize i (to_rusttype ty) re)
+                ret (Rustlight.Pparenthesize i rty re)
             | _ =>
                 error (msg "not pointer, Unsupported lvalue binary operation")
             end
@@ -209,7 +215,7 @@ Section TRANSL.
       | Clight.Etempvar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
       | Clight.Ederef e' ty=>
           match e' with
-          | Clight.Ebinop op e1 e2 ty =>
+          | Clight.Ebinop op e1 e2 ty1 =>
               match op with
               | Oadd => 
                   do p <- sub_cexpr_to_place e';
@@ -340,8 +346,8 @@ Section TRANSL.
             ret (Rustlight.Scall dummy_place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
         | Some id => 
             (* with return value *)
-            let func_ty := to_rusttype (Clight.typeof e) in
-            match get_return_type func_ty with
+            (* let func_ty := to_rusttype (Clight.typeof e) in *)
+            match get_return_type e with
             | Some ty' =>
                 let place := Rustlight.Plocal id ty' in
                 ret (Rustlight.Scall place (Rustlight.Epure pe) (map pexpr_to_expr pargs))

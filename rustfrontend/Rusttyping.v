@@ -744,7 +744,8 @@ Fixpoint type_check_pexpr (pe: pexpr) : res unit :=
         Error (msg "Ebinop type error")
   | Eglobal _ _ =>
       Error (msg "Global variables are restricted to be used")
-  | Eas _ _
+  | Eas pe _ =>
+      type_check_pexpr pe
   | Esizeof _ _ => OK tt
   | Rustlight.Ederef pe ty =>
       do _ <- type_check_pexpr pe;

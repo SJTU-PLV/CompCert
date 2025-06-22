@@ -64,6 +64,94 @@ Module DS := Dataflow_Solver(IM)(NodeSetForward).
 
 Local Open Scope error_monad_scope.
 
+Require Import BinPosDef.
+Require Import String.
+Require Import Ascii.
+
+(* 数字转字符（0-9） *)
+Definition digit_to_char (n: Z) : ascii :=
+  ascii_of_nat (Z.to_nat (n + 10) mod 10 + 48). (* 安全处理负数 *)
+
+(* 使用 Program Fixpoint 确保终止性 *)
+Program Fixpoint z_to_digits_aux (n: Z) (acc: list ascii) 
+  {measure (Z.to_nat (Z.abs n))} : list ascii :=
+  match n with
+  | Z0 => acc
+  | _ =>
+      let (q, r) := Z.quotrem n 10 in
+      z_to_digits_aux q (digit_to_char r :: acc)
+  end.
+Next Obligation.
+Admitted.
+
+(* 处理符号和零 *)
+Definition z_to_digits (z: Z) : list ascii :=
+  match z with
+  | Z0 => ["0"%char]
+  | Zpos p => z_to_digits_aux (Zpos p) []
+  | Zneg p => "-"%char :: z_to_digits_aux (Zpos p) []
+  end.
+
+(* 最终转换函数 *)
+Definition z_to_string (z: positive) : string :=
+  string_of_list_ascii (z_to_digits (Z.pos z)).
+
+(* 测试 *)
+Compute z_to_string 42.     (* "42" *)
+Compute z_to_string 1.      (* "0" *)
+
+(* Fixpoint positive_to_bin_string (p : positive) : string :=
+  match p with
+  | xH => "1"%string (* 1 *)
+  | xO p' => append (positive_to_bin_string p') "0"%string (* 2*p → 加 "0" *)
+  | xI p' => append (positive_to_bin_string p') "1"%string (* 2*p +1 → 加 "1" *)
+  end. *)
+
+(* 辅助函数：将place转为字符串 *)
+Fixpoint show_place (p: place) : string :=
+  match p with
+  | Plocal id ty => "Plocal(" ++  z_to_string id ++ ")"
+  | Pfield p' fid ty => "Pfield(" ++ show_place p' ++ ")"
+  | Pderef p' ty => "Pderef(" ++ show_place p' ++ ")"
+  | Pdowncast p' n ty => "Pdowncast(" ++ show_place p' ++ ")"
+  | Pparenthesize id _ _ => "Pparen(" ++ z_to_string id ++ ")"
+  | ParrayIndex p' e ty => "ParrayIndex(" ++ show_place p' ++ ")"
+  end.
+
+(* 辅助函数：将Paths.t转为字符串 *)
+Definition show_paths (ps: Paths.t) : string :=
+  let l := Paths.elements ps in
+  "{" ++ String.concat ", " (List.map show_place l) ++ "}".
+
+(* 辅助函数：将PathsMap.t转为字符串 *)
+Definition show_whole (whole: PathsMap.t) : string :=
+  let l := PTree.elements whole in
+  String.concat "; " (List.map 
+  (fun '(id, ps) => 
+    z_to_string id ++ ":" ++ show_paths ps)%string l).
+
+
+(* 辅助函数：将PMap.t PathsMap.t转为字符串 *)
+Definition show_map (m: PMap.t PathsMap.t) : string :=
+  let l := PMap.elements m in
+  String.concat " \n " (List.map (fun '(pc, pm) => 
+    (String.append "pc " (String.append (z_to_string pc) (String.append ": " (show_whole pm))))
+  ) l).
+
+(* 辅助函数：将 DS.L.t 转为字符串 *)
+Definition show_L (l: DS.L.t) : string :=
+  match l with
+  | IM.State pm => show_whole pm  (* 假设 IM.State 包含 PathsMap.t *)
+  | _ => "<unknown L.t>"          (* 其他情况的默认处理 *)
+  end.
+
+(* 辅助函数：将 PMap.t DS.L.t 转为字符串 *)
+Definition show_L_map (m: PMap.t DS.L.t) : string :=
+  let l := PMap.elements m in
+  String.concat "  \n  " (List.map (fun '(pc, pm) => 
+    (String.append "pc " (String.append (z_to_string pc) (String.append ": " (show_L pm))))
+  ) l).
+
 (* The analyze returns the MaybeInit and MaybeUninit sets along with
 the universe set *)
 Definition analyze (ce: composite_env) (f: function) (cfg: rustcfg) (entry: node) : Errors.res (PMap.t IM.t * PMap.t IM.t * PathsMap.t) :=
@@ -90,7 +178,10 @@ Definition analyze (ce: composite_env) (f: function) (cfg: rustcfg) (entry: node
           if IM.beq (IM.State whole) (IM.lub initMap!!entry uninitMap!!entry) then
             Errors.OK (initMap, uninitMap, whole)
           else
-            Errors.Error (msg "consistence checking error in analyze")
+          Errors.Error (msg ("consistence checking error in analyze\n" ++
+          "whole: " ++ show_whole whole ++ "\n               " ++
+          "initMap: " ++ show_L_map initMap ++ "\n            " ++
+          "uninitMap: " ++ show_L_map uninitMap))
   | _, _ => Errors.Error (msg "Error in initialize analysis")
   end.
 
@@ -1635,5 +1726,3 @@ Qed.
 
 
 End SOUNDNESS.
-
-

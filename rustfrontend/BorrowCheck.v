@@ -440,7 +440,7 @@ Fixpoint transfer_pure_expr (pc: node) (pe: pexpr) (m: amem) : res (aval * amem)
       match v1, v2 with
       | Scalar, Scalar => OK (Scalar, m2)
       | _, _ => OK (Vbot, m2)
-      end          
+      end   
   end.
 
 

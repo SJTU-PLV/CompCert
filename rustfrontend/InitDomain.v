@@ -211,6 +211,10 @@ Fixpoint collect_pexpr (pe: pexpr) (m: PathsMap.t) : PathsMap.t :=
       collect_pexpr pe m
   | Ebinop _ pe1 pe2 _ =>
       collect_pexpr pe2 (collect_pexpr pe1 m)
+  | Eas pe _ =>
+      collect_pexpr pe m
+  | Rustlight.Ederef pe _ =>
+      collect_pexpr pe m
   (* note that we do not collect global variable *)
   | _ => m
 end.          

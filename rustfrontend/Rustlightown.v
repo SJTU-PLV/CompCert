@@ -181,6 +181,10 @@ Fixpoint own_check_pexpr (own: own_env) (pe: pexpr) : bool :=
       own_check_pexpr own pe
   | Ebinop _ pe1 pe2 _ =>
       own_check_pexpr own pe1 && own_check_pexpr own pe2
+  | Eas pe _ =>
+      own_check_pexpr own pe
+  | Rustlight.Ederef pe _ =>
+      own_check_pexpr own pe
   | _ => true
 end.          
   

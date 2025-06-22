@@ -132,6 +132,8 @@ Fixpoint move_check_pexpr (pe : pexpr) : bool :=
   | Eglobal _ _ => false
   | Eunop _ pe0 _ => move_check_pexpr pe0
   | Ebinop _ pe1 pe2 _ => move_check_pexpr pe1 && move_check_pexpr pe2
+  | Eas pe _ => move_check_pexpr pe
+  | Rustlight.Ederef pe ty => move_check_pexpr pe
   | _ => true
   end.
 
