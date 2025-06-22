@@ -29,7 +29,6 @@ transl_program间接使用了transl_function，这个函数和其它中间代码
 
 最后就是要把clight的表达式转换为rustlight中的place或者pexpr两种表达式了。这里值得注意的是，为了支持clight中的指针运算的转换，我将a[1],即clight中的*（a+1）转换为rustlight中的place表达式PparenPparenthesize。具体定义如下
 ```
-PparenPparenthesize: ident -> type -> list ((int * type) * 
-    (ident * type) * (binary_operation * type) * pmark) -> place
+PparenPparenthesize: ident -> type -> pexpr -> place
 ```
-我将clight的二元表达式，转换成了波兰表达式（前缀算法），这样就可以方便地将*（a+1）转换成rust中的*b.as_mut_ptr().offset(1)。至于更复杂的，b[((a+c+2)|2)<<3]被转换成*b.as_mut_ptr().offset(((((a+c)+2)|2)<<3))。然后，我在clightgen中将这种波兰表达式又还原成了clight的中缀表达式。
+其中pexpr部分一般是二元表达式，其第一个参数指针（数组下标），第二个元素是偏移（索引），这样就可以方便地将*（a+1）转换成rust中的*a.as_mut_ptr().offset(1)。

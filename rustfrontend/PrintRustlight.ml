@@ -38,57 +38,6 @@ let string_of_op op=
   | Oge -> ">="
   (* | _ -> "no support this operation" *)
 
-(* let print_paren_list out ll =
-  match ll with
-  | [] -> ()
-  | _ -> List.iter (fun (eid, _) -> fprintf out ".offset(%s)" (extern_atom eid)) ll *)
-
-let rec print_place out (p: place) =
-  match p with
-  | Plocal(id, _) ->
-    fprintf out "%s" (extern_atom id)
-  | Pderef(p', _) ->
-    fprintf out "*%a " print_place p'
-  | Pfield(p', fid, _) ->
-    fprintf out "%a.%s" print_place p' (extern_atom fid)
-  | Pdowncast(p',fid, _) ->
-    fprintf out "(%a as %s)" print_place p' (extern_atom fid)
-  | Pparenthesize(pid, _, ll) ->
-    fprintf out "(arrayParen %s)" (extern_atom pid)
-    (* let b = Buffer.create 50 in
-      let rec aux = function
-      | [] -> ()
-      | (((((num, _), (id, _)), (op, _)), mark) :: rest) ->
-        match mark with
-        | Coq_first ->
-          Buffer.add_string b (extern_coqZ num)
-        | Coq_second ->
-          Buffer.add_string b (extern_atom id);
-        | Coq_third ->
-          let op_str = string_of_op op in
-          Buffer.add_string b "(";
-          let (p1,r1) = find_first_part rest in
-          aux p1;
-          Buffer.add_string b op_str;
-          let (p2,r2) = find_first_part r1 in
-          aux p2;
-          Buffer.add_string b ")";
-      in
-      begin
-      match ll with
-      | (((((_, _), (_, _)), (Oadd, _)), Coq_third) :: rest) ->
-        begin
-        match rest with
-        | (((((num, _), (id, _)), (op, _)), mark) :: rest_ll) ->
-          aux rest_ll;
-          fprintf out "%s.as_mut_ptr().offset(%s)" (extern_atom id) (Buffer.contents b)
-        |_ -> fprintf err_formatter "@[<2>Error place list in print_place@]@."
-        end
-      | _ -> fprintf err_formatter "@[<2>Error place list in print_place@]@."
-      end *)
-    (* print_paren_list out ll; *)
-  | ParrayIndex(p', aid, _) ->
-      fprintf out "(%a as %s)" print_place p' (extern_atom aid)
 
 (* Precedences and associativity (copy from PrintClight.ml) *)
 
@@ -119,9 +68,31 @@ let precedence = function
   | Emoveplace(_,_) -> (16,NA)
   | Epure pe -> precedence' pe
 
+  let rec print_place out (p: place) =
+    match p with
+    | Plocal(id, _) ->
+      fprintf out "%s" (extern_atom id)
+    | Pderef(p', _) ->
+      fprintf out "*%a " print_place p'
+    | Pfield(p', fid, _) ->
+      fprintf out "%a.%s" print_place p' (extern_atom fid)
+    | Pdowncast(p',fid, _) ->
+      fprintf out "(%a as %s)" print_place p' (extern_atom fid)
+    | Pparenthesize(pid, _, ll) ->
+      begin
+      match ll with
+      | Ebinop(op, lb, lr, _) ->
+          fprintf out "%a.as_mut_ptr().offset(%a)" pexpr (0, lb) pexpr (0, lr);
+          ()
+      | _ -> 
+        fprintf out "error in Pparenthesize";()
+      end
+    | ParrayIndex(p', aid, _) ->
+        fprintf out "(%a as %s)" print_place p' (extern_atom aid)
+
 (* Expressions *)
 
-let rec pexpr p (prec, e) =
+and pexpr p (prec, e) =
   let (prec', assoc) = precedence' e in
   let (prec1, prec2) =
     if assoc = LtoR
