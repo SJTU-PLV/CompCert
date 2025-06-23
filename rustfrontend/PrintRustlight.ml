@@ -73,7 +73,7 @@ let precedence = function
     | Plocal(id, _) ->
       fprintf out "%s" (extern_atom id)
     | Pderef(p', _) ->
-      fprintf out "*%a " print_place p'
+      fprintf out "*%a" print_place p'
     | Pfield(p', fid, _) ->
       fprintf out "%a.%s" print_place p' (extern_atom fid)
     | Pdowncast(p',fid, _) ->

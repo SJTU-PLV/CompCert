@@ -32,18 +32,21 @@ Import ListNotations.
 
 (* Local Open Scope error_monad_scope. *)
 
-Parameter dummy_origin : unit -> origin.
+(* Parameter dummy_origin : unit -> origin. *)
 
 (** State and error monad for generating fresh identifiers. *)
 
+(* get a fresh atom and update the next atom *)
+Parameter fresh_atom: unit -> ident.
+
 Record generator : Type := mkgenerator {
-                               gen_next: ident;
+                               (* gen_next: ident; *)
                                gen_trail: list (ident * type)
                              }.
 
 Inductive result (A: Type) (g: generator) : Type :=
 | Err: Errors.errmsg -> result A g
-| Res: A -> forall (g': generator), Ple (gen_next g) (gen_next g') -> result A g.
+| Res: A -> forall (g': generator), (* Ple (gen_next g) (gen_next g') -> *)result A g.
 
 Arguments Err [A g].
 Arguments Res [A g].
@@ -51,7 +54,7 @@ Arguments Res [A g].
 Definition mon (A: Type) := forall (g: generator), result A g.
 
 Definition ret {A: Type} (x: A) : mon A :=
-  fun g => Res x g (Ple_refl (gen_next g)).
+  fun g => Res x g (*(Ple_refl (gen_next g))*).
 
 Definition error {A: Type} (msg: Errors.errmsg) : mon A :=
   fun g => Err msg.
@@ -60,10 +63,10 @@ Definition bind {A B: Type} (x: mon A) (f: A -> mon B) : mon B :=
   fun g =>
     match x g with
     | Err msg => Err msg
-    | Res a g' i =>
+    | Res a g' =>
         match f a g' with
         | Err msg => Err msg
-        | Res b g'' i' => Res b g'' (Ple_trans _ _ _ i i')
+        | Res b g'' => Res b g'' (*(Ple_trans _ _ _ i i')*)
         end
     end.
 
@@ -78,14 +81,14 @@ Notation "'do' ( X , Y ) <- A ; B" := (bind2 A (fun X Y => B))
                                         (at level 200, X ident, Y ident, A at level 100, B at level 200)
     : gensym_monad_scope.
 
-Definition initial_generator (max_id: ident) : generator :=
-  mkgenerator max_id nil.
+Definition initial_generator (* (max_id: ident)*) : generator :=
+  mkgenerator (* max_id *) nil.
 
 Definition gensym (ty: type): mon ident :=
   fun (g: generator) =>
-    Res (gen_next g)
-      (mkgenerator (Pos.succ (gen_next g)) ((gen_next g, ty) :: gen_trail g))
-      (Ple_succ (gen_next g)).
+    let fresh_id := fresh_atom tt in
+    Res fresh_id
+        (mkgenerator ((fresh_id, ty) :: gen_trail g)).
 
 (** Convert Clight type to Rustlight type *)
 Fixpoint to_rusttype (ty: Ctypes.type): Rusttypes.type :=
@@ -389,14 +392,14 @@ Section TRANSL.
     end.
 
     (* get most largest id in id list *)
-  Fixpoint max_pos (l: list positive) : positive :=
+  (* Fixpoint max_pos (l: list positive) : positive :=
     match l with
     | nil => 1%positive (* 默认最小值 *)
     | hd :: tl => Pos.max hd (max_pos tl)
-    end.
+    end. *)
   
   (* get all id from expr in clight *)
-  Fixpoint get_ids_expr (e: Clight.expr) : list positive :=
+  (* Fixpoint get_ids_expr (e: Clight.expr) : list positive :=
     match e with
     | Clight.Evar id _ => [id]
     | Clight.Etempvar id _ => [id]
@@ -407,10 +410,10 @@ Section TRANSL.
     | Clight.Ecast e1 _ => get_ids_expr e1
     | Clight.Efield e1 _ _ => get_ids_expr e1
     | _ => []
-    end.
+    end. *)
 
   (* get all id from statement in clight *)
-  Fixpoint get_ids_stmt (s: Clight.statement) : list positive :=
+  (* Fixpoint get_ids_stmt (s: Clight.statement) : list positive :=
     match s with
     | Clight.Sskip => []
     | Clight.Sassign e1 e2 => get_ids_expr e1 ++ get_ids_expr e2
@@ -442,82 +445,71 @@ Section TRANSL.
     | Clight.LSnil => []
     | Clight.LScons _ st ls => 
         get_ids_stmt st ++ get_ids_labeled_statements ls
-    end.
+    end. *)
 
   (* get all id from function in clight *)
-  Definition get_max_id_function (f: Clight.function) : positive :=
-  max_pos (get_ids_stmt f.(Clight.fn_body)).
+  (* Definition get_max_id_function (f: Clight.function) : positive :=
+  max_pos (get_ids_stmt f.(Clight.fn_body)). *)
 
   (** Convert Clight function to Rustlight function *)
   Definition transl_function (main_id: ident) (id: ident) (f: Clight.function): res Rustlight.function :=
     let locals := List.map (@fst ident _) (Clight.fn_params f ++ Clight.fn_vars f ++ Clight.fn_temps f) in
-    (* let max_id := Pos.succ (get_max_id_function f) in *)
-    let max_id := Pos.succ (max_pos locals) in
+    (* let max_id := Pos.succ (max_pos locals) in *)
     (* main function in rust is different in c 
      c:    int main() { ...; return 0; }
      rust: fn main() {}  *)
     if ident_eq main_id id then
       match f.(Clight.fn_body) with
-      (* match transl_stmt locals (Clight.fn_body f) (initial_generator tt) with
-      | Err msg => Error msg
-      | Res body g i =>
-          match body with
-          | Rustlight.Ssequence inner_stmt _ =>  
-          (* delete Ssequence (return 0) *)
-              (* match inner_stmt with
-              | Rustlight.Ssequence inner_stmt' _ =>   *)
-                  OK {| Rustlight.fn_generic_origins := [];
-                  Rustlight.fn_origins_relation := [];
-                  Rustlight.fn_drop_glue := None;
-                  Rustlight.fn_return := Tunit;  
-                  (* In rust, return value of main is Tunit *)
-                  Rustlight.fn_callconv := (Clight.fn_callconv f);
-                  Rustlight.fn_vars := (List.map (fun '(id, ty) => (id, to_rusttype ty)) 
-                                        (Clight.fn_vars f ++ Clight.fn_temps f)) ++ g.(gen_trail);
-                  Rustlight.fn_params := List.map (fun '(id, ty) => (id, to_rusttype ty)) 
-                                           (Clight.fn_params f);
-                  Rustlight.fn_body := inner_stmt
-                |} (* delete Ssequence (return 0) again, I don't know why clight has two return 0; *)
-              (* | _ => Error (msg "error main function in transl_function in Clight2Rustlight.v")
-              end *)
-          | _ => Error (msg "error main function in transl_function in Clight2Rustlight.v")
-          end *)
       | Clight.Ssequence inner_stmt _ =>  (* delete Ssequence (return 0) *)
-              match transl_stmt locals inner_stmt (initial_generator max_id) with
+              match transl_stmt locals inner_stmt initial_generator with
               | Err msg => Error msg
-              | Res body g i =>
-                  OK {| Rustlight.fn_generic_origins := [];
-                       Rustlight.fn_origins_relation := [];
-                       Rustlight.fn_drop_glue := None;
-                       Rustlight.fn_return := Tunit;  
-                       (* In rust, return value of main is Tunit *)
-                       Rustlight.fn_callconv := (Clight.fn_callconv f);
-                       (* Rustlight.fn_vars := locals ++ g.(gen_trail); *)
-                       Rustlight.fn_vars := (List.map (fun '(id, ty) => (id, to_rusttype ty)) 
-                                               (Clight.fn_vars f ++ Clight.fn_temps f)) ++ g.(gen_trail);
-                       Rustlight.fn_params := List.map (fun '(id, ty) => (id, to_rusttype ty)) 
-                                                (Clight.fn_params f);
-                       Rustlight.fn_body := body
-                     |}
+              | Res body g =>
+                  (* check that temporaries are not repeated *)
+                  if list_norepet_dec ident_eq (var_names g.(gen_trail)) then
+                    if list_disjoint_dec ident_eq locals (var_names g.(gen_trail)) then
+                    OK {| Rustlight.fn_generic_origins := [];
+                         Rustlight.fn_origins_relation := [];
+                         Rustlight.fn_drop_glue := None;
+                         Rustlight.fn_return := Tunit;  
+                         (* In rust, return value of main is Tunit *)
+                         Rustlight.fn_callconv := (Clight.fn_callconv f);
+                         (* Rustlight.fn_vars := locals ++ g.(gen_trail); *)
+                         Rustlight.fn_vars := (List.map (fun '(id, ty) => (id, to_rusttype ty)) 
+                                                 (Clight.fn_vars f ++ Clight.fn_temps f)) ++ g.(gen_trail);
+                         Rustlight.fn_params := List.map (fun '(id, ty) => (id, to_rusttype ty)) 
+                                                  (Clight.fn_params f);
+                         Rustlight.fn_body := body
+                       |}
+                    else
+                      Error (msg "temporary variables in Clight2rustlight are not disjoint with locals")
+                  else
+                    Error (msg "repeated temporary variables in Clight2rustlight")
               end
       | _ => Error (msg "Main function has unexpected structure")
       end
     else
       (* other function *)
-      match transl_stmt locals (Clight.fn_body f) (initial_generator max_id) with
+      match transl_stmt locals (Clight.fn_body f) initial_generator with
       | Err msg => Error msg
-      | Res body g i =>
-          OK {| Rustlight.fn_generic_origins := [];
-               Rustlight.fn_origins_relation := [];
-               Rustlight.fn_drop_glue := None;
-               Rustlight.fn_return := to_rusttype (Clight.fn_return f);
-               Rustlight.fn_callconv := (Clight.fn_callconv f);
-               Rustlight.fn_vars := (List.map (fun '(id, ty) => (id, to_rusttype ty)) 
-                                       (Clight.fn_vars f ++ Clight.fn_temps f)) ++ g.(gen_trail);
-               Rustlight.fn_params := List.map (fun '(id, ty) => (id, to_rusttype ty)) 
-                                        (Clight.fn_params f);
-               Rustlight.fn_body := body
-             |}
+      | Res body g =>
+          (* check that temporaries are not repeated *)
+          if list_norepet_dec ident_eq (var_names g.(gen_trail)) then
+            if list_disjoint_dec ident_eq locals (var_names g.(gen_trail)) then
+            OK {| Rustlight.fn_generic_origins := [];
+                 Rustlight.fn_origins_relation := [];
+                 Rustlight.fn_drop_glue := None;
+                 Rustlight.fn_return := to_rusttype (Clight.fn_return f);
+                 Rustlight.fn_callconv := (Clight.fn_callconv f);
+                 Rustlight.fn_vars := (List.map (fun '(id, ty) => (id, to_rusttype ty)) 
+                                         (Clight.fn_vars f ++ Clight.fn_temps f)) ++ g.(gen_trail);
+                 Rustlight.fn_params := List.map (fun '(id, ty) => (id, to_rusttype ty)) 
+                                          (Clight.fn_params f);
+                 Rustlight.fn_body := body
+               |}
+            else
+              Error (msg "temporary variables in Clight2rustlight are not disjoint with locals")
+          else
+            Error (msg "repeated temporary variables in Clight2rustlight")
       end.
   
 
@@ -582,8 +574,8 @@ Section TRANSL.
     end.
 
   (* get max id from Ctype composite_definition list *)
-  Definition get_max_composite_definition_id (cd: list Ctypes.composite_definition) : ident :=
-    max_pos (get_composite_definition_ids cd).
+  (* Definition get_max_composite_definition_id (cd: list Ctypes.composite_definition) : ident :=
+    max_pos (get_composite_definition_ids cd). *)
     
   (* convert Ctype member to Rusttype member *)
   Fixpoint convert_members (ms:Ctypes.members) : mon Rusttypes.members :=
@@ -620,11 +612,11 @@ Section TRANSL.
     OK (mkglobvar info' g.(gvar_init) g.(gvar_readonly) g.(gvar_volatile)). 
 
   Definition transl_program (p: Clight.program): res program :=
-    let max_composite_definition_id := get_max_composite_definition_id (Ctypes.prog_types p) in
+    (* let max_composite_definition_id := get_max_composite_definition_id (Ctypes.prog_types p) in *)
     (* create initial generator with max id *)
-    let initial_gen := initial_generator (Pos.succ max_composite_definition_id) in
+    let initial_gen := initial_generator (*(Pos.succ max_composite_definition_id)*) in
     match convert_composite_definition (Ctypes.prog_types p) initial_gen with
-    | Res co_defs g i =>
+    | Res co_defs g =>
         let tce := Rusttypes.build_composite_env co_defs in
         (match tce with
          | OK tce =>
