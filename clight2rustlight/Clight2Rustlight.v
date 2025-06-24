@@ -30,10 +30,6 @@ Require Import rustfrontend.Rustlight.
 
 Import ListNotations.
 
-(* Local Open Scope error_monad_scope. *)
-
-(* Parameter dummy_origin : unit -> origin. *)
-
 (** State and error monad for generating fresh identifiers. *)
 
 (* get a fresh atom and update the next atom *)
@@ -507,7 +503,18 @@ Section TRANSL.
                  Rustlight.fn_body := body
                |}
             else
-              Error (msg "temporary variables in Clight2rustlight are not disjoint with locals")
+              let vars := flat_map (fun '(id, ty) => [POS id; MSG " "]) (Clight.fn_vars f) in
+              let temps := flat_map (fun '(id, ty) => [POS id; MSG " "]) (Clight.fn_temps f) in
+              let params := flat_map (fun '(id, ty) => [POS id; MSG " "]) (Clight.fn_params f) in
+              let g_trail := flat_map (fun '(id, ty) => [POS id; MSG " "]) g.(gen_trail) in
+              let msg := 
+                MSG "temporary variables in Clight2rustlight are not disjoint with locals" ::
+                MSG "      vars: " :: vars ++
+                MSG "           temps: " :: temps ++
+                MSG "           params: " :: params ++
+                MSG "           g_trail: " :: g_trail ++
+                nil in
+              Error msg
           else
             Error (msg "repeated temporary variables in Clight2rustlight")
       end.
