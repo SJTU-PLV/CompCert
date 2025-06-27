@@ -33,16 +33,32 @@ Import ListNotations.
 (** State and error monad for generating fresh identifiers. *)
 
 (* get a fresh atom and update the next atom *)
-Parameter fresh_atom: unit -> ident.
+(* Local Open Scope error_monad_scope. *)
+
+Parameter fresh_atom : unit -> ident.
+Definition max_nat_limit := 1000000%positive.
+(** State and error monad for generating fresh identifiers. *)
 
 Record generator : Type := mkgenerator {
-                               (* gen_next: ident; *)
+                               gen_next: ident;
                                gen_trail: list (ident * type)
                              }.
 
+(* 查找第一个可用标识符的辅助函数 *)
+Fixpoint find_fresh (candidate: positive) (locals: list ident) (max_limit: nat):=
+  match max_limit with
+  | S n =>
+      if in_dec ident_eq candidate locals then
+          find_fresh (Pos.succ candidate) locals n
+      else
+          candidate
+  | 0%nat =>
+      max_nat_limit
+  end.
+
 Inductive result (A: Type) (g: generator) : Type :=
 | Err: Errors.errmsg -> result A g
-| Res: A -> forall (g': generator), (* Ple (gen_next g) (gen_next g') -> *)result A g.
+| Res: A -> forall (g': generator), result A g.
 
 Arguments Err [A g].
 Arguments Res [A g].
@@ -50,7 +66,7 @@ Arguments Res [A g].
 Definition mon (A: Type) := forall (g: generator), result A g.
 
 Definition ret {A: Type} (x: A) : mon A :=
-  fun g => Res x g (*(Ple_refl (gen_next g))*).
+  fun g => Res x g.
 
 Definition error {A: Type} (msg: Errors.errmsg) : mon A :=
   fun g => Err msg.
@@ -62,7 +78,7 @@ Definition bind {A B: Type} (x: mon A) (f: A -> mon B) : mon B :=
     | Res a g' =>
         match f a g' with
         | Err msg => Err msg
-        | Res b g'' => Res b g'' (*(Ple_trans _ _ _ i i')*)
+        | Res b g'' => Res b g'' 
         end
     end.
 
@@ -77,14 +93,42 @@ Notation "'do' ( X , Y ) <- A ; B" := (bind2 A (fun X Y => B))
                                         (at level 200, X ident, Y ident, A at level 100, B at level 200)
     : gensym_monad_scope.
 
-Definition initial_generator (* (max_id: ident)*) : generator :=
-  mkgenerator (* max_id *) nil.
+Definition initial_generator : generator :=
+  mkgenerator 10000%positive nil.
 
-Definition gensym (ty: type): mon ident :=
+(* Lemma find_fresh_incr0 :
+  forall start locals n,
+  Ple (find_fresh start locals n) (find_fresh (Pos.succ start) locals n).
+Proof.
+  intros. induction start; simpl.
+Admitted.
+Lemma find_fresh_incr : 
+  forall start locals n,
+  Ple start max_nat_limit ->
+  Ple start (find_fresh start locals n).
+Proof.
+  intros. induction n; simpl.
+  - apply H.
+  - destruct (in_dec ident_eq start locals) eqn:E. 
+    + eapply Ple_trans. 2: { apply find_fresh_incr0.  }
+      apply IHn.
+    + apply Ple_refl.
+Qed.
+
+Lemma find_fresh_property g locals :
+  Ple (gen_next g) max_nat_limit ->
+  Ple (gen_next g) (find_fresh (gen_next g) locals (Pos.to_nat max_nat_limit)).
+Proof.
+  apply find_fresh_incr.
+Qed. *)
+
+Definition gensym (locals: list ident) (ty: type) : mon ident :=
   fun (g: generator) =>
-    let fresh_id := fresh_atom tt in
-    Res fresh_id
-        (mkgenerator ((fresh_id, ty) :: gen_trail g)).
+  if Pos.leb (Pos.succ (gen_next g)) max_nat_limit then
+  let fresh_id := find_fresh (gen_next g) locals (Pos.to_nat max_nat_limit) in
+  Res fresh_id
+      (mkgenerator (Pos.succ fresh_id) ((fresh_id, ty) :: gen_trail g))
+  else Err (msg "gensym: out of fresh id limit").
 
 (** Convert Clight type to Rustlight type *)
 Fixpoint to_rusttype (ty: Ctypes.type): Rusttypes.type :=
@@ -159,13 +203,13 @@ Section TRANSL.
     | Clight.Etempvar _ _ => 2
     end.
 
-  Fixpoint sub_cexpr_to_place (depth: nat) (e: Clight.expr): mon Rustlight.place :=
-    let sub_cexpr_to_place := sub_cexpr_to_place depth in
+  Fixpoint sub_cexpr_to_place (locals: list ident) (depth: nat) (e: Clight.expr): mon Rustlight.place :=
+    let sub_cexpr_to_place := sub_cexpr_to_place locals depth in
     match depth with
     | 0%nat => error (msg "Unsupported lvalue expression: depth is 0")
     | S d =>
       (* let cexpr_to_place := cexpr_to_place d in *)
-      let cexpr_to_pexpr := cexpr_to_pexpr d in
+      let cexpr_to_pexpr := cexpr_to_pexpr locals d in
       match e with
       | Clight.Evar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
       | Clight.Etempvar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
@@ -178,7 +222,7 @@ Section TRANSL.
       | Clight.Ebinop op e1 e2 ty => 
             match ty with
             | Ctypes.Tpointer _ _ =>
-                do i <- gensym (to_rusttype ty);
+                do i <- gensym locals (to_rusttype ty);
                 do e1' <- cexpr_to_pexpr e1;
                 do e2' <- cexpr_to_pexpr e2;
                 let rty := to_rusttype ty in
@@ -190,7 +234,7 @@ Section TRANSL.
       (* | Clight.Ecast e' ty => 
             match ty with
             | Ctypes.Tpointer _ _ => 
-                do i <- gensym (to_rusttype ty);
+                do i <- gensym locals (to_rusttype ty);
                 do e'' <- cexpr_to_pexpr e';
                 let rty := to_rusttype ty in
                 let re := Rustlight.Eas e'' rty in
@@ -202,12 +246,12 @@ Section TRANSL.
     end
 
   (** Convert Clight expression to Rustlight place *)
-  with cexpr_to_place (depth: nat) (e: Clight.expr): mon Rustlight.place :=
+  with cexpr_to_place (locals: list ident) (depth: nat) (e: Clight.expr): mon Rustlight.place :=
     match depth with
     | 0%nat => error (msg "Unsupported lvalue expression: depth is 0")
     | S d =>
-      let cexpr_to_place := cexpr_to_place d in
-      let sub_cexpr_to_place := sub_cexpr_to_place d in
+      let cexpr_to_place := cexpr_to_place locals d in
+      let sub_cexpr_to_place := sub_cexpr_to_place locals d in
       (* let cexpr_to_pexpr := cexpr_to_pexpr d in *)
       match e with
       | Clight.Evar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
@@ -245,12 +289,12 @@ Section TRANSL.
       end
     end
   (** Convert Clight expression to Rustlight pure expression *)
-  with cexpr_to_pexpr (depth: nat) (e: Clight.expr): mon Rustlight.pexpr :=
+  with cexpr_to_pexpr (locals: list ident) (depth: nat) (e: Clight.expr): mon Rustlight.pexpr :=
     match depth with
     | 0%nat => error (msg "Unsupported rvalue expression: depth is 0")
     | S d =>
-      let cexpr_to_place := cexpr_to_place d in
-      let cexpr_to_pexpr := cexpr_to_pexpr d in
+      let cexpr_to_place := cexpr_to_place locals d in
+      let cexpr_to_pexpr := cexpr_to_pexpr locals d in
       match e with
       | Clight.Econst_int i ty => ret (Rustlight.Econst_int i (to_rusttype ty))
       | Clight.Econst_float f ty => ret (Rustlight.Econst_float f (to_rusttype ty))
@@ -272,7 +316,7 @@ Section TRANSL.
           (* ret (Eplace p (to_rusttype ty)) *)
           ret (Eplace p (to_rusttype ty))
       | Clight.Eaddrof e' ty => 
-          do i <- gensym (to_rusttype ty);
+          do i <- gensym locals (to_rusttype ty);
           do p <- cexpr_to_place e';
           ret (Eref i Mutable p (to_rusttype ty))
       | Clight.Ederef e' ty => 
@@ -294,7 +338,7 @@ Section TRANSL.
     match el with
     | nil => ret nil
     | e :: rest =>
-        do pe <- cexpr_to_pexpr (expr_depth e) e;
+        do pe <- cexpr_to_pexpr locals (expr_depth e) e;
         do rest' <- transl_expr_list locals rest;
         ret (pe :: rest')
     end.
@@ -302,13 +346,15 @@ Section TRANSL.
   Definition pexpr_to_expr (pe: Rustlight.pexpr): Rustlight.expr :=
     Rustlight.Epure pe.
 
-  Definition empty_place : mon Rustlight.place := 
-    do i <- gensym Rusttypes.Tunit;
+  Definition empty_place (locals: list ident): mon Rustlight.place := 
+    do i <- gensym locals Rusttypes.Tunit;
     ret (Rustlight.Plocal i Rusttypes.Tunit). 
   
 
   Fixpoint transl_stmt (locals: list ident) (s: Clight.statement): mon Rustlight.statement :=
     let transl_stmt := transl_stmt locals in
+    let cexpr_to_place := cexpr_to_place locals in
+    let cexpr_to_pexpr := cexpr_to_pexpr locals in
     match s with
     | Clight.Sskip => ret Rustlight.Sskip
     | Clight.Ssequence s1 s2 => 
@@ -341,7 +387,7 @@ Section TRANSL.
         match optid with
         | None => 
             (* without return value *)
-            do dummy_place <- empty_place;
+            do dummy_place <- empty_place locals;
             ret (Rustlight.Scall dummy_place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
         | Some id => 
             (* with return value *)
@@ -356,12 +402,12 @@ Section TRANSL.
         end
     | Clight.Sreturn None => 
         (* no return value*)
-        do dummy_place <- empty_place;
+        do dummy_place <- empty_place locals;
         ret (Rustlight.Sreturn dummy_place)
     | Clight.Sreturn (Some e) => 
         do pe <- cexpr_to_pexpr (expr_depth e) e;
         (* create a temp variable to store return value *)
-        do i <- gensym (to_rusttype (Clight.typeof e));
+        do i <- gensym locals (to_rusttype (Clight.typeof e));
         let ret_place := Rustlight.Plocal i (to_rusttype (Clight.typeof e)) in
         (* assign the return value to the temp variable and return *)
         ret (Rustlight.Ssequence
@@ -446,10 +492,12 @@ Section TRANSL.
   (* get all id from function in clight *)
   (* Definition get_max_id_function (f: Clight.function) : positive :=
   max_pos (get_ids_stmt f.(Clight.fn_body)). *)
-
+Require Import SimplLocals.
   (** Convert Clight function to Rustlight function *)
   Definition transl_function (main_id: ident) (id: ident) (f: Clight.function): res Rustlight.function :=
-    let locals := List.map (@fst ident _) (Clight.fn_params f ++ Clight.fn_vars f ++ Clight.fn_temps f) in
+    let cenv_ids := VSet.elements (cenv_for f) in
+    let locals_clight := List.map (@fst ident _) (Clight.fn_params f ++ Clight.fn_vars f ++ Clight.fn_temps f) in
+    let locals := cenv_ids ++ locals_clight in
     (* let max_id := Pos.succ (max_pos locals) in *)
     (* main function in rust is different in c 
      c:    int main() { ...; return 0; }
@@ -477,7 +525,18 @@ Section TRANSL.
                          Rustlight.fn_body := body
                        |}
                     else
-                      Error (msg "temporary variables in Clight2rustlight are not disjoint with locals")
+                      let vars := flat_map (fun '(id, ty) => [POS id; MSG " "]) (Clight.fn_vars f) in
+                      let temps := flat_map (fun '(id, ty) => [POS id; MSG " "]) (Clight.fn_temps f) in
+                      let params := flat_map (fun '(id, ty) => [POS id; MSG " "]) (Clight.fn_params f) in
+                      let g_trail := flat_map (fun '(id, ty) => [POS id; MSG " "]) g.(gen_trail) in
+                      let msg := 
+                        MSG "temporary variables in Clight2rustlight are not disjoint with locals" ::
+                        MSG "      vars: " :: vars ++
+                        MSG "           temps: " :: temps ++
+                        MSG "           params: " :: params ++
+                        MSG "           g_trail: " :: g_trail ++
+                        nil in
+                      Error msg
                   else
                     Error (msg "repeated temporary variables in Clight2rustlight")
               end
