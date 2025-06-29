@@ -350,11 +350,141 @@ Section TRANSL.
     do i <- gensym locals Rusttypes.Tunit;
     ret (Rustlight.Plocal i Rusttypes.Tunit). 
   
+  Definition tbool := Ctypes.Tint IBool Unsigned noattr.
+
+  Fixpoint collect_case_conds (ls: Clight.labeled_statements) : list Z :=
+    match ls with
+    | Clight.LSnil => []
+    | Clight.LScons (Some n) _ rest => n :: collect_case_conds rest
+    | Clight.LScons None _ rest => collect_case_conds rest
+    end.
+  
+  Fixpoint ends_with_break (s: Clight.statement) : bool :=
+    match s with
+    | Clight.Sbreak => true
+    | Clight.Ssequence _ s2 => ends_with_break s2
+    | _ => false
+    end.
+
+  Fixpoint remove_break (s: Clight.statement) : Clight.statement :=
+    match s with
+    | Clight.Sbreak => Clight.Sskip
+    | Clight.Ssequence s1 s2 =>
+        Clight.Ssequence s1 (remove_break s2)
+    | s => s
+    end.  
+
+  Fixpoint ends_with_break_rs (s: Rustlight.statement) : bool :=
+    match s with
+    | Rustlight.Sbreak => true
+    | Rustlight.Ssequence _ s2 => ends_with_break_rs s2
+    | _ => false
+    end.
+  
+  Fixpoint remove_break_rs (s: Rustlight.statement) : Rustlight.statement :=
+    match s with
+    | Rustlight.Sbreak => Rustlight.Sskip
+    | Rustlight.Ssequence s1 s2 =>
+        Rustlight.Ssequence s1 (remove_break_rs s2)
+    | s => s
+    end.
+
+  (* Fixpoint collect_until_break_and_rest
+    (ls: Clight.labeled_statements)
+    : mon (Clight.statement * Clight.labeled_statements) :=
+    match ls with
+    | Clight.LSnil => ret (Clight.Sskip, Clight.LSnil)
+    | Clight.LScons o st rest =>
+        (* do rs <- transl_stmt st; *)
+        let rs' := remove_break st in
+        if ends_with_break st then
+          ret (rs', rest)
+        else
+          do (rest_stmts, rest_ls) <- collect_until_break_and_rest rest;
+          ret (Clight.Ssequence rs' rest_stmts, rest_ls)
+    end. *)
+
+  Fixpoint split_cases
+    (ls: Clight.labeled_statements)
+    (acc: list (option Z * Clight.statement))
+    : list (option Z * Clight.statement) :=
+    match ls with
+    | Clight.LSnil => List.rev acc
+    | Clight.LScons o st rest =>
+        let st' := remove_break st in
+        if ends_with_break st || (match rest with Clight.LSnil => true | _ => false end) then
+          split_cases rest ((o, st') :: acc)
+        else
+          let '(rest_cases) := split_cases rest acc in
+          match rest_cases with
+          | [] => [(o, st')]
+          | (o', st'') :: xs => (o, Clight.Ssequence st' st'') :: rest_cases
+          end
+    end.
+
+  Definition default_cond (e: Clight.expr) (case_conds: list Z) : Clight.expr :=
+  fold_right (fun n acc =>
+    Clight.Ebinop Oand
+        (Clight.Ebinop One
+          e
+          (Clight.Econst_int (Int.repr n) (Clight.typeof e))
+          tbool)
+          acc
+          tbool
+  ) (Clight.Econst_int (Int.repr 1) tbool) case_conds.
+
+Fixpoint build_ifelse
+  (e: Clight.expr)
+  (case_conds: list Z)
+  (lst: list (option Z * Clight.statement))
+  : Clight.statement :=
+  match lst with
+  | [] => Clight.Sskip
+  | (Some n, st) :: xs =>
+      let cond := Clight.Ebinop Oeq e
+                    (Clight.Econst_int (Int.repr n) (Clight.typeof e))
+                    tbool in
+      Clight.Sifthenelse cond st (build_ifelse e case_conds xs)
+  | (None, st) :: xs =>
+      let cond := default_cond e case_conds in
+      Clight.Sifthenelse cond st (build_ifelse e case_conds xs)
+  end.
+
+Definition switch_to_ifelse (e: Clight.expr) (cases: Clight.labeled_statements) : Clight.statement :=
+  let case_conds := collect_case_conds cases in
+  let cases_list := split_cases cases [] in
+  build_ifelse e case_conds cases_list.
+
+Fixpoint elim_switch (s: Clight.statement) : Clight.statement :=
+  match s with
+  | Clight.Sskip => Clight.Sskip
+  | Clight.Ssequence s1 s2 =>
+      Clight.Ssequence (elim_switch s1) (elim_switch s2)
+  | Clight.Sifthenelse e s1 s2 =>
+      Clight.Sifthenelse e (elim_switch s1) (elim_switch s2)
+  | Clight.Sloop s1 s2 =>
+      Clight.Sloop (elim_switch s1) (elim_switch s2)
+  | Clight.Sbreak => Clight.Sbreak
+  | Clight.Scontinue => Clight.Scontinue
+  | Clight.Sassign e1 e2 => Clight.Sassign e1 e2
+  | Clight.Sset id e => Clight.Sset id e
+  | Clight.Scall optid e args => Clight.Scall optid e args
+  | Clight.Sreturn None => Clight.Sreturn None
+  | Clight.Sreturn (Some e) => Clight.Sreturn (Some e)
+  | Clight.Sswitch e cases =>
+      switch_to_ifelse e cases
+  | Clight.Slabel lbl s1 =>
+      Clight.Slabel lbl (elim_switch s1)
+  | Clight.Sgoto lbl => Clight.Sgoto lbl
+  | Clight.Sbuiltin optid ef tyargs args =>
+      Clight.Sbuiltin optid ef tyargs args
+  end.
 
   Fixpoint transl_stmt (locals: list ident) (s: Clight.statement): mon Rustlight.statement :=
     let transl_stmt := transl_stmt locals in
     let cexpr_to_place := cexpr_to_place locals in
     let cexpr_to_pexpr := cexpr_to_pexpr locals in
+    (* let transl_stmt_list := transl_stmt_list locals in *)
     match s with
     | Clight.Sskip => ret Rustlight.Sskip
     | Clight.Ssequence s1 s2 => 
@@ -414,24 +544,90 @@ Section TRANSL.
                (Rustlight.Sassign ret_place (Rustlight.Epure pe))
                (Rustlight.Sreturn ret_place))
     (* | Clight.Sswitch e cases =>
-        do pe <- cexpr_to_pexpr locals e;
-        let fix convert_cases (cases: Clight.labeled_statements) : mon Rustlight.statement :=
-            match cases with
-            | nil => ret Rustlight.Sskip
-            | Clight.LScase n s rest =>
-                do rs <- transl_stmt s;
-                do rest_stmt <- convert_cases rest;
-                let cond := Rustlight.Ebinop Ceq (Rustlight.Epure pe) 
-                                             (Rustlight.Econst_int n (to_rusttype (Clight.typeof e))) 
-                                             Rusttypes.Tbool in
-                ret (Rustlight.Sifthenelse cond rs rest_stmt)
-            | Clight.LSdefault s rest =>
-                transl_stmt s
+        let stmt := switch_to_ifelse e cases in
+        do rstmt <- transl_stmt stmt;
+        ret rstmt        *)
+    (* | Clight.Sswitch e cases =>
+        do pe <- cexpr_to_pexpr (expr_depth e) e;
+        let case_conds := collect_case_conds cases in
+        let fix convert_cases (ls: Clight.labeled_statements) : mon Rustlight.statement :=
+          match ls with
+          | Clight.LSnil => ret Rustlight.Sskip
+          | Clight.LScons (Some n) st rest =>
+              let cond := Rustlight.Ebinop Oeq pe
+                            (Rustlight.Econst_int (Int.repr n) (to_rusttype (Clight.typeof e)))
+                            (Rusttypes.Tint IBool Unsigned) in
+              do (stmts, rest_ls) <- collect_until_break_and_rest ls;
+              do rstmts <- transl_stmt stmts;
+              do rest_stmt <- convert_cases rest_ls;
+              ret (Rustlight.Sifthenelse cond rstmts rest_stmt)
+          | Clight.LScons None st rest =>
+              let default_cond :=
+              fold_right (fun n acc =>
+                Rustlight.Ebinop Oand
+                    (Rustlight.Ebinop Oeq pe
+                      (Rustlight.Econst_int (Int.repr n) (to_rusttype (Clight.typeof e)))
+                      (Rusttypes.Tint IBool Unsigned)) acc
+                    (Rusttypes.Tint IBool Unsigned))
+            (Rustlight.Econst_int Int.one (Rusttypes.Tint IBool Unsigned))
+            case_conds in
+              do (stmts, rest_ls) <- collect_until_break_and_rest ls;
+              do rstmts <- transl_stmt stmts;
+              do rest_stmt <- convert_cases rest_ls;
+              ret (Rustlight.Sifthenelse default_cond rstmts rest_stmt)
+          end
+        in convert_cases cases *)
+    (* | Clight.Sswitch e cases =>
+        do pe <- cexpr_to_pexpr (expr_depth e) e;
+        let case_conds := collect_case_conds cases in
+        let rec_convert_cases :=
+          fix convert_cases (ls: Clight.labeled_statements) (fallthrough: Rustlight.statement) : mon Rustlight.statement :=
+            match ls with
+            | Clight.LSnil => ret fallthrough
+            | Clight.LScons (Some n) st rest =>
+                do rs <- transl_stmt st;
+                let cond := Rustlight.Ebinop Oeq pe
+                             (Rustlight.Econst_int (Int.repr n) (to_rusttype (Clight.typeof e)))
+                             (Rusttypes.Tint IBool Unsigned) in
+                do rest_stmt <- convert_cases rest fallthrough;
+                if ends_with_break rs then
+                  ret (Rustlight.Sifthenelse cond rs rest_stmt)
+                else
+                  (* do rest_stmt <- convert_cases rest fallthrough; *)
+                  ret (Rustlight.Sifthenelse cond (Rustlight.Ssequence rs rest_stmt) rest_stmt)
+            | Clight.LScons None st rest =>
+                do rs <- transl_stmt st;
+                let default_cond :=
+                  fold_right (fun n acc =>
+                    Rustlight.Ebinop Oand
+                        (Rustlight.Ebinop Oeq pe
+                          (Rustlight.Econst_int (Int.repr n) (to_rusttype (Clight.typeof e)))
+                          (Rusttypes.Tint IBool Unsigned)) acc
+                        (Rusttypes.Tint IBool Unsigned))
+                    (Rustlight.Econst_int Int.one (Rusttypes.Tint IBool Unsigned))
+                    case_conds in
+                do rest_stmt <- convert_cases rest fallthrough;
+                if ends_with_break rs then
+                  ret (Rustlight.Sifthenelse default_cond rs rest_stmt)
+                else
+                  (* do rest_stmt <- convert_cases rest fallthrough; *)
+                  ret (Rustlight.Sifthenelse default_cond (Rustlight.Ssequence rs rest_stmt) rest_stmt)
             end
         in
-        convert_cases cases *)
+        rec_convert_cases cases Rustlight.Sskip *)
     | _ => error (msg "Unsupported statement type")
     end.
+  
+  (* with transl_stmt_list (locals: list ident) (ls: list Clight.statement): mon (list Rustlight.statement) :=
+    let transl_stmt := transl_stmt locals in
+    let transl_stmt_list := transl_stmt_list locals in
+    match ls with
+    | nil => ret nil
+    | s :: res =>
+      do rs <- transl_stmt s;
+      do rres <- transl_stmt_list res;
+      ret (rs :: rres)
+    end. *)
 
     (* get most largest id in id list *)
   (* Fixpoint max_pos (l: list positive) : positive :=
@@ -498,12 +694,13 @@ Require Import SimplLocals.
     let cenv_ids := VSet.elements (cenv_for f) in
     let locals_clight := List.map (@fst ident _) (Clight.fn_params f ++ Clight.fn_vars f ++ Clight.fn_temps f) in
     let locals := cenv_ids ++ locals_clight in
+    let no_swtich_stmts := elim_switch (Clight.fn_body f) in
     (* let max_id := Pos.succ (max_pos locals) in *)
     (* main function in rust is different in c 
      c:    int main() { ...; return 0; }
      rust: fn main() {}  *)
     if ident_eq main_id id then
-      match f.(Clight.fn_body) with
+      match no_swtich_stmts with
       | Clight.Ssequence inner_stmt _ =>  (* delete Ssequence (return 0) *)
               match transl_stmt locals inner_stmt initial_generator with
               | Err msg => Error msg
@@ -544,7 +741,7 @@ Require Import SimplLocals.
       end
     else
       (* other function *)
-      match transl_stmt locals (Clight.fn_body f) initial_generator with
+      match transl_stmt locals no_swtich_stmts initial_generator with
       | Err msg => Error msg
       | Res body g =>
           (* check that temporaries are not repeated *)
@@ -698,8 +895,8 @@ Require Import SimplLocals.
                      OK (id, Gvar tv)
                  end in
                (* transfer all def *)
-               let transf_def := fun def => transl_def (Ctypes.prog_main p) def in
-               do defs <- mmap transf_def (Ctypes.prog_defs p);
+               let transl_def := fun def => transl_def (Ctypes.prog_main p) def in
+               do defs <- mmap transl_def (Ctypes.prog_defs p);
                (* add malloc and free, to pass check_malloc_free_existence in Clightgen.v *)
                let defs := if in_dec ident_eq malloc_id (List.map (fun '(id, ty) => id) defs)
                  then defs else (malloc_id, Gfun (Rusttypes.External [] [] AST.EF_malloc 

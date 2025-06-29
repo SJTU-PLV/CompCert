@@ -1,17 +1,18 @@
+#include <stdio.h>
 
-// #include <stdio.h>
-int f(int a){
-  int b = a-1;
-  if(a>1){
-    int c = f(b);
-    return a*c;
-  } else {
-    return 1;
-  }
-}
 int main() {
-  int a = 5;
-  // a ^= f(a);
-  // printf("Factorial of %d is %d\n", a, a);
+  int a = 2;
+  switch(a){
+    default:
+      a = 4;
+    case 1:
+      a = 2;
+      a = 5;
+      break;
+    case 2:
+      a = 3;
+      break;
+  }
+  printf("a = %d\n", a);
   return 0;
 }
