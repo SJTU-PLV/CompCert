@@ -51,6 +51,27 @@ Inductive safek {liA liB St} (se: Genv.symtbl) (L: lts liA liB St) (IA: invarian
     safek se L IA IB SI wI (S k) s1
 .
 
+(** This definition is compatible with safety preservation, but its
+destroys the **compositionality** !!!  *)
+(* Inductive safek {liA liB St} (se: Genv.symtbl) (L: lts liA liB St) (IA: invariant liA) (IB: invariant liB) (SI: St -> Prop) (wI: inv_world IB) : nat -> St -> Prop := *)
+(* | safek_O: forall s, *)
+(*     safek se L IA IB SI wI O s *)
+(* | safek_step: forall s1 k *)
+(*     (SAFEK: forall t s2,  *)
+(*         Star L s1 t s2 -> *)
+(*         (SI s2 *)
+(*          \/ (exists t' s3, Step L s2 t' s3) *)
+(*          \/ (exists r, final_state L s2 r /\ reply_inv IB wI r) *)
+(*          \/ (exists w q, at_external L s2 q *)
+(*                    /\ symtbl_inv IA w se *)
+(*                    /\ query_inv IA w q *)
+(*                    /\ forall r, reply_inv IA w r -> *)
+(*                           exists s3, after_external L s2 r s3 *)
+(*                                 /\ safek se L IA IB SI wI k s3))), *)
+(*     safek se L IA IB SI wI (S k) s1 *)
+(* . *)
+
+
 (** Experiment safek based on internal multiple steps  *)
 (* Inductive safek {liA liB St} (se: Genv.symtbl) (L: lts liA liB St) (IA: invariant liA) (IB: invariant liB) (SI: lts liA liB St -> St -> Prop) (wI: inv_world IB) : nat -> St -> Prop := *)
 (* | safek_O: forall s, *)

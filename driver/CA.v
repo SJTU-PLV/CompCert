@@ -200,6 +200,39 @@ Next Obligation.
   apply H1. auto.
 Qed.
 
+(** Experiment code for flatening CAinjp into a safety interface *)
+
+Record inv_cainjp_world :=
+  inv_cajw {
+      inv_cajw_fp: Mem.sup;
+      inv_cajw_mem: mem;
+      inv_cajw_sg : signature;
+      inv_cajw_rs : regset;
+    }.
+
+(** TODO: remove c_query, remove Hm, refine the sup  *)
+Inductive inv_c_asm_injp_mq : inv_cainjp_world -> c_query -> query li_asm -> Prop:=
+  inv_c_asm_injp_mq_intro sg args m sup (rs: regset) tm0 vf
+    (* TODO: write a more general condition *)
+    (Hm: Mem.inject (Mem.flat_inj sup) m m):
+    let tsp := rs#SP in let tra := rs#RA in let tvf := rs#PC in
+    let targs := (map (fun p => Locmap.getpair p (make_locset_rs rs m tsp))
+                    (loc_arguments sg)) in
+    (* TODO  *)
+    Val.inject_list (Mem.flat_inj sup) args targs ->
+    Val.inject (Mem.flat_inj sup) vf tvf ->
+    (forall b ofs, loc_init_args (size_arguments sg) tsp b ofs ->
+              loc_out_of_reach (Mem.flat_inj sup) m b ofs) ->
+    Val.has_type tsp Tptr ->
+    Val.has_type tra Tptr ->
+    valid_blockv (Mem.support m) tsp ->
+    args_removed sg tsp m tm0 -> (* The Outgoing arguments are readable and freeable in tm *)
+    vf <> Vundef -> tra <> Vundef ->
+    inv_c_asm_injp_mq
+      (inv_cajw sup m sg rs)
+      (cq vf sg args m)
+      (rs,m).
+
 
 Lemma cc_injpca_cainjp :
   ccref (cc_c injp @ cc_c_asm) (cc_c_asm_injp).
