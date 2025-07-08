@@ -37,10 +37,12 @@ void hmap_set(HashMap hmap, int key, int* val){
     List_ptr* buk = find_bucket(hmap, key);
     List_ptr l;
     if (*buk == NULL){
-        l = empty_list();
+        List_ptr l = empty_list();
+        l = insert(l, key, val);
+        *buk = l;
     }
     else{
-        l = *buk;
+        *buk = insert(*buk, key, val);
     }
     *buk = insert(l, key, val);
 }
@@ -52,6 +54,7 @@ int process(int val){
 
 int* process_box(int* val){
     printf("The key is mapped to a pointer points to %d\n", *val);
+    *val ^= 42;
     return val;
 }
 
@@ -117,6 +120,7 @@ int main(){
     hmap_set(hmap, 13, v2);
     hmap_set(hmap, 23, v3);
     hmap_process(hmap, 19);
+    hmap_process(hmap, 13);
     hmap_process(hmap, 13);
     hmap_process(hmap, 23);
     delete_hmap(hmap);
