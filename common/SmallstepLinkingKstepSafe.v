@@ -709,7 +709,8 @@ Proof.
       exists s2'. split; auto.
       eapply IHk. 2: eapply MATCH'.
       (** Difficult *)
-      admit.
+      Abort.
+(*
   - eapply safek_step; eauto.
     intros t' s2'' STEP.
     exploit (@bsim_simulation liA1); eauto.
@@ -720,7 +721,8 @@ Proof.
     + eapply IHk. 2: eapply MATCH'.
       eapply star_safek; eauto.
 Abort.
-      
+*)
+
 End BSIM.
 
 
