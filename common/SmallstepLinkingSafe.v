@@ -693,7 +693,6 @@ Context (IA1 : invariant liA1) (IB1: invariant liB1).
 (* Hypothesis L1_determ: open_determinate L1. *)
 (* Hypothesis L2_determ: open_determinate L2. *)
 
-(* why we need inhabited? *)
 Lemma module_type_safe_preservation:
   module_type_safe IA1 IB1 L1 SIF ->
   backward_simulation ccA ccB L1 L2 ->

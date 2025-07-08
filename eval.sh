@@ -9,12 +9,16 @@ IRgen="$DIR/RustIRgen.v $DIR/RustIRgenProof.v"
 ELAB="$DIR/RustIRcfg.v $DIR/InitAnalysis.v $DIR/ElaborateDrop.v $DIR/ElaborateDropProof.v"
 CLgen="$DIR/Clightgen.v $DIR/Clightgenspec.v $DIR/Clightgenproof.v"
 Owncheck="$DIR/MoveChecking.v $DIR/MoveCheckingFootprint.v $DIR/MoveCheckingDomain.v $DIR/MoveCheckingSafe.v"
-Safety="common/SmallstepLinkingSafe.v common/InvariantAlgebra.v common/SmallstepSafe.v"
+Safety="common/SmallstepLinkingSafe.v common/InvariantAlgebra.v common/SmallstepSafe.v common/SmallstepClosed.v"
+Example="rustdemo/HashMap.v  rustdemo/HashMapCommon.v  rustdemo/HashMapLink.v rustdemo/HashMapSafe.v rustdemo/LinkedList.v     rustdemo/LinkedListSafe.v"
 
 COMP="driver/RA.v driver/CallConvRust.v"
 
 echo "Open Safety, Compositionality and Preservation"
 $WC $Safety
+
+echo "Hash Map Example"
+$WC $Example
 
 echo "Rustlight"
 $WC $RL
@@ -44,8 +48,8 @@ HashMap="rustdemo/*.v"
 echo "Running Example"
 $WC $HashMap
 
-echo "Owl Compiler Total"
+echo "Owlang Compiler Total"
 $WC $RL $RIR $PARSER $IRgen $ELAB $CLgen $COMP
 
 echo "Total"
-$WC $Safety $RL $RIR $PARSER $IRgen $Owncheck $ELAB $CLgen $COMP
+$WC $Safety $Example $RL $RIR $PARSER $IRgen $Owncheck $ELAB $CLgen $COMP
