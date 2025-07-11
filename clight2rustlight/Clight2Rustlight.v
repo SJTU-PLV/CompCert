@@ -405,6 +405,23 @@ Section TRANSL.
     end. *)
 
   Fixpoint split_cases
+  (ls: Clight.labeled_statements)
+  : list (option Z * Clight.statement) :=
+  match ls with
+  | Clight.LSnil => []
+  | Clight.LScons o st rest =>
+      let st' := remove_break st in
+      if ends_with_break st || (match rest with Clight.LSnil => true | _ => false end) then
+        ((o, st') :: split_cases rest)
+      else
+        let '(rest_cases) := split_cases rest in
+        match rest_cases with
+        | [] => [(o, st')]
+        | (o', st'') :: xs => (o, Clight.Ssequence st' st'') :: rest_cases
+        end
+  end.
+
+  (* Fixpoint split_cases
     (ls: Clight.labeled_statements)
     (acc: list (option Z * Clight.statement))
     : list (option Z * Clight.statement) :=
@@ -420,7 +437,7 @@ Section TRANSL.
           | [] => [(o, st')]
           | (o', st'') :: xs => (o, Clight.Ssequence st' st'') :: rest_cases
           end
-    end.
+    end. *)
 
   Definition default_cond (e: Clight.expr) (case_conds: list Z) : Clight.expr :=
   fold_right (fun n acc =>
@@ -452,7 +469,7 @@ Fixpoint build_ifelse
 
 Definition switch_to_ifelse (e: Clight.expr) (cases: Clight.labeled_statements) : Clight.statement :=
   let case_conds := collect_case_conds cases in
-  let cases_list := split_cases cases [] in
+  let cases_list := split_cases cases in
   build_ifelse e case_conds cases_list.
 
 Fixpoint elim_switch (s: Clight.statement) : Clight.statement :=

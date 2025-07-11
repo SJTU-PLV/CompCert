@@ -1,13 +1,13 @@
 #include <stdio.h>
 
 int main() {
-  int a = 2;
+  int a = 0;
   switch(a){
-    default:
-      a = 4;
     case 1:
       a = 2;
       a = 5;
+    default:
+      a = 4;
       break;
     case 2:
       a = 3;
