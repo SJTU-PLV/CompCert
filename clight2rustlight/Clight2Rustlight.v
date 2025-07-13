@@ -705,6 +705,33 @@ Fixpoint elim_switch (s: Clight.statement) : Clight.statement :=
   (* get all id from function in clight *)
   (* Definition get_max_id_function (f: Clight.function) : positive :=
   max_pos (get_ids_stmt f.(Clight.fn_body)). *)
+
+  (** Remove the pattern "return 0" from the end of a statement *)
+  Fixpoint remove_return_zero_pattern (s: Clight.statement): Clight.statement :=
+    match s with
+    | Clight.Ssequence s1 s2 =>
+        (* Check if s2 is exactly "return 0" *)
+        match s2 with
+        | Clight.Sreturn (Some return_expr) =>
+            match return_expr with
+            | Clight.Econst_int n _ =>
+                if Int.eq n Int.zero then
+                    (* Found "return 0" - remove it *)
+                    s1
+                else
+                    (* Not returning 0, keep both statements *)
+                    Clight.Ssequence s1 (remove_return_zero_pattern s2)
+            | _ =>
+                (* Not returning constant, keep both statements *)
+                Clight.Ssequence s1 (remove_return_zero_pattern s2)
+            end
+        | _ =>
+            (* Not a return statement, recursively process both parts *)
+            Clight.Ssequence s1 (remove_return_zero_pattern s2)
+        end
+    | _ => s
+    end.
+
 Require Import SimplLocals.
   (** Convert Clight function to Rustlight function *)
   Definition transl_function (main_id: ident) (id: ident) (f: Clight.function): res Rustlight.function :=
@@ -719,6 +746,7 @@ Require Import SimplLocals.
     if ident_eq main_id id then
       match no_swtich_stmts with
       | Clight.Ssequence inner_stmt _ =>  (* delete Ssequence (return 0) *)
+        let inner_stmt := remove_return_zero_pattern inner_stmt in  
               match transl_stmt locals inner_stmt initial_generator with
               | Err msg => Error msg
               | Res body g =>
