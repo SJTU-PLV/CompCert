@@ -96,7 +96,7 @@ let rec name_rust_decl id ty =
 let rec name_rust_decl_fn_arg id ty =
   match ty with
   | Rusttypes.Tunit ->
-    name_optid_no_space id 
+    name_optid_no_space id ^ "i32 /*this is unit */"
   | Rusttypes.Tvoid ->
     name_optid_no_space id ^ "std::ffi::c_void"    
   | Rusttypes.Tint(sz, sg) ->

@@ -47,7 +47,7 @@ let compile_c_file sourcename ifile ofile =
   set_dest PrintCsyntax.destination option_dcmedium ".compcert.c";
   set_dest PrintClight.destination option_dclight ".light.c";
   set_dest PrintClight0.destination option_dclight0 ".light.c0";
-  set_dest PrintRustlight.destination option_drustlight ".light.rust";
+  set_dest PrintRustlight.destination option_drustlight ".rs";
   set_dest PrintCminor.destination option_dcminor ".cm";
   set_dest PrintRTL.destination option_drtl ".rtl";
   set_dest Regalloc.destination_alloctrace option_dalloctrace ".alloctrace";
@@ -220,7 +220,7 @@ Code generation options: (use -fno-<opt> to turn off -f<opt>)
   -dc            Save generated Compcert C in <file>.compcert.c
   -dclight       Save generated Clight in <file>.light.c
   -dclight0      Save generated Clight in <file>.light.c0 before transpiling
-  -drustlight    Save generated Rustlight in <file>.light.rust
+  -drustlight    Save generated Rustlight in <file>.rs
   -dcminor       Save generated Cminor in <file>.cm
   -drtl          Save RTL at various optimization points in <file>.rtl.<n>
   -dltl          Save LTL after register allocation in <file>.ltl

@@ -221,9 +221,9 @@ let rec print_stmt p (s: Rustlight.statement) =
     (* comment *)
     fprintf p "/*skip*/"
   | Sassign(v, e) ->
-    fprintf p "@[<hv 2>let mut %a =@ %a;@]" print_place v print_expr e
+    fprintf p "@[<hv 2>%a =@ %a;@]" print_place v print_expr e
   | Sassign_variant (v, enum_id, id, e) ->
-    fprintf p "@[<hv 2>let mut %a =@ %s::%s(%a);@]" print_place v (extern_atom enum_id)(extern_atom id) print_expr e
+    fprintf p "@[<hv 2>%a =@ %s::%s(%a);@]" print_place v (extern_atom enum_id)(extern_atom id) print_expr e
   | Scall(v, e1, el) ->
     let fun_ty = type_of_expr e1 in
     let param_tys =
@@ -231,7 +231,7 @@ let rec print_stmt p (s: Rustlight.statement) =
       | Rusttypes.Tfunction(_, _, args, _, _) ->  typelist_to_list args
       | _ -> List.map (fun _ -> Rusttypes.Tunit) el  (* fallback: 全部Tunit *)
     in
-    fprintf p "@[<hv 2>let mut %a =@ %a@,(@[<hov 0>%a@]);@]"
+    fprintf p "@[<hv 2>%a =@ %a@,(@[<hov 0>%a@]);@]"
               print_place v
               expr (15, e1)
               print_expr_list_with_type (true, el, param_tys)
@@ -285,6 +285,10 @@ let print_function p id f =
     fprintf p "fn%s"
         (name_rust_decl_fn (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
         fprintf p "{@;@[<v 2>  unsafe@;{@[<v 1>@;";
+        List.iter 
+        (fun (id, ty) ->
+          fprintf p "let mut %s;@ " (name_rust_decl_fn_arg (extern_atom id ^ " : ") ty))
+        f.fn_vars;
         print_stmt p f.fn_body;
     fprintf p "@;<0 -2>}@]@;<0 -2>}@]@ @ "
     end
@@ -294,10 +298,11 @@ let print_function p id f =
                 (name_rust_decl_fn (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
       fprintf p "@[<v 2>{@ ";
         (* Print variables and their types *)
-        (* List.iter 
+        List.iter 
         (fun (id, ty) ->
-          fprintf p "fn_vars: %s;@ " (name_rust_decl (extern_atom id) ty))
+          fprintf p "let mut %s;@ " (name_rust_decl_fn_arg (extern_atom id ^ " : ") ty))
         f.fn_vars;
+        (*
         List.iter
         (fun (id, ty) ->
           fprintf p "fn_param: %s;@ " (name_rust_decl (extern_atom id) ty))
