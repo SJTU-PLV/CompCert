@@ -96,19 +96,19 @@ let rec name_rust_decl id ty =
 let rec name_rust_decl_fn_arg id ty =
   match ty with
   | Rusttypes.Tunit ->
-      name_optid id 
+    name_optid_no_space id 
   | Rusttypes.Tvoid ->
-      name_optid id ^ "std::ffi::c_void"    
+    name_optid_no_space id ^ "std::ffi::c_void"    
   | Rusttypes.Tint(sz, sg) ->
-      name_optid id ^ name_inttype sz sg
+    name_optid_no_space id ^ name_inttype sz sg
   | Rusttypes.Tfloat(sz) ->
-      name_optid id  ^ name_floattype sz
+    name_optid_no_space id  ^ name_floattype sz
   | Rusttypes.Tlong(sg) ->
-      name_optid id ^ name_longtype sg
+    name_optid_no_space id ^ name_longtype sg
   | Rusttypes.Treference(org, mut, t) ->
-      "&" ^ (extern_atom org) ^" "^  string_of_mut mut ^ (name_rust_decl ""  t) ^ name_optid id
+    name_optid_no_space id ^ "&" ^ (extern_atom org) ^" "^  string_of_mut mut ^ (name_rust_decl ""  t)
   | Tbox(t) ->
-      "Box<" ^ (name_rust_decl ""  t) ^ ">" ^ name_optid id
+    name_optid_no_space id ^ "Box<" ^ (name_rust_decl ""  t) ^ ">"
   | Tfunction( _, _, args, res, cconv) ->
       let b = Buffer.create 20 in
       if id = ""
@@ -126,7 +126,7 @@ let rec name_rust_decl_fn_arg id ty =
             ()
       | Tcons(t1, tl) ->
           if not first then Buffer.add_string b ", ";
-          Buffer.add_string b (name_rust_decl "_:" t1);
+          Buffer.add_string b (name_rust_decl "_" t1);
           add_args false tl in
       if not cconv.cc_unproto then add_args true args;
       Buffer.add_char b ')';
@@ -136,10 +136,18 @@ let rec name_rust_decl_fn_arg id ty =
   | Tvariant(orgs, name) ->
       "variant" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
   | Traw_pointer(mut, ty) ->
-    name_optid id ^ "*" ^ string_of_pmut mut ^ (name_rust_decl_fn_arg ""  ty)
+    name_optid_no_space id ^ "*" ^ string_of_pmut mut ^ (name_rust_decl ""  ty)
   | Tarray(mut, ty, sz) ->
+    (* begin
     (* string_of_mut mut ^ " "^ *)
-    name_rust_decl (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
+    match mut with
+    | Immutable->
+        (* 处理 const 数组 *)
+        name_optid id ^ "[" ^ name_rust_decl "" ty ^ ";" ^ sprintf "%ld" (camlint_of_coqint sz) ^ "]"
+    | Mutable -> *)
+        (* 处理 mutable 数组 *)
+        name_optid_no_space id ^ "[" ^ name_rust_decl "" ty ^ ";" ^ sprintf "%ld" (camlint_of_coqint sz) ^ "]"
+    (* end *)
   | Tslice(mut, ty) ->
     "&" ^ string_of_mut mut ^ " " ^ (name_rust_decl ""  ty) ^ name_optid id
 
@@ -176,7 +184,7 @@ let rec name_rust_decl_fn id ty =
             ()
       | Tcons(t1, tl) ->
           if not first then Buffer.add_string b ", ";
-          Buffer.add_string b (name_rust_decl_fn_arg "_:" t1);
+          Buffer.add_string b (name_rust_decl_fn_arg "_ : " t1);
           add_args false tl in
       if not cconv.cc_unproto then add_args true args;
       Buffer.add_char b ')';
@@ -230,19 +238,45 @@ let print_fundecl p id fd =
                 (name_rust_decl (extern_atom id) (Rustsyntax.type_of_function f))
   | _ -> ()
 
+let print_string_array p id ty il =
+  (* p: formatter, id: 变量名, ty: Rusttypes.type, il: Init_int8 列表 *)
+  let len = List.length il in
+  fprintf p "[";
+  List.iteri
+    (fun i init ->
+      match init with
+      | Init_int8 n ->
+        let n_int32 = camlint_of_coqint n in
+        let c =
+          if n_int32 = Int32.of_int 10 then "\\n"
+          else if n_int32 = Int32.of_int 13 then "\\r"
+          else if n_int32 = Int32.of_int 9 then "\\t"
+          else if n_int32 = Int32.of_int 0 then "\\0"
+          else if n_int32 = Int32.of_int 39 then "\\'"  (* 单引号特殊处理 *)
+          else if n_int32 >= Int32.of_int 32 && n_int32 <= Int32.of_int 126 then
+            String.make 1 (Char.chr (Int32.to_int n_int32))
+          else Printf.sprintf "\\x%02x" (Int32.to_int n_int32)
+          in
+          fprintf p "    b'%s' as i8" c;
+          if i < len - 1 then fprintf p ",\n" else fprintf p "\n"
+      | _ -> ()
+    ) il;
+  fprintf p "]"
+
 let print_globvar p id v =
   let name1 = extern_atom id in
   let name2 = if v.gvar_readonly then "const " ^ name1 else name1 in
+  let name3 = name2 ^ " : " in
   match v.gvar_init with
   | [] ->
       fprintf p "extern %s;@ @ "
-              (name_rust_decl name2 v.gvar_info)
+              (name_rust_decl_fn_arg name3 v.gvar_info)
   | [Init_space _] ->
       fprintf p "%s;@ @ "
-              (name_rust_decl name2 v.gvar_info)
+              (name_rust_decl_fn_arg name3 v.gvar_info)
   | _ ->
       fprintf p "@[<hov 2>%s = "
-              (name_rust_decl name2 v.gvar_info);
+              (name_rust_decl_fn_arg name3 v.gvar_info);
       begin match v.gvar_info, v.gvar_init with
       | (Rusttypes.Tint _ | Rusttypes.Tlong _ | Rusttypes.Tfloat _ | Tfunction _),
         [i1] ->
@@ -250,7 +284,8 @@ let print_globvar p id v =
       | _, il ->
           if Str.string_match re_string_literal (extern_atom id) 0
           && List.for_all (function Init_int8 _ -> true | _ -> false) il
-          then fprintf p "\"%s\"" (string_of_init (chop_last_nul il))
+          then print_string_array p (extern_atom id) v.gvar_info il
+          (* then fprintf p "\"%s\"" (string_of_init (chop_last_nul il)) *)
           else print_composite_init p il
       end;
       fprintf p ";@]@ @ "

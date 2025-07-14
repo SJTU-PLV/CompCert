@@ -153,6 +153,14 @@ with to_rusttypelist (tyl: Ctypes.typelist) : Rusttypes.typelist :=
            Rusttypes.Tcons (to_rusttype ty) (to_rusttypelist tyl)
        end.
 
+Definition to_rusttype_global (ty: Ctypes.type): Rusttypes.type :=
+  match ty with
+  | Ctypes.Tpointer ty _ => Rusttypes.Traw_pointer const (to_rusttype ty)
+  (*todo*)
+  | Ctypes.Tarray ty' sz _ => Rusttypes.Tarray Immutable (to_rusttype ty') sz
+  | _ => to_rusttype ty
+  end.
+
 Definition get_return_type fe : option type :=
   match fe with
   | Evar _ fty 

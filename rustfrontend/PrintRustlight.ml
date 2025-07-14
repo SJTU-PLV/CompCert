@@ -152,14 +152,68 @@ let expr p (prec, e) =
 
 let print_expr p e = expr p (0, e)
 
+let type_of_pexpr (p : Rustlight.pexpr) : Rusttypes.coq_type =
+  match p with
+  | Eunit -> Rusttypes.Tunit
+  | Econst_int (_, ty) -> ty
+  | Econst_float (_, ty) -> ty
+  | Econst_single (_, ty) -> ty
+  | Econst_long (_, ty) -> ty
+  | Eplace (_, ty) -> ty
+  | Ecktag (_, _) -> Rusttypes.Tint (Ctypes.I32, Ctypes.Signed)  (* 或者你需要的类型 *)
+  | Eref (_, _, _, ty) -> ty
+  | Eunop (_, _, ty) -> ty
+  | Ebinop (_, _, _, ty) -> ty
+  | Eglobal (_, ty) -> ty
+  | Eas (_, ty) -> ty
+  | Esizeof (_, ty) -> ty
+  | Ederef (_, ty) -> ty
+  
+let type_of_expr (e : expr) : Rusttypes.coq_type =
+  match e with
+  | Emoveplace (_, ty) -> ty
+  | Epure p -> type_of_pexpr p
+
 let rec print_expr_list p (first, rl) =
   match rl with
   | [] -> ()
   | r :: rl ->
       if not first then fprintf p ",@ ";
       expr p (2, r);
+      (* 判断类型，如果是数组或指针，加 .as_ptr() *)
+      (match type_of_expr r with
+       | Rusttypes.Tarray _ | Rusttypes.Traw_pointer _ -> fprintf p ".as_ptr()"
+       | _ -> ());
       print_expr_list p (false, rl)
 
+let rec print_expr_list_with_type p (first, exprs, param_tys) =
+  match exprs, param_tys with
+  | [], [] -> ()
+  | r :: rl, ty :: tyl ->
+      if not first then fprintf p ",@ ";
+      expr p (2, r);
+      (* 判断类型，如果是数组或指针，加 .as_ptr() *)
+      (match type_of_expr r with
+       | Rusttypes.Tarray _ | Rusttypes.Traw_pointer _ -> fprintf p ".as_ptr()"
+       | _ -> ());
+      (* 打印参数类型 *)
+      fprintf p " as %s" (name_rust_decl_fn_arg "" ty);
+      print_expr_list_with_type p (false, rl, tyl)
+  | r :: rl, [] ->
+      if not first then fprintf p ",@ ";
+      expr p (2, r);
+      (* 判断类型，如果是数组或指针，加 .as_ptr() *)
+      (match type_of_expr r with
+      | Rusttypes.Tarray _ | Rusttypes.Traw_pointer _ -> fprintf p ".as_ptr()"
+      | _ -> ());
+      print_expr_list_with_type p (false, rl, [])
+  | _ ->
+      (* error *)
+      ()
+
+let rec typelist_to_list = function
+  | Rusttypes.Tnil -> []
+  | Rusttypes.Tcons(ty, rest) -> ty :: typelist_to_list rest
 
 let rec print_stmt p (s: Rustlight.statement) =
   match s with
@@ -171,10 +225,16 @@ let rec print_stmt p (s: Rustlight.statement) =
   | Sassign_variant (v, enum_id, id, e) ->
     fprintf p "@[<hv 2>let mut %a =@ %s::%s(%a);@]" print_place v (extern_atom enum_id)(extern_atom id) print_expr e
   | Scall(v, e1, el) ->
+    let fun_ty = type_of_expr e1 in
+    let param_tys =
+      match fun_ty with
+      | Rusttypes.Tfunction(_, _, args, _, _) ->  typelist_to_list args
+      | _ -> List.map (fun _ -> Rusttypes.Tunit) el  (* fallback: 全部Tunit *)
+    in
     fprintf p "@[<hv 2>let mut %a =@ %a@,(@[<hov 0>%a@]);@]"
               print_place v
               expr (15, e1)
-              print_expr_list (true, el)
+              print_expr_list_with_type (true, el, param_tys)
   | Ssequence(Sskip, s2) ->
       print_stmt p s2
   | Ssequence(s1, Sskip) ->
@@ -182,11 +242,11 @@ let rec print_stmt p (s: Rustlight.statement) =
   | Ssequence(s1, s2) ->
       fprintf p "%a@ %a" print_stmt s1 print_stmt s2
   | Sifthenelse(e, s1, Sskip) ->
-      fprintf p "@[<v 2>if (%a) {@ %a@;<0 -2>}@]"
+      fprintf p "@[<v 2>if %a {@ %a@;<0 -2>}@]"
               print_expr e
               print_stmt s1
   | Sifthenelse(e, Sskip, s2) ->
-    fprintf p "@[<v 2>if (! %a) {@ %a@;<0 -2>}@]"
+    fprintf p "@[<v 2>if ! %a {@ %a@;<0 -2>}@]"
               expr (15, e)
               print_stmt s2
   | Sifthenelse(e, s1, s2) ->
@@ -195,7 +255,7 @@ let rec print_stmt p (s: Rustlight.statement) =
               print_stmt s1
               print_stmt s2
   | Sloop(s1) ->
-    fprintf p "@[<v 2>while (1) {@ %a@;<0 -2>}@]"
+    fprintf p "@[<v 2>while true {@ %a@;<0 -2>}@]"
               print_stmt s1
   | Sbreak ->
     fprintf p "break;"
@@ -234,7 +294,7 @@ let print_function p id f =
                 (name_rust_decl_fn (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
       fprintf p "@[<v 2>{@ ";
         (* Print variables and their types *)
-        (* List.iter
+        (* List.iter 
         (fun (id, ty) ->
           fprintf p "fn_vars: %s;@ " (name_rust_decl (extern_atom id) ty))
         f.fn_vars;

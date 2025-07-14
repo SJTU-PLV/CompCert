@@ -84,6 +84,9 @@ let attributes_space a =
 let name_optid id =
   if id = "" then "" else " " ^ id
 
+let name_optid_no_space id = 
+  if id = "" then "" else id
+
 let rec name_cdecl id ty =
   match ty with
   | Ctypes.Tvoid ->
