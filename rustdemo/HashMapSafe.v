@@ -597,35 +597,29 @@ Inductive call_find_bucket_from_operate_on (b: block) : cont -> massert -> Prop 
                                         ** contains Mint32 b_key 0 (eq (Vint ki)))
 .
 
-(** TODO *)
 Definition find_bucket_return_to_hmap_set_cont k :=
   (Kseq
-     (Sifthenelse
-        (Ebinop Oeq (Ederef (Etempvar buk List_box_ptr) List_ptr)
-           (Ecast (Econst_long (Int64.repr 0) tlong) (tptr tvoid)) tint) 
-        (Sreturn None)
-        (Ssequence
-           (Scall (Some tmp)
-              (Evar find
-                 (Tfunction (Tcons List_ptr (Tcons tint Tnil)) List_ptr cc_default))
-              [Ederef (Etempvar buk List_box_ptr) List_ptr; Evar key tint])
-           (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr)))) k).
+     (Ssequence
+        hmap_set_cond
+        (* *buk = insert(tmp, key, val) *)
+        hmap_set_after_cond)
+     k).
 
-(** TODO  *)
-Inductive hmap_set_cont : cont -> Prop :=
-| hmap_set_cont_intro: forall k,
-    hmap_set_cont k.
+Inductive hmap_set_cont b_hmap : cont -> Prop :=
+| hmap_set_cont_intro: forall le
+    (FUNID: list_callee_ext (hmap_list_ext w) = main)
+    (GETHMAP: PTree.get hmap le = Some (Vptr b_hmap Ptrofs.zero)),
+    hmap_set_cont b_hmap (Kcall (Some hmap) main_func empty_env le (Kseq main_after_insertion Kstop)).
 
-Inductive call_find_bucket_from_hmap_set (b: block) : cont -> massert -> Prop :=
+Inductive call_find_bucket_from_hmap_set (b_hmap: block) : cont -> massert -> Prop :=
 | call_find_bucket_from_hmap_set_intro: forall k e le sb_hmap sb_key sb_v kv fp
-    (CONT: hmap_set_cont k)
     (ENV: e = PTree.set val (sb_v, val_ty)
                 (PTree.set key (sb_key, tint)
                 (PTree.set hmap (sb_hmap, hmap_ty) empty_env)))
     (LENV: le = create_undef_temps (fn_temps hmap_set_func))
-    (CONT: hmap_operate_on_cont b k),
-    call_find_bucket_from_hmap_set b (Kcall (Some buk) hmap_set_func e le (find_bucket_return_to_hmap_set_cont k))
-      (contains Mptr sb_hmap 0 (eq (Vptr sb_hmap Ptrofs.zero))
+    (CONT: hmap_set_cont b_hmap k),
+    call_find_bucket_from_hmap_set b_hmap (Kcall (Some buk) hmap_set_func e le (find_bucket_return_to_hmap_set_cont k))
+      (contains Mptr sb_hmap 0 (eq (Vptr b_hmap Ptrofs.zero))
          ** contains Mint32 sb_key 0 (eq (Vint kv))
          ** process_val_pred sb_v 0 fp)
 .
@@ -636,10 +630,9 @@ Inductive call_find_bucket_cont (b: block) : cont -> massert -> Prop :=
 | call_find_bucket_cont_intro1: forall k MP
     (CONT: call_find_bucket_from_operate_on b k MP),
     call_find_bucket_cont b k MP
-(** Uncomment it when we want to support hmap_set *)
-(* | call_find_bucket_cont_intro2: forall k MP *)
-(*     (CONT: call_find_bucket_from_hmap_set b k MP), *)
-(*     call_find_bucket_cont b k MP     *)
+| call_find_bucket_cont_intro2: forall k MP
+    (CONT: call_find_bucket_from_hmap_set b k MP),
+    call_find_bucket_cont b k MP
 .
 
 Lemma call_find_bucket_cont_eq_call_cont: forall b k MP,
@@ -732,15 +725,61 @@ Inductive sound_state_init : state -> Prop :=
     (FUNID: list_callee_ext (hmap_list_ext w) = main)
     (RAN: (0<= n <=1)%nat),
     sound_state_init s
-(* After calling init_map and before calling hmap_operate *)
+(* After calling init_map and before calling malloc for creating a value *)
 | hmap_main_internal2: forall t s n m le b fpl
     (STAR: starNf step1 num_frames ge n (State main_func Sskip (Kseq main_after_init_hmap Kstop) empty_env le m) t s)
     (GETHMAP: PTree.get hmap le = Some (Vptr b Ptrofs.zero))
+    (GETVAL: PTree.get val le = Some Vundef)
     (MPRED : m |= hmap_pred b fpl)
     (NOTCALLRET: not_call_return_state s)
     (FUNID: list_callee_ext (hmap_list_ext w) = main)
     (RAN: (0<= n <=2)%nat),
     sound_state_init s
+(* Before calling malloc for creating the value *)
+| hmap_main_insert_call_malloc: forall m bf sz le b_hmap fpl
+    (FINDF: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some Clightgen.malloc_decl)
+    (GETHMAP: PTree.get hmap le = Some (Vptr b_hmap Ptrofs.zero))
+    (GETVAL: PTree.get val le = Some Vundef)
+    (MPRED : m |= hmap_pred b_hmap fpl)
+    (FUNID: list_callee_ext (hmap_list_ext w) = main)
+    (SZEQ: sz = Vlong (Int64.repr 4)),
+    sound_state_init (Callstate (Vptr bf Ptrofs.zero) [sz]
+                   (Kcall (Some val) main_func empty_env le
+                      (Kseq (Ssequence main_assign_value main_call_hmap_set) (Kseq main_after_insertion Kstop))) m)
+(* After returning from malloc of allocating the value *)
+| hmap_main_insert_return_malloc: forall m b_v b_hmap le fpl
+    (GETHMAP: PTree.get hmap le = Some (Vptr b_hmap Ptrofs.zero))
+    (GETVAL: PTree.get val le = Some Vundef)
+    (FUNID: list_callee_ext (hmap_list_ext w) = main)
+    (MPRED: m |= contains_neg Mptr b_v (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr 4)))
+              ** range b_v 0 4
+              ** hmap_pred b_hmap fpl),
+    sound_state_init (Returnstate (Vptr b_v Ptrofs.zero)
+                   (Kcall (Some val) main_func empty_env le
+                      (Kseq (Ssequence main_assign_value main_call_hmap_set) (Kseq main_after_insertion Kstop))) m)
+(* Before calling hmap_set, that is, assigning 23 into the *val *)
+| hmap_main_insert_assign_val: forall m b_v b_hmap le fpl t s n
+    (GETHMAP: PTree.get hmap le = Some (Vptr b_hmap Ptrofs.zero))
+    (GETVAL: PTree.get val le = Some (Vptr b_v Ptrofs.zero))
+    (FUNID: list_callee_ext (hmap_list_ext w) = main)
+    (MPRED: m |= contains_neg Mptr b_v (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr 4)))
+              ** range b_v 0 4
+              ** hmap_pred b_hmap fpl)
+    (STAR: starNf step1 num_frames ge n (State main_func Sskip (Kseq (Ssequence main_assign_value main_call_hmap_set) (Kseq main_after_insertion Kstop)) empty_env le m) t s)
+    (NOTCALLRET: not_call_return_state s)
+    (RAN: (0<= n <=1)%nat),
+    sound_state_init s
+(* After returning from hmap_set, and next is to call hmap_process *)
+| hmap_main_before_hmap_process: forall m b_v b_hmap le fpl t s n
+    (GETHMAP: PTree.get hmap le = Some (Vptr b_hmap Ptrofs.zero))
+    (GETVAL: PTree.get val le = Some (Vptr b_v Ptrofs.zero))
+    (FUNID: list_callee_ext (hmap_list_ext w) = main)
+    (MPRED: m |= hmap_pred b_hmap fpl)
+    (STAR: starNf step1 num_frames ge n (State main_func Sskip (Kseq main_after_insertion Kstop) empty_env le m) t s)
+    (NOTCALLRET: not_call_return_state s)
+    (RAN: (0<= n <=1)%nat),
+    sound_state_init s                     
+
 (* After calling hmap_operate and before returning *)
 | hmap_main_internal3: forall t s n m le b fpl
     (STAR: starNf step1 num_frames ge n (State main_func Sskip (Kseq (Sreturn (Some (Econst_int Int.zero tint))) Kstop) empty_env le m) t s)
@@ -837,20 +876,21 @@ Inductive sound_state_init : state -> Prop :=
 
 (** TODO: we only define the invariants for hmap_set but does not
 prove its safety for now. It is ok as we do not use hmap_set in the
-main function *)
+main function for now *)
 Inductive sound_state_set : state -> Prop :=
 (* callstate of hmap_set *)
 | hmap_set_call: forall bf b_hmap b_v kv k m v_fp fpl
     (SYMB: Genv.invert_symbol se bf = Some hmap_set)
-    (CONT: hmap_set_cont k)
+    (CONT: hmap_set_cont b_hmap k)
     (BVSPEC: process_val_spec m v_fp (Vptr b_v Ptrofs.zero))
+    (DIS: forall b ofs, m_footprint (hmap_pred b_hmap fpl) b ofs -> In b (footprint_flat v_fp) -> False)
     (MPRED: m |= hmap_pred b_hmap fpl)
     (DISJOINT: forall b ofs, m_footprint (hmap_pred b_hmap fpl) b ofs ->
                         In b (footprint_flat v_fp) -> False),
     sound_state_set (Callstate (Vptr bf Ptrofs.zero) [Vptr b_hmap Ptrofs.zero; Vint kv; Vptr b_v Ptrofs.zero] k m)
 (* Before calling find_bucket *)
 | hmap_set_internal1: forall k n m t s fpl b_hmap sb_hmap sb_key sb_v e kv v_fp
-    (CONT: hmap_set_cont k)
+    (CONT: hmap_set_cont b_hmap k)
     (STAR: starNf step1 num_frames ge n (State hmap_set_func (fn_body hmap_set_func) k e (create_undef_temps (fn_temps hmap_set_func)) m) t s)
     (ENV: e = PTree.set val (sb_v, val_ty)
                 (PTree.set key (sb_key, tint)
@@ -866,7 +906,7 @@ Inductive sound_state_set : state -> Prop :=
 find_bucket_callstate *)                    
 (* After returning from find_bucket *)
 | hmap_set_internal2: forall k n m t s fp fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le v_fp
-    (CONT: hmap_set_cont k)
+    (CONT: hmap_set_cont b_hmap k)
     (STAR: starNf step1 num_frames ge n
              (State hmap_set_func Sskip
                 (Kseq (Ssequence hmap_set_cond hmap_set_after_cond) k)
@@ -893,7 +933,7 @@ find_bucket_callstate *)
 (* Before calling empty_list *)
 | hmap_set_call_empty_list: forall k bf m fp fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le v_fp
     (SYMB: Genv.invert_symbol se bf = Some empty_list)
-    (CONT: hmap_set_cont k)
+    (CONT: hmap_set_cont b_hmap k)
     (* copy from hmap_set_internal2 *)
     (ENV: e = PTree.set val (sb_v, val_ty)
                 (PTree.set key (sb_key, tint)
@@ -914,7 +954,7 @@ find_bucket_callstate *)
     sound_state_set (Callstate (Vptr bf Ptrofs.zero) nil (Kcall (Some tmp) hmap_set_func e le (Kseq hmap_set_after_cond k)) m)
 (* After returning from empty_list *)
 | hmap_set_return_empty_list: forall k m fp fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le MP  v_fp l_fp b_l
-    (CONT: hmap_set_cont k)
+    (CONT: hmap_set_cont b_hmap k)
     (* copy from hmap_set_internal2 *)
     (ENV: e = PTree.set val (sb_v, val_ty)
                 (PTree.set key (sb_key, tint)
@@ -942,7 +982,7 @@ find_bucket_callstate *)
     sound_state_set (Returnstate (Vptr b_l Ptrofs.zero) (Kcall (Some tmp) hmap_set_func e le (Kseq hmap_set_after_cond k)) m)
 (* Execution of hmap_set_after_cond before calling insert *)
 | hmap_set_internal3: forall k n m t s fp fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le b_l MP v_fp l_fp
-    (CONT: hmap_set_cont k)
+    (CONT: hmap_set_cont b_hmap k)
     (STAR: starNf step1 num_frames ge n
              (State hmap_set_func Sskip
                 (Kseq hmap_set_after_cond k) e le m) t s)
@@ -974,7 +1014,11 @@ Inductive sound_state : state -> Prop :=
 | hmap_init_inv: forall s
     (SINV_INIT: sound_state_init s),
     sound_state s
-    
+(* Invariant for inserting key-value pairs into the hash_map *)
+| hmap_set_inv: forall s
+    (SINV_SET: sound_state_set s),
+    sound_state s
+                
 (* callstate in process function *)
 | hmap_call_process: forall bf b rwm rwfp
     (SYMB: Genv.invert_symbol se bf = Some process)
@@ -1259,7 +1303,7 @@ Proof.
   exploit process_val_spec_unchanged_on.
   eapply Mem.alloc_unchanged_on. eauto. eauto. intros SPEC1.
   exploit storev_rule. eapply range_contains with (ofs:=0) (chunk:= Mptr). eauto.
-  eapply Z.divide_0_r.  
+  eapply Z.divide_0_r.
   instantiate (1 := Vptr b ofs). instantiate (1 := eq (Vptr b ofs)).
   reflexivity.
   intros (m2 & STORE1 & MP3).
@@ -1290,6 +1334,119 @@ Proof.
     + destruct H; subst. eapply A6; eauto.
     + destruct H0. congruence.
 Qed.
+
+
+Lemma function_entry_hmap_set: forall m b_hmap kv b_v fp P,
+    process_val_spec m fp (Vptr b_v Ptrofs.zero) ->
+    m |= P ->
+    (forall b ofs, m_footprint P b ofs -> In b (footprint_flat fp) -> False) ->
+    exists b1 b2 b3 m', 
+      function_entry1 ge hmap_set_func [Vptr b_hmap Ptrofs.zero; Vint kv; Vptr b_v Ptrofs.zero] m
+        (PTree.set val (b3, val_ty) (PTree.set key (b2, tint) (PTree.set hmap (b1, hmap_ty) empty_env)))
+        (create_undef_temps (fn_temps hmap_set_func)) m'
+      /\ m'
+          |= contains Mptr b1 0 (eq (Vptr b_hmap Ptrofs.zero)) **
+          contains Mint32 b2 0 (eq (Vint kv)) **
+          process_val_pred b3 0 fp ** P.
+Proof.
+  intros until P. intros SPEC MP DIS.
+  destruct (Mem.alloc m 0 (size_chunk Mptr)) eqn: ALLOC1.
+  destruct (Mem.alloc m0 0 (size_chunk Mint32)) eqn: ALLOC2.
+  destruct (Mem.alloc m1 0 (size_chunk Mptr)) eqn: ALLOC3.  
+  exploit alloc_rule. eapply ALLOC1. lia. vm_compute. congruence.
+  eapply MP. intros MP1.
+  exploit alloc_rule. eapply ALLOC2. lia. vm_compute. congruence.
+  eapply MP1. intros MP2.
+  eapply sep_swap12 in MP2.
+  exploit alloc_rule. eapply ALLOC3. lia. vm_compute. congruence.
+  eapply MP2. intros MP3.
+  erewrite sep_swap12, sep_swap23 in MP3.  
+  exploit storev_rule. eapply range_contains with (ofs:=0) (chunk:= Mptr). eauto.
+  eapply Z.divide_0_r.
+  instantiate (1 := Vptr b_hmap Ptrofs.zero). instantiate (1 := eq (Vptr b_hmap Ptrofs.zero)). auto.
+  intros (m3 & STORE1 & MP4). 
+  eapply sep_swap12 in MP4.
+  exploit storev_rule. eapply range_contains with (ofs:=0) (chunk:= Mint32). eauto.
+  eapply Z.divide_0_r.
+  instantiate (1 := Vint kv). instantiate (1 := eq (Vint kv)). auto.
+  intros (m4 & STORE2 & MP5).
+  eapply sep_swap12 in MP5.
+  eapply sep_swap3 in MP5.
+  exploit storev_rule. eapply range_contains with (ofs:=0) (chunk:= Mptr). eauto.
+  eapply Z.divide_0_r.
+  instantiate (1 := Vptr b_v Ptrofs.zero). instantiate (1 := eq (Vptr b_v Ptrofs.zero)). auto.
+  intros (m5 & STORE3 & MP6).
+  (* val_spec in m5 *)
+  assert (FPVALID: forall b, In b (footprint_flat fp) -> Mem.valid_block m b).
+  { inv SPEC. inv WTFP.
+    inv WTVAL. inv WTVAL. inv WT. inv WTVAL. inv WTLOC. simpl.
+    intros. destruct H; try contradiction. subst.
+    eapply sem_wt_val_valid_block. eauto. inv WTVAL. simpl. eauto. }   
+  exploit process_val_spec_unchanged_on.
+  2: eapply SPEC. instantiate (1 := m5). (* inv SPEC. inv WTFP. *)
+  (* inv WTVAL. inv WTVAL. inv WT. inv WTVAL. inv WTLOC. *)
+  (* simpl. *)
+  eapply Mem.unchanged_on_trans. eapply Mem.alloc_unchanged_on. eauto.
+  eapply Mem.unchanged_on_trans. eapply Mem.alloc_unchanged_on. eauto.
+  eapply Mem.unchanged_on_trans. eapply Mem.alloc_unchanged_on. eauto.
+  (* exploit sem_wt_val_valid_block. eauto. simpl. eauto. intros VB. *)
+  (* inv WTVAL.   *)
+  eapply Mem.unchanged_on_trans. eapply Mem.store_unchanged_on. eauto.
+  intros. intro. eapply Mem.fresh_block_alloc. eapply ALLOC1. eapply FPVALID. auto.
+  eapply Mem.unchanged_on_trans. eapply Mem.store_unchanged_on. eauto.
+  intros. intro. eapply Mem.fresh_block_alloc. eapply ALLOC2. 
+  eapply Mem.valid_block_alloc; eauto. 
+  eapply Mem.unchanged_on_trans. eapply Mem.store_unchanged_on. eauto.
+  intros. intro. eapply Mem.fresh_block_alloc. eapply ALLOC3.
+  eapply Mem.valid_block_alloc; eauto.
+  eapply Mem.valid_block_alloc; eauto.
+  eapply Mem.unchanged_on_refl.
+  intros SPEC1. 
+  eapply sep_swap3 in MP6.
+  exists p, p0, p1, m5. split.
+  econstructor.
+  eapply proj_sumbool_true with (a:= list_norepet_dec ident_eq [hmap; key; val]); eauto.
+  (* alloc_variables *)
+  econstructor; eauto.
+  econstructor; eauto. econstructor; eauto.
+  simpl. econstructor. 
+  (* bind_parameters *)  
+  econstructor. reflexivity.
+  econstructor. reflexivity. eauto.
+  econstructor. reflexivity.
+  econstructor. reflexivity. eauto.
+  econstructor. reflexivity.
+  econstructor. reflexivity. eauto.
+  econstructor. auto.
+  (* memory predicate *)
+  erewrite <- sep_assoc. erewrite <- sep_assoc in MP6.
+  set ( mp:=(contains Mptr p 0 (eq (Vptr b_hmap Ptrofs.zero)) **
+               contains Mint32 p0 0 (eq (Vint kv)))) in *.
+  erewrite sep_swap12. erewrite sep_swap12 in MP6.
+  red. red. do 2 red in MP6.
+  destruct MP6 as (A1 & A2 & A3).
+  split.
+  + simpl. simpl in A1.
+    destruct A1 as (B1 & B2 & (v & B3 & B4)).
+    assert (NIN: ~ In p1 (footprint_flat fp)).
+    { intro. eapply Mem.fresh_block_alloc. eapply ALLOC3.
+      eapply Mem.valid_block_alloc; eauto.
+      eapply Mem.valid_block_alloc; eauto. }    
+    repeat apply conj; eauto. lia. lia.
+    eapply B2. eapply Z.divide_0_r.
+    subst. exists (Vptr b_v Ptrofs.zero). split; eauto.
+  + split; auto.
+    red. intros. eapply A3; eauto. simpl. simpl in H.
+    destruct H; auto. destruct H. auto.
+    simpl in H0. destruct H0.
+    * destruct H0.
+      -- destruct H0; subst.
+         exfalso. eapply Mem.fresh_block_alloc. eapply ALLOC1. auto.
+      -- destruct H0; subst.
+         exfalso. eapply Mem.fresh_block_alloc. eapply ALLOC2.
+         eapply Mem.valid_block_alloc; eauto.
+    * exfalso. eapply DIS; eauto. 
+Qed.  
 
 Lemma function_entry_main: forall m,
     function_entry1 ge main_func nil m empty_env (create_undef_temps (fn_temps main_func)) m.
@@ -1334,7 +1491,7 @@ Lemma hash_map_external: forall s q,
                /\ (forall s', after_external s r_c s' -> sound_state s')).
 Proof.
   intros s q_c SINV ATEXT. inv ATEXT. unfold f in *.
-  inv SINV; try inv SINV_INIT; try simpl in NOTCALLRET; try contradiction.
+  inv SINV; try inv SINV_INIT; try inv SINV_SET; try simpl in NOTCALLRET; try contradiction.
   - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal main_func)).
     { simpl. destruct Ptrofs.eq_dec; try congruence.
       eapply Genv.find_funct_ptr_iff.
@@ -1348,6 +1505,15 @@ Proof.
       reflexivity. }
     rewrite H in FIND. inv FIND.
   - rewrite H in FINDF. inv FINDF.
+  (* call hmap_set *)
+  - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal hmap_set_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYMB.
+      reflexivity. }
+    rewrite H in FIND. inv FIND.
+  (** TODO: call empty_list in hmap_set *)
+  - admit.
   - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal process_func)).
     { simpl. destruct Ptrofs.eq_dec; try congruence.
       eapply Genv.find_funct_ptr_iff.
@@ -1506,7 +1672,8 @@ Proof.
       eapply Mem.unchanged_on_implies. eauto.
       intros. simpl. auto. auto.
       intro. inv H.
-Qed.
+(* Qed. *)
+Admitted.
 
 (* Incoming safety interface: {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q} *)
 Lemma initial_preservation_progress: forall q_c,
@@ -1599,12 +1766,12 @@ Lemma final_progress: forall s r,
     final_state s r ->
     reply_inv (hmap_int_inv N) w r.
 Proof.
-  intros. inv H0. inv H; try inv SINV_INIT; try (simpl in NOTCALLRET; contradiction).
+  intros. inv H0. inv H; try inv SINV_INIT; try inv SINV_SET; try (simpl in NOTCALLRET; contradiction).
   (* return from main *)
   + simpl. red. red. rewrite FUNID.
     reflexivity.
   (* return from init_hmap: impossible *)
-  + inv CONT.    
+  + inv CONT.
   (* return from process *)
   + simpl. red. red.
     rewrite FUNID. rewrite dec_eq_true. 
@@ -1633,7 +1800,8 @@ Proof.
     econstructor; eauto.
     intro. inv H.    
   + inv CONT.
-  + inv CONT. inv CONT0.
+  (* return from find_bucket: impossible *)
+  + inv CONT; inv CONT0.
 Qed.
 
 
@@ -1668,6 +1836,35 @@ Proof.
   rewrite Int.unsigned_one. lia.
   rewrite Int.unsigned_one. lia.
 Qed.
+
+
+(* progress and invariant preservation in hmap_set *)
+
+Lemma step_hmap_set_preservation_progress: forall s,
+    sound_state_set s ->
+    (not_stuck (hash_map_sem se) s
+    /\ (forall s' t, step1 ge s t s' ->
+               sound_state s')).
+Proof.
+  intros s INV. inv INV.
+  (* call hmap_set *)
+  - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal hmap_set_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYMB.
+      auto. }
+    generalize (function_entry_hmap_set m b_hmap kv b_v _ MPRED). intros (sb_hmap & sb_kv & sb_bv & m1 & (ENTRY & MPRED1)).
+    split.
+    + red. do 2 right.
+      do 2 eexists. econstructor; eauto.
+    + intros. inv H; rewrite FIND in FIND0; inv FIND0.
+      exploit function_entry1_det. eauto. eapply ENTRY.
+      intros (A1 & A2 & A3). subst.
+      eapply hmap_set_inv.
+      eapply hmap_set_internal1. eauto.
+      econstructor. reflexivity. simpl. auto.
+      
+      lia.
 
 Lemma step_hmap_init_preservation_progress: forall s,
     sound_state_init s ->

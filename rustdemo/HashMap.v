@@ -140,7 +140,7 @@ Definition init_hmap_func := {|
   fn_temps := (hmap, hmap_ty) :: (tmp, tuint) :: nil; 
   fn_body := Ssequence
                (* call malloc *)
-               (Scall (Some hmap) (Evar malloc malloc_ty) [Ebinop Omul (Esizeof List_ptr Ctyping.size_t) (Econst_int (Int.repr buk_size) tuint) Ctyping.size_t])               
+               (Scall (Some hmap) (Evar malloc malloc_ty) [Ebinop Omul (Esizeof List_ptr Ctyping.size_t) (Econst_int (Int.repr buk_size) tuint) Ctyping.size_t])
                (* for loop used to initialize the hash map *)
                (Ssequence
                   (* If we use Sfor we need to unfold Sfor to define
@@ -215,6 +215,7 @@ Definition hmap_set_func := {|
     hmap_set_after_cond))
 |}.
 
+Definition hmap_set_ty := (Tfunction (Tcons hmap_ty (Tcons tint (Tcons val_ty Tnil))) hmap_ty cc_default).
 
 (* main function *)
 
@@ -224,21 +225,39 @@ Definition hmap_set_func := {|
 (*     return 0; *)
 (* } *)
 
-Definition main_after_init_hmap :=
-  (Ssequence
-     (Scall None (Evar hmap_process hmap_operate_on_ty)
-        [Etempvar hmap hmap_ty; Econst_int Int.one tint])
-     (Sreturn (Some (Econst_int Int.zero tint)))).
+Definition main_assign_value := (Sassign (Ederef (Evar val val_ty) tint) (Econst_int (Int.repr 23) tint)).
 
+Definition main_call_hmap_set := (Scall (Some hmap) (Evar hmap_set hmap_set_ty) [Evar hmap hmap_ty; Econst_int (Int.repr 42) tint; Evar val val_ty]).
+
+Definition main_insert_key_value :=
+  Ssequence
+    (* use malloc to allocate the heap memory for the value *)
+    (Scall (Some val) (Evar malloc malloc_ty) [Esizeof tint tlong])
+    (Ssequence
+       (* initialize this value *)
+       main_assign_value
+       main_call_hmap_set).
+
+Definition main_after_insertion := (Ssequence
+        (Scall None (Evar hmap_process hmap_operate_on_ty)
+           [Etempvar hmap hmap_ty; Econst_int Int.one tint])
+        (Sreturn (Some (Econst_int Int.zero tint)))).
+
+Definition main_after_init_hmap :=
+  Ssequence
+    (* insert (42,23) into the hash map *)
+    main_insert_key_value
+    (* call hmap_operate_on *)
+    main_after_insertion.
+   
 Definition main_func := {|
   fn_return := tint;
   fn_callconv := cc_default;
   fn_params := nil;
   fn_vars := nil;
-  fn_temps := (hmap, hmap_ty) :: nil;
+  fn_temps := (hmap, hmap_ty) :: (val, val_ty) :: nil;
   fn_body := Ssequence
                (Scall (Some hmap) (Evar init_hmap init_hmap_ty) nil)
-                       (* Find value in the empty hash map *)
                main_after_init_hmap;
 |}.
 
