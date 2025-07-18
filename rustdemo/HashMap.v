@@ -276,6 +276,11 @@ Definition find_ext: fundef := (External (EF_external "find"
                                        cc_default)) (Tcons List_ptr (Tcons tint Tnil)) List_ptr
                           cc_default).
 
+Definition empty_list_ext: fundef := (External
+                                        (EF_external "empty_list"
+                                           (AST.mksignature nil AST.Tlong cc_default))
+                                        Tnil List_ptr cc_default).
+
 Definition global_definitions : list (ident * globdef fundef type) :=
   (find_bucket, Gfun(Internal find_bucket_func)) ::
   (process, Gfun(Internal process_func)) ::
@@ -285,11 +290,12 @@ Definition global_definitions : list (ident * globdef fundef type) :=
   (main, Gfun (Internal main_func)) ::
   (malloc, Gfun malloc_decl) ::       (* Declaration of malloc *)
   (hash, Gfun hash_ext) ::
-  (find, Gfun find_ext) :: nil.
+  (find, Gfun find_ext) ::
+  (empty_list, Gfun empty_list_ext) :: nil.
 
 
 Definition public_idents : list ident :=
-  (hmap_process :: process :: find_bucket :: hash :: find :: init_hmap :: main :: malloc :: nil).
+  (hmap_process :: process :: find_bucket :: hash :: find :: init_hmap :: main :: malloc :: empty_list :: nil).
 
 Definition hash_map_prog : Clight.program :=
   mkprogram composites global_definitions public_idents main Logic.I.
