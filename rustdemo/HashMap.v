@@ -215,7 +215,7 @@ Definition hmap_set_func := {|
     hmap_set_after_cond))
 |}.
 
-Definition hmap_set_ty := (Tfunction (Tcons hmap_ty (Tcons tint (Tcons val_ty Tnil))) hmap_ty cc_default).
+Definition hmap_set_ty := (Tfunction (Tcons hmap_ty (Tcons tint (Tcons val_ty Tnil))) Tvoid cc_default).
 
 (* main function *)
 
@@ -227,7 +227,7 @@ Definition hmap_set_ty := (Tfunction (Tcons hmap_ty (Tcons tint (Tcons val_ty Tn
 
 Definition main_assign_value := (Sassign (Ederef (Evar val val_ty) tint) (Econst_int (Int.repr 23) tint)).
 
-Definition main_call_hmap_set := (Scall (Some hmap) (Evar hmap_set hmap_set_ty) [Evar hmap hmap_ty; Econst_int (Int.repr 42) tint; Evar val val_ty]).
+Definition main_call_hmap_set := (Scall None (Evar hmap_set hmap_set_ty) [Evar hmap hmap_ty; Econst_int (Int.repr 42) tint; Evar val val_ty]).
 
 Definition main_insert_key_value :=
   Ssequence
@@ -281,6 +281,14 @@ Definition empty_list_ext: fundef := (External
                                            (AST.mksignature nil AST.Tlong cc_default))
                                         Tnil List_ptr cc_default).
 
+Definition insert_ext: fundef := (External
+                                    (EF_external "insert"
+                                       (AST.mksignature 
+                                          (AST.Tlong :: AST.Tint :: AST.Tlong :: nil)
+                                          AST.Tlong cc_default))
+                                    (Tcons List_ptr (Tcons tint (Tcons val_ty Tnil)))
+                                    List_ptr cc_default).
+
 Definition global_definitions : list (ident * globdef fundef type) :=
   (find_bucket, Gfun(Internal find_bucket_func)) ::
   (process, Gfun(Internal process_func)) ::
@@ -291,11 +299,12 @@ Definition global_definitions : list (ident * globdef fundef type) :=
   (malloc, Gfun malloc_decl) ::       (* Declaration of malloc *)
   (hash, Gfun hash_ext) ::
   (find, Gfun find_ext) ::
-  (empty_list, Gfun empty_list_ext) :: nil.
+  (empty_list, Gfun empty_list_ext) ::
+  (insert, Gfun insert_ext) :: nil.
 
 
 Definition public_idents : list ident :=
-  (hmap_process :: process :: find_bucket :: hash :: find :: init_hmap :: main :: malloc :: empty_list :: nil).
+  (hmap_process :: process :: find_bucket :: hash :: find :: init_hmap :: main :: malloc :: empty_list :: insert :: nil).
 
 Definition hash_map_prog : Clight.program :=
   mkprogram composites global_definitions public_idents main Logic.I.
