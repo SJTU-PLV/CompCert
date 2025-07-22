@@ -298,8 +298,8 @@ Definition process_ext : fundef :=
 Definition linked_list_mod : program :=
   {| prog_defs := [(hash, Gfun (Internal hash_func));
                    (find, Gfun (Internal find_func));
-                   (* (empty_list, Gfun (Internal empty_list_func)); *)
-                   (* (insert, Gfun (Internal insert_func)); *)
+                   (empty_list, Gfun (Internal empty_list_func));
+                   (insert, Gfun (Internal insert_func));
                    (* (remove, Gfun (Internal remove_func)); *)
                    (process, Gfun process_ext);
                    (__drop_in_place_Node, Gfun (Internal (drop_in_place_Node)));

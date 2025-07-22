@@ -971,7 +971,7 @@ find_bucket_callstate *)
     (FPLEN: S (length (fpl1 ++ fpl2)) = N),
     sound_state_set (Callstate (Vptr bf Ptrofs.zero) nil (Kcall (Some tmp) hmap_set_func e le (Kseq hmap_set_after_cond k)) m)
 (* After returning from empty_list *)
-| hmap_set_return_empty_list: forall k m fp fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le MP  v_fp l_fp b_l
+| hmap_set_return_empty_list: forall k m fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le MP  v_fp l_fp b_l
     (CONT: hmap_set_cont b_hmap k)
     (* copy from hmap_set_internal2 *)
     (ENV: e = PTree.set val (sb_v, val_ty)
@@ -991,7 +991,7 @@ find_bucket_callstate *)
               ** process_val_pred sb_v 0 v_fp)
     (MPRED: m |= MP)
     (MAXRAN: Int.unsigned idx < (Z.of_nat N))
-    (FPLEN: length (fpl1 ++ fp :: fpl2) = N)
+    (FPLEN: length (fpl1 ++ l_fp :: fpl2) = N)
     (* l_fp is the footprint of the empty list *)
     (RETV_SPEC: bucket_val_spec m l_fp (Vptr b_l Ptrofs.zero))
     (* disjointness is used to prove bucket_pred_intro which embeds
@@ -1585,6 +1585,11 @@ Definition find_rs_sig :=
 Definition hash_rs_sig :=
   mksignature nil nil [Rusttypes.type_int32s; type_int32u] type_int32u cc_default ll_ce.
 
+Definition empty_list_rs_sig := 
+  mksignature nil nil nil List_box cc_default ll_ce.
+
+Definition insert_rs_sig := 
+  mksignature nil nil [List_box; Rusttypes.type_int32s; Tbox_int] List_box cc_default ll_ce.
 
 (* External interface: {find_process ↦ ⊤, hash ↦ P} ⋅ I_rs⋅R_rc *)
 Lemma hash_map_external: forall s q,
@@ -1627,8 +1632,65 @@ Proof.
       rewrite Genv.find_def_spec. rewrite SYMB.
       reflexivity. }
     rewrite H in FIND. inv FIND.
-  (** TODO: call empty_list in hmap_set *)
-  - admit.
+  (** call empty_list in hmap_set *)
+   - assert (SUP: Mem.sup_include nil (Mem.support m)).
+     { red. intros. inv H0. }
+     exists (Build_hmap_world_ext empty_list se (nat_to_int N)),
+      (rsw empty_list_rs_sig [] m SUP),
+      (rsq (Vptr bf Ptrofs.zero) empty_list_rs_sig nil m).
+    assert (FINDFUN1: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some empty_list_ext).
+    { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
+      rewrite Genv.find_def_spec.
+      rewrite SYMB. reflexivity. }
+    assert (FINDFUN2: Genv.find_funct (Genv.globalenv se linked_list_mod) (Vptr bf Ptrofs.zero) = Some (Rusttypes.Internal empty_list_func)).
+    { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
+      rewrite Genv.find_def_spec.
+      rewrite SYMB. reflexivity. }
+    rewrite FINDFUN1 in H. inv H.
+    replace {| sig_args := [];
+              sig_res := AST.Tlong;
+              sig_cc := cc_default |} with (signature_of_rust_signature empty_list_rs_sig) by reflexivity.
+    repeat apply conj.
+    + econstructor.
+    + unfold empty_list_rs_sig.
+      simpl. red. simpl. rewrite dec_eq_true. rewrite SYMB.
+      red. simpl. 
+      replace (@nil Rusttypes.type) with (type_list_of_typelist Rusttypes.Tnil).
+      econstructor; eauto.
+      (* casted *)
+      econstructor. reflexivity.
+    + eapply rs_own_query_intro with (fpl := []).
+      * simpl. econstructor.
+      * econstructor. 
+      * econstructor. 
+      * simpl. 
+        red; split; auto.
+    + reflexivity.
+    (* reply *)
+    + intros ? ? A1 A2 A3.
+      simpl in A1. red in A1. red in A1. simpl in A1. 
+      destruct A2 as (w_rs' & ACC & A2). inv A2.
+      inv A3.
+      eexists. split.
+      econstructor.
+      intros s' AFEXT. inv AFEXT.
+      inv CONT.
+      inv ACC.
+      (* return from empty_list *)
+      inv WTFP. inv SEMWT. inv SEMWT.
+      replace (Rusttypes.sizeof (rs_sig_comp_env empty_list_rs_sig) List_ty) with 32 in SEMWT by reflexivity. 
+      inv SEMWT.
+      eapply hmap_set_inv. eapply hmap_set_return_empty_list with (l_fp := fp_box b 32 fp0) (b_hmap := b_hmap).
+      econstructor. all: eauto. 
+      * reflexivity. 
+      * eapply m_invar. eauto. eapply Mem.unchanged_on_implies. eapply UNC.
+        simpl. intros. auto.
+      * rewrite app_length in *. simpl. lia.
+      * econstructor. econstructor; eauto.
+        econstructor; auto. auto. auto.
+      * intros. eapply SEP with (b:=b1).  intro. inv H1.
+        eapply INCL. simpl. eauto. eapply m_valid; eauto.
+
   (** TODO: call insert in hmap_set *)
   - admit.
   - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal process_func)).

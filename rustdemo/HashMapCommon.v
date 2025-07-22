@@ -243,6 +243,29 @@ Inductive vq_find (w: hmap_world_ext) : rust_query -> Prop :=
     vq_find w (rsq vf (mksignature orgs rels (type_list_of_typelist targs) tres tcc (prog_comp_env linked_list_mod)) vargs m).
 
 
+Inductive vq_empty_list (w: hmap_world_ext) : rust_query -> Prop :=
+(* incoming call of linked_list (i.e., the outgoing call of hmap) *)
+| vq_empty_list_intro: forall vf targs tres tcc vargs m orgs rels
+    (* For safety of initial_state *)
+    (FINDF: Genv.find_funct (globalenv w.(hmap_senv_ext) linked_list_mod) vf = Some (Internal empty_list_func))
+    (CASTED: val_casted_list vargs targs)
+    (TYF: type_of_function empty_list_func = Tfunction orgs rels targs tres tcc)
+    (LEN: length vargs = 0%nat)
+    (CALLEE: hmap_callee_ext w = empty_list),
+    vq_empty_list w (rsq vf (mksignature orgs rels (type_list_of_typelist targs) tres tcc (prog_comp_env linked_list_mod)) vargs m).
+
+
+Inductive vq_insert (w: hmap_world_ext) : rust_query -> Prop :=
+(* incoming call of linked_list (i.e., the outgoing call of hmap) *)
+| vq_insert_intro: forall vf targs tres tcc vargs m orgs rels
+    (* For safety of initial_state *)
+    (FINDF: Genv.find_funct (globalenv w.(hmap_senv_ext) linked_list_mod) vf = Some (Internal insert_func))
+    (CASTED: val_casted_list vargs targs)
+    (TYF: type_of_function insert_func = Tfunction orgs rels targs tres tcc)
+    (LEN: length vargs = 3%nat)
+    (CALLEE: hmap_callee_ext w = insert),
+    vq_insert w (rsq vf (mksignature orgs rels (type_list_of_typelist targs) tres tcc (prog_comp_env linked_list_mod)) vargs m).
+
 
 (** External interface for hmap.c  *)
 Definition rsq_inv_hmap_ext (w: hmap_world_ext) (q: rust_query) (fid: ident) : Prop :=
@@ -252,14 +275,22 @@ Definition rsq_inv_hmap_ext (w: hmap_world_ext) (q: rust_query) (fid: ident) : P
     vq_find w q
   else if ident_eq fid hash then
          vq_hash w q 
-       else False.
+       else if ident_eq fid empty_list then
+              vq_empty_list w q
+            else if ident_eq fid insert then
+                   vq_insert w q                
+                 else False.
 
 Definition rsr_inv_hmap_ext (w: hmap_world_ext) (r: rust_reply) (fid: ident) : Prop :=
   if ident_eq fid find then
     True
   else if ident_eq fid hash then
          vr_hash w r 
-       else False.
+       else if ident_eq fid empty_list then
+              True
+            else if ident_eq fid insert then
+                   True
+                 else False.
 
 
 (* Pre-conditions of rust query composed of the conditions of each
