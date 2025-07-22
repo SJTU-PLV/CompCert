@@ -1057,13 +1057,13 @@ find_bucket_callstate *)
     (NOREPET: list_norepet ((footprint_flat l_fp) ++ (footprint_flat bv_fp))),
     sound_state_set (Callstate (Vptr bf Ptrofs.zero) [Vptr b_l Ptrofs.zero; Vint kv; Vptr b_v Ptrofs.zero] (Kcall (Some tmp) hmap_set_func e le (Kseq (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr)) k)) m)
 (* return from insert *)
-| hmap_set_return_insert: forall k m fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le b_l MP l_fp b_v
+| hmap_set_return_insert: forall k m fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le b_l MP l_fp tmp_v
     (CONT: hmap_set_cont b_hmap k)
     (ENV: e = PTree.set val (sb_v, val_ty)
                 (PTree.set key (sb_key, tint)
                    (PTree.set hmap (sb_hmap, hmap_ty) empty_env)))
     (GETBUK: le ! buk = Some (Vptr b_hmap (Ptrofs.repr ((size_chunk Mptr) * (Int.unsigned idx)))))
-    (GETTMP: le ! tmp = Some (Vptr b_l Ptrofs.zero))
+    (GETTMP: le ! tmp = Some tmp_v)
     (MPEQ: MP = contains Mptr b_hmap ((size_chunk Mptr) * (Int.unsigned idx)) (fun _ => True)
               ** contains_neg Mptr b_hmap (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (Z_of_nat N * size_chunk Mptr))))
               ** hmap_pred_rec (int_to_nat idx) fpl1 b_hmap 0
@@ -1072,7 +1072,7 @@ find_bucket_callstate *)
               (* local stack of hmap_set *)
               ** contains Mptr sb_hmap 0 (eq (Vptr b_hmap Ptrofs.zero))
               ** contains Mint32 sb_key 0 (eq (Vint kv))
-              ** contains Mptr sb_v 0 (eq (Vptr b_v Ptrofs.zero)))
+              ** contains Mptr sb_v 0 (fun _ => True))
     (MPRED: m |= MP)
     (MAXRAN: Int.unsigned idx < (Z.of_nat N))
     (FPLEN: S (length (fpl1 ++ fpl2)) = N)
@@ -1082,7 +1082,7 @@ find_bucket_callstate *)
     (DISJOINT2: ~ In b_hmap (footprint_flat l_fp)),
     sound_state_set (Returnstate (Vptr b_l Ptrofs.zero) (Kcall (Some tmp) hmap_set_func e le (Kseq (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr)) k)) m)
 (* after returning from insert and steps to return set *)
-| hmap_set_internal4: forall n t k m fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le b_l MP l_fp b_v s (* stmt1 k1 m1 *)
+| hmap_set_internal4: forall n t k m fpl1 fpl2 b_hmap sb_hmap sb_key sb_v e kv idx le b_l MP l_fp  s (* stmt1 k1 m1 *)
     (STAR: starNf step1 num_frames ge n
              (State hmap_set_func Sskip
                 (Kseq (Sassign (Ederef (Etempvar buk List_box_ptr) List_ptr) (Etempvar tmp List_ptr)) k) e le m) t 
@@ -1103,7 +1103,7 @@ find_bucket_callstate *)
               (* local stack of hmap_set *)
               ** contains Mptr sb_hmap 0 (eq (Vptr b_hmap Ptrofs.zero))
               ** contains Mint32 sb_key 0 (eq (Vint kv))
-              ** contains Mptr sb_v 0 (eq (Vptr b_v Ptrofs.zero)))
+              ** contains Mptr sb_v 0 (fun _ => True))
     (MPRED: m |= MP)
     (MAXRAN: Int.unsigned idx < (Z.of_nat N))
     (FPLEN: S (length (fpl1 ++ fpl2)) = N)
@@ -1691,8 +1691,88 @@ Proof.
       * intros. eapply SEP with (b:=b1).  intro. inv H1.
         eapply INCL. simpl. eauto. eapply m_valid; eauto.
 
-  (** TODO: call insert in hmap_set *)
-  - admit.
+  (** call insert in hmap_set *)
+  - assert (SUP: Mem.sup_include (footprint_flat l_fp ++ footprint_flat bv_fp) (Mem.support m)).
+     { red. intros.
+       inv RETV_SPEC. inv BV_SPEC.
+       eapply in_app_iff in H0. destruct H0.
+       - eapply sem_wt_val_footprint_valid_block. 2: eapply WTVAL. all: eauto. 
+         eapply ll_ce_composite_members_norepet.
+       - eapply sem_wt_val_footprint_valid_block. 2: eapply WTVAL0. all: eauto. 
+         eapply ll_ce_composite_members_norepet. }
+     exists (Build_hmap_world_ext insert se (nat_to_int N)),
+      (rsw insert_rs_sig (footprint_flat l_fp ++ footprint_flat bv_fp) m SUP),
+      (rsq (Vptr bf Ptrofs.zero) insert_rs_sig [Vptr b_l Ptrofs.zero; Vint kv; Vptr b_v Ptrofs.zero] m).
+    assert (FINDFUN1: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some insert_ext).
+    { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
+      rewrite Genv.find_def_spec.
+      rewrite SYMB. reflexivity. }
+    assert (FINDFUN2: Genv.find_funct (Genv.globalenv se linked_list_mod) (Vptr bf Ptrofs.zero) = Some (Rusttypes.Internal insert_func)).
+    { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
+      rewrite Genv.find_def_spec.
+      rewrite SYMB. reflexivity. }
+    rewrite FINDFUN1 in H. inv H.
+    replace {| sig_args := [AST.Tlong; AST.Tint; AST.Tlong];
+              sig_res := AST.Tlong;
+              sig_cc := cc_default |} with (signature_of_rust_signature insert_rs_sig) by reflexivity.
+    repeat apply conj.
+    + econstructor.
+    + unfold insert_rs_sig.
+      simpl. red. simpl. rewrite dec_eq_true. rewrite SYMB.
+      red. simpl. 
+      replace [List_box; Rusttypes.type_int32s; Tbox_int] with (type_list_of_typelist (Rusttypes.Tcons List_box (Rusttypes.Tcons Rusttypes.type_int32s (Rusttypes.Tcons Tbox_int Rusttypes.Tnil)))) by reflexivity.
+      econstructor; eauto.
+      * (* casted *)
+        econstructor. econstructor. econstructor. econstructor. reflexivity.
+        econstructor. econstructor. econstructor.
+    + eapply rs_own_query_intro with (fpl := [l_fp; fp_scalar Rusttypes.type_int32s; bv_fp]).
+      * simpl. rewrite app_nil_r. auto.
+      * inv RETV_SPEC. inv BV_SPEC. econstructor; auto. 
+        econstructor; eauto. econstructor. econstructor; eauto.
+        constructor.
+      * inv RETV_SPEC. inv BV_SPEC. econstructor; auto. 
+        econstructor; eauto. econstructor. auto. econstructor; eauto.
+        constructor. 
+      * simpl. rewrite app_nil_r.
+        red; split; auto.
+    + reflexivity.
+    (* reply *)
+    + intros ? ? A1 A2 A3.
+      simpl in A1. red in A1. red in A1. simpl in A1. 
+      destruct A2 as (w_rs' & ACC & A2). inv A2.
+      inv A3.
+      eexists. split.
+      econstructor.
+      intros s' AFEXT. inv AFEXT.
+      inv CONT.
+      inv ACC.
+      (* return from insert *)
+      inv WTFP. inv SEMWT. inv SEMWT.
+      replace (Rusttypes.sizeof (rs_sig_comp_env insert_rs_sig) List_ty) with 32 in SEMWT by reflexivity. 
+      inv SEMWT.
+      eapply hmap_set_inv. eapply hmap_set_return_insert with (l_fp := fp_box b 32 fp0) (b_hmap := b_hmap).
+      econstructor. all: eauto. 
+      * eapply m_invar. 
+        eauto. eapply Mem.unchanged_on_implies. eapply UNC.
+        intros. simpl. rewrite in_app_iff. intro. eapply DISJOINT; eauto.
+      * econstructor; eauto. econstructor; eauto. econstructor; eauto.
+      * intros. simpl in INCL. simpl in H0.
+        destruct (in_dec eq_block b1 (footprint_flat l_fp ++ footprint_flat bv_fp)).
+        -- eapply DISJOINT; eauto. eapply in_app_iff. auto.
+        -- eapply SEP. eauto. auto.
+           eapply m_valid; eauto.
+      * simpl. intro. eapply INCL in H.
+        destruct (in_dec eq_block b_hmap (footprint_flat bv_fp)).
+        -- eapply DISJOINT; eauto. simpl. right. left.
+           instantiate (1 := - size_chunk Mptr). split; auto. vm_compute. split; congruence.
+        -- eapply SEP with (b:=b_hmap). 
+           ++ intro. eapply in_app_iff in H0. destruct H0; try congruence.
+              contradiction.
+           ++ auto.
+           ++ eapply m_valid. eapply MPRED.
+              simpl. right. left.
+             instantiate (1 := - size_chunk Mptr). split; auto. vm_compute. split; congruence.
+
   - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal process_func)).
     { simpl. destruct Ptrofs.eq_dec; try congruence.
       eapply Genv.find_funct_ptr_iff.
@@ -1851,8 +1931,8 @@ Proof.
       eapply Mem.unchanged_on_implies. eauto.
       intros. simpl. auto. auto.
       intro. inv H.
-(* Qed. *)
-Admitted.
+Qed.
+
 
 (* Incoming safety interface: {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q} *)
 Lemma initial_preservation_progress: forall q_c,
@@ -2483,7 +2563,7 @@ Proof.
                 (size_chunk Mptr * Int.unsigned idx + size_chunk Mptr) **
               contains Mptr sb_hmap 0 (eq (Vptr b_hmap Ptrofs.zero)) **
               contains Mint32 sb_key 0 (eq (Vint kv)) **
-              contains Mptr sb_v 0 (eq (Vptr b_v Ptrofs.zero))) in *.
+              contains Mptr sb_v 0 (fun _ => True)) in *.
     assert (MPRED3: m2 |= bucket_pred b_hmap (size_chunk Mptr * Int.unsigned idx) l_fp ** MP).
     { do 2 red. 
       generalize MPRED2 as MPRED2'. intros.

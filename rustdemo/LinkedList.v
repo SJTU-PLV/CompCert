@@ -179,6 +179,7 @@ Definition empty_list_func : function :=
 
 (* insert function *)
 
+(** TODO: re-implement it *)
 Definition insert_body : statement :=
   <{ let head: Node_ty in
   let _37: Node_ty in
@@ -205,7 +206,7 @@ Definition insert_func : function :=
     fn_return := List_box;
     fn_callconv := cc_default;
     fn_vars := [(_retv, List_box); (head, Node_ty); (_37, Node_ty); (_39, List_box); (_38, List_ty)];
-    fn_params := [];
+    fn_params := [(l, List_box); (key, type_int32s); (val, Tbox_int)];
     fn_body := insert_body |}.
   
 (* remove function *)
