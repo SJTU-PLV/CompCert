@@ -225,9 +225,9 @@ Definition hmap_set_ty := (Tfunction (Tcons hmap_ty (Tcons tint (Tcons val_ty Tn
 (*     return 0; *)
 (* } *)
 
-Definition main_assign_value := (Sassign (Ederef (Evar val val_ty) tint) (Econst_int (Int.repr 23) tint)).
+Definition main_assign_value := (Sassign (Ederef (Etempvar val val_ty) tint) (Econst_int (Int.repr 23) tint)).
 
-Definition main_call_hmap_set := (Scall None (Evar hmap_set hmap_set_ty) [Evar hmap hmap_ty; Econst_int (Int.repr 42) tint; Evar val val_ty]).
+Definition main_call_hmap_set := (Scall None (Evar hmap_set hmap_set_ty) [Etempvar hmap hmap_ty; Econst_int (Int.repr 42) tint; Etempvar val val_ty]).
 
 Definition main_insert_key_value :=
   Ssequence

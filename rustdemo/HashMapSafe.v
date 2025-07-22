@@ -725,7 +725,8 @@ Inductive call_find_bucket: state -> Prop :=
 Inductive init_hmap_cont: cont -> Prop :=
 | init_hmap_cont_intro: forall le
     (FUNID: list_callee_ext (hmap_list_ext w) = main)
-    (GETHMAP: PTree.get hmap le = Some Vundef),
+    (GETHMAP: PTree.get hmap le = Some Vundef)
+    (GETVAL: PTree.get val le = Some Vundef),
     init_hmap_cont (Kcall (Some hmap) main_func empty_env le (Kseq main_after_init_hmap Kstop)).
 
 
@@ -750,7 +751,7 @@ Inductive sound_state_init : state -> Prop :=
     (MPRED : m |= hmap_pred b fpl)
     (NOTCALLRET: not_call_return_state s)
     (FUNID: list_callee_ext (hmap_list_ext w) = main)
-    (RAN: (0<= n <=2)%nat),
+    (RAN: (0<= n <=3)%nat),
     sound_state_init s
 (* Before calling malloc for creating the value *)
 | hmap_main_insert_call_malloc: forall m bf sz le b_hmap fpl
@@ -768,6 +769,7 @@ Inductive sound_state_init : state -> Prop :=
     (GETHMAP: PTree.get hmap le = Some (Vptr b_hmap Ptrofs.zero))
     (GETVAL: PTree.get val le = Some Vundef)
     (FUNID: list_callee_ext (hmap_list_ext w) = main)
+    (DIS_BV: forall ofs, ~ (m_footprint (hmap_pred b_hmap fpl) b_v ofs))
     (MPRED: m |= contains_neg Mptr b_v (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr 4)))
               ** range b_v 0 4
               ** hmap_pred b_hmap fpl),
@@ -779,12 +781,13 @@ Inductive sound_state_init : state -> Prop :=
     (GETHMAP: PTree.get hmap le = Some (Vptr b_hmap Ptrofs.zero))
     (GETVAL: PTree.get val le = Some (Vptr b_v Ptrofs.zero))
     (FUNID: list_callee_ext (hmap_list_ext w) = main)
+    (DIS_BV: forall ofs, ~ (m_footprint (hmap_pred b_hmap fpl) b_v ofs))
     (MPRED: m |= contains_neg Mptr b_v (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr 4)))
               ** range b_v 0 4
               ** hmap_pred b_hmap fpl)
     (STAR: starNf step1 num_frames ge n (State main_func Sskip (Kseq (Ssequence main_assign_value main_call_hmap_set) (Kseq main_after_insertion Kstop)) empty_env le m) t s)
     (NOTCALLRET: not_call_return_state s)
-    (RAN: (0<= n <=1)%nat),
+    (RAN: (0<= n <=4)%nat),
     sound_state_init s
 (* After returning from hmap_set, and next is to call hmap_process *)
 | hmap_main_before_hmap_process: forall m b_hmap le fpl t s n
@@ -793,7 +796,7 @@ Inductive sound_state_init : state -> Prop :=
     (MPRED: m |= hmap_pred b_hmap fpl)
     (STAR: starNf step1 num_frames ge n (State main_func Sskip (Kseq main_after_insertion Kstop) empty_env le m) t s)
     (NOTCALLRET: not_call_return_state s)
-    (RAN: (0<= n <=1)%nat),
+    (RAN: (0<= n <=2)%nat),
     sound_state_init s                     
 
 (* After calling hmap_operate and before returning *)
@@ -896,7 +899,6 @@ Inductive sound_state_set : state -> Prop :=
     (SYMB: Genv.invert_symbol se bf = Some hmap_set)
     (CONT: hmap_set_cont b_hmap k)
     (BVSPEC: process_val_spec m v_fp (Vptr b_v Ptrofs.zero))
-    (DIS: forall b ofs, m_footprint (hmap_pred b_hmap fpl) b ofs -> In b (footprint_flat v_fp) -> False)
     (MPRED: m |= hmap_pred b_hmap fpl)
     (DISJOINT: forall b ofs, m_footprint (hmap_pred b_hmap fpl) b ofs ->
                         In b (footprint_flat v_fp) -> False),
@@ -1970,7 +1972,7 @@ Proof.
       eapply Genv.find_funct_ptr_iff.
       rewrite Genv.find_def_spec. rewrite SYMB.
       auto. }
-    generalize (function_entry_hmap_set m b_hmap kv b_v _ _ BVSPEC MPRED DIS). intros (sb_hmap & sb_kv & sb_bv & m1 & (ENTRY & MPRED1)).
+    generalize (function_entry_hmap_set m b_hmap kv b_v _ _ BVSPEC MPRED DISJOINT). intros (sb_hmap & sb_kv & sb_bv & m1 & (ENTRY & MPRED1)).
     split.
     + red. do 2 right.
       do 2 eexists. econstructor; eauto.
@@ -2546,7 +2548,7 @@ Lemma step_hmap_init_preservation_progress: forall s,
         inv H0; inv H.
         eapply hmap_init_inv.
         eapply hmap_call_init_hmap.
-        econstructor. auto. reflexivity.
+        econstructor. auto. reflexivity. reflexivity.
         eapply Genv.find_invert_symbol. auto. }
     lia.
   (* main: after returning from init_hmap *)
@@ -2560,7 +2562,7 @@ Lemma step_hmap_init_preservation_progress: forall s,
         eapply hmap_init_inv.
         eapply hmap_main_internal2 with (n:=1%nat).
         eapply starNf_step_right; eauto. 
-        1, 4: inv H; simpl; auto. eauto. eauto. auto. lia. }
+        1, 5: inv H; simpl; auto. all: eauto. }
     inv STEP.
     2: { simpl in H6. contradiction. }
     inv STAR0; cbn [num_frames num_frames_cont] in *.
@@ -2572,12 +2574,267 @@ Lemma step_hmap_init_preservation_progress: forall s,
         eapply hmap_init_inv.
         eapply hmap_main_internal2 with (n:=2%nat).
         eapply starNf_step_right; eauto. 
-        1, 4: inv H; simpl; auto. eauto. eauto. auto. lia. }
+        1, 5: inv H; simpl; auto. all: eauto. }
     inv STEP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluete Ssequence *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+      + intros.
+        eapply hmap_init_inv.
+        eapply hmap_main_internal2 with (n:=3%nat).
+        eapply starNf_step_right; eauto. 
+        1, 5: inv H; simpl; auto. all: eauto. }
+    inv STEP.
+    (* find malloc symbol and malloc function *)
+    generalize ((proj1 wf_senv) malloc). intros FINDF.
+    exploit FINDF. reflexivity. clear FINDF.
+    intros (bf & PRO_G & FINDF & FINDINFO & LINKORD).
+    assert (FINDFUN: Genv.find_funct (Smallstep.globalenv (hash_map_sem se)) (Vptr bf Ptrofs.zero) = Some Clightgen.malloc_decl).
+    { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
+      rewrite Genv.find_def_spec.
+      erewrite Genv.find_invert_symbol; eauto.
+      reflexivity. }    
+    assert (EVALE: eval_expr (Smallstep.globalenv (hash_map_sem se)) empty_env le m 
+                     (Evar malloc malloc_ty) (Vptr bf Ptrofs.zero)).
+    { econstructor. eapply eval_Evar_global. reflexivity. eauto.
+      eapply deref_loc_reference. reflexivity. }
+    assert (EVALARGS: eval_exprlist (Smallstep.globalenv (hash_map_sem se)) empty_env le m [
+                          Esizeof tint tlong] (Tcons Ctyping.size_t Tnil) [Vlong (Int64.repr 4)]).
+    {  econstructor. econstructor. reflexivity. econstructor. }
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Scall *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+        reflexivity. reflexivity.       
+      + intros. inv H.
+        inv H10. exploit eval_expr_det. eauto. eapply EVALE. intros A. inv A.
+        simpl in H13. setoid_rewrite FINDFUN in H13. inv H13.
+        inv H14.
+        exploit eval_exprlist_det. eauto. eapply EVALARGS. intros A. inv A.
+        eapply hmap_init_inv. eapply hmap_main_insert_call_malloc; eauto. }
+    lia.
+  (* execution of malloc before insertion *)
+  - destruct (Mem.alloc m (- size_chunk Mptr) 4) as [m1 b] eqn: ALLOC.
+    destruct (Mem.valid_access_store m1 Mptr b (- size_chunk Mptr) (Vptrofs (Ptrofs.repr 4))) as [m2].
+    { eapply Mem.valid_access_implies.
+      eapply Mem.valid_access_alloc_same. eauto. lia. lia.
+      eapply Z.divide_opp_r. rewrite align_chunk_Mptr. rewrite size_chunk_Mptr.
+      eapply Z.divide_refl. constructor. }
+    (* As alloc_rule does not support negative position, we prove it manually *)
+    eapply m_invar in MPRED as MPRED'. 
+    2: { eapply Mem.unchanged_on_trans. eapply Mem.alloc_unchanged_on. eauto.
+         eapply Mem.store_unchanged_on. eauto. intros. simpl. intro.
+         eapply Mem.fresh_block_alloc. eauto. eapply m_valid. eapply MPRED.
+         simpl. eauto. }    
+    assert (MPRED1: m2 |= contains_neg Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr 4))) ** range b 0 4).
+    { simpl. repeat apply conj.
+      - red. intros. eapply Mem.perm_store_1. eauto.
+        eapply Mem.perm_alloc_2. eauto. lia.
+      - eapply Z.divide_opp_r. rewrite align_chunk_Mptr. rewrite size_chunk_Mptr.
+        eapply Z.divide_refl.
+      - eexists. split; eauto.
+        erewrite Mem.load_store_same; eauto.
+        reflexivity.
+      - lia.
+      - rewrite ptr_modulus. lia.
+      - intros. eapply Mem.perm_store_1. eauto.
+        eapply Mem.perm_implies. eapply Mem.perm_alloc_2. eauto.
+        rewrite size_chunk_Mptr. destruct Archi.ptr64; lia.
+        constructor.
+      - red. simpl. intros. destruct H. destruct H0. subst. lia. }
+    assert (MPRED2: m2 |= contains_neg Mptr b (-size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr 4))) ** range b 0 4 ** hmap_pred b_hmap fpl).
+    { rewrite <- sep_assoc. do 2 red. split; eauto. split; auto.
+      red. intros. simpl in H. destruct H.
+      - destruct H; subst. 
+        eapply Mem.fresh_block_alloc. eauto.
+        eapply m_valid. eapply MPRED. eauto.
+      - destruct H; subst.
+        eapply Mem.fresh_block_alloc. eauto.
+        eapply m_valid. eapply MPRED. eauto. }    
+    split.
+    + red. do 2 right.
+      do 2 eexists. eapply step_external_function; eauto.
+      simpl.
+      change (Vlong (Int64.repr 4)) with (Vptrofs (Ptrofs.repr 4)).
+      econstructor. eauto. eauto.
+    + intros. inv H. setoid_rewrite FINDF in FIND. inv FIND.
+      setoid_rewrite FINDF in FIND. inv FIND.
+      eapply extcall_malloc_sem_inv in H6 as (m1' & b1 & sz1 & A1 & A2 & A3 & A4).
+      change (Vlong (Int64.repr 4)) with (Vptrofs (Ptrofs.repr 4)) in *.
+      eapply Rustlightown.Vptrofs_det in A1. subst.
+      rewrite Ptrofs.unsigned_repr in *.
+      rewrite ALLOC in A2. inv A2.
+      rewrite e in A3. inv A3.
+      eapply hmap_init_inv. eapply hmap_main_insert_return_malloc; eauto.
+      (* disjoint footprint *)
+      intros. intro. eapply Mem.fresh_block_alloc. eauto.
+      eapply m_valid; eauto.
+      rewrite maxv. lia.
+  (* return from malloc before insertion *)
+  - split.
+    + red. do 2 right.
+      do 2 eexists. econstructor.
+    + intros. inv H.
+      eapply hmap_init_inv. eapply hmap_main_insert_assign_val with (n:=0%nat).
+      6: econstructor.
+      simpl. rewrite PTree.gso; eauto. congruence.
+      simpl. rewrite PTree.gss; eauto. 
+      all: eauto. simpl. auto. lia.
+  (* assign val before insertion  *)
+  - generalize STAR as STAR1. intros.
+    inv STAR1.
+    (* evaluate Kseq *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+      + intros.
+        eapply hmap_init_inv.
+        eapply hmap_main_insert_assign_val with (n:=1%nat).
+        6: eapply starNf_step_right; eauto. 
+        6, 7: inv H; simpl; auto. all: eauto. lia. }
+    inv STEP.
+    2: { simpl in H6. contradiction. }
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Ssequence *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+      + intros.
+        eapply hmap_init_inv.
+        eapply hmap_main_insert_assign_val with (n:=2%nat).
+        6: eapply starNf_step_right; eauto. 
+        6, 7: inv H; simpl; auto. all: eauto. lia. }
+    inv STEP.
+    assert (EVALL: eval_lvalue (Smallstep.globalenv (hash_map_sem se)) empty_env le m
+                     (Ederef (Etempvar val val_ty) tint) b_v Ptrofs.zero Full).
+    { econstructor. econstructor. eauto. }
+    assert (EVALE: eval_expr (Smallstep.globalenv (hash_map_sem se)) empty_env le m
+                 (Econst_int (Int.repr 23) tint) (Vint (Int.repr 23))).
+    { econstructor. }
+    eapply sep_swap12 in MPRED as MPRED1.
+    exploit storev_rule. eapply range_contains with (ofs:= 0) (chunk:= Mint32). 
+    eapply MPRED1. eapply Z.divide_0_r.
+    instantiate (1 := Vint (Int.repr 23)). instantiate (1 := eq (Vint (Int.repr 23))). 
+    reflexivity.
+    intros (m1 & STORE1 & MPRED2). rewrite sep_swap12 in MPRED2.
+    assert (ASS: assign_loc (Smallstep.globalenv (hash_map_sem se))
+                   (typeof (Ederef (Etempvar val val_ty) tint)) m b_v Ptrofs.zero Full
+                   (Vint (cast_int_int I32 Signed (Int.repr 23))) m1).
+    { econstructor. reflexivity. eauto. }
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Sassign *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+        reflexivity. 
+      + intros.
+        eapply hmap_init_inv.
+        eapply hmap_main_insert_assign_val with (n:=3%nat).
+        6: eapply starNf_step_right; eauto. 
+        6, 7: inv H; simpl; auto. all: eauto. lia. }
+    inv STEP.
+    exploit eval_lvalue_det. eauto. eapply EVALL. intros (A1 & A2). inv A1.
+    exploit eval_expr_det. eauto. eapply EVALE. intros A. inv A. inv H10.
+    exploit assign_loc_det. eauto. eapply ASS. intros A. inv A.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Kseq *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+      + intros.
+        eapply hmap_init_inv.
+        eapply hmap_main_insert_assign_val with (n:=4%nat).
+        6: eapply starNf_step_right; eauto. 
+        6, 7: inv H; simpl; auto. all: eauto. lia. }
+    inv STEP.
+    2: { simpl in H6. contradiction. }
+    (* call hmap_set *)
+    generalize ((proj1 wf_senv) hmap_set). intros FINDF.
+    exploit FINDF. reflexivity. clear FINDF.
+    intros (?b & PRO_G & FINDF & FINDINFO & LINKORD).
+    assert (FINDFUN: Genv.find_funct (Smallstep.globalenv (hash_map_sem se)) (Vptr b Ptrofs.zero) = Some (Internal hmap_set_func)).
+    { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
+      rewrite Genv.find_def_spec.
+      erewrite Genv.find_invert_symbol; eauto.
+      reflexivity. }    
+    assert (EVALF: eval_expr (Smallstep.globalenv (hash_map_sem se)) empty_env le m1
+                     (Evar hmap_set hmap_set_ty) (Vptr b Ptrofs.zero)).
+    { econstructor. eapply eval_Evar_global; eauto.
+      eapply deref_loc_reference. reflexivity. }
+    assert (EVALARGS: eval_exprlist (Smallstep.globalenv (hash_map_sem se)) empty_env le m1
+                        [Etempvar hmap hmap_ty; Econst_int (Int.repr 42) tint; Etempvar val val_ty]
+                        (Tcons hmap_ty (Tcons tint (Tcons val_ty Tnil))) 
+                        [Vptr b_hmap Ptrofs.zero; Vint (Int.repr 42); Vptr b_v Ptrofs.zero]).
+    { econstructor. 
+      econstructor; eauto. reflexivity.
+      econstructor. econstructor. reflexivity.
+      econstructor. econstructor. eauto. reflexivity. econstructor. }
+    assert (SPEC: process_val_spec m1 (fp_box b_v 4 (fp_scalar Rusttypes.type_int32s))
+                    (Vptr b_v Ptrofs.zero)).
+    { exploit load_rule. eapply MPRED2. intros (v & A1 & A2). subst.
+      exploit load_rule_neg. eapply sep_pick1. eapply MPRED2. intros (v & A3 & A4). subst.
+      econstructor; eauto. econstructor; eauto. econstructor; eauto. reflexivity.
+      econstructor. 
+      - red. intros. 
+        destruct (Z.lt_decidable ofs 0).
+        + eapply sep_pick1 in MPRED2. eapply MPRED2. lia.
+        + eapply MPRED2. simpl. lia.
+      - rewrite maxv. lia.
+      - econstructor. econstructor. reflexivity.
+      - econstructor. intro. inv H. econstructor.
+      - econstructor. }
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+        reflexivity. reflexivity.
+      + intros. inv H.
+        inv H13.
+        exploit eval_expr_det. eapply EVALF. eauto. intros. subst.
+        exploit eval_exprlist_det. eapply EVALARGS. eauto. intros. subst.
+        simpl in H16. setoid_rewrite FINDFUN in H16. inv H16. inv H17.
+        eapply hmap_set_inv. eapply hmap_set_call with (v_fp := fp_box b_v 4 (fp_scalar Rusttypes.type_int32s)).
+        eapply Genv.find_invert_symbol; eauto.
+        econstructor. auto. auto. auto.
+        eapply MPRED2.
+        (* footprint disjoint *)
+        intros. simpl in H0. destruct H0; try contradiction. subst.
+        eapply DIS_BV; eauto. }
+    lia.
+
+  (* before calling hmap_process *)
+  - generalize STAR as STAR1. intros.
+    inv STAR1.
+    (* evaluate Kseq *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+      + intros.
+        eapply hmap_init_inv.
+        eapply hmap_main_before_hmap_process with (n:=1%nat).
+        4: eapply starNf_step_right; eauto. 
+        4, 5: inv H; simpl; auto. all: eauto. }
+    inv STEP.
+    2: { simpl in H6. contradiction. }
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluete Ssequence *)
+    { split.
+      + red. do 2 right.
+        do 2 eexists. econstructor; eauto.
+      + intros.
+        eapply hmap_init_inv.
+        eapply hmap_main_before_hmap_process with (n:=2%nat).
+        4: eapply starNf_step_right; eauto. 
+        4, 5: inv H; simpl; auto. all: eauto. }
+    inv STEP.
+    (* call hmap_process *)
     generalize ((proj1 wf_senv) hmap_process). intros FINDF.
     exploit FINDF. reflexivity. clear FINDF.
     intros (?b & PRO_G & FINDF & FINDINFO & LINKORD).
-    assert (FINDFUN: Genv.find_funct (Smallstep.globalenv (hash_map_sem se)) (Vptr b0 Ptrofs.zero) = Some (Internal hmap_operate_on_func)).
+    assert (FINDFUN: Genv.find_funct (Smallstep.globalenv (hash_map_sem se)) (Vptr b Ptrofs.zero) = Some (Internal hmap_operate_on_func)).
     { simpl. rewrite dec_eq_true. unfold Genv.find_funct_ptr.
       rewrite Genv.find_def_spec.
       erewrite Genv.find_invert_symbol; eauto.
@@ -3076,8 +3333,10 @@ Lemma step_hmap_init_preservation_progress: forall s,
     + intros. inv H.
       eapply hmap_init_inv.
       eapply hmap_main_internal2 with (n:=0%nat).
-      econstructor. simpl. eapply PTree.gss. eauto.
-      simpl. auto. auto. lia.
+      econstructor. 
+      simpl. eapply PTree.gss.
+      simpl. rewrite PTree.gso; auto. vm_compute. congruence.
+      eauto. simpl. auto. auto. lia.
 Qed.
 
 Lemma step_preservation_progress: forall s,
@@ -3089,6 +3348,8 @@ Proof.
   intros s INV. inv INV.
   (* Initilization of hash map *)
   - eapply step_hmap_init_preservation_progress. auto.
+  (* Insertion of key-value pair *)
+  - eapply step_hmap_set_preservation_progress. auto.
 
   (* call process *)
   - assert (FIND: Genv.find_funct ge (Vptr bf Ptrofs.zero) = Some (Internal process_func)).
@@ -3912,15 +4173,26 @@ Proof.
         erewrite <- call_find_bucket_cont_eq_call_cont; eauto. }
     lia.
   (* return from find_bucket *)
-  - inv CONT. inv CONT0.
-    split.
-    + do 2 right. do 2 eexists.
-      econstructor.
-    + intros. inv H.
-      (* return to hmap_process *)
-      eapply hmap_operate_on_internal2 with (n:= 0%nat).
-      2: econstructor. reflexivity.
-      eauto. auto. eauto. lia. auto. simpl. auto. auto. lia.
+  - inv CONT. 
+    + inv CONT0.
+      split.
+      * do 2 right. do 2 eexists.
+        econstructor.
+      * intros. inv H.
+        (* return to hmap_process *)
+        eapply hmap_operate_on_internal2 with (n:= 0%nat).
+        2: econstructor. reflexivity.
+        eauto. auto. eauto. lia. auto. simpl. auto. auto. lia.
+    (* return to hmap_set *)
+    + inv CONT0. 
+      split.
+      * do 2 right. do 2 eexists.
+        econstructor.
+      * intros. inv H.
+        (* return to hmap_process *)
+        eapply hmap_set_inv. eapply hmap_set_internal2 with (n:=0%nat).
+        econstructor. eauto. reflexivity. reflexivity.
+        simpl. auto. eauto. lia. auto. lia.
 Qed.
       
 End SOUNDNESS.
@@ -3948,7 +4220,7 @@ Proof.
   (* external safe *)
   - intros.
     exploit hash_map_external. reflexivity.
-    eauto. eauto.
+    eauto. eauto. eauto.
     intros (wI & w_rs1 & q_rs & A1 & A2 & A3 & A4 & A5).
     rewrite <- A4 in *.
     exists ((wI, (se, w_rs1)), tt).
