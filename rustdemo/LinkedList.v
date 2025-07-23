@@ -156,13 +156,21 @@ Definition find_func : function :=
 
 (* empty_list function *)
 
+(* 
+   fn empty_list() -> Box<List> {
+      let tmp: List;
+      tmp = List::Nil(tt);
+      _retv = Box(move tmp);
+      return _retv
+   }  
+
+ *)
+
 Definition empty_list_body : statement :=
-  <{ let _36: List_box in
-     let _35: List_ty in
-     _35#List_ty :=v List::Nil(Ett);
-     _36#List_box :=b move _35#List_ty;
-     _retv#List_box := move _36#List_box
-     end
+  <{ 
+     let tmp: List_ty in
+     tmp#List_ty :=v List::Nil(Ett);
+     _retv#List_box :=b move tmp#List_box
      end;
      return _retv#List_box
     }>. 
@@ -173,30 +181,35 @@ Definition empty_list_func : function :=
     fn_drop_glue := None;
     fn_return := List_box;
     fn_callconv := cc_default;
-    fn_vars := [(_retv, List_box); (_36, List_box); (_35, List_ty)];
+    fn_vars := [(_retv, List_box); (tmp, List_ty)];
     fn_params := [];
     fn_body := empty_list_body |}.
 
 (* insert function *)
 
-(** TODO: re-implement it *)
+(* 
+   fn insert(l: Box<List>, k: i32, v: Box<i32>) -> Box<i32> {
+      let head: Node;
+      head.key = key; 
+      head.val = move val; 
+      head.next = move l;
+      let tmp: List;
+      tmp = List::Cons(move head);
+      _retv = Box(move tmp);
+      return retv;
+   }
+ *)
+
 Definition insert_body : statement :=
   <{ let head: Node_ty in
-  let _37: Node_ty in
-  _37#Node_ty proj key<type_int32s> := copy k#type_int32s;
-  _37#Node_ty proj val<type_int32s> := copy v#type_int32s;
-  _37#Node_ty proj next<List_box> := move l#List_box;
-  head#Node_ty := move _37#Node_ty
-  end 
-  end;
-  let _39: List_box in
-  let _38: List_ty in
-  _38#List_ty :=v List::Cons(move head#Node_ty);
-  _39#List_box :=b move _38#List_ty; 
-  l#List_box := move _39#List_box
+  head#Node_ty proj key<type_int32s> := copy k#type_int32s;
+  head#Node_ty proj val<type_int32s> := copy v#Tbox_int;
+  head#Node_ty proj next<List_box> := move l#List_box;
+  let tmp: List_ty in
+  tmp#List_ty :=v List::Cons(move head#Node_ty);
+  _retv#List_box := move tmp#List_box
   end
   end;
-  _retv#List_box := move l#List_box;
   return _retv#List_box }>.
 
 Definition insert_func : function :=
@@ -205,8 +218,8 @@ Definition insert_func : function :=
     fn_drop_glue := None;
     fn_return := List_box;
     fn_callconv := cc_default;
-    fn_vars := [(_retv, List_box); (head, Node_ty); (_37, Node_ty); (_39, List_box); (_38, List_ty)];
-    fn_params := [(l, List_box); (key, type_int32s); (val, Tbox_int)];
+    fn_vars := [(_retv, List_box); (head, Node_ty); (tmp, List_ty)];
+    fn_params := [(l, List_box); (k, type_int32s); (v, Tbox_int)];
     fn_body := insert_body |}.
   
 (* remove function *)
@@ -308,7 +321,7 @@ Definition linked_list_mod : program :=
                    (* malloc and free place holders. No need to specify its argument types *)
                    (malloc, Gfun (External [] [] AST.EF_malloc Tnil Tunit cc_default));
                    (free, Gfun (External [] [] AST.EF_free Tnil Tunit cc_default))];
-    prog_public := [hash; find; (* empty_list; insert; remove; *) process; malloc; free];
+    prog_public := [hash; find; empty_list; insert; process; malloc; free];
     prog_main := main;
     prog_types := composite_types;
     prog_comp_env := proj1_sig build_ce_ok;

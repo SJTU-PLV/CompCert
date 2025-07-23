@@ -603,6 +603,10 @@ Definition length_of_args (f: ident) : nat :=
       2
     else if ident_eq f process then
            1
+         else if ident_eq f empty_list then
+                O
+              else if ident_eq f insert then
+                     3
   else O.
   
 

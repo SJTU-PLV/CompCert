@@ -167,6 +167,13 @@ Inductive find_cont_ret_process : cont -> Prop :=
 Inductive hash_cont: cont -> Prop :=
 | hash_cont_intro: hash_cont Kstop.
 
+Inductive empty_list_cont: cont -> Prop :=
+| empty_list_cont_intro: empty_list_cont Kstop.
+
+Inductive insert_cont: cont -> Prop :=
+| insert_cont_intro: insert_cont Kstop.
+
+
 (** Continuation parameterized by the function name *)
 
 Definition sound_cont (f: ident) : cont -> Prop :=
@@ -175,7 +182,11 @@ Definition sound_cont (f: ident) : cont -> Prop :=
   else
     if ident_eq f hash then
       hash_cont
-    else
+    else if ident_eq f empty_list then
+           empty_list_cont
+         else if ident_eq f insert then
+                insert_cont
+              else
       fun _ => False.
 
 
@@ -254,8 +265,55 @@ Definition not_call_return_state s :=
   | _ => True
   end.
 
+(* Invariant of empty_list states *)
+
+Inductive sound_state_empty_list: state -> Prop :=
+| call_empty_list: forall v al k m
+    (CALL: call_func empty_list (Callstate v al k m))
+    (FIDEQ: w.(hmap_callee_ext) = empty_list),
+    sound_state_empty_list (Callstate v al k m)
+| empty_list_internal: forall v al k m t s1 n
+    (CALL: call_func empty_list (Callstate v al k m))
+    (FIDEQ: w.(hmap_callee_ext) = empty_list)
+    (STAR: starNf step num_frames ge n (Callstate v al k m) t s1)
+    (NOTCALL: not_call_return_state s1)
+    (RAN: (1 <= n <= 11)%nat),
+    sound_state_empty_list s1
+| return_empty_list: forall v k m
+    (CONT: sound_cont empty_list k)
+    (FIDEQ: w.(hmap_callee_ext) = empty_list),
+    sound_state_empty_list (Returnstate v k m)
+.
+
+Inductive sound_state_insert: state -> Prop :=
+| call_insert: forall v al k m
+    (CALL: call_func insert (Callstate v al k m))
+    (FIDEQ: w.(hmap_callee_ext) = insert),
+    sound_state_insert (Callstate v al k m)
+| insert_internal: forall v al k m t s1 n
+    (CALL: call_func insert (Callstate v al k m))
+    (FIDEQ: w.(hmap_callee_ext) = insert)
+    (STAR: starNf step num_frames ge n (Callstate v al k m) t s1)
+    (NOTCALL: not_call_return_state s1)
+    (RAN: (1 <= n <= 11)%nat),
+    sound_state_insert s1
+| return_insert: forall v k m
+    (CONT: sound_cont insert k)
+    (FIDEQ: w.(hmap_callee_ext) = insert),
+    sound_state_insert (Returnstate v k m)
+.
+
 
 Inductive sound_state : state -> Prop :=
+(** states of empty_list *)
+| sound_empty_list: forall s
+    (INV: sound_state_empty_list s),
+    sound_state s
+(** states of insert *)
+| sound_insert: forall s
+    (INV: sound_state_insert s),
+    sound_state s
+
 (** callstate of hash function *)
 | hash_callstate: forall v al k m
     (CALL: call_func hash (Callstate v al k m))
@@ -360,6 +418,25 @@ Proof.
 Qed.
 
 
+Lemma empty_list_args_params_norepet:
+  list_norepet
+    (var_names (fn_params empty_list_func) ++ var_names (fn_vars empty_list_func)).
+Proof.
+  eapply proj_sumbool_true.
+  instantiate (1 := list_norepet_dec ident_eq (var_names (fn_params empty_list_func) ++ var_names (fn_vars empty_list_func))).
+  auto.
+Qed.
+
+Lemma insert_args_params_norepet:
+  list_norepet
+    (var_names (fn_params insert_func) ++ var_names (fn_vars insert_func)).
+Proof.
+  eapply proj_sumbool_true.
+  instantiate (1 := list_norepet_dec ident_eq (var_names (fn_params insert_func) ++ var_names (fn_vars insert_func))).
+  auto.
+Qed.
+
+
 Lemma init_own_env_find_progress:
   exists own, init_own_env (Smallstep.globalenv (linked_list_sem se)) find_func = OK own.        
   unfold init_own_env.
@@ -423,6 +500,71 @@ Proof.
  unfold collect_func in A. congruence.
  unfold collect_func in A. congruence.
 Qed.
+
+
+Lemma init_own_env_empty_list_progress:
+  exists own, init_own_env (Smallstep.globalenv (linked_list_sem se)) empty_list_func = OK own.        
+  unfold init_own_env.
+  destruct collect_func eqn: A. cbn [bind].
+  set (empty_map := (PTree.map
+                       (fun (_ : positive) (_ : InitDomain.LPaths.t) =>
+                          InitDomain.Paths.empty) t)) in *.
+  set (initParams:= (InitDomain.add_place_list t
+                       (places_of_locals (fn_params empty_list_func ++ fn_vars empty_list_func))
+                       empty_map)) in *.
+  set (flag := check_own_env_consistency empty_map empty_map initParams t) in *.
+  generalize (eq_refl flag).             
+  generalize flag at 1 3.
+  intros flag0 E. destruct flag0; try congruence.
+  eexists; eauto.
+  unfold flag in E. unfold initParams, empty_map in *.  
+  unfold collect_func in A. 
+  replace t with ((collect_stmt (Smallstep.globalenv (linked_list_sem se))
+           (fn_body empty_list_func)
+           (fold_right
+              (InitDomain.collect_place
+                 (Smallstep.globalenv (linked_list_sem se)))
+              (PTree.empty InitDomain.LPaths.t)
+              (map
+                 (fun elt : ident * type => Plocal (fst elt) (snd elt))
+                 (fn_params empty_list_func ++ fn_vars empty_list_func))))) in *.
+  vm_compute in E. congruence.
+  congruence.
+  unfold collect_func in A. congruence.
+Qed.
+
+
+Lemma init_own_env_insert_progress:
+  exists own, init_own_env (Smallstep.globalenv (linked_list_sem se)) insert_func = OK own.        
+  unfold init_own_env.
+  destruct collect_func eqn: A. cbn [bind].
+  set (empty_map := (PTree.map
+                       (fun (_ : positive) (_ : InitDomain.LPaths.t) =>
+                          InitDomain.Paths.empty) t)) in *.
+  set (initParams:= (InitDomain.add_place_list t
+                       (places_of_locals (fn_params insert_func ++ fn_vars insert_func))
+                       empty_map)) in *.
+  set (flag := check_own_env_consistency empty_map empty_map initParams t) in *.
+  generalize (eq_refl flag).             
+  generalize flag at 1 3.
+  intros flag0 E. destruct flag0; try congruence.
+  eexists; eauto.
+  unfold flag in E. unfold initParams, empty_map in *.  
+  unfold collect_func in A. 
+  replace t with ((collect_stmt (Smallstep.globalenv (linked_list_sem se))
+           (fn_body insert_func)
+           (fold_right
+              (InitDomain.collect_place
+                 (Smallstep.globalenv (linked_list_sem se)))
+              (PTree.empty InitDomain.LPaths.t)
+              (map
+                 (fun elt : ident * type => Plocal (fst elt) (snd elt))
+                 (fn_params insert_func ++ fn_vars insert_func))))) in *.
+  vm_compute in E. congruence.
+  congruence.
+  unfold collect_func in A. congruence.
+Qed.
+
 
 Local Open Scope sep_scope.
 
@@ -508,7 +650,79 @@ Proof.
     econstructor. reflexivity. eauto.
     econstructor.
 Qed.
+
+Lemma function_entry_insert_progress: forall vl m,
+    length_of_args insert = length vl ->
+  exists e m2, function_entry ge insert_func vl m e m2.
+Proof.
+  intros. 
+  destruct vl; inv H. destruct vl; inv H1. destruct vl; inv H0. destruct vl; inv H1.
+  destruct (Mem.alloc m 0 (sizeof ge List_box)) as (m1 & b1) eqn: A1.
+  destruct (Mem.alloc m1 0 (sizeof ge type_int32s)) as (m2 & b2) eqn: A2.
+  destruct (Mem.alloc m2 0 (sizeof ge Tbox_int)) as (m3 & b3) eqn: A3.
+  destruct (Mem.alloc m3 0 (sizeof ge List_box)) as (m4 & b4) eqn: A4.
+  destruct (Mem.alloc m4 0 (sizeof ge Node_ty)) as (m5 & b5) eqn: A5.
+  destruct (Mem.alloc m5 0 (sizeof ge List_ty)) as (m6 & b6) eqn: A6.
+  exploit alloc_rule. eapply A1. lia. vm_compute. congruence.
+  instantiate (1 := Separation.pure True). simpl. auto.
+  intros PM1.
+  exploit alloc_rule. eapply A2. lia. vm_compute. congruence.
+  eapply PM1. intros PM2.
+  exploit alloc_rule. eapply A3. lia. vm_compute. congruence.
+  eapply PM2. intros PM3.
+  exploit alloc_rule. eapply A4. lia. vm_compute. congruence.
+  eapply PM3. intros PM4.
+  exploit alloc_rule. eapply A5. lia. vm_compute. congruence.
+  eapply PM4. intros PM5.
+  exploit alloc_rule. eapply A6. lia. vm_compute. congruence.
+  eapply PM5. intros PM6.
+  (* store the first param *)
+  exploit (storev_rule Mptr m6 b1 0 v (fun _ => True) (eq (Val.load_result Mptr v))).
+  do 3 eapply sep_drop in PM6.
+  rewrite sep_swap3 in PM6.
+  eapply range_contains with (ofs := 0).  rewrite Z.add_0_l. eapply PM6.
+  eapply Z.divide_0_r. eauto.
+  intros (m7 & STORE1 & PM7).
+  (* store the second param *)
+  exploit (storev_rule Mint32 m7 b2 0 v0 (fun _ => True) (eq (Val.load_result Mint32 v0))).
+  eapply range_contains with (ofs := 0).  rewrite Z.add_0_l. eapply PM7.
+  eapply Z.divide_0_r. eauto.
+  intros (m8 & STORE2 & PM8).
+  (* store the third param *)
+  exploit (storev_rule Mptr m8 b3 0 v1 (fun _ => True) (eq (Val.load_result Mptr v1))).
+  eapply range_contains with (ofs := 0).  rewrite Z.add_0_l. eapply PM8.
+  eapply Z.divide_0_r. eauto.
+  intros (m9 & STORE3 & PM9).
+  do 2 eexists.
+  econstructor. eapply insert_args_params_norepet.
+  - repeat (econstructor; eauto).
+  - econstructor. reflexivity.
+    econstructor. reflexivity. eauto.
+    econstructor. reflexivity.
+    econstructor. reflexivity. eauto.
+    econstructor. reflexivity.
+    econstructor. reflexivity. eauto.
+    econstructor.
+Qed.
   
+
+Lemma function_entry_empty_list_progress: forall vl m,
+    length_of_args empty_list = length vl ->
+  exists e m2, function_entry ge empty_list_func vl m e m2.
+Proof.
+  intros. destruct vl; inv H. 
+  destruct (Mem.alloc m 0 (sizeof ge List_box)) as (m1 & b1) eqn: A1.
+  destruct (Mem.alloc m1 0 (sizeof ge List_ty)) as (m2 & b2) eqn: A2.
+  exploit alloc_rule. eapply A1. lia. vm_compute. congruence.
+  instantiate (1 := Separation.pure True). simpl. auto.
+  intros PM1.
+  exploit alloc_rule. eapply A2. lia. vm_compute. congruence.
+  eapply PM1. intros PM2.
+  do 2 eexists.
+  econstructor. eapply empty_list_args_params_norepet.
+  - repeat (econstructor; eauto).
+  - econstructor. 
+Qed.
 
 
 (* Compute (variant_field_offset (proj1_sig build_ce_ok) Nil [Member_plain Nil Tunit; Member_plain Cons Node_ty]). *)
@@ -525,6 +739,10 @@ Lemma sound_cont_no_vars: forall f k,
     cont_vars k = nil.
 Proof.
   intros. unfold sound_cont in H.
+  destruct ident_eq in H; try contradiction. 
+  inv H; reflexivity.
+  destruct ident_eq in H; try contradiction.
+  inv H; reflexivity.
   destruct ident_eq in H; try contradiction.
   inv H; reflexivity.
   destruct ident_eq in H; try contradiction.
@@ -601,6 +819,66 @@ Proof.
 Qed.
 
 
+Lemma split_drop_place_empty_list_retv: forall w,
+    collect_func ge empty_list_func = OK w ->
+    split_drop_place ge (PathsMap.get _retv w) (Plocal _retv List_box) List_box = OK [(Plocal _retv List_box, true)].
+Proof.
+  intros. unfold collect_func in H.
+  vm_compute in H. inv H. reflexivity.
+Qed.
+
+Lemma split_drop_place_empty_list_tmp: forall w,
+    collect_func ge empty_list_func = OK w ->
+    split_drop_place ge (PathsMap.get tmp w) (Plocal tmp List_ty) List_ty = OK [(Plocal tmp List_ty, true)].
+Proof.
+  intros. unfold collect_func in H.
+  vm_compute in H. inv H. reflexivity.  
+Qed.
+
+Lemma split_drop_place_insert_retv: forall w,
+    collect_func ge insert_func = OK w ->
+    split_drop_place ge (PathsMap.get _retv w) (Plocal _retv List_box) List_box = OK [(Plocal _retv List_box, true)].
+Proof.
+  intros. unfold collect_func in H.
+  vm_compute in H. inv H. reflexivity.
+Qed.
+
+Lemma split_drop_place_insert_head: forall w,
+    collect_func ge insert_func = OK w ->
+    split_drop_place ge (PathsMap.get head w) (Plocal head Node_ty) Node_ty = 
+      OK [(Pfield (Plocal head Node_ty) key type_int32s, true);
+          (Pfield (Plocal head Node_ty) LinkedList.val Tbox_int, true);
+          (Pfield (Plocal head Node_ty) next List_box, true)].
+Proof.
+  intros. unfold collect_func in H.
+  vm_compute in H. inv H. reflexivity.
+Qed.
+
+Lemma split_drop_place_insert_tmp: forall w,
+    collect_func ge insert_func = OK w ->
+    split_drop_place ge (PathsMap.get tmp w) (Plocal tmp List_ty) List_ty = OK [(Plocal tmp List_ty, true)].
+Proof.
+  intros. unfold collect_func in H.
+  vm_compute in H. inv H. reflexivity.
+Qed.
+
+Lemma split_drop_place_insert_l: forall w,
+    collect_func ge insert_func = OK w ->
+    split_drop_place ge (PathsMap.get l w) (Plocal l List_box) List_box = OK [(Plocal l List_box, true)].
+Proof.
+  intros. unfold collect_func in H.
+  vm_compute in H. inv H. reflexivity.
+Qed.
+
+Lemma split_drop_place_insert_v: forall w,
+    collect_func ge insert_func = OK w ->
+    split_drop_place ge (PathsMap.get v w) (Plocal v Tbox_int) List_box = OK [(Plocal v Tbox_int, true)].
+Proof.
+  intros. unfold collect_func in H.
+  vm_compute in H. inv H. reflexivity.
+Qed.
+
+
 Lemma sound_call_cont: forall f k,
     sound_cont f k ->
     (* Actually ck is the same as k *)
@@ -608,14 +886,15 @@ Lemma sound_call_cont: forall f k,
           /\ sound_cont f ck.
 Proof.
   intros. unfold sound_cont in H.
-  destruct ident_eq in H; subst.
+  repeat destruct ident_eq in H; subst; try contradiction.
   - inv H.
     + eexists. split; eauto.
       reflexivity. vm_compute. eapply sound_find_Kstop.
     + simpl. eexists. split; eauto.
       econstructor; eauto.
-  - destruct ident_eq in H; subst; try contradiction.
-    + inv H. eexists. split; eauto. reflexivity. econstructor.
+  - inv H. eexists. split; eauto. reflexivity. econstructor.
+  - inv H. eexists. split; eauto. reflexivity. econstructor.
+  - inv H. eexists. split; eauto. reflexivity. econstructor.
 Qed.
     
 Lemma call_cont_num_frames_eq: forall k1 k2,
@@ -662,6 +941,22 @@ Proof.
       eapply hash_callstate; eauto.
       econstructor; auto.
       constructor. inv PRECOND. reflexivity.
+  (* call empty_list *)
+  - inv QINV. split.
+    + econstructor; eauto.
+      rewrite hmap_senv_eq in *. eauto.
+    + intros. inv H.
+      eapply sound_empty_list. eapply call_empty_list; eauto.
+      econstructor; auto.
+      constructor. 
+  (* call insert *)
+  - inv QINV. split.
+    + econstructor; eauto.
+      rewrite hmap_senv_eq in *. eauto.
+    + intros. inv H.
+      eapply sound_insert. eapply call_insert; eauto.
+      econstructor; auto.
+      constructor. 
 Qed.
 
 Lemma linked_list_final: forall s r,
@@ -671,7 +966,13 @@ Lemma linked_list_final: forall s r,
 Proof.
   intros s r SINV FINAL.
   simpl.
-  inv FINAL. inv SINV; try simpl in NOTCALL; try contradiction.
+  inv FINAL. inv SINV; try inv INV; try simpl in NOTCALL; try contradiction.
+  (* return from empty_list *)
+  - rewrite FIDEQ.
+    econstructor; eauto.
+  (* return from insert *)
+  - rewrite FIDEQ.
+    econstructor; eauto.
   (* return from hash *)
   - rewrite FIDEQ.
     econstructor; eauto.
@@ -692,7 +993,23 @@ Lemma linked_list_external: forall s q,
                         /\ (forall s', after_external s r s' -> sound_state s')).
 Proof.
   intros s q SINV EXT. inv EXT.
-  inv SINV; try simpl in NOTCALL; try contradiction.
+  inv SINV; try inv INV; try simpl in NOTCALL; try contradiction.
+  (* call empty_list (contradiction) *)
+  - inv CALL.
+    assert (FIND: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some (Internal empty_list_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYM.
+      auto. }
+    rewrite H in FIND. inv FIND.
+  (* call insert (contradiction) *)
+  - inv CALL.
+    assert (FIND: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some (Internal insert_func)).
+    { simpl. destruct Ptrofs.eq_dec; try congruence.
+      eapply Genv.find_funct_ptr_iff.
+      rewrite Genv.find_def_spec. rewrite SYM.
+      auto. }
+    rewrite H in FIND. inv FIND.
   (* call hash (contradiction) *)
   - inv CALL.
     assert (FIND: Genv.find_funct ge (Vptr b Ptrofs.zero) = Some (Internal hash_func)).
