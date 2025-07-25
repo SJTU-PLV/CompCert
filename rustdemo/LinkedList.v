@@ -170,7 +170,7 @@ Definition empty_list_body : statement :=
   <{ 
      let tmp: List_ty in
      tmp#List_ty :=v List::Nil(Ett);
-     _retv#List_box :=b move tmp#List_box
+     _retv#List_box :=b move tmp#List_ty
      end;
      return _retv#List_box
     }>. 
@@ -203,11 +203,11 @@ Definition empty_list_func : function :=
 Definition insert_body : statement :=
   <{ let head: Node_ty in
   head#Node_ty proj key<type_int32s> := copy k#type_int32s;
-  head#Node_ty proj val<type_int32s> := copy v#Tbox_int;
+  head#Node_ty proj val<Tbox_int> := copy v#Tbox_int;
   head#Node_ty proj next<List_box> := move l#List_box;
   let tmp: List_ty in
   tmp#List_ty :=v List::Cons(move head#Node_ty);
-  _retv#List_box := move tmp#List_box
+  _retv#List_box :=b move tmp#List_ty
   end
   end;
   return _retv#List_box }>.

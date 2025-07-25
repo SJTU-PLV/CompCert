@@ -1372,6 +1372,7 @@ Proof.
   eapply IHl; eauto.
 Qed.
 
+
 Fixpoint do_alloc_variables ce e m l : (env * mem) :=
   match l with
   | nil => (e, m)
@@ -1670,6 +1671,16 @@ Inductive function_entry (ce: composite_env) (f: function) (vargs: list val) (m:
     (BIND: bind_parameters ce e m1 f.(fn_params) vargs m2),
     function_entry ce f vargs m e m2.
 
+Lemma function_entry_det: forall ce f vargs m e1 e2 m1 m2,
+    function_entry ce f vargs m e1 m1 ->
+    function_entry ce f vargs m e2 m2 ->
+    e1 = e2 /\ m1 = m2.
+Proof.
+  intros. inv H. inv H0.
+  exploit alloc_variables_det. eapply ALLOC. eauto. intros (A1 & A2). subst.
+  exploit bind_parameters_det. eapply BIND. eauto. intros A3. subst.
+  auto.
+Qed.
 
 Section DROPMEMBER.
 
