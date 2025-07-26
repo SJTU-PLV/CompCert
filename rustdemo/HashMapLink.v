@@ -21,8 +21,8 @@ Import ListNotations.
 (* The linked_list module (implemented in Rustlight) is totally safe
 after the compilation. The safety interface for the compiled module is
 
-⟦list.s⟧ ⊩ {process ↦ ⊤, hmap_process ↦ ⊥} ⋅ I_rs⋅R_ra
-        ↠ {find_process ↦ ⊤, hash ↦ P} ⋅ I_rs⋅R_ra
+⟦list.s⟧ ⊩ {process ↦ ⊤, hmap_process ↦ ⊥, hmap_set ↦ ⊤} ⋅ I_rs⋅R_ra
+        ↠ {find_process ↦ ⊤, hash ↦ P, empty_list ↦ ⊤, insert ↦ ⊤} ⋅ I_rs⋅R_ra
  *)
 Lemma compiled_linked_list_safe: forall linked_list_asm,
   transf_rustlight_program linked_list_mod = OK linked_list_asm ->
@@ -37,8 +37,8 @@ Definition hmap_size : nat := 10%nat.
 
 (* The hash_map module is totally safe after the compilation.
 
-⟦hmap.s⟧ ⊩ {find_process ↦ ⊤, hash ↦ P} ⋅ I_rs⋅R_rc⋅R_ca
-             ↠ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q, main ↦ ⊤} ⋅ R_ca
+⟦hmap.s⟧ ⊩ {find_process/empty_list/insert ↦ ⊤, hash ↦ P} ⋅ I_rs⋅R_rc⋅R_ca
+             ↠ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q, main/hmap_set/hmap_init ↦ ⊤} ⋅ R_ca
  *)
 Lemma compiled_hash_map_safe: forall hash_map_asm,
   transf_clight_program hash_map_prog = OK hash_map_asm ->
@@ -56,20 +56,20 @@ Qed.
 (** The syntactic linked assembly module (linked_list_asm +
 hash_map_asm) is totally safe with the following safety interfaces.
 
- ⟦hmap.s + list.s⟧ ⊩ ({find_process ↦ ⊤⋅I_rs⋅R_rc, hash ↦ P⋅I_rs⋅R_rc}
-                    ⊎ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q, main ↦ ⊤}) ⋅ R_ca
+ ⟦hmap.s + list.s⟧ ⊩ ({find_process/empty_list/insert ↦ ⊤⋅I_rs⋅R_rc, hash ↦ P⋅I_rs⋅R_rc}
+                    ⊎ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q, main/hmap_set/hmap_init ↦ ⊤}) ⋅ R_ca
                     ↠ 
-                    ({find_process ↦ ⊤⋅I_rs⋅R_rc, hash ↦ P⋅I_rs⋅R_rc}
-                    ⊎ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q, main ↦ ⊤}) ⋅ R_ca
+                    ({find_process/empty_list/insert ↦ ⊤⋅I_rs⋅R_rc, hash ↦ P⋅I_rs⋅R_rc}
+                    ⊎ {process ↦ ⊤⋅I_rs⋅R_rc, hmap_process ↦ Q, main/hmap_set/hmap_init ↦ ⊤}) ⋅ R_ca
 
 We want to separate the hmap_process and main from functions those have rust
 interfaces.
 
- ⟦hmap.s + list.s⟧ ⊩ {find_process ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra
+ ⟦hmap.s + list.s⟧ ⊩ { find_process/empty_list/insert ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra
                      ⊎ {hmap_process ↦ Q, main ↦ ⊤}⋅ R_ca
                      ↠ 
                      {find_process ↦ ⊤, hash ↦ P, process ↦ ⊤} ⋅I_rs⋅R_ra
-                     ⊎ {hmap_process ↦ Q, main ↦ ⊤}⋅ R_ca
+                     ⊎ {hmap_process ↦ Q, main/hmap_set/hmap_init ↦ ⊤}⋅ R_ca
 
  *)
 
@@ -294,6 +294,42 @@ Proof.
            econstructor. split; eauto.
            econstructor. split; eauto.
            econstructor; auto.
+      (* call empty_list, the same as above *)
+      * exists (inl ((((inl w1), w2), tt), w4)). repeat apply conj.
+        -- econstructor. split; eauto.
+           econstructor. split; eauto.
+           2: { simpl. eauto. }
+           simpl in S1. 
+           econstructor. simpl. eauto.
+           auto.
+        -- econstructor. split; eauto.
+           econstructor. split.
+           2: econstructor. 
+           econstructor. simpl. red. simpl.
+           rewrite dec_eq_true. rewrite SYM. auto.
+           auto.
+        -- intros r (r1 & (r2 & ((R1 & R2) & R3)) & R4).
+           econstructor. split; eauto.
+           econstructor. split; eauto.
+           econstructor; auto.
+      (* call insert, same as above *)
+      * exists (inl ((((inl w1), w2), tt), w4)). repeat apply conj.
+        -- econstructor. split; eauto.
+           econstructor. split; eauto.
+           2: { simpl. eauto. }
+           simpl in S1. 
+           econstructor. simpl. eauto.
+           auto.
+        -- econstructor. split; eauto.
+           econstructor. split.
+           2: econstructor. 
+           econstructor. simpl. red. simpl.
+           rewrite dec_eq_true. rewrite SYM. auto.
+           auto.
+        -- intros r (r1 & (r2 & ((R1 & R2) & R3)) & R4).
+           econstructor. split; eauto.
+           econstructor. split; eauto.
+           econstructor; auto.
     + destruct w1 as (w1 & w2).
       intros se q (se1 & (S1 & S2)) (q1 & (Q1 & Q2)).
       (* case analysis of Q1 *)
@@ -399,6 +435,39 @@ Proof.
               econstructor. split; eauto.
               econstructor. split; eauto.
               econstructor; auto.
+        (* call empty_list *)
+        -- exists (inl (((w1, w2), tt), w4)). repeat apply conj.
+           ++ econstructor. split; eauto.
+              econstructor. split; eauto.
+              2: econstructor. 
+              econstructor; eauto.
+           ++  econstructor. split; eauto.
+           econstructor. split.
+           2: econstructor. 
+           econstructor. simpl. red. simpl.
+           rewrite dec_eq_true. rewrite SYM. auto.
+           auto.
+           ++ intros r (r1 & (r2 & ((R1 & R2) & R3)) & R4).
+              econstructor. split; eauto.
+              econstructor. split; eauto.
+              econstructor; auto.
+        (* call insert *)
+        -- exists (inl (((w1, w2), tt), w4)). repeat apply conj.
+           ++ econstructor. split; eauto.
+              econstructor. split; eauto.
+              2: econstructor. 
+              econstructor; eauto.
+           ++  econstructor. split; eauto.
+           econstructor. split.
+           2: econstructor. 
+           econstructor. simpl. red. simpl.
+           rewrite dec_eq_true. rewrite SYM. auto.
+           auto.
+           ++ intros r (r1 & (r2 & ((R1 & R2) & R3)) & R4).
+              econstructor. split; eauto.
+              econstructor. split; eauto.
+              econstructor; auto.
+
       * red in Q1. destruct q2. simpl in Q1.
         destruct rsq_vf; try contradiction.
         destruct Ptrofs.eq_dec in Q1; try contradiction. subst.
@@ -915,7 +984,8 @@ End Initial.
 
 End CLOSED_ASM_SAFE.
     
-
+(** The final theorem of the hash map example --- the linked assembly
+module is reachable safe *)
 Theorem hash_map_closed_safety: forall linked_list_asm hash_map_asm linked_mod,
     (* Compilation for the two modules *)
     transf_rustlight_program linked_list_mod = OK linked_list_asm ->

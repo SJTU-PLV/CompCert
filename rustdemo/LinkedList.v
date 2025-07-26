@@ -203,7 +203,7 @@ Definition empty_list_func : function :=
 Definition insert_body : statement :=
   <{ let head: Node_ty in
   head#Node_ty proj key<type_int32s> := copy k#type_int32s;
-  head#Node_ty proj val<Tbox_int> := copy v#Tbox_int;
+  head#Node_ty proj val<Tbox_int> := move v#Tbox_int;
   head#Node_ty proj next<List_box> := move l#List_box;
   let tmp: List_ty in
   tmp#List_ty :=v List::Cons(move head#Node_ty);

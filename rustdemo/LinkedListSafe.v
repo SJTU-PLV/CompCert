@@ -304,7 +304,7 @@ Inductive sound_state_insert: state -> Prop :=
     (FIDEQ: w.(hmap_callee_ext) = insert)
     (STAR: starNf step num_frames ge n (Callstate v al k m) t s1)
     (NOTCALL: not_call_return_state s1)
-    (RAN: (1 <= n <= 30)%nat),
+    (RAN: (1 <= n <= 59)%nat),
     sound_state_insert s1
 | return_insert: forall v k m
     (CONT: sound_cont insert k)
@@ -757,7 +757,9 @@ Lemma function_entry_insert_progress: forall vl m,
     /\ e ! l = Some (b_l, List_box)
     /\ e ! k = Some (b_k, type_int32s)
     /\ e ! v = Some (b_v, Tbox_int)
-    /\ blocks_of_env ge e = [(b_v, 0, 8); (b_tmp, 0, 32); (b_l, 0, 8); (b_head, 0, 24); (b_retv, 0, 8); (b_k, 0, 4)].
+    /\ blocks_of_env ge e = [(b_v, 0, 8); (b_tmp, 0, 32); (b_l, 0, 8); (b_head, 0, 24); (b_retv, 0, 8); (b_k, 0, 4)]
+    (* used for assign_variant *)
+    /\ b_head <> b_tmp.
 Proof.
   intros. 
   destruct vl; inv H. destruct vl; inv H1. destruct vl; inv H0. destruct vl; inv H1.
@@ -807,7 +809,13 @@ Proof.
   econstructor. reflexivity.
   econstructor. reflexivity. eauto.
   econstructor.
-  all: reflexivity.
+  1-7: reflexivity.
+  intro. subst. eapply Mem.fresh_block_alloc. eapply A6.
+  eapply Mem.valid_access_valid_block.
+  eapply Mem.valid_access_implies.
+  eapply Mem.valid_access_alloc_same. eauto. reflexivity. 
+  instantiate (1 := Mptr). vm_compute. congruence. apply Z.divide_0_r.
+  constructor.
 Qed.
   
 
@@ -1003,7 +1011,7 @@ Qed.
 
 Lemma split_drop_place_insert_v: forall w,
     collect_func ge insert_func = OK w ->
-    split_drop_place ge (PathsMap.get v w) (Plocal v Tbox_int) List_box = OK [(Plocal v Tbox_int, true)].
+    split_drop_place ge (PathsMap.get v w) (Plocal v Tbox_int) Tbox_int = OK [(Plocal v Tbox_int, true)].
 Proof.
   intros. unfold collect_func in H.
   vm_compute in H. inv H. reflexivity.
@@ -1613,7 +1621,7 @@ Proof.
     (* take one step *)
     { split.
       - left. red. right. right.
-        edestruct (function_entry_insert_progress al m) as (e & m1 & b_retv & b_head & b_tmp & b_l & b_k & b_v & ENT & G1 & G2 & G3 & G4 & G5 & G6 & G7); eauto.
+        edestruct (function_entry_insert_progress al m) as (e & m1 & b_retv & b_head & b_tmp & b_l & b_k & b_v & ENT & G1 & G2 & G3 & G4 & G5 & G6 & G7 & G8); eauto.
         destruct init_own_env_insert_progress1 as (universe & E1 & E2 & INITOWN).
         do 2 eexists.
         econstructor; eauto.
@@ -1629,7 +1637,7 @@ Proof.
       eapply Genv.find_funct_ptr_iff.
       rewrite Genv.find_def_spec. rewrite SYM.
       auto. }
-    edestruct (function_entry_insert_progress al m) as (e & m1 & b_retv & b_head & b_tmp & b_l & b_k & b_v & ENT & G1 & G2 & G3 & G4 & G5 & G6 & G7); eauto.
+    edestruct (function_entry_insert_progress al m) as (e & m1 & b_retv & b_head & b_tmp & b_l & b_k & b_v & ENT & G1 & G2 & G3 & G4 & G5 & G6 & G7 & G8); eauto.
     destruct init_own_env_insert_progress1 as (universe & E1 & E2 & INITOWN).
     exploit collect_func_inv. eauto. intros COLLECT.
     generalize STAR as STAR1. intros.
@@ -1792,35 +1800,34 @@ Proof.
         inv_collect_func COLLECT; reflexivity.
       - intros. eapply sound_insert. eapply insert_internal with (n:= 12%nat); eauto.
         eapply starNf_step_right; eauto. 
-        1-2: inv H; inv SDROP; simpl; auto. lia. }    
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
     inv STEP. inv SDROP.
     2-3: inv_collect_func COLLECT; vm_compute in OWN; congruence. 
     clear NOTOWN.
-    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
     { split.
       - left. red. do 2 right.
         do 2 eexists. econstructor. econstructor.
-      - intros. eapply sound_empty_list. eapply empty_list_internal with (n:= 14%nat); eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 13%nat); eauto.
         eapply starNf_step_right; eauto. 
-        1-2: inv H; inv SDROP; simpl; auto. lia. }
+        1-2: inv H; inv SDROP; simpl; auto. lia. }    
     inv STEP. inv SDROP.
-    inv STAR1; cbn [num_frames num_frames_cont] in *.
-
+    inv STAR0; cbn [num_frames num_frames_cont] in *.    
     (* evaluate Dassign *)
     { split.
-      - destruct (Mem.valid_access_dec m' Mint32 b_k 0 Readable) eqn: VA1.
+      - destruct (Mem.valid_access_dec m2 Mptr b_v 0 Readable) eqn: VA1.
         (* The argument l is loadable *)
-        + exploit Mem.valid_access_load. eapply v. intros (?v & ?LOAD).
-          * destruct (sem_cast v0 type_int32s type_int32s) eqn: CAST1.
+        + exploit Mem.valid_access_load. eapply v0. intros (?v & ?LOAD).
+          * destruct (sem_cast v2 Tbox_int Tbox_int) eqn: CAST1.
             (* v0 can be casted *)
-            -- destruct (Mem.valid_access_dec m' Mint32 b_head 0 Writable) eqn: VA2.
+            -- destruct (Mem.valid_access_dec m2 Mptr b_head 8 Writable) eqn: VA2.
                (* The return variable is writable *)
-               ++ edestruct Mem.valid_access_store with (v:= v1) as (?m & ?STORE).
-                  eapply v2.
+               ++ edestruct Mem.valid_access_store with (v:= v3) as (?m & ?STORE).
+                  eapply v4.
                   left. red. do 2 right.
                   do 2 eexists. econstructor.
                   econstructor; eauto.
-                  simpl. unfold type_int32s. congruence.
+                  simpl. unfold Tbox_int. congruence.
                   econstructor. econstructor. eauto. reflexivity. reflexivity.
                   reflexivity. 
                   econstructor. econstructor. econstructor. eauto.
@@ -1850,14 +1857,682 @@ Proof.
           econstructor. eapply eval_Eplace_error2.
           econstructor. eauto.
           econstructor. reflexivity. eauto.
-      - intros. eapply sound_insert. eapply insert_internal with (n:= 7%nat); eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 14%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Kseq *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. 
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 15%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP. 
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Ssequence *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 16%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        inv H; simpl; auto.
+        inv H; simpl; auto. lia. }
+    inv STEP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *. 
+    (* evaluate Sassign to Dassign *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 17%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_to_dropplace_reassign *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropinsert_to_dropplace_reassign.
+        reflexivity. reflexivity. simpl.
+        eapply split_drop_place_insert_head_next. eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 18%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2: { inv_collect_func COLLECT; vm_compute in OWNTY1; congruence. }
+    erewrite split_drop_place_insert_head_next in SPLIT; eauto. inv SPLIT.    
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropplace_init1 *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropplace_init1.
+        inv_collect_func COLLECT; reflexivity.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 19%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2-3: inv_collect_func COLLECT; vm_compute in OWN; congruence. 
+    clear NOTOWN.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 20%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }    
+    inv STEP. inv SDROP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.    
+    (* evaluate Dassign *)
+    { split.
+      - destruct (Mem.valid_access_dec m0 Mptr b_l 0 Readable) eqn: VA1.
+        (* The argument l is loadable *)
+        + exploit Mem.valid_access_load. eapply v3. intros (?v & ?LOAD).
+          * destruct (sem_cast v4 List_box List_box) eqn: CAST1.
+            (* v0 can be casted *)
+            -- destruct (Mem.valid_access_dec m0 Mptr b_head 16 Writable) eqn: VA2.
+               (* The return variable is writable *)
+               ++ edestruct Mem.valid_access_store with (v:= v5) as (?m & ?STORE).
+                  eapply v6.
+                  left. red. do 2 right.
+                  do 2 eexists. econstructor.
+                  econstructor; eauto.
+                  simpl. unfold List_box. congruence.
+                  econstructor. econstructor. eauto. reflexivity. reflexivity.
+                  reflexivity. 
+                  econstructor. econstructor. econstructor. eauto.
+                  econstructor. reflexivity. eauto. 
+                  econstructor. reflexivity. eauto.
+               (* The return variable is not writable *)
+               ++ right. econstructor.
+                  eapply step_dropinsert_assign_error3.
+                  econstructor.
+                  econstructor; eauto. reflexivity. reflexivity.
+                  reflexivity. 
+                  econstructor. econstructor. econstructor. eauto.
+                  econstructor. reflexivity. eauto. eauto.
+                  econstructor. reflexivity. eauto.
+            (* v0 cannot be casted *)
+            -- right. econstructor.
+               eapply step_dropinsert_assign_error5.
+               econstructor.
+               econstructor; eauto. reflexivity. reflexivity.
+               reflexivity.
+               econstructor. econstructor. econstructor. eauto. 
+               econstructor. reflexivity. eauto. reflexivity.
+               eauto.
+        (* The argument l is not loadable *)
+        + right. econstructor.
+          eapply step_dropinsert_assign_error1.
+          econstructor. eapply eval_Eplace_error2.
+          econstructor. eauto.
+          econstructor. reflexivity. eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 21%nat); eauto.
         eapply starNf_step_right; eauto. 
         1-2: inv H; inv SDROP; simpl; auto. lia. }
     inv STEP. inv SDROP.
     inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Kseq *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. 
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 22%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP. 
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Slet *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 23%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        inv H; simpl; auto.
+        inv H; simpl; auto. lia. }
+    inv STEP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *. 
+    (* evaluate Ssequence *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 24%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        inv H; simpl; auto.
+        inv H; simpl; auto. lia. }
+    inv STEP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *. 
+    (* evaluate Sassign_variant *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 25%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        inv H; simpl; auto.
+        inv H; simpl; auto. lia. }
+    inv STEP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *. 
+    (* evaluate step_dropinsert_to_dropplace_reassign *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. eapply step_dropinsert_to_dropplace_reassign.
+        reflexivity. reflexivity.
+        eapply split_drop_place_insert_tmp. eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 26%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2: { vm_compute in OWNTY2. congruence. }
+    erewrite split_drop_place_insert_tmp in SPLIT; eauto. inv SPLIT.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropplace_init1 *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropplace_init1.
+        inv_collect_func COLLECT; reflexivity.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 27%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }    
+    inv STEP. inv SDROP.
+    2-3: inv_collect_func COLLECT; vm_compute in OWN; congruence. 
+    clear NOTOWN.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 28%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate assign_variant *)
+    { split.
+      - destruct (Mem.range_perm_dec m3 b_head 0 (0 + 24) Cur Readable).
+        + exploit Mem.range_perm_loadbytes. eapply r. intros (bys & LOADBYTES).
+          destruct (Mem.range_perm_dec m3 b_tmp 8 (8 + 24) Cur Writable).
+          * edestruct Mem.range_perm_storebytes with (bytes:= bys) as (?m & ?STOREBYTES).
+            erewrite Mem.loadbytes_length; eauto. eauto.
+            assert (ASSOK: assign_copy_ok (Smallstep.globalenv (linked_list_sem se)) Node_ty b_tmp (Ptrofs.repr 8) b_head Ptrofs.zero).
+            { red. rewrite Ptrofs.unsigned_zero. repeat apply conj.
+              eapply Z.divide_0_r. eapply Z.divide_refl.
+              left. auto. }
+            destruct (check_assign_copy (Smallstep.globalenv (linked_list_sem se)) Node_ty b_tmp (Ptrofs.repr 8) b_head Ptrofs.zero) eqn: CAC; try congruence.
+            destruct (Mem.valid_access_dec m1 Mint32 b_tmp 0 Writable) eqn: VA2.
+            -- edestruct Mem.valid_access_store with (v:= (Vint (Int.repr 1))) as (?m & ?STORE); eauto.
+               left. red. do 2 right.
+               do 2 eexists. econstructor. econstructor.
+               1-5: reflexivity.
+               econstructor. econstructor. econstructor. eauto.
+               eapply deref_loc_copy. reflexivity. econstructor. eauto.
+               instantiate (1 := 8).
+               reflexivity. reflexivity.
+               eapply do_assign_loc_sound.
+               unfold do_assign_loc.
+               replace (sizeof (Smallstep.globalenv (linked_list_sem se))
+                          (type_member (Member_plain Cons Node_ty))) with 24 by reflexivity. 
+               rewrite Ptrofs.unsigned_zero.
+               rewrite LOADBYTES.
+               change ((Ptrofs.unsigned (Ptrofs.add Ptrofs.zero (Ptrofs.repr 8)))) with 8.
+               rewrite STOREBYTES. 
+               rewrite Ptrofs.add_zero_l. simpl. setoid_rewrite CAC.
+               reflexivity.
+               reflexivity. 
+               econstructor. eauto. eauto.
+            -- right. econstructor. eapply step_dropinsert_assign_variant_error5.
+               1-3: reflexivity.
+               econstructor. econstructor. econstructor. eauto.
+               eapply deref_loc_copy. reflexivity. econstructor. eauto.
+               instantiate (1 := 8).
+               reflexivity. reflexivity.
+               eapply do_assign_loc_sound.
+               unfold do_assign_loc.
+               replace (sizeof ge (type_member (Member_plain Cons Node_ty))) with 24 by reflexivity. 
+               rewrite Ptrofs.unsigned_zero.
+               rewrite LOADBYTES.
+               change ((Ptrofs.unsigned (Ptrofs.add Ptrofs.zero (Ptrofs.repr 8)))) with 8.
+               rewrite STOREBYTES. 
+               rewrite Ptrofs.add_zero_l. simpl. setoid_rewrite CAC.
+               reflexivity.
+               econstructor. eauto. reflexivity. eauto.
+          * right. econstructor.
+            eapply step_dropinsert_assign_variant_error3.
+            1-3: reflexivity.
+            econstructor. econstructor. econstructor. eauto.
+            eapply deref_loc_copy. reflexivity. econstructor. eauto.
+            instantiate (1 := 8).
+            reflexivity. reflexivity.
+            eapply assign_loc_copy_mem_error2. reflexivity.
+            eauto.
+        + right. econstructor.
+            eapply step_dropinsert_assign_variant_error3.
+            1-3: reflexivity.
+            econstructor. econstructor. econstructor. eauto.
+            eapply deref_loc_copy. reflexivity. econstructor. eauto.
+            instantiate (1 := 8).
+            reflexivity. reflexivity.
+            eapply assign_loc_copy_mem_error1. reflexivity.
+            eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 29%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Kseq *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. 
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 30%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Sbox to Dbox *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. 
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 31%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_to_dropplace_reassign *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. eapply step_dropinsert_to_dropplace_reassign.
+        reflexivity. reflexivity.
+        eapply split_drop_place_insert_retv. eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 32%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2: { vm_compute in OWNTY3. congruence. }
+    erewrite split_drop_place_insert_retv in SPLIT; eauto. inv SPLIT.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropplace_init1 *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropplace_init1.
+        inv_collect_func COLLECT; reflexivity.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 33%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2-3: inv_collect_func COLLECT; vm_compute in OWN; congruence. 
+    clear NOTOWN.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 34%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Dbox *)
+    { split.
+      - destruct (Mem.alloc m5 (- size_chunk Mptr)
+                (sizeof (Smallstep.globalenv (linked_list_sem se)) List_ty)) as (m6 & b_r) eqn: ALLOC.
+        assert (VA1: Mem.valid_access m6 Mptr b_r (-size_chunk Mptr) Writable).
+        { eapply Mem.valid_access_implies. eapply Mem.valid_access_alloc_same; eauto. 
+          lia. vm_compute. congruence. rewrite Z.divide_opp_r. 
+          rewrite align_size_chunk_divides. eapply Z.divide_refl. constructor. }
+        edestruct Mem.valid_access_store with (v:= (Vptrofs (Ptrofs.repr (sizeof (Smallstep.globalenv (linked_list_sem se)) (typeof (Emoveplace (Plocal tmp List_ty) List_ty)))))) as (?m & ?STORE); eauto.
+        (* loadbytes of tmp *)
+        destruct (Mem.range_perm_dec m1 b_tmp 0 (0 + 32) Cur Readable).
+        * exploit Mem.range_perm_loadbytes. eapply r. intros (bys & LOADBYTES).
+          destruct (Mem.range_perm_dec m1 b_r 0 (0 + 32) Cur Writable).
+          -- edestruct Mem.range_perm_storebytes with (bytes:= bys) as (?m & ?STOREBYTES).
+             erewrite Mem.loadbytes_length; eauto. eauto.
+             assert (ASSOK: assign_copy_ok (Smallstep.globalenv (linked_list_sem se)) List_ty b_r Ptrofs.zero b_tmp Ptrofs.zero).
+             { red. rewrite Ptrofs.unsigned_zero. repeat apply conj.
+               eapply Z.divide_0_r. eapply Z.divide_0_r.
+               right. left. auto. }
+             destruct (check_assign_copy (Smallstep.globalenv (linked_list_sem se)) List_ty b_r Ptrofs.zero b_tmp Ptrofs.zero) eqn: CAC; try congruence.
+             destruct (Mem.valid_access_dec m7 Mptr b_retv 0 Writable) eqn: VA2.
+             ++ edestruct Mem.valid_access_store with (v:= (Vptr b_r Ptrofs.zero)) as (?m & ?STORE); eauto.
+                left. red. do 2 right.
+                do 2 eexists. econstructor. econstructor.
+                1-3: reflexivity. eauto. simpl. eauto.
+                econstructor. econstructor.
+                econstructor. eauto. eapply deref_loc_copy. reflexivity. reflexivity.
+                (* assign_loc_copy *)
+                eapply do_assign_loc_sound.
+                unfold do_assign_loc.
+                replace (sizeof (Smallstep.globalenv (linked_list_sem se))
+                           List_ty) with 32 by reflexivity. rewrite Ptrofs.unsigned_zero.
+                rewrite LOADBYTES.
+                rewrite STOREBYTES.
+                rewrite CAC.
+                reflexivity.
+                econstructor. eauto.
+                econstructor. reflexivity. eauto.
+             ++ right. econstructor. eapply step_dropinsert_box_error5; eauto.
+                reflexivity. 
+                econstructor. econstructor. econstructor. eauto.
+                eapply deref_loc_copy. reflexivity. reflexivity.
+                (* assign_loc_copy *)
+                eapply do_assign_loc_sound.
+                unfold do_assign_loc.
+                replace (sizeof ge List_ty) with 32 by reflexivity. rewrite Ptrofs.unsigned_zero.
+                rewrite LOADBYTES.
+                rewrite STOREBYTES.
+                simpl in CAC. simpl. rewrite CAC.
+                reflexivity.
+                econstructor. eauto.
+                eapply assign_loc_value_mem_error. reflexivity. eauto.
+          -- right. econstructor. eapply step_dropinsert_box_error3; eauto.
+             reflexivity. 
+             econstructor. econstructor. econstructor. eauto.
+             eapply deref_loc_copy. reflexivity. reflexivity.
+             eapply assign_loc_copy_mem_error2; eauto.
+        * right. econstructor. eapply step_dropinsert_box_error3; eauto.
+          reflexivity. 
+          econstructor. econstructor. econstructor. eauto.
+          eapply deref_loc_copy. reflexivity. reflexivity.
+          eapply assign_loc_copy_mem_error1; eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 35%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
 
-  Strategy opaque [collect_func].  
-Qed
+    inv STEP. inv SDROP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_end_let *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 36%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_to_dropplace_escape *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropinsert_to_dropplace_escape.
+        repeat_rewrite_eq_universe.
+        reflexivity. reflexivity.
+        eapply split_drop_place_insert_tmp. eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 37%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2: { vm_compute in OWNTY4. congruence. }
+    clear OWNTY4.
+    erewrite split_drop_place_insert_tmp in SPLIT; eauto.
+    inv SPLIT.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropplace_init1 *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropplace_init1.
+        inv_collect_func COLLECT; reflexivity.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 38%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2-3: inv_collect_func COLLECT; vm_compute in OWN; congruence. 
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 39%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 40%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_endlet *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. eapply step_dropinsert_endlet.        
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 41%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP. 
+    destruct NOTRETURN; try congruence.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_end_let *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 42%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_to_dropplace_escape *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropinsert_to_dropplace_escape.
+        repeat_rewrite_eq_universe.
+        reflexivity. reflexivity.
+        eapply split_drop_place_insert_head. eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 43%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2: { vm_compute in OWNTY4. congruence. }
+    clear OWNTY4.
+    erewrite split_drop_place_insert_head in SPLIT; eauto.
+    inv SPLIT.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropplace_init1 *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropplace_init1.
+        inv_collect_func COLLECT; reflexivity.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 44%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2-3: inv_collect_func COLLECT; vm_compute in OWN; congruence. 
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropplace_init1 *)   
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropplace_init1.
+        inv_collect_func COLLECT; reflexivity.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 45%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2-3: inv_collect_func COLLECT; vm_compute in OWN; congruence. 
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropplace_init1 *)   
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropplace_init1.
+        inv_collect_func COLLECT; reflexivity.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 46%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2-3: inv_collect_func COLLECT; vm_compute in OWN; congruence. 
+    inv STAR1; cbn [num_frames num_frames_cont] in *.    
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 47%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 48%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_endlet *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. eapply step_dropinsert_endlet.        
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 49%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP. 
+    destruct NOTRETURN; try congruence.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Kseq *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. 
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 50%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Sreturn to Dreturn *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. 
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 51%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; simpl; auto. lia. }
+    inv STEP.
+    2: { destruct H21; congruence. }
+    erewrite sound_cont_no_vars in *; eauto.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropinsert_return_before.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 52%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP.   
+    inv SDROP. destruct NOTRETURN; congruence.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_to_dropplace_return *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropinsert_to_dropplace_return.
+        reflexivity. reflexivity.
+        eapply split_drop_place_insert_l; eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 53%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2: { unfold List_box in OWNTY4. vm_compute in OWNTY4. congruence. }
+    erewrite split_drop_place_insert_l in SPLIT; eauto. inv SPLIT.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropplace_init1 *)   
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropplace_init1.
+        inv_collect_func COLLECT; reflexivity.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 54%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2-3: inv_collect_func COLLECT; vm_compute in OWN; congruence. 
+    inv STAR1; cbn [num_frames num_frames_cont] in *.    
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 55%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_skip_return *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropinsert_skip_return. reflexivity.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 56%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    vm_compute in OWNTY5. congruence. clear OWNTY5.
+    inv STAR1; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropinsert_to_dropplace_return *)
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor.
+        eapply step_dropinsert_to_dropplace_return.
+        reflexivity. reflexivity.
+        eapply split_drop_place_insert_v; eauto.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 57%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2: { unfold List_box in OWNTY5. vm_compute in OWNTY5. congruence. }
+    erewrite split_drop_place_insert_v in SPLIT; eauto. inv SPLIT.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate step_dropplace_init1 *)   
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. 
+        eapply step_dropplace_init1.
+        inv_collect_func COLLECT; reflexivity.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 58%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    2-3: inv_collect_func COLLECT; vm_compute in OWN; congruence. 
+    inv STAR1; cbn [num_frames num_frames_cont] in *.    
+    { split.
+      - left. red. do 2 right.
+        do 2 eexists. econstructor. econstructor.
+      - intros. eapply sound_insert. eapply insert_internal with (n:= 59%nat); eauto.
+        eapply starNf_step_right; eauto. 
+        1-2: inv H; inv SDROP; simpl; auto. lia. }
+    inv STEP. inv SDROP.
+    inv STAR0; cbn [num_frames num_frames_cont] in *.
+    (* evaluate Dreturn *)
+    exploit sound_call_cont; eauto.
+    intros (ck & CK & SCK).
+    (* load retv *)
+    inv H26. rewrite G1 in H3. inv H3.
+    inv H27. 2: inv H1. 
+    inv H. exploit Mem.load_store_same. eauto. intros LOAD.  
+    (* evaluate step_dropinsert_return_after *)
+    { split.
+      - destruct (Mem.free_list m9 [(b_v, 0, 8); (b_tmp, 0, 32); (b_l, 0, 8); (b_head, 0, 24); (pb, 0, 8); (b_k, 0, 4)]) eqn: FREE.
+        + left. red. do 2 right.
+          do 2 eexists. econstructor.
+          eapply step_dropinsert_return_after. 
+          econstructor. econstructor. econstructor. eauto.
+          econstructor. reflexivity. eauto.
+          reflexivity. eauto. reflexivity. 
+          simpl in G7. simpl. rewrite G7. eauto.
+        + right. econstructor.
+          eapply step_dropinsert_return_error2. 
+          simpl in G7. simpl. rewrite G7. eauto.
+      - intros. inv H. inv SDROP. 
+        eapply sound_insert. eapply return_insert. rewrite CK in CONT. inv CONT.
+        auto. auto. }
+  lia.
+  
+  (* return from insert *)
+  - inv CONT.
+    split.
+    + left. red. left.
+      eexists. econstructor.
+    + intros. inv H.
+      Strategy opaque [collect_func].
+Qed.
 
 
 Lemma step_hash_callstate_preservation_progress: forall v al k m
