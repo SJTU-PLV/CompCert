@@ -1416,9 +1416,9 @@ Section CONSTR_PROOF.
   Hypothesis ADDSAME : update_add_same j2 j2' j1'.
   Hypothesis ADDBLOCK: update_add_block (Mem.support m2) s2' j1' j2'.
 
-  (** step2 of Definition C.7, defined in common/Memory.v as memory operation *)
+  (** step2 of Definition A.7, defined in common/Memory.v as memory operation *)
   Definition m2'1 := Mem.step2 m1 m2 m1' s2' j1'.
-  (** step3 of Definition C.7, in common/Memory.v *)
+  (** step3 of Definition A.7, in common/Memory.v *)
   Definition m2' := Mem.copy_sup m1 m2 m1' j1 j2 j1' INJ12 (Mem.support m2) m2'1.
   
   Lemma INJNOLAP1' : Mem.meminj_no_overlap j1' m1'.
