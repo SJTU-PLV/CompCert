@@ -212,11 +212,10 @@ Record inv_asm_cc_injp_world :=
 
 Local Open Scope mfp_scope.
 
-(** TODO: remove c_query, remove Hm, refine the sup  *)
 (* Safety interface for asm query that contains the asm-level calling
 convention and the memory protection *)
-Inductive inv_asm_cc_injp_q : inv_asm_cc_injp_world -> query li_asm -> Prop:=
-  inv_asm_cc_injp_q_intro tm mfp (rs: regset) m0 sg
+Inductive inv_asm_cc_injp_q (P: invariant li_c) : inv_world P -> inv_asm_cc_injp_world -> query li_asm -> Prop :=
+  inv_asm_cc_injp_q_intro tm mfp (rs: regset) m0 sg wP
     (Hm: memory_valid mfp tm):
     let tsp := rs#SP in let tra := rs#RA in let tvf := rs#PC in
     let targs := (map (fun p => Locmap.getpair p (make_locset_rs rs tm tsp))
@@ -231,7 +230,11 @@ Inductive inv_asm_cc_injp_q : inv_asm_cc_injp_world -> query li_asm -> Prop:=
     args_removed sg tsp tm m0 -> (* The Outgoing arguments are readable and freeable in tm *)
     (* Do we actually need these? *)
     tra <> Vundef ->
-    inv_asm_cc_injp_q
+    tvf <> Vundef ->
+    (* safety assertions for the C query *)
+    query_inv P wP (cq tvf sg targs tm) ->
+    inv_asm_cc_injp_q P
+      wP
       (inv_asmcc_w (mvw mfp tm Hm) sg rs)
       (rs,tm).
 
@@ -250,15 +253,18 @@ Inductive cc_c_asm_args_q: signature -> query li_c -> query li_asm -> Prop :=
 
 (* Safety interface for asm reply that contains the asm-level calling
 convention and the memory protection *)
-Inductive inv_asm_cc_injp_r : inv_asm_cc_injp_world -> reply li_asm -> Prop :=
-  inv_asm_cc_injp_r_intro sg mfp tm Hm mfp' tm' Hm' (rs rs' :regset) :
+Inductive inv_asm_cc_injp_r (P: invariant li_c) : inv_world P -> inv_asm_cc_injp_world -> reply li_asm -> Prop :=
+  inv_asm_cc_injp_r_intro sg mfp tm Hm mfp' tm' Hm' (rs rs' :regset) wP:
      let tsp := rs#SP in
      let tres := rs_getpair (map_rpair preg_of (loc_result sg)) rs' in
      valid_val mfp' tres ->
      mvw_acc (mvw mfp tm Hm) (mvw mfp' tm' Hm') ->
      (forall r, is_callee_save r = true -> rs' (preg_of r) = rs (preg_of r)) ->
      rs'#SP = rs#SP -> rs'#PC = rs#RA ->
-     inv_asm_cc_injp_r
+     (* safety assertions for the C reply *)
+     reply_inv P wP (cr tres tm') ->
+     inv_asm_cc_injp_r P
+       wP
        (inv_asmcc_w (mvw mfp tm Hm) sg rs)
        (rs', tm').
 
@@ -271,11 +277,12 @@ Inductive cc_c_asm_res_r: signature -> reply li_c -> reply li_asm -> Prop :=
       (cr res m)
       (rs, m).
 
-Definition inv_asm_cc_injp : invariant li_asm :=
-  {| inv_world := inv_asm_cc_injp_world;
-    symtbl_inv w se := mem_valid_stbl (inv_asmcc_fp w) se;
-    query_inv := inv_asm_cc_injp_q;
-    reply_inv := inv_asm_cc_injp_r; |}.
+(* It parametrizes over an safety interface *)
+Definition inv_asm_cc_injp (P: invariant li_c) : invariant li_asm :=
+  {| inv_world := (inv_world P * inv_asm_cc_injp_world);
+    symtbl_inv '(wP, w) se := symtbl_inv P wP se /\ mem_valid_stbl (inv_asmcc_fp w) se;
+    query_inv '(wP, w) q := inv_asm_cc_injp_q P wP w q;
+    reply_inv '(wP, w) r := inv_asm_cc_injp_r P wP w r; |}.
 
 Program Definition cc_c_asm_args_res : callconv li_c li_asm :=
   {|
@@ -294,7 +301,7 @@ Local Open Scope inv_scope.
 Definition meminj_inv : Type := (NMap.t (Maps.ZMap.t (option (block * Z)))).
 
 (* The inverse function of the memory injection *)
-Definition tm_inj (j: meminj) (m: mem) : meminj_inv :=
+Definition inv_inj (j: meminj) (m: mem) : meminj_inv :=
   (NMap.init _ (Maps.ZMap.init None)).
 
 (** TODO: construct target footprint from the injection *)
@@ -303,22 +310,22 @@ Definition tm_fp (j: meminj_inv) : memfp :=
 
 Lemma inject_implies_valid_memory: forall m tm j,
     Mem.inject j m tm ->
-    memory_valid (tm_fp (tm_inj j m)) tm.
+    memory_valid (tm_fp (inv_inj j m)) tm.
 Admitted.
 
 Lemma inject_implies_valid_val: forall v1 v2 j m,
     Val.inject j v1 v2 ->
-    valid_val (tm_fp (tm_inj j m)) v2.
+    valid_val (tm_fp (inv_inj j m)) v2.
 Admitted.
 
 Lemma inject_implies_valid_val_list: forall vl1 vl2 j m,
     Val.inject_list j vl1 vl2 ->
-    valid_val_list (tm_fp (tm_inj j m)) vl2.
+    valid_val_list (tm_fp (inv_inj j m)) vl2.
 Admitted.
 
 Lemma tm_fp_out_of_reach: forall j m b ofs,
     loc_out_of_reach j m b ofs ->
-    (tm_fp (tm_inj j m)) ! b ## ofs = false.
+    (tm_fp (inv_inj j m)) ! b ## ofs = false.
 Admitted.
 
 
@@ -326,17 +333,26 @@ Admitted.
 
 (* TODO: one problem is how to find the largest consecutive memory
 regions for building a source block *)
-Definition tm_inj' (invj: meminj_inv) (tm tm': mem) (mfp': memfp) : meminj_inv :=
+Definition tm_inv_inj' (invj: meminj_inv) (tm tm': mem) (mfp': memfp) : meminj_inv :=
   invj.
+
+Definition m_inv_inj (invj: meminj_inv) (tm: mem) (mfp: memfp) : meminj_inv :=
+  invj.
+
 
 (** Construct the outgoing source memory with the new inverse injection *)
 
 (* TODO: Iterate the tm' and construct memory values to update m *)
 Definition m'_from_invj' (invj': meminj_inv) (m tm': mem) : mem := m.
 
+(* TODO: construct incoming source memory. We should only construct
+blocks for the largest consecutive footprint in the target memory *)
+Definition m_from_mfp (mfp: memfp) (tm: mem) : meminj * mem := 
+  (Mem.flat_inj (Mem.support tm), tm).
+
 (* top level theorem of the injp construction for outgoing reply *)
 Lemma mfp_outgoing_constr: forall j m tm (INJ: Mem.inject j m tm) Hm mfp' tm' Hm',
-    let invj := tm_inj j m in
+    let invj := inv_inj j m in
     let mfp := tm_fp invj in
     mvw_acc (mvw mfp tm Hm) (mvw mfp' tm' Hm') ->
     exists j' m' INJ',
@@ -344,6 +360,19 @@ Lemma mfp_outgoing_constr: forall j m tm (INJ: Mem.inject j m tm) Hm mfp' tm' Hm
       (* move this property to other places *)
       /\ (forall v', valid_val mfp' v' -> 
               exists v, Val.inject j' v v').
+Admitted.
+
+Lemma incoming_constr_inject: forall mfp tm (Hm: memory_valid mfp tm),
+    exists j m, Mem.inject j m tm
+           (* move this property to other places *)
+           /\ (forall tv, valid_val mfp tv -> 
+                    (* v <> Vundef is necessary for vf <> Vundef *)
+                     exists v, Val.inject j v tv /\ v <> Vundef)
+           /\ (forall tvl, valid_val_list mfp tvl -> 
+                    exists vl, Val.inject_list j vl tvl).
+Proof.
+  intros.
+  (* use m_from_mfp to construct j and m *)
 Admitted.
 
 (* This property classifies those safety interfaces that are preserved
@@ -378,12 +407,10 @@ Record c_interface_up_to_inj (P: invariant li_c) : Prop :=
   }.
     
 
-
-
 Lemma c_asm_inv_cainjp: forall P (UINJ: c_interface_up_to_inj P),
     invref 
       (P @! cc_c_asm_injp)
-      ((P @! cc_c_asm_args_res) @@ inv_asm_cc_injp).
+      (inv_asm_cc_injp P).
 Proof.
   intros. red.
   intros (wP1 & wca) se2 q2 (se1 & SYM1 & MSENV) (q1 & QINV1 & MQ).
@@ -392,22 +419,18 @@ Proof.
   (* construct wP2 *)
   inv MQ.
   exploit (c_interface_up_to_inj_incoming _ UINJ); eauto. intros (wP2 & QINV2 & RINV2). 
-  set (invj := tm_inj j m).
-  exists ((wP2, sg), inv_asmcc_w (mvw (tm_fp invj) tm (inject_implies_valid_memory m tm j Hm1)) sg rs). 
+  set (invj := inv_inj j m).
+  exists (wP2, inv_asmcc_w (mvw (tm_fp invj) tm (inject_implies_valid_memory m tm j Hm1)) sg rs). 
   split. 2: split.
-  (* symbol table *)
+  (* symbol table: it needs to add requirements for symbol tables in UINJ *)
   - admit.
   (* query *)
-  - econstructor.
-    + exists (cq tvf sg targs tm). split; eauto.
-      econstructor; eauto. fold tvf.
-      inv H5; subst; try congruence.
-    + econstructor. 4-8: eauto.
+  - simpl. econstructor.  4-10: eauto.
       * eapply inject_implies_valid_val_list; eauto.
       * eapply inject_implies_valid_val; eauto.
       * intros. eapply tm_fp_out_of_reach; eauto.
-  - intros r2 ((r1 & (RINV1' & RINV2')) & RINV3').
-    inv RINV3'. inv RINV2'.
+      * fold tvf. inv H5; auto; try congruence.
+  - intros r2 RINV'. inv RINV'.
     (** TODO: construct a source memory m' such that (m, tm) ~->_injp (m', tm') *)
     exploit mfp_outgoing_constr; eauto. 
     instantiate (1 := Hm1). intros (j' & m' & INJ' & INJP & VP).
@@ -419,7 +442,43 @@ Proof.
     + inv INJP. econstructor; eauto.
       econstructor; eauto.
 Admitted.
-        
+
+Lemma cainjp_c_asm_inv: forall P (UINJ: c_interface_up_to_inj P),
+    invref       
+      (inv_asm_cc_injp P)
+      (P @! cc_c_asm_injp).
+Proof.
+  intros. red.
+  intros (wP & [mfp sg rs]) se2 q2 (SYM1 & SYM2) QINV. inv QINV.
+  (* construct a source memory and an injection *)
+  edestruct incoming_constr_inject as (j & m & INJ & VINJ & VLINJ); eauto. 
+  (* P preserves up to the injection *)
+  exploit VLINJ; eauto. intros (args & VLINJ1).
+  exploit VINJ; eauto. intros (vf & VINJ1 & NUN).
+  exploit (c_interface_up_to_inj_outgoing P UINJ); eauto.
+  intros (wP2 & (RI1 & RI2)).
+  exists (wP2, cajw (injpw j m tm INJ) sg rs).
+  split. 2: split.
+  (* symbol table *)
+  - admit.
+  - exists (cq vf sg args m). split.
+    + auto.
+    + econstructor; eauto.
+      (* loc_out_of_reach *)
+      * admit.
+  - intros tr (r & RINV1 & RINV2). inv RINV2.
+    exploit RI2; eauto. intros RINV1'.
+    simpl. 
+    exploit inject_implies_valid_memory. eapply Hm'. intros MVAL'.
+    eapply inv_asm_cc_injp_r_intro with (mfp' := tm_fp (inv_inj j' m')) (Hm' := MVAL'); eauto.
+    eapply inject_implies_valid_val; eauto.
+    (* mvw_acc *)
+    inv H17.
+    econstructor; eauto.
+    (* unchanged_on: specified to the construction of mfp' *)
+    admit. admit. admit.
+Admitted.
+
 Lemma cc_injpca_cainjp :
   ccref (cc_c injp @ cc_c_asm) (cc_c_asm_injp).
 Proof.
