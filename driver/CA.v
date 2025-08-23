@@ -298,12 +298,6 @@ Require Import InvariantAlgebra.
 
 Local Open Scope inv_scope.
 
-Definition meminj_inv : Type := (NMap.t (Maps.ZMap.t (option (block * Z)))).
-
-(* The inverse function of the memory injection *)
-Definition inv_inj (j: meminj) (m: mem) : meminj_inv :=
-  (NMap.init _ (Maps.ZMap.init None)).
-
 (** TODO: construct target footprint from the injection *)
 Definition tm_fp (j: meminj_inv) : memfp := 
   NMap.map _ _ (fun zm => Maps.ZMap.map (fun elt => match elt with | Some _ => true | None => false end) zm) j.
