@@ -9,8 +9,11 @@ Require Import Floats.
 Require Import Values.
 Require Export Memdata.
 Require Export Memtype.
+Require Import Events.
 Require Import InjectFootprint Memory.
 Require Import Globalenvs.
+
+Import ListNotations.
 
 Local Notation "a # b" := (NMap.get _ b a) (at level 1).
 Local Notation "a ## b" := (ZMap.get b a) (at level 1).
@@ -146,25 +149,17 @@ Inductive mem_valid_stbl : mem_valid_world -> Genv.symtbl -> Prop :=
       Mem.sup_include (Genv.genv_sup se) (Mem.support m) ->
       mem_valid_stbl (mvw mfp m Hm) se.
 
+(** Properties of inv_inj and meminj_inv_memfp *)
+
+Lemma inject_implies_valid_memory: forall m tm j,
+    Mem.inject j m tm ->
+    memory_valid (meminj_inv_memfp (inv_inj j m)) tm.
+Admitted.
+
+
 (** Construction of inverse injection and source memory (the same
 steps as m2'1 and m2' in Injectfootprint) *)
 
-Definition meminj_inv_add (invj: meminj_inv) (tb: block) (lo hi: Z) (sb: block) (slo: Z) : meminj_inv :=
-  fun b ofs => 
-    if eq_block b tb && zle lo ofs && zlt ofs hi then
-      Some (sb, slo + hi - lo)
-    else
-      invj b ofs.
-
-(* update the injection with the old injection and the new footprint,
-and also returns the updated support *)
-Fixpoint update_meminj_fp (intvs: list (block * Z * Z)) (j: meminj) (invj: meminj_inv) (s: sup) : meminj * meminj_inv * sup :=
-  match intvs with
-  | nil => (j, invj, s)
-  | (tb, lo, hi) :: tl =>
-      let sb := Mem.fresh_block s in
-      update_meminj_fp tl (meminj_add j sb (tb, lo)) (meminj_inv_add invj tb lo hi sb 0) (sup_incr s)
-  end.
 
 Require Import Mergesort.
 
@@ -179,9 +174,6 @@ Module ZOrder.
 End ZOrder.
 
 Module ZSort := Mergesort.Sort(ZOrder).
-
-Require Import ZArith List.
-Import ListNotations.
 
 (* We’ll need a function to extend the current interval if the next
 element is consecutive, or start a new interval otherwise. *)
@@ -213,6 +205,32 @@ Definition loc_in_reach_intervals (s: list block) (mfp: memfp) (m: mem) : list (
                        (* filter the locations that at least have Nonempty permission *)
                        (map fst (Mem.perm_elements_any (ZMap.elements (NMap.get _ b m.(Mem.mem_access))))))
                        s).
+
+Definition meminj_inv_add (invj: meminj_inv) (tb: block) (lo hi: Z) (sb: block) (slo: Z) : meminj_inv :=
+  fun b ofs => 
+    if eq_block b tb && zle lo ofs && zlt ofs hi then
+      Some (sb, slo + hi - lo)
+    else
+      invj b ofs.
+
+Fixpoint update_meminj_fp' (intvs: list (block * Z * Z)) (j: meminj) (invj: meminj_inv) (s: sup) : meminj * meminj_inv * sup :=
+  match intvs with
+  | nil => (j, invj, s)
+  | (tb, lo, hi) :: tl =>
+      let sb := Mem.fresh_block s in
+      update_meminj_fp' tl (meminj_add j sb (tb, lo)) (meminj_inv_add invj tb lo hi sb 0) (sup_incr s)
+  end.
+
+(* update the injection with the old injection and the new footprint,
+and also returns the updated support for m1 (i.e., the source
+memory) *)
+Definition update_meminj_fp (j: meminj) (invj: meminj_inv) (m1 m2 m2': mem) (mfp': memfp) : meminj * meminj_inv * sup :=
+  let s2 := Mem.sup_list (Mem.support m2) in
+  let s2' := Mem.sup_list (Mem.support m2') in
+  let new_s2' := filter (fun b => negb (in_dec eq_block b s2)) s2' in
+  let intvs := loc_in_reach_intervals new_s2' mfp' m2' in
+  update_meminj_fp' intvs j invj (Mem.support m1).
+
 
 (* update memory value *)
 
@@ -335,41 +353,121 @@ Definition join_memperm (perm1 perm2: Mem.memperm) : Mem.memperm :=
   fun k => join_option_perm (perm1 k) (perm2 k).
 
 (* perms: the source permission *)
-Fixpoint content_filter' (perms : list (Z * Mem.memperm)) (sb: block): list (Z * memval) :=
+Fixpoint content_perm_filter' (perms : list (Z * Mem.memperm)) (sb: block): (list (Z * memval)) * (list (Z * Mem.memperm)) :=
   match perms with
-  | nil => nil
+  | nil => (nil, nil)
   | (o1, p) :: tl =>
       (* only care old injection? *)
       match j12 sb with
       | Some (tb, o2) =>
           let joined_perm := join_memperm p ((Mem.mem_access m2') # tb ## (o1 + o2)%Z) in
+          let (vl, pl) := content_perm_filter' tl sb in
+          let pl' := (o1, joined_perm) :: pl in
           (* if the original permission of this location is Readable *)
           if Mem.perm_order'_dec (joined_perm Cur) Readable then
-            if Mem.perm_dec m1 sb o1 Max Writable then
-              (o1, memval_map_inv j21' ((Mem.mem_contents m2') # tb ## (o1 + o2)%Z))
-                :: content_filter' tl sb 
-            else content_filter' tl sb 
-          else content_filter' tl sb 
-      | None => content_filter' tl sb 
+            if Mem.perm_dec m1 sb o1 Max Writable then              
+              ((o1, memval_map_inv j21' ((Mem.mem_contents m2') # tb ## (o1 + o2)%Z)) :: vl,
+                pl')
+            else (vl, pl')
+          else (vl, pl')
+      (* This block is not injected *)
+      | None => content_perm_filter' tl sb 
       end
   end.
 
-Definition content_filter (sb : block) :=
+Definition content_perm_filter (sb : block) :=
   let elements := ZMap.elements ((Mem.mem_access m1) # sb) in
-  content_filter' elements sb.
+  content_perm_filter' elements sb.
 
-(* update contents of all positions with nonempty permission in block b_2 *)
-Definition copy_content_old_block (sb: block) (vmap: ZMap.t memval) :=
-  let elements := content_filter sb in
-  Mem.setN' elements vmap.
+(* update contents and permission of all positions in vmap and
+perm_map which are from the updating memory m in inject_old_block *)
+Definition copy_content_perm_old_block (sb: block) (vmap: ZMap.t memval) (perm_map: ZMap.t Mem.memperm) : ZMap.t memval * ZMap.t Mem.memperm :=
+  let (vl, pl) := content_perm_filter sb in
+  (Mem.setN' vl vmap, Mem.setN' pl perm_map).
 
 Program Definition inject_old_block (m: mem) (sb: block) := 
   if j12' sb then
     if Mem.sup_dec sb (Mem.support m) then
-      {| Mem.mem_contents := Mem.pmap_update sb 
-                               (copy_content_old_block sb)
-                               (Mem.mem_contents m);
-        Mem.mem_access := Mem.pmap_update sb 
-                               (copy_perm_old_block sb)
-                               (Mem.mem_perm m);
+      let (vm, pm) := copy_content_perm_old_block sb ((Mem.mem_contents m) # sb) ((Mem.mem_access m) # sb) in
+      {| Mem.mem_contents := NMap.set _ sb vm (Mem.mem_contents m);
+        Mem.mem_access := NMap.set _ sb pm (Mem.mem_access m);
         Mem.support := Mem.support m |}
+    else m
+  else m.
+Next Obligation. Admitted.
+Next Obligation. Admitted.
+Next Obligation. Admitted.
+Next Obligation. Admitted.
+      
+Fixpoint copy_old_sup' (bl:list block) m : mem :=
+   match bl with
+   | nil => m
+   | hd :: tl => inject_old_block (copy_old_sup' tl m) hd
+   end.
+
+(* Copy the contents and permissions in (support m1) into m1' *)
+Definition step3_old_blocks (s: sup) m : mem := copy_old_sup' (Mem.sup_list s) m.
+
+End STEP23.
+
+(** The construction proof of source memory m1' *)
+
+Section CONSTR_PROOF.
+  Variable m1 m2 m2': mem.
+  Variable j12 j12': meminj.
+  Variable j21': meminj_inv.
+  Variable s1': sup.
+  
+  Hypothesis (SUPINCR1 : Mem.sup_include (Mem.support m1) s1').
+
+  Definition m1'1 := step2_new_blocks m1 m2 m2' s1' j12 j12' j21' SUPINCR1.
+  Definition m1' := step3_old_blocks m1 m2 m2' s1' j12 j12' j21' SUPINCR1 (Mem.support m1) m1'1.
+  
+  Lemma INJ12': Mem.inject j12' m1' m2'.
+  Admitted.
+
+  Lemma ROUNC1: Mem.ro_unchanged m1 m1'.
+  Admitted.
+
+  Lemma MAXPERM1: injp_max_perm_decrease m1 m1'.
+  Admitted.
+
+  Lemma UNC1: Mem.unchanged_on (loc_unmapped j12) m1 m1'.
+  Admitted.
+
+  Lemma UNC2: Mem.unchanged_on (loc_out_of_reach j12 m1) m2 m2'.
+  Admitted.
+
+
+End CONSTR_PROOF.
+
+
+(* Incoming related memorys m1 and m2 that are related by injp, and
+module accessibility is an unary relation (the mvw_acc), to construct
+the outgoing source memory m1' and the injp_acc relation *)
+Lemma mem_protect_injp: forall m1 m2 j (INJ: Mem.inject j m1 m2),
+  exists invj (Hm: memory_valid (meminj_inv_memfp invj) m2),   
+    let mfp := meminj_inv_memfp invj in
+    (forall mfp' m2' Hm',
+        mvw_acc (mvw mfp m2 Hm) (mvw mfp' m2' Hm') ->
+        exists (invj': meminj_inv) j' m1' INJ',
+          (** TODO: relation between invj', j' and mfp', which is used
+          to establish value injection in the new j' *)
+          injp_acc (injpw j m1 m2 INJ) (injpw j' m1' m2' INJ')).
+Proof.
+  intros.
+  exists (inv_inj j m1), (inject_implies_valid_memory m1 m2 j INJ).
+  simpl. 
+  intros mfp' m2' Hm' MACC.
+  set (invj := inv_inj j m1) in *.
+  (* construction of injection, inverse injection and the fresh support for m1 *)
+  destruct (update_meminj_fp j invj m1 m2 m2' mfp') as ((j' & invj') & s1').
+  assert (SUPINCL1: Mem.sup_include (Mem.support m1) s1'). admit.
+  set (m1' := m1' m1 m2 m2' j j' invj' s1' SUPINCL1).
+  set (INJ12' := INJ12' m1 m2 m2' j j' invj' s1' SUPINCL1).
+  exists invj', j', m1', INJ12'. inv MACC.
+  (* injp_acc *)
+  econstructor; eauto.
+  eapply ROUNC1.
+  eapply MAXPERM1.
+  eapply UNC1. eapply UNC2.

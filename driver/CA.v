@@ -302,10 +302,6 @@ Local Open Scope inv_scope.
 Definition tm_fp (j: meminj_inv) : memfp := 
   NMap.map _ _ (fun zm => Maps.ZMap.map (fun elt => match elt with | Some _ => true | None => false end) zm) j.
 
-Lemma inject_implies_valid_memory: forall m tm j,
-    Mem.inject j m tm ->
-    memory_valid (tm_fp (inv_inj j m)) tm.
-Admitted.
 
 Lemma inject_implies_valid_val: forall v1 v2 j m,
     Val.inject j v1 v2 ->
