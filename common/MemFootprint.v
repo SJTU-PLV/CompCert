@@ -10,7 +10,7 @@ Require Import Values.
 Require Export Memdata.
 Require Export Memtype.
 Require Import Events.
-Require Import InjectFootprint Memory.
+Require Import Inject InjectFootprint Memory.
 Require Import Globalenvs.
 
 Import ListNotations.
@@ -418,24 +418,109 @@ Section CONSTR_PROOF.
   Variable j21': meminj_inv.
   Variable s1': sup.
   
-  Hypothesis (SUPINCR1 : Mem.sup_include (Mem.support m1) s1').
+  Hypothesis ROUNC2: Mem.ro_unchanged m2 m2'.
+  Hypothesis DOMIN1: inject_dom_in j12 (Mem.support m1).
+  (* Hypothesis DOMIN1': inject_dom_in j12' (Mem.support m1'). *)
+  (* Hypothesis UNCHANGE1: Mem.unchanged_on (loc_unmapped j12) m1 m1'. *)
+  Hypothesis UNCHANGE2: Mem.unchanged_on (loc_out_of_reach j12 m1) m2 m2'.
+  Hypothesis INJ12 : Mem.inject j12 m1 m2.
+  Hypothesis SUPINCR1 : Mem.sup_include (Mem.support m1) s1'.
+  Hypothesis INCR1 : inject_incr j12 j12'.
+  Hypothesis INCRDISJ1 : inject_incr_disjoint j12 j12' (Mem.support m1) (Mem.support m2).
+  Hypothesis INCRNOLAP'1:inject_incr_no_overlap' j12 j12'.
+  (* Hypothesis MAXPERM1 : injp_max_perm_decrease m1 m1'. *)
+  (* Hypothesis IMGIN1': inject_image_in j12' s2'. *)
+  (* Hypothesis DOMIN2': inject_dom_in j2' s2'. *)
+  Hypothesis DOMIN1': inject_dom_in j12' s1'.
+  (* Hypothesis INCRNEW1: inject_incr_newblock1 j12 j1' (Mem.support m2). *)
+  (* Hypothesis INCRNEW2: inject_incr_newblock2 j2 j2' (Mem.support m2). *)
+  (* Hypothesis ADDZERO: update_add_zero j1 j1'. *)
+  (* Hypothesis ADDEXISTS: update_add_exists j1 j1' (compose_meminj j1' j2'). *)
+  (* Hypothesis ADDSAME : update_add_same j2 j2' j1'. *)
+  (* Hypothesis ADDBLOCK: update_add_block (Mem.support m2) s2' j1' j2'. *)
 
   Definition m1'1 := step2_new_blocks m1 m2 m2' s1' j12 j12' j21' SUPINCR1.
   Definition m1' := step3_old_blocks m1 m2 m2' s1' j12 j12' j21' SUPINCR1 (Mem.support m1) m1'1.
   
-  Lemma INJ12': Mem.inject j12' m1' m2'.
+  Lemma old_injected_block_perm: forall b1 o1 b2 o2 k p,
+          j12 b1 = Some (b2, o2 - o1) ->
+          Mem.perm m1 b1 o1 Max Nonempty ->
+          Mem.perm m1' b1 o1 k p ->
+          Mem.perm m2' b2 o2 k p.
+  Proof.
   Admitted.
 
-  Lemma ROUNC1: Mem.ro_unchanged m1 m1'.
+  Lemma new_injected_block_perm: forall b1 o1 b2 o2 k p,
+      j12 b1 = None ->      
+      j12' b1 = Some (b2, o2 - o1) ->
+      Mem.perm m1' b1 o1 Max Nonempty ->
+      (Mem.perm m1' b1 o1 k p <->
+         Mem.perm m2' b2 o2 k p).
+  Proof.
   Admitted.
+
+  
+  Lemma new_injected_block_perm1: forall b1 o1 b2 o2 k p,
+      j12 b1 = None ->      
+      j12' b1 = Some (b2, o2 - o1) ->
+      Mem.perm m1' b1 o1 Max Nonempty ->
+      (Mem.perm m1' b1 o1 k p ->
+         Mem.perm m2' b2 o2 k p).
+  Proof.
+    intros. eapply new_injected_block_perm; eauto.
+  Qed.
+  
+  Lemma new_injected_block_perm2: forall b1 o1 b2 o2 k p,
+      j12 b1 = None ->      
+      j12' b1 = Some (b2, o2 - o1) ->
+      Mem.perm m2' b2 o2 k p ->
+      Mem.perm m1' b1 o1 k p.
+  Proof.
+    (* prove that m1'[(b1,o1)] is Nonempty *)
+  Admitted.
+
 
   Lemma MAXPERM1: injp_max_perm_decrease m1 m1'.
   Admitted.
+
 
   Lemma UNC1: Mem.unchanged_on (loc_unmapped j12) m1 m1'.
   Admitted.
 
   Lemma UNC2: Mem.unchanged_on (loc_out_of_reach j12 m1) m2 m2'.
+  Admitted.
+
+
+  Lemma INJ12': Mem.inject j12' m1' m2'.
+  Proof.
+    constructor.
+    - constructor.
+      (* permission *)
+      + intros.
+        destruct (subinj_dec j12 j12' b1 b2 delta INCR1 H).
+        (* old injected block *)
+        * eapply old_injected_block_perm with (o2 := ofs + delta) (o1 := ofs) (b1 := b1).
+          replace (ofs + delta - ofs) with delta by lia. auto.
+          (* injected block has nonempty permission in m1, ensured by
+          MAXPERM1 *)
+          eapply MAXPERM1. eapply DOMIN1. eauto. 
+          eauto with mem. auto.
+        (* new injected block *)
+        * eapply new_injected_block_perm1 with (o1 := ofs); eauto.
+          replace (ofs + delta - ofs) with delta by lia. auto.
+          eauto with mem.
+      (* alignment *)
+      + intros.
+        destruct (subinj_dec j12 j12' b1 b2 delta INCR1 H).
+        * eapply Mem.mi_align. eapply INJ12. eauto.
+          red. intros. eapply MAXPERM1. eapply DOMIN1. eauto.
+          eapply H0. eauto.
+        * Mem.inject'
+memory_valid align_chunk
+                         Mem.inject'
+        
+
+  Lemma ROUNC1: Mem.ro_unchanged m1 m1'.
   Admitted.
 
 
