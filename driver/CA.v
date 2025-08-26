@@ -368,6 +368,7 @@ Admitted.
 (* This property classifies those safety interfaces that are preserved
 up to the memory injeciton. It says that the safety interface is
 irrelavent to the injection (i.e., the name of the memory block) *)
+(* To ensure that this property can be proved for some cases (e.g., I_own), we may need to restrict the inject function that it is an identity function when we use its additional part (inject_incr part) *)
 Record c_interface_up_to_inj (P: invariant li_c) : Prop :=
   { c_interface_up_to_inj_incoming:
     forall w1 args1 args2 vf1 vf2 m1 m2 sg j,
