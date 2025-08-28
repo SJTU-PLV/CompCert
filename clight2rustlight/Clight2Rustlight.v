@@ -130,6 +130,8 @@ Definition gensym (locals: list ident) (ty: type) : mon ident :=
       (mkgenerator (Pos.succ fresh_id) ((fresh_id, ty) :: gen_trail g))
   else Err (msg "gensym: out of fresh id limit").
 
+Definition new_origin := 1%positive.
+
 (** Convert Clight type to Rustlight type *)
 Fixpoint to_rusttype (ty: Ctypes.type): Rusttypes.type :=
   match ty with
@@ -139,7 +141,7 @@ Fixpoint to_rusttype (ty: Ctypes.type): Rusttypes.type :=
   | Ctypes.Tfloat fz _ => Rusttypes.Tfloat fz
   | Ctypes.Tstruct id _ => Rusttypes.Tstruct nil id
   | Ctypes.Tunion id _ => Rusttypes.Tvariant nil id
-  | Ctypes.Tpointer ty _ => Rusttypes.Traw_pointer mutable (to_rusttype ty)
+  | Ctypes.Tpointer ty _ => Rusttypes.Treference new_origin Mutable (to_rusttype ty)
   (*todo*)
   | Ctypes.Tarray ty' sz _ => Rusttypes.Tarray Mutable (to_rusttype ty') sz
   | Ctypes.Tfunction tyl ty' cc => 

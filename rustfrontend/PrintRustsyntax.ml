@@ -21,10 +21,16 @@ let string_of_pmut pmut =
   | Coq_mutable -> "mut "
   | Coq_const -> "const"
 
+let print_origin_as_lifetime a =
+  try
+    Hashtbl.find string_of_atom a
+  with Not_found ->
+    Printf.sprintf "'a" 
+
 let rec print_origins_aux (orgs : origin list) =
   match orgs with
   | [] -> ""
-  | org :: orgs' -> extern_atom org ^ ", " ^ print_origins_aux orgs'
+  | org :: orgs' -> print_origin_as_lifetime org ^ ", " ^ print_origins_aux orgs'
 
 let print_origins (orgs : origin list) =
   match orgs with
@@ -35,7 +41,7 @@ let rec origin_relations_string_aux (rels: origin_rel list) =
   match rels with
   | [] -> ""
   | (org1, org2) :: rels' -> 
-    extern_atom org1 ^ ": " ^ extern_atom org2 ^ ", " ^ origin_relations_string_aux rels'
+    print_origin_as_lifetime org1 ^ ": " ^ print_origin_as_lifetime org2 ^ ", " ^ origin_relations_string_aux rels'
 
 let origin_relations_string (rels: origin_rel list) =
   match rels with
@@ -56,14 +62,28 @@ let rec name_rust_decl id ty =
   | Rusttypes.Tlong(sg) ->
       name_longtype sg ^ name_optid id
   | Rusttypes.Treference(org, mut, t) ->
-      "&" ^ (extern_atom org) ^" "^  string_of_mut mut ^ (name_rust_decl ""  t) ^ name_optid id
+      "&" ^ " " ^  string_of_mut mut ^ (name_rust_decl ""  t) ^ name_optid id
   | Tbox(t) ->
       "Box<" ^ (name_rust_decl ""  t) ^ ">" ^ name_optid id
   | Tfunction( _, _, args, res, cconv) ->
+      let has_lifetime = ref false in
+      let rec check_args = function
+      | Tnil -> ()
+      | Tcons(t1, tl) ->
+          (match t1 with
+          | Rusttypes.Treference(_, _, _) -> has_lifetime := true
+          | _ -> check_nested t1);
+          check_args tl
+      and check_nested t = match t with
+      | Tfunction(_, _, a, r, c) -> check_args a
+      | _ -> ()
+      in
+      check_args args;
       let b = Buffer.create 20 in
       if id = ""
       then Buffer.add_string b "(*)"
       else Buffer.add_string b id;
+      if !has_lifetime then Buffer.add_string b "<'a>";
       Buffer.add_char b '(';
       let rec add_args first = function
       | Tnil ->
@@ -86,10 +106,68 @@ let rec name_rust_decl id ty =
   | Tvariant(orgs, name) ->
       "variant" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
   | Traw_pointer(mut, ty) ->
-    "*" ^ (name_rust_decl ""  ty) ^ name_optid id
+    "*" ^ string_of_pmut mut ^ (name_rust_decl ""  ty) ^ name_optid id
   | Tarray(mut, ty, sz) ->
     (* string_of_mut mut ^ " "^ *)
     name_rust_decl (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
+  | Tslice(mut, ty) ->
+    "&" ^ string_of_mut mut ^ " " ^ (name_rust_decl ""  ty) ^ name_optid id
+
+let rec name_rust_decl_var id ty =
+  match ty with
+  | Rusttypes.Tunit ->
+    name_optid_no_space id ^ "i32 /*this is unit */"
+  | Rusttypes.Tvoid ->
+    name_optid_no_space id ^ "std::ffi::c_void"    
+  | Rusttypes.Tint(sz, sg) ->
+    name_optid_no_space id ^ name_inttype sz sg
+  | Rusttypes.Tfloat(sz) ->
+    name_optid_no_space id  ^ name_floattype sz
+  | Rusttypes.Tlong(sg) ->
+    name_optid_no_space id ^ name_longtype sg
+  | Rusttypes.Treference(org, mut, t) ->
+    name_optid_no_space id ^ "&" ^  string_of_mut mut ^ (name_rust_decl ""  t)
+  | Tbox(t) ->
+    name_optid_no_space id ^ "Box<" ^ (name_rust_decl ""  t) ^ ">"
+  | Tfunction( _, _, args, res, cconv) ->
+      let b = Buffer.create 20 in
+      if id = ""
+      then Buffer.add_string b "(*)"
+      else Buffer.add_string b id;
+      Buffer.add_char b '(';
+      let rec add_args first = function
+      | Tnil ->
+          if first then
+            Buffer.add_string b
+               (if cconv.cc_vararg <> None then "..." else "")
+          else if cconv.cc_vararg <> None then
+            Buffer.add_string b ", ..."
+          else
+            ()
+      | Tcons(t1, tl) ->
+          if not first then Buffer.add_string b ", ";
+          Buffer.add_string b (name_rust_decl "_" t1);
+          add_args false tl in
+      if not cconv.cc_unproto then add_args true args;
+      Buffer.add_char b ')';
+      "fn" ^ name_rust_decl_var (Buffer.contents b) res
+  | Tstruct(orgs, name) ->
+      "struct" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+  | Tvariant(orgs, name) ->
+      "variant" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+  | Traw_pointer(mut, ty) ->
+    name_optid_no_space id ^ "*" ^ string_of_pmut mut ^ (name_rust_decl ""  ty)
+  | Tarray(mut, ty, sz) ->
+    (* begin
+    (* string_of_mut mut ^ " "^ *)
+    match mut with
+    | Immutable->
+        (* 处理 const 数组 *)
+        name_optid id ^ "[" ^ name_rust_decl "" ty ^ ";" ^ sprintf "%ld" (camlint_of_coqint sz) ^ "]"
+    | Mutable -> *)
+        (* 处理 mutable 数组 *)
+        name_optid_no_space id ^ "[" ^ name_rust_decl "" ty ^ ";" ^ sprintf "%ld" (camlint_of_coqint sz) ^ "]"
+    (* end *)
   | Tslice(mut, ty) ->
     "&" ^ string_of_mut mut ^ " " ^ (name_rust_decl ""  ty) ^ name_optid id
 
@@ -106,7 +184,7 @@ let rec name_rust_decl_fn_arg id ty =
   | Rusttypes.Tlong(sg) ->
     name_optid_no_space id ^ name_longtype sg
   | Rusttypes.Treference(org, mut, t) ->
-    name_optid_no_space id ^ "&" ^ (extern_atom org) ^" "^  string_of_mut mut ^ (name_rust_decl ""  t)
+    name_optid_no_space id ^ "&" ^ (print_origin_as_lifetime org) ^" "^  string_of_mut mut ^ (name_rust_decl ""  t)
   | Tbox(t) ->
     name_optid_no_space id ^ "Box<" ^ (name_rust_decl ""  t) ^ ">"
   | Tfunction( _, _, args, res, cconv) ->
@@ -164,14 +242,28 @@ let rec name_rust_decl_fn id ty =
   | Rusttypes.Tlong(sg) ->
       name_optid id ^ " -> " ^ name_longtype sg
   | Rusttypes.Treference(org, mut, t) ->
-      "&" ^ (extern_atom org) ^" "^  string_of_mut mut ^ (name_rust_decl ""  t) ^ name_optid id
+      name_optid id ^ " -> " ^ "&" ^ (print_origin_as_lifetime org) ^" "^  string_of_mut mut ^ (name_rust_decl ""  t)
   | Tbox(t) ->
-      "Box<" ^ (name_rust_decl ""  t) ^ ">" ^ name_optid id
+      name_optid id ^ " -> " ^ "Box<" ^ (name_rust_decl ""  t) ^ ">"
   | Tfunction( _, _, args, res, cconv) ->
+      let has_lifetime = ref false in
+      let rec check_args = function
+      | Tnil -> ()
+      | Tcons(t1, tl) ->
+          (match t1 with
+          | Rusttypes.Treference(_, _, _) -> has_lifetime := true
+          | _ -> check_nested t1);
+          check_args tl
+      and check_nested t = match t with
+      | Tfunction(_, _, a, r, c) -> check_args a
+      | _ -> ()
+      in
+      check_args args;
       let b = Buffer.create 20 in
       if id = ""
       then Buffer.add_string b "(*)"
       else Buffer.add_string b id;
+      if !has_lifetime then Buffer.add_string b "<'a>";
       Buffer.add_char b '(';
       let rec add_args first = function
       | Tnil ->
@@ -206,28 +298,46 @@ let name_rust_type ty = name_rust_decl "" ty
 
 (* TODO: print expressions and statements *)
 
-let name_function_parameters name_param fun_name params cconv name_origins rels =
-    let b = Buffer.create 20 in
+let name_function_parameters name_param fun_name params cconv name_origins rels = 
+    let b = Buffer.create 20 in 
     Buffer.add_string b fun_name;
-    (* origins *)
-    Buffer.add_string b (print_origins name_origins);
+    
+    (* add a helper function to check if params contain reference type *)
+    let rec has_reference_param = function
+    | [] -> false
+    | (_, ty) :: rem ->
+        let rec check_type t = match t with
+        | Rusttypes.Treference _ -> true
+        | Rusttypes.Tfunction(_, _, args, _, _) -> check_args args
+        | _ -> false
+        and check_args = function
+        | Rusttypes.Tnil -> false
+        | Rusttypes.Tcons(t, rest) -> check_type t || check_args rest
+        in
+        check_type ty || has_reference_param rem
+    in
+    
+    (* only when params contain reference type, add lifetime parameter *)
+    if has_reference_param params then
+        Buffer.add_string b "<'a>";
+    
     Buffer.add_char b '(';
-    begin match params with
-    | [] ->
-        Buffer.add_string b (if cconv.cc_vararg <> None then "..." else "")
-    | _ ->
-        let rec add_params first = function
-        | [] ->
-            if cconv.cc_vararg <> None then Buffer.add_string b ",..."
-        | (id, ty) :: rem ->
-            if not first then Buffer.add_string b ", ";
-            Buffer.add_string b ((name_param id)^": "^(name_rust_decl "" ty));
-            add_params false rem in
-        add_params true params
+    begin match params with 
+    | [] -> 
+        Buffer.add_string b (if cconv.cc_vararg <> None then "..." else "") 
+    | _ -> 
+        let rec add_params first = function 
+        | [] -> 
+            if cconv.cc_vararg <> None then Buffer.add_string b ",..." 
+        | (id, ty) :: rem -> 
+            if not first then Buffer.add_string b ", "; 
+            Buffer.add_string b ((name_param id)^": "^(name_rust_decl_fn_arg "" ty)); 
+            add_params false rem in 
+        add_params true params 
     end;
-    Buffer.add_char b ')';
+    Buffer.add_char b ')'; 
     Buffer.add_string b "\n";
-    Buffer.add_string b (origin_relations_string rels);
+    Buffer.add_string b (origin_relations_string rels); 
     Buffer.contents b
 
 let print_fundecl p id fd =
@@ -235,7 +345,7 @@ let print_fundecl p id fd =
   | Ctypes.Internal f ->
       let linkage = if C2C.atom_is_static id then "static" else "extern" in
       fprintf p "%s %s;@ @ " linkage
-                (name_rust_decl (extern_atom id) (Rustsyntax.type_of_function f))
+                (name_rust_decl_fn (extern_atom id) (Rustsyntax.type_of_function f))
   | _ -> ()
 
 let print_string_array p id ty il =
@@ -263,6 +373,58 @@ let print_string_array p id ty il =
     ) il;
   fprintf p "]"
 
+let int32_unsigned_to_int64 n = 
+  Int64.logand (Int64.of_int32 n) 0xFFFFFFFFL
+
+let int8_unsigned_to_int64 n = 
+  Int64.logand (Int64.of_int32 n) 0xFFL
+
+let int16_unsigned_to_int64 n = 
+  Int64.logand (Int64.of_int32 n) 0xFFFFL
+
+let bool_to_u8 n = 
+  if Int32.compare n 0l = 0 then 0l else 1l
+
+let print_rust_init p typ init = 
+  match typ with 
+  | Rusttypes.Tint(Ctypes.I8, Ctypes.Unsigned) -> 
+      let num = camlint_of_coqint (match init with Init_int8 n -> n | _ -> assert false) in 
+      fprintf p "0x%02Lx_u8" (int8_unsigned_to_int64 num)
+  | Rusttypes.Tint(Ctypes.I16, Ctypes.Unsigned) -> 
+      let num = camlint_of_coqint (match init with Init_int16 n -> n | _ -> assert false) in 
+      fprintf p "0x%04Lx_u16" (int16_unsigned_to_int64 num)
+  | Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned) -> 
+      let num = camlint_of_coqint (match init with Init_int32 n -> n | _ -> assert false) in 
+      fprintf p "0x%08Lx_u32" (int32_unsigned_to_int64 num)
+  | Rusttypes.Tint(Ctypes.IBool, Ctypes.Unsigned) -> 
+      let num = camlint_of_coqint (match init with Init_int8 n -> n | _ -> assert false) in 
+      fprintf p "0x%02Lx_u8" (int8_unsigned_to_int64 (bool_to_u8 num))
+  | _ -> 
+      print_init p init
+
+let print_composite_init_rust var_info p il = 
+  match var_info with 
+  | Rusttypes.Tarray(mut, elem_ty, sz) -> 
+    fprintf p "[@ "; 
+    let last_index = List.length il - 1 in 
+    List.iteri (fun idx i -> 
+      print_rust_init p elem_ty i;
+      match i with 
+      | Init_space _ -> () 
+      | _ -> 
+          if idx < last_index then 
+            fprintf p ",@ " 
+    ) il; 
+    fprintf p "]"
+  | _ -> 
+    fprintf p "{@ "; 
+    List.iter 
+      (fun i -> 
+        print_init p i; 
+        match i with Init_space _ -> () | _ -> fprintf p ",@ ") 
+      il; 
+    fprintf p "}"
+
 let print_globvar p id v =
   let name1 = extern_atom id in
   let name2 = if v.gvar_readonly then "const " ^ name1 else name1 in
@@ -280,13 +442,13 @@ let print_globvar p id v =
       begin match v.gvar_info, v.gvar_init with
       | (Rusttypes.Tint _ | Rusttypes.Tlong _ | Rusttypes.Tfloat _ | Tfunction _),
         [i1] ->
-          print_init p i1
-      | _, il ->
+          print_rust_init p v.gvar_info i1
+      | var_info, il ->
           if Str.string_match re_string_literal (extern_atom id) 0
           && List.for_all (function Init_int8 _ -> true | _ -> false) il
           then print_string_array p (extern_atom id) v.gvar_info il
           (* then fprintf p "\"%s\"" (string_of_init (chop_last_nul il)) *)
-          else print_composite_init p il
+          else print_composite_init_rust var_info p il
       end;
       fprintf p ";@]@ @ "
 

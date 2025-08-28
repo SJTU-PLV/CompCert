@@ -106,17 +106,17 @@ and pexpr p (prec, e) =
   | Eplace(v, _) ->
     fprintf p "%a" print_place v
   | Econst_int(n, Rusttypes.Tint(I32, Unsigned)) ->
-    fprintf p "%luU" (camlint_of_coqint n)
+    fprintf p "%lu_u32" (camlint_of_coqint n)
   | Econst_int(n, _) ->
     fprintf p "%ld" (camlint_of_coqint n)
   | Econst_float(f, _) ->
     fprintf p "%.18g" (camlfloat_of_coqfloat f)
   | Econst_single(f, _) ->
-    fprintf p "%.18gf" (camlfloat_of_coqfloat32 f)
+    fprintf p "%.18g_f32" (camlfloat_of_coqfloat32 f)
   | Econst_long(n, Rusttypes.Tlong(Unsigned)) ->
-    fprintf p "%LuLLU" (camlint64_of_coqint n)
+    fprintf p "%Lu_u64" (camlint64_of_coqint n)
   | Econst_long(n, _) ->
-    fprintf p "%LdLL" (camlint64_of_coqint n)
+    fprintf p "%Ldi64" (camlint64_of_coqint n)
   | Eglobal(id, _) ->
     fprintf p "glob %s" (extern_atom id)
   | Eunop(Oabsfloat, a1, _) ->
@@ -197,7 +197,7 @@ let rec print_expr_list_with_type p (first, exprs, param_tys) =
        | Rusttypes.Tarray _ | Rusttypes.Traw_pointer _ -> fprintf p ".as_ptr()"
        | _ -> ());
       (* 打印参数类型 *)
-      fprintf p " as %s" (name_rust_decl_fn_arg "" ty);
+      fprintf p " as %s" (name_rust_decl "" ty);
       print_expr_list_with_type p (false, rl, tyl)
   | r :: rl, [] ->
       if not first then fprintf p ",@ ";
@@ -284,23 +284,23 @@ let print_function p id f =
     begin
     fprintf p "fn%s"
         (name_rust_decl_fn (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
-        fprintf p "{@;@[<v 2>  unsafe@;{@[<v 1>@;";
+        fprintf p "{@;@[<v 2>  @[<v 1>@;";
         List.iter 
         (fun (id, ty) ->
           fprintf p "let mut %s;@ " (name_rust_decl_fn_arg (extern_atom id ^ " : ") ty))
         f.fn_vars;
         print_stmt p f.fn_body;
-    fprintf p "@;<0 -2>}@]@;<0 -2>}@]@ @ "
+    fprintf p "@]@;<0 -2>}@]@ @ "
     end
   else
     begin
-      fprintf p "unsafe fn%s@ "
+      fprintf p "fn%s@ "
                 (name_rust_decl_fn (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
       fprintf p "@[<v 2>{@ ";
         (* Print variables and their types *)
         List.iter 
         (fun (id, ty) ->
-          fprintf p "let mut %s;@ " (name_rust_decl_fn_arg (extern_atom id ^ " : ") ty))
+          fprintf p "let mut %s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty))
         f.fn_vars;
         (*
         List.iter
