@@ -111,7 +111,7 @@ let rec name_rust_decl id ty =
     (* string_of_mut mut ^ " "^ *)
     name_rust_decl (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
   | Tslice(mut, ty) ->
-    "&" ^ string_of_mut mut ^ " " ^ (name_rust_decl ""  ty) ^ name_optid id
+    "&" ^ string_of_mut mut ^ " [" ^ (name_rust_decl ""  ty) ^ "]" ^ name_optid id
 
 let rec name_rust_decl_var id ty =
   match ty with
@@ -169,7 +169,7 @@ let rec name_rust_decl_var id ty =
         name_optid_no_space id ^ "[" ^ name_rust_decl "" ty ^ ";" ^ sprintf "%ld" (camlint_of_coqint sz) ^ "]"
     (* end *)
   | Tslice(mut, ty) ->
-    "&" ^ string_of_mut mut ^ " " ^ (name_rust_decl ""  ty) ^ name_optid id
+    "&" ^ string_of_mut mut ^ " [" ^ (name_rust_decl ""  ty) ^ "]" ^ name_optid id
 
 let rec name_rust_decl_fn_arg id ty =
   match ty with
@@ -227,7 +227,7 @@ let rec name_rust_decl_fn_arg id ty =
         name_optid_no_space id ^ "[" ^ name_rust_decl "" ty ^ ";" ^ sprintf "%ld" (camlint_of_coqint sz) ^ "]"
     (* end *)
   | Tslice(mut, ty) ->
-    "&" ^ string_of_mut mut ^ " " ^ (name_rust_decl ""  ty) ^ name_optid id
+     name_optid_no_space id ^ "&" ^ string_of_mut mut ^ " [" ^ (name_rust_decl ""  ty) ^ "]"
 
 let rec name_rust_decl_fn id ty =
   match ty with
@@ -291,7 +291,7 @@ let rec name_rust_decl_fn id ty =
     (* string_of_mut mut ^ " "^ *)
     name_rust_decl (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
   | Tslice(mut, ty) ->
-    "&" ^ string_of_mut mut ^ " " ^ (name_rust_decl ""  ty) ^ name_optid id
+    name_optid id ^ " -> " ^ "&" ^ string_of_mut mut ^ " [" ^ (name_rust_decl ""  ty) ^ "]"
 (* Type *)
 
 let name_rust_type ty = name_rust_decl "" ty
@@ -425,7 +425,7 @@ let print_composite_init_rust var_info p il =
       il; 
     fprintf p "}"
 
-let print_globvar p id v =
+let print_globvar p id v = 
   let name1 = extern_atom id in
   let name2 = if v.gvar_readonly then "const " ^ name1 else name1 in
   let name3 = name2 ^ " : " in
@@ -447,8 +447,30 @@ let print_globvar p id v =
           if Str.string_match re_string_literal (extern_atom id) 0
           && List.for_all (function Init_int8 _ -> true | _ -> false) il
           then print_string_array p (extern_atom id) v.gvar_info il
-          (* then fprintf p "\"%s\"" (string_of_init (chop_last_nul il)) *)
-          else print_composite_init_rust var_info p il
+          (* 对于需要动态分配的类型，使用Box包装 *)
+          (*1. 1.
+   全局变量与内存分配的关系 ：
+   
+   - 在C/C++中，全局变量有时会持有通过 malloc 分配的内存指针
+   - 当我们将整个代码库从使用 malloc/free 转换为使用Rust的 Box 时，需要确保全局变量的初始化方式也随之调整
+  2.
+   Rust的所有权模型要求 ：
+   
+   - Rust的所有权模型要求明确谁负责内存的分配和释放
+   - 全局变量如果持有原始指针( *mut T / *const T )，会绕过Rust的所有权检查
+   - 使用 Box<T> 可以确保全局变量遵循Rust的所有权规则
+  3.
+   代码一致性 ：
+   
+   - 既然我们已经在函数调用中替换了 malloc/free ，也应该确保全局变量的初始化方式与之保持一致
+   - 否则可能会出现混合使用两种不同内存管理方式的情况
+   - 全局变量如果持有原始指针( *mut T / *const T )，会绕过Rust的所有权检查
+   - 使用 Box<T> 可以确保全局变量遵循Rust的所有权规则 *)
+          else match var_info with
+               | Rusttypes.Traw_pointer _ ->
+                   fprintf p "Box::new(%a)" (print_composite_init_rust var_info) il
+               | _ ->
+                   print_composite_init_rust var_info p il
       end;
       fprintf p ";@]@ @ "
 

@@ -141,7 +141,7 @@ Fixpoint to_rusttype (ty: Ctypes.type): Rusttypes.type :=
   | Ctypes.Tfloat fz _ => Rusttypes.Tfloat fz
   | Ctypes.Tstruct id _ => Rusttypes.Tstruct nil id
   | Ctypes.Tunion id _ => Rusttypes.Tvariant nil id
-  | Ctypes.Tpointer ty _ => Rusttypes.Treference new_origin Mutable (to_rusttype ty)
+  | Ctypes.Tpointer ty _ => Rusttypes.Tslice Mutable (to_rusttype ty)
   (*todo*)
   | Ctypes.Tarray ty' sz _ => Rusttypes.Tarray Mutable (to_rusttype ty') sz
   | Ctypes.Tfunction tyl ty' cc => 
@@ -157,7 +157,7 @@ with to_rusttypelist (tyl: Ctypes.typelist) : Rusttypes.typelist :=
 
 Definition to_rusttype_global (ty: Ctypes.type): Rusttypes.type :=
   match ty with
-  | Ctypes.Tpointer ty _ => Rusttypes.Traw_pointer const (to_rusttype ty)
+  | Ctypes.Tpointer ty _ => Rusttypes.Tslice Immutable (to_rusttype ty)
   (*todo*)
   | Ctypes.Tarray ty' sz _ => Rusttypes.Tarray Immutable (to_rusttype ty') sz
   | _ => to_rusttype ty

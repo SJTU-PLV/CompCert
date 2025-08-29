@@ -1,11 +1,17 @@
 #include <stdio.h>
+#include <stdlib.h>
 typedef unsigned int	u32;
-const u32 Te2[] = { 0x42c68442f, 0x68b8d068U,
-    0x41c38241U, 0x99b02999U, 0x2d775a2dL, 0x0f111e0fU,
-    0xb0cb7bb0U, 0x54fca854U, 0xbbd66dbbLL, 0x163a2c16UL,
+struct Test {
+  u32 a;
+  u32 b;
 };
 
 int main() {
-  int arr[5] = {1,2,3,4,5};
+  struct Test* t = (struct Test*)malloc(sizeof(struct Test));
+  t->a = 1;
+  t->b = 2;
+  printf("%d\n", t->a);
+  printf("%d\n", t->b);
+  free(t);
   return 0;
 }
