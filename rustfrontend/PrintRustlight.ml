@@ -75,6 +75,8 @@ let precedence = function
     | Pderef(p', _) ->
       (* fprintf out "*%a" print_place p' *)
       fprintf out "%a" print_place p'
+      (* fprintf out "*%a" print_place p' *)
+      fprintf out "%a" print_place p'
     | Pfield(p', fid, _) ->
       fprintf out "%a.%s" print_place p' (extern_atom fid)
     | Pdowncast(p',fid, _) ->
@@ -260,6 +262,12 @@ let parse_malloc_param p v param =
   | _ ->
       fprintf p "@[<hv 2>/* 错误:类型信息不足,建议改为sizeof(type)*n的形式 */@]"
 
+let get_callee_name (e: expr) : string option =
+  match e with
+  | Epure (Eplace(Plocal(id, _), _)) -> Some (String.lowercase_ascii (extern_atom id))
+  | Epure (Eglobal(id, _))           -> Some (String.lowercase_ascii (extern_atom id))
+  | _                                -> None
+
 let rec print_stmt p (s: Rustlight.statement) = 
   match s with
   | Sskip ->
@@ -298,16 +306,26 @@ let rec print_stmt p (s: Rustlight.statement) =
       fprintf p "/* free call replaced by Rust's ownership system */"
     ) else (
       (* 正常函数调用 *)
-      let fun_ty = type_of_expr e1 in
-      let param_tys = 
-        match fun_ty with 
-        | Rusttypes.Tfunction(_, _, args, _, _) ->  typelist_to_list args
-        | _ -> List.map (fun _ -> Rusttypes.Tunit) el  (* fallback: 全部Tunit *)
-      in
-      fprintf p "@[<hv 2>%a =@ %a@,(@[<hov 0>%a@]);@]"
-                print_place v
-                expr (15, e1)
-                print_expr_list_with_type (true, el, param_tys)
+      (match get_callee_name e1 with
+     | Some ("malloc" | "__malloc") ->
+         (match el with
+          | [param] -> parse_malloc_param p v param
+          | _ -> fprintf p "@[<hv 2>/* Error: wrong number of arguments for malloc */@]")
+     | Some ("free" | "__free") ->
+         fprintf p "/* free call removed, handled by Box drop */;"
+     | _ ->
+         (* 正常的函数调用逻辑 (这是你原来的 else 分支) *)
+         let fun_ty = type_of_expr e1 in
+           let param_tys = 
+             match fun_ty with 
+             | Rusttypes.Tfunction(_, _, args, _, _) ->  typelist_to_list args
+             | _ -> List.map (fun _ -> Rusttypes.Tunit) el  (* fallback: 全部Tunit *)
+           in
+           fprintf p "@[<hv 2>%a =@ %a@,(@[<hov 0>%a@]);@]"
+             print_place v
+             expr (15, e1)
+             print_expr_list_with_type (true, el, param_tys)
+    )
     )
   | Ssequence(Sskip, s2) ->
       print_stmt p s2

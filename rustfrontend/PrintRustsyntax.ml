@@ -496,12 +496,34 @@ let struct_or_variant = function Struct -> "struct" | TaggedUnion -> "variant"
 let declare_composite p (Composite(id, su, m, orgs, rels)) =
   fprintf p "%s %s%s %s;@ " (struct_or_variant su) (extern_atom id) (print_origins orgs) (origin_relations_string rels)
 
-let print_member p = function
+(* let print_member p = function
   | Member_plain(id, ty) ->
-      fprintf p "@ %s;" (name_rust_decl (extern_atom id) ty)
+      fprintf p "@ %s;" (name_rust_decl (extern_atom id) ty) *)
 
-let define_composite p (Composite(id, su, m, orgs, rels)) =
+(* let define_composite p (Composite(id, su, m, orgs, rels)) =
   fprintf p "@[<v 2>%s %s%s %s{"
           (struct_or_variant su) (extern_atom id) (print_origins orgs) (origin_relations_string rels);
   List.iter (print_member p) m;
-  fprintf p "@;<0 -2>};@]@ @ "
+  fprintf p "@;<0 -2>};@]@ @ " *)
+let print_member p = function
+  | Member_plain(id, ty) ->
+      fprintf p "pub %s: %s," (extern_atom id) (name_rust_type ty)
+
+let define_composite p (Composite(id, su, m, orgs, rels)) =
+  let (keyword, derive_macro) =
+    match su with
+    | Rusttypes.Struct      -> ("struct", Some "#[derive(Default, Copy, Clone)]")
+    | Rusttypes.TaggedUnion -> ("union",  Some "#[derive(Copy, Clone)]")
+  in
+  match keyword, derive_macro with
+  | "", None -> ()
+  | keyword, Some derive ->
+      fprintf p "@[<v 2>%s@,pub %s %s%s %s {"
+        derive
+        keyword
+        (extern_atom id) (print_origins orgs) (origin_relations_string rels);
+      List.iter (fun member -> fprintf p "@,%a" print_member member) m;
+      (* 修正结尾：只在有成员时才添加换行符，然后打印右括号 *)
+      if m <> [] then fprintf p "@,";
+      fprintf p "}@];@ @ "
+  | _ -> ()
