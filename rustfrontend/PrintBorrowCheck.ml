@@ -8,14 +8,15 @@ open RustIRcfg
 (* open PrintCsyntax *)
 open PrintRustlight
 open Maps
-open BorrowCheckPolonius
 open BorrowCheckDomain
+open BorrowCheckPolonius
 open Driveraux
+open UnionFindDelete
 
 let print_mutkind pp (mut: mutkind) =
   match mut with
   | Mutable -> fprintf pp "mut"
-  | Immutable -> fprintf pp "immut"
+  | Immutable -> fprintf pp "shr"
 
 let print_loan pp (l: loan) =
   match l with
@@ -24,6 +25,14 @@ let print_loan pp (l: loan) =
   | Lintern(mut, p) ->
     fprintf pp "(%a, %a)" print_mutkind mut print_place p
 
+let origin_list_to_string (orgs: origin list) : string =
+  let rec aux orgs =
+    match orgs with
+    | [] -> ""
+    | [org] -> extern_atom org
+    | org :: orgs' -> (extern_atom org) ^ ", " ^ (aux orgs') in
+  "[" ^ (aux orgs) ^ "]"
+
 let print_loanset pp (ls: LoanSet.t) =
   let l = LoanSet.elements ls in
   pp_print_list ~pp_sep: (fun out () -> fprintf out ";@ ") print_loan pp l
@@ -31,48 +40,57 @@ let print_loanset pp (ls: LoanSet.t) =
 let print_origin pp org =
   fprintf pp "%s" (extern_atom org)
 
-let print_originset pp (ls: OriginSet.t) =
+(* let print_originset pp (ls: OriginSet.t) =
   let l = OriginSet.elements ls in
-  pp_print_list ~pp_sep: (fun out () -> fprintf out ";@ ") print_origin pp l
+  pp_print_list ~pp_sep: (fun out () -> fprintf out ";@ ") print_origin pp l *)
 
-let print_dead_origin pp (org: origin) =
-  fprintf pp "%s: Dead@ " (extern_atom org)
+let print_dead_origin pp (orgs: origin list) =
+  fprintf pp "%s: Dead@ " (origin_list_to_string orgs)
 
-let print_origin_state pp (org_st: origin * LOrgSt.t) =
-  let (org, st) = org_st in
+let print_origin_state pp (org_st: origin list * LOrgSt.t) =
+  let (orgs, st) = org_st in
   match st with
-  | Obot -> fprintf pp "%s: Bot@ " (extern_atom org)
+  (* | Obot -> fprintf pp "%s: Bot@ " (extern_atom org) *)
   | Live(ls) ->
-    fprintf pp "%s: {@[<hov>%a@]}@ " (extern_atom org) print_loanset ls
+    fprintf pp "%s: {@[<hov>%a@]}@ " (origin_list_to_string orgs) print_loanset ls
   | Dead ->
-    print_dead_origin pp org
+    print_dead_origin pp orgs
+
+let find_same_set (org: origin) (uf: UFD.unionfind) : origin list =
+  let all_orgs = List.map fst (PTree.elements uf) in
+  (* all_orgs may be empty *)
+  org :: (List.filter (fun o -> o != org && UFD.repr uf o == UFD.repr uf org) all_orgs)
 
 let print_origin_env pp (e: LOrgEnv.t) =
   fprintf pp "OrgEnv: ";
-  let l = (PTree.elements e) in
-  List.iter (print_origin_state pp) l
+  let l = (PTree.elements (LOrgEnv.m e)) in
+  (* collect the equivalent set where each element uses the element
+  (same position) in l as the repr node *)
+  let (orgs, ls) = List.split l in
+  let orgs_ds = List.map (fun o -> find_same_set o (LOrgEnv.uf e)) orgs in
+  List.iter (print_origin_state pp) (List.combine orgs_ds ls)
 
 let print_live_loans pp (ls: LoanSet.t) =
   fprintf pp "May-Live Loans: {@[<hov>%a@]}@ " print_loanset ls
 
-let print_alias_graph pp (ag: LAliasGraph.t) =
+(* let print_alias_graph pp (ag: LAliasGraph.t) =
   let l = PTree.elements ag in
   match l with
   | [] -> fprintf pp "Alias Graph is empty "
   | _ ->
     fprintf pp "Alias Graph: ";
     List.iter
-        (fun (org, ls) -> fprintf pp "%s: {@[<hov>%a@]}@ " (extern_atom org) print_originset ls) l
+        (fun (org, ls) -> fprintf pp "%s: {@[<hov>%a@]}@ " (extern_atom org) print_originset ls) l *)
 
 let print_ae pp ae =
   match ae with
-  | AE.Err(pc', msg) ->
+  | BORCK.Err(pc', msg) ->
     fprintf pp "Error found in %d: %a@.@." (P.to_int pc') print_error msg
-  | AE.Bot ->
+  | BORCK.Bot ->
     fprintf pp "Unreachable point@.@."
-  | AE.State(live_loans, org_env, alias_graph) ->
+  | BORCK.State(org_env) ->
     (* TODO: print alias graph *)
-    fprintf pp "%a@ %a@ %a@.@." print_live_loans live_loans print_origin_env org_env print_alias_graph alias_graph
+    fprintf pp "%a@.@." print_origin_env org_env
 
 let print_instruction_debug pp prog (pc, (i, ae)) =
   PrintRustIR.print_instruction pp prog (pc,i);
@@ -94,14 +112,17 @@ let print_cfg_body_borrow_check pp (body, entry, cfg) ae =
 let print_cfg_borrow_check ce pp id f  =
   match generate_cfg f.fn_body with
   | Errors.OK(entry, cfg) ->
-    (match borrow_check ce f with
+    (match borrow_check ce f cfg entry with
     | Errors.OK ae ->
-      fprintf pp "%s(%a) {\n" (extern_atom id) PrintRustIR.print_params f.fn_params;
+      fprintf pp "%s@ "
+          (PrintRustsyntax.name_rust_decl (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
+      fprintf pp "@[<v 2>{@ ";
+      (* fprintf pp "%s(%a) {\n" (extern_atom id) PrintRustIR.print_params f.fn_params; *)
       (* Print variables and their types *)
       List.iter
       (fun (id, ty) ->
         fprintf pp "%s;@ " (PrintRustsyntax.name_rust_decl (extern_atom id) ty)) f.fn_vars;
-      print_cfg_body_borrow_check pp (f.fn_body, entry, cfg) ae
+      print_cfg_body_borrow_check pp (f.fn_body, entry, cfg) (snd ae)
     | Errors.Error msg ->
       Diagnostics.fatal_error Diagnostics.no_loc "Error in borrow check: %a@ " Driveraux.print_error msg)
   | Errors.Error msg ->

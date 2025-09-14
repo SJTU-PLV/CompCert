@@ -1,4 +1,4 @@
-1.  Attempting to modify a borrowed value (crashed)
+1.  Attempting to modify a borrowed value 
 ```
 fn main() {
     let a : i32 = 2;
@@ -15,7 +15,7 @@ fn main() {
 }
 ```
 
-3. Multiple mutable borrow (crashed)
+3. Multiple mutable borrow
 ```
 fn main() {
 	let a : i32 = 2;
@@ -35,7 +35,7 @@ fn main() {
 	let r2 : &mut i32 = &mut a;
 }
 ```
-5. combining mutable and immutable references(crashed)
+5. combining mutable and immutable references
 ```
 fn main() {
 	let a : i32 = 2;

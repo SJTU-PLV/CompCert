@@ -476,6 +476,36 @@ Proof.
   rewrite !PTree.gmap1.
   destruct PTree.get eqn: G; simpl; auto.
 Qed.
+
+(* Union of two representative node in the ds_map *)
+
+(* The new representative node is the repr node of b *)
+Definition union (a b: positive) (dm: t) : t :=
+  let dm1 := set b (L.lub (get a dm) (get b dm)) dm in
+  mk (m dm1) (UFD.union (uf dm1) a b).
+
+(* Deletion of a node in the equivalent set *)
+
+Definition delete (p: positive) (dm: t) : t :=
+  let (uf1, or) := UFD.delete (uf dm) p in
+  match or with
+  (* The set of p contains more than p, and r is the new repr node of
+  set of p after deleting p *)
+  | Some r =>
+      (* change the repr node of the set of p to r. There may be no need
+         to remove the value of repr(p) in the map of dm *)
+      let m1 := PTree.set r (get p dm) (m dm) in
+      (* clear the value of p. We can use delete_fresh_repr to prove
+      that r <> p by choosing b which may be specific to the
+      analysis *)
+      let m2 := PTree.remove p m1 in
+      mk m2 uf1
+  | None =>
+      (* p is the only element in the set *)
+      let m1 := PTree.remove p (m dm) in
+      mk m1 uf1
+  end.
+
   
 End LUFMap.
 
@@ -565,108 +595,83 @@ Definition valid_access (oe: LOrgEnv.t) (p: place) : bool :=
     end in
   forallb check orgs.
 
-(* Deletion of an origin from the origin state *)
+(** Top level environment for borrow checking *)
 
+(* Define equality for errcode *)
 
+Lemma errcode_eq : forall (c1 c2: errcode), {c1 = c2} + {c1 <> c2}.
+  generalize string_dec Pos.eq_dec.
+  decide equality.
+Defined.
 
-
-(** The following code is unused in the new Origin state  *)
-
-(* Module LOrgEnv := LPMap1(LOrgSt). *)
-
-(* (** Alias graph *) *)
-
-(* Module OriginSet := FSetAVL.Make(OrderedPositive). *)
-
-(* Module LOriginSet := LFSet(OriginSet). *)
-
-(* Module LAliasGraph := LPMap1(LOriginSet). *)
-
-
-(* (** Top level environment for dataflow analysis *) *)
-
-(* (* Define equality for errcode *) *)
-
-(* Lemma errcode_eq : forall (c1 c2: errcode), {c1 = c2} + {c1 <> c2}. *)
-(*   generalize string_dec Pos.eq_dec. *)
-(*   decide equality. *)
-(* Qed. *)
-
-(* Module AE <: SEMILATTICE. *)
+Module BORCK <: SEMILATTICE.
   
-(*   Inductive t' := | Bot | Err (loc: node) (msg: errmsg) | State (live_loans: LoanSetL.t) (org_env: LOrgEnv.t) (alias: LAliasGraph.t). *)
+  Inductive t' := | Bot | Err (loc: node) (msg: errmsg) | State (org_env: LOrgEnv.t).
   
-(*   Definition t := t'. *)
+  Definition t := t'.
  
-(*   Definition eq (x y: t) : Prop := *)
-(*     match x, y with *)
-(*     | Bot, Bot => True *)
-(*     | State ls1 oe1 a1, State ls2 oe2 a2 => *)
-(*         LoanSetL.eq ls1 ls2 /\ *)
-(*         LOrgEnv.eq oe1 oe2 /\ *)
-(*         LAliasGraph.eq a1 a2           *)
-(*     | Err pc1 msg1, Err pc2 msg2 => *)
-(*         Pos.eq pc1 pc2 /\ list_forall2 eq msg1 msg2 *)
-(*     | _, _ => False *)
-(*     end. *)
+  Definition eq (x y: t) : Prop :=
+    match x, y with
+    | Bot, Bot => True
+    | State oe1, State oe2 =>
+        LOrgEnv.eq oe1 oe2
+    | Err pc1 msg1, Err pc2 msg2 =>
+        Pos.eq pc1 pc2 /\ list_forall2 eq msg1 msg2
+    | _, _ => False
+    end.
 
-(*   Definition beq (x y: t) : bool := *)
-(*     match x, y with *)
-(*     | Bot, Bot => false *)
-(*     | State ls1 oe1 a1, State ls2 oe2 a2 => *)
-(*         LoanSetL.beq ls1 ls2 && *)
-(*         LOrgEnv.beq oe1 oe2 && *)
-(*         LAliasGraph.beq a1 a2           *)
-(*     | Err pc1 msg1, Err pc2 msg2 => *)
-(*         Pos.eqb pc1 pc2 && List.list_eq_dec errcode_eq msg1 msg2 *)
-(*     | _, _ => false *)
-(*     end. *)
+  Definition beq (x y: t) : bool :=
+    match x, y with
+    | Bot, Bot => false
+    | State oe1, State oe2 =>
+        LOrgEnv.beq oe1 oe2
+    | Err pc1 msg1, Err pc2 msg2 =>
+        Pos.eqb pc1 pc2 && List.list_eq_dec errcode_eq msg1 msg2
+    | _, _ => false
+    end.
 
-(*   Definition ge (x y: t) : Prop := *)
-(*     match x, y with *)
-(*     | _, Bot => True *)
-(*     | Bot, _ => False *)
-(*     (* Err is the top *) *)
-(*     | Err pc1 _, Err pc2 _ => Pos.ge pc1 pc2 *)
-(*     | Err _ _, _ => True *)
-(*     | _, Err _ _ => False *)
-(*     | State ls1 oe1 a1, State ls2 oe2 a2 => *)
-(*         LoanSetL.ge ls1 ls2 /\ *)
-(*         LOrgEnv.ge oe1 oe2 /\ *)
-(*         LAliasGraph.ge a1 a2           *)
-(*     end. *)
+  Definition ge (x y: t) : Prop :=
+    match x, y with
+    | _, Bot => True
+    | Bot, _ => False
+    (* Err is the top *)
+    | Err pc1 _, Err pc2 _ => Pos.ge pc1 pc2
+    | Err _ _, _ => True
+    | _, Err _ _ => False
+    | State oe1, State oe2 =>
+        LOrgEnv.ge oe1 oe2
+    end.
 
-(*   Definition bot := Bot. *)
+  Definition bot := Bot.
 
-(*   Definition lub (x y: t) := *)
-(*     match x,y with *)
-(*     | _, Bot => x *)
-(*     | Bot, _ => y *)
-(*     | Err pc1 msg1, Err pc2 msg2 => *)
-(*         if Pos.ltb pc1 pc2 then Err pc2 msg2 else Err pc1 msg1 *)
-(*     | Err _ _, State _ _ _ => x *)
-(*     | State _ _ _, Err _ _ => y *)
-(*     | State ls1 oe1 a1, State ls2 oe2 a2 => *)
-(*         State (LoanSetL.lub ls1 ls2) (LOrgEnv.lub oe1 oe2) (LAliasGraph.lub a1 a2) *)
-(*     end. *)
+  Definition lub (x y: t) :=
+    match x,y with
+    | _, Bot => x
+    | Bot, _ => y
+    | Err pc1 msg1, Err pc2 msg2 =>
+        if Pos.ltb pc1 pc2 then Err pc2 msg2 else Err pc1 msg1
+    | Err _ _, State _ => x
+    | State _, Err _ _ => y
+    | State oe1, State oe2 =>
+        State (LOrgEnv.lub oe1 oe2) 
+    end.
 
-(*   (** TODO  *) *)
-(*   Axiom eq_refl: forall x, eq x x. *)
-(*   Axiom eq_sym: forall x y, eq x y -> eq y x. *)
-(*   Axiom eq_trans: forall x y z, eq x y -> eq y z -> eq x z. *)
+  (** TODO  *)
+  Axiom eq_refl: forall x, eq x x.
+  Axiom eq_sym: forall x y, eq x y -> eq y x.
+  Axiom eq_trans: forall x y z, eq x y -> eq y z -> eq x z.
 
-(*   Axiom beq_correct: forall x y, beq x y = true -> eq x y. *)
+  Axiom beq_correct: forall x y, beq x y = true -> eq x y.
 
-(*   Axiom ge_refl: forall x y, eq x y -> ge x y. *)
-(*   Axiom ge_trans: forall x y z, ge x y -> ge y z -> ge x z. *)
+  Axiom ge_refl: forall x y, eq x y -> ge x y.
+  Axiom ge_trans: forall x y z, ge x y -> ge y z -> ge x z.
 
-(*   Axiom ge_bot: forall x, ge x bot. *)
+  Axiom ge_bot: forall x, ge x bot.
 
-(*   Axiom ge_lub_left: forall x y, ge (lub x y) x. *)
-(*   Axiom ge_lub_right: forall x y, ge (lub x y) y. *)
+  Axiom ge_lub_left: forall x y, ge (lub x y) x.
+  Axiom ge_lub_right: forall x y, ge (lub x y) y.
 
-(* End AE. *)
-
+End BORCK.
 
 (* (* Update Alias graph *) *)
 

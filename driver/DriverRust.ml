@@ -48,11 +48,14 @@ let asm =
   let oc = open_out ofile in
   PrintAsm.print_program oc asm;
   close_out oc;
-  (* invoke assembler *)
-  let objname = object_filename name in
-  assemble ofile objname;
-  objname
-
+  if !option_S then
+    (* Do not call the assembler *)
+    ofile
+  else
+    (* invoke assembler *)
+    let objname = object_filename name in
+    assemble ofile objname;
+    objname
 
 (* Debug the Rust compiler *)
 
@@ -97,7 +100,7 @@ let debug_ElaborateDrop rustir_prog =
 let debug_borrow_check = true
 
 (* Unsupported now *)
-(* let debug_BorrowCheck (prog: RustIR.program) =
+let debug_BorrowCheck (prog: RustIR.program) =
   match ReplaceOrigins.transl_program prog with
   | Errors.OK rustir_after_replace_origins ->
     Format.fprintf logout "@.After Replacing Origins: @.";
@@ -105,9 +108,14 @@ let debug_borrow_check = true
     (if debug_borrow_check then
       Format.fprintf logout "@.Borrow Check: @.";
       PrintBorrowCheck.print_cfg_program_borrow_check logout rustir_after_replace_origins);
-    rustir_after_replace_origins
+    (match BorrowCheckPolonius.borrow_check_program rustir_after_replace_origins with
+    | Errors.OK _ ->
+      Format.fprintf logout "@.Borrow Check Success@.";
+      rustir_after_replace_origins
+     | Errors.Error msg ->
+       fatal_error no_loc "Borrow checking error: %a"  print_error msg)
   | Errors.Error msg ->
-    fatal_error no_loc "%a"  print_error msg *)
+    fatal_error no_loc "%a"  print_error msg
 
 let debug_MoveChecking (prog: RustIR.program) =
   match MoveChecking.move_check_program prog with
@@ -152,9 +160,9 @@ let process_rust_file test_case =
                           |> debug_RustIRgen
                           |> debug_RustCFG
                           |> debug_InitAnalysis
-                          |> debug_MoveChecking
+                          (* |> debug_MoveChecking *)
+                          |> debug_BorrowCheck
                           |> debug_ElaborateDrop
-                          (* |> debug_BorrowCheck *)
                           |> debug_ClightComposite
                           |> debug_Clightgen in
         clight_prog

@@ -104,7 +104,8 @@ Require RustIRgen.
 Require InitAnalysis.
 Require ElaborateDrop.
 Require MoveChecking.
-(* Require BorrowCheckPolonius. *)
+Require ReplaceOrigins.
+Require BorrowCheckPolonius.
 Require Clightgen.
 
 (** Proof of Rust frontend  *)
@@ -256,6 +257,23 @@ Definition transf_rustlight_program (p: Rustlight.program) : res Asm.program :=
   OK p
   !@@ time "Rustlight to RustIR" RustIRgen.transl_program
   @@@ time "Move checking" (fun p => match MoveChecking.move_check_program p with
+                                 | OK _ => OK p
+                                 | Error msg => Error msg
+                                 end)
+  @@@ time "Elaborate drop in RustIR" ElaborateDrop.transl_program
+  @@@ time "Generate Clight and insert drop glue" Clightgen.transl_program
+  @@@ transf_clight_program.
+
+
+Definition transf_rustlight_program_borck (p: Rustlight.program) : res Asm.program :=
+  OK p
+  !@@ time "Rustlight to RustIR" RustIRgen.transl_program
+  (* @@@ time "Move checking" (fun p => match MoveChecking.move_check_program p with *)
+  (*                                | OK _ => OK p *)
+  (*                                | Error msg => Error msg *)
+  (*                                end) *)
+  @@@ time "Replace origins in RustIR" ReplaceOrigins.transl_program
+  @@@ time "Borrow check" (fun p => match BorrowCheckPolonius.borrow_check_program p with
                                  | OK _ => OK p
                                  | Error msg => Error msg
                                  end)

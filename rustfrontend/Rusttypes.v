@@ -35,7 +35,7 @@ Proof.
   destruct p1, p2.
   generalize Pos.eq_dec. intros.
   decide equality.
-Qed.  
+Defined.  
 
 
 (** ** Types  *)

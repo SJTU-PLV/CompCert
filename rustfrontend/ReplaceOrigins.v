@@ -28,37 +28,6 @@ Fixpoint gensym_list (n: nat) : list ident :=
       let l := gensym_list n' in
       (id :: l)
   end.
-    
-(* replace origins in type with fresh origins *)
-
-Fixpoint replace_origin_type (ty: type) : type :=
-  match ty with
-  | Treference _ mut ty1 =>
-      let ty2 := replace_origin_type ty1 in
-      let org := fresh_atom tt in
-      Treference org mut ty2
-  | Tbox ty1 =>
-      let ty2 := replace_origin_type ty1 in
-      Tbox ty2
-  | Tstruct orgs id =>
-      let orgs' := gensym_list (length orgs) in
-      Tstruct orgs' id
-  | Tvariant orgs id =>
-      let orgs' := gensym_list (length orgs) in
-      Tvariant orgs' id
-  | _ => ty
-  end.
-            
-(* replace origins in variables *)
-
-Definition replace_origin_var (var: ident * type) (l: list (ident * type)) : list (ident * type) :=
-  let (id, ty) := var in
-  let ty' := replace_origin_type ty in
-  (id, ty') :: l.
-
-Definition replace_origin_vars (vars: list (ident * type)) : list (ident * type) :=
-  fold_right replace_origin_var nil vars.
-
 
 (* replace org with the the origin in rels *)
 Definition replace_origin (rels: list origin_rel) (org: origin) : origin :=
@@ -83,8 +52,50 @@ Fixpoint replace_origin_in_type (ty: type) (rels: list origin_rel) : type :=
   | Tvariant orgs id =>
       let orgs' := map (replace_origin rels) orgs in
       Tvariant orgs' id
+  (* What if it is function? But we should forbid passing function
+  pointer? *)
   | _ => ty
   end.
+    
+(* replace origins in type with fresh origins *)
+
+Fixpoint replace_origin_type (ty: type) : type :=
+  match ty with
+  | Treference _ mut ty1 =>
+      let ty2 := replace_origin_type ty1 in
+      let org := fresh_atom tt in
+      Treference org mut ty2
+  | Tbox ty1 =>
+      let ty2 := replace_origin_type ty1 in
+      Tbox ty2
+  | Tstruct orgs id =>
+      let orgs' := gensym_list (length orgs) in
+      Tstruct orgs' id
+  | Tvariant orgs id =>
+      let orgs' := gensym_list (length orgs) in
+      Tvariant orgs' id
+  (* For now, we do not replace the origins for function variable
+  because it may make the definition of invariant for callstate
+  difficult due to these new names of origins that are different from
+  those in the function sigature found in the genv? *)
+  (* When calling a function, we replace the origins in this function
+  signature with some unique origins. For example, we may call f<'a,
+  'b> but we should replace 'a and 'b with fresh origins *)
+  (* | Tfunction orgs rels tyl rety cc => *)
+  (*     let orgs' := gensym_list (length orgs) in *)
+  (*     let replace_rels := combine orgs' orgs in *)      
+  | _ => ty
+  end.
+            
+(* replace origins in variables *)
+
+Definition replace_origin_var (var: ident * type) (l: list (ident * type)) : list (ident * type) :=
+  let (id, ty) := var in
+  let ty' := replace_origin_type ty in
+  (id, ty') :: l.
+
+Definition replace_origin_vars (vars: list (ident * type)) : list (ident * type) :=
+  fold_right replace_origin_var nil vars.
 
 
 Section TYPE_ENV.
@@ -225,11 +236,12 @@ Section TYPE_ENV.
         OK (Sdrop p')
     | Scall p f l =>
         do p' <- replace_origin_place p;
+        do f' <- replace_origin_expr f;         
         do l' <- replace_origin_exprlist l;
-        OK (Scall p' f l')             
-    | Sreturn (Some e) =>
-        do e' <- replace_origin_expr e;
-        OK (Sreturn (Some e'))
+        OK (Scall p' f' l')             
+    | Sreturn p =>
+        do e' <- replace_origin_place p;
+        OK (Sreturn p)
     | Ssequence s1 s2 =>
         do s1' <- replace_origin_statement s1;
         do s2' <- replace_origin_statement s2;

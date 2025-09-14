@@ -201,6 +201,8 @@ Next Obligation.
   apply H1. auto.
 Qed.
 
+(* TODO
+
 (** Experiment code for flatening CAinjp into a safety interface *)
 
 Record inv_asm_cc_injp_world :=
@@ -210,7 +212,7 @@ Record inv_asm_cc_injp_world :=
       inv_asmcc_rs : regset;
     }.
 
-Local Open Scope mfp_scope.
+(* Local Open Scope mfp_scope. *)
 
 (* Safety interface for asm query that contains the asm-level calling
 convention and the memory protection *)
@@ -223,7 +225,7 @@ Inductive inv_asm_cc_injp_q (P: invariant li_c) : inv_world P -> inv_asm_cc_injp
     valid_val_list mfp targs ->
     valid_val mfp tvf ->
     (forall b ofs, loc_init_args (size_arguments sg) tsp b ofs ->
-              mfp ! b ## ofs = false) ->
+              mfp # b ## ofs = false) ->
     Val.has_type tsp Tptr ->
     Val.has_type tra Tptr ->
     valid_blockv (Mem.support tm) tsp ->
@@ -469,6 +471,8 @@ Proof.
     (* unchanged_on: specified to the construction of mfp' *)
     admit. admit. admit.
 Admitted.
+
+*)
 
 Lemma cc_injpca_cainjp :
   ccref (cc_c injp @ cc_c_asm) (cc_c_asm_injp).

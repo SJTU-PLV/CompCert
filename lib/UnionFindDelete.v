@@ -259,7 +259,7 @@ Lemma get_elt_dec: forall (m: PTree.t vt) a,
     {v | PTree.get a m = Some v} + {PTree.get a m = None}.
 Proof.
   intros. destruct (PTree.get a m0); eauto.
-Qed.
+Defined.
 
 (* The canonical representative of an element *)
 

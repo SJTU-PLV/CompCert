@@ -285,7 +285,7 @@ Definition check_universe_wf (te: typenv) (ce: composite_env) (universe: PathsMa
 
 Lemma struct_or_variant_eq: forall (s1 s2: struct_or_variant),
     {s1 = s2} + {s1 <> s2}.
-Proof. intros. decide equality. Qed.
+Proof. intros. decide equality. Defined.
 
 Section REC.
 
