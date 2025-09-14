@@ -36,7 +36,10 @@ Import ListNotations.
 (* Local Open Scope error_monad_scope. *)
 
 Parameter fresh_atom : unit -> ident.
+
 Definition max_nat_limit := 1000000%positive.
+
+Parameter external_find_and_split : ident -> ident -> Z -> Rustlight.statement.
 (** State and error monad for generating fresh identifiers. *)
 
 Record generator : Type := mkgenerator {
@@ -344,7 +347,8 @@ Section TRANSL.
       end
     end.
 
-  Fixpoint transl_expr_list (locals: list ident) (el: list Clight.expr) : mon (list Rustlight.pexpr) :=
+  
+    Fixpoint transl_expr_list (locals: list ident) (el: list Clight.expr) : mon (list Rustlight.pexpr) :=
     match el with
     | nil => ret nil
     | e :: rest =>
@@ -353,7 +357,8 @@ Section TRANSL.
         ret (pe :: rest')
     end.
 
-  Definition pexpr_to_expr (pe: Rustlight.pexpr): Rustlight.expr :=
+  
+    Definition pexpr_to_expr (pe: Rustlight.pexpr): Rustlight.expr :=
     Rustlight.Epure pe.
 
   Definition empty_place (locals: list ident): mon Rustlight.place := 
@@ -507,17 +512,76 @@ Fixpoint elim_switch (s: Clight.statement) : Clight.statement :=
       Clight.Sbuiltin optid ef tyargs args
   end.
 
+  (* Helper to identify malloc calls *)
+  
+  Definition get_temp_id (e: Clight.expr) : mon ident :=
+  match e with
+  | Clight.Evar id _ 
+  | Clight.Etempvar id _
+  | Clight.Ecast (Clight.Etempvar id _) _
+  | Clight.Ecast (Clight.Evar id _) _ => ret id
+  | _ =>
+      error (msg "Cannot get return value id of function: Clight2Rustlight")
+  end.
+
   Fixpoint transl_stmt (locals: list ident) (s: Clight.statement): mon Rustlight.statement :=
     let transl_stmt := transl_stmt locals in
     let cexpr_to_place := cexpr_to_place locals in
     let cexpr_to_pexpr := cexpr_to_pexpr locals in
     (* let transl_stmt_list := transl_stmt_list locals in *)
     match s with
+            (* if andb (ident_eq tmp1 tmp2) (is_malloc f) then *)
+                (* do rid <- get_temp_id e; *)
+                (* do pf <- cexpr_to_pexpr (expr_depth f) f;
+                do pargs <- transl_expr_list locals args;
+                let target_place := Rustlight.Plocal var (to_rusttype (Clight.typeof e)) in
+                ret (Rustlight.Scall target_place (Rustlight.Epure pf) (map pexpr_to_expr pargs)) *)
+            (* else
+              (* normal sequence *)
+              do rs1 <- transl_stmt (Clight.Scall (Some tmp1) f args);
+              do rs2 <- transl_stmt (Clight.Sset var (Clight.Ecast (Clight.Etempvar tmp2 tyt) ty));
+              ret (Rustlight.Ssequence rs1 rs2) *)
     | Clight.Sskip => ret Rustlight.Sskip
     | Clight.Ssequence s1 s2 => 
-        do rs1 <- transl_stmt s1;
-        do rs2 <- transl_stmt s2;
-        ret (Rustlight.Ssequence rs1 rs2)
+        match s2 with
+        | Clight.Scall _ _ _ =>
+            error (msg "Not implemented yet: Scall")
+        | Clight.Sset _ _ =>
+            error (msg "Not implemented yet: Sset")
+        | Clight.Sbuiltin _ _ _ _ =>
+            error (msg "Not implemented yet: Sbuiltin")
+        (* | Clight.Sskip => 
+            do rs1 <- transl_stmt s1;
+            do rs2 <- transl_stmt s2;
+            ret (Rustlight.Ssequence rs1 rs2) *)
+        | Clight.Slabel _ _ => error (msg "Not implemented yet: Slabel in sequence")
+        | Clight.Sgoto _ => error (msg "Not implemented yet: Sgoto in sequence")
+        | Clight.Sreturn _ => error (msg "Not implemented yet: Sreturn in sequence")
+        | Clight.Sswitch _ _ => error (msg "Not implemented yet: Sswitch in sequence")
+        | Clight.Sloop _ _ => error (msg "Not implemented yet: Sloop in sequence")
+        | Clight.Sbreak => error (msg "Not implemented yet: Sbreak in sequence")
+        | Clight.Scontinue => error (msg "Not implemented yet: Scontinue in sequence")
+        | Clight.Sassign _ _ => 
+            error (msg "Not implemented yet: Sassign in sequence")
+        | Clight.Sifthenelse _ _ _ =>
+            error (msg "Not implemented yet: Sifthenelse in sequence")
+        (* | Clight.Ssequence _ _ =>
+            error (msg "Not implemented yet: nested sequence in sequence") *)
+        | _ =>
+            do rs1 <- transl_stmt s1;
+            do rs2 <- transl_stmt s2;
+            ret (Rustlight.Ssequence rs1 rs2)
+        end
+        (* match (s1,s2) with
+        | ( (Clight.Scall (Some tmp1) f args), (Clight.Sset var e) ) =>
+            error (msg "Not implemented yet: sequence of call and set")
+        | ( (Clight.Scall _ _ _), (Clight.Sset _ _) ) =>
+            error (msg "Not implemented yet: sequence of call and set")
+        | _ =>
+            do rs1 <- transl_stmt s1;
+            do rs2 <- transl_stmt s2;
+            ret (Rustlight.Ssequence rs1 rs2)
+        end *)
     | Clight.Sifthenelse e s1 s2 => 
         do pe <- cexpr_to_pexpr (expr_depth e) e;
         do rs1 <- transl_stmt s1;
@@ -531,9 +595,28 @@ Fixpoint elim_switch (s: Clight.statement) : Clight.statement :=
     | Clight.Sbreak => ret Rustlight.Sbreak
     | Clight.Scontinue => ret Rustlight.Scontinue
     | Clight.Sassign e1 e2 => 
-        do p <- cexpr_to_place (expr_depth e1) e1;
-        do pe <- cexpr_to_pexpr (expr_depth e2) e2;
-        ret (Rustlight.Sassign p (Rustlight.Epure pe))
+        match e2 with
+        | Clight.Ebinop Oadd (Clight.Evar base_ptr_id _) (Clight.Econst_int offset _) _ =>
+            (* 检测到模式： new_ptr = base_ptr + constant *)
+            match e1 with
+            | Clight.Evar new_ptr_id _ =>
+                (* 这是我们要处理的指针运算！*)
+                let c_offset := Int.unsigned offset in
+                (* 我们调用在 Coq 中定义的外部函数 *)
+                let split_stmt := external_find_and_split base_ptr_id new_ptr_id c_offset in
+                (* 使用 'ret' 将纯粹的 statement 提升到 monad 中，这修复了原始的类型错误 *)
+                ret split_stmt
+            | _ => (* 左边不是简单变量，按原逻辑处理 *)
+                do p <- cexpr_to_place (expr_depth e1) e1;
+                do pe <- cexpr_to_pexpr (expr_depth e2) e2;
+                ret (Rustlight.Sassign p (Rustlight.Epure pe))
+            end
+        | _ =>
+            (* 不是指针加法，按原逻辑处理 *)
+            do p <- cexpr_to_place (expr_depth e1) e1;
+            do pe <- cexpr_to_pexpr (expr_depth e2) e2;
+            ret (Rustlight.Sassign p (Rustlight.Epure pe))
+        end
     | Clight.Sset id e => 
         do pe <- cexpr_to_pexpr (expr_depth e) e;
         ret (Rustlight.Sassign (Rustlight.Plocal id (to_rusttype (Clight.typeof e))) 
@@ -829,8 +912,29 @@ Require Import SimplLocals.
           else
             Error (msg "repeated temporary variables in Clight2rustlight")
       end.
-  
 
+(* Definition tint := Ctypes.Tint I32 Signed noattr.
+Parameter _b : ident.
+Parameter _t'1 : ident.
+Parameter _f : ident.
+
+Definition test_main : Clight.function := {|
+  Clight.fn_return := tint;
+  Clight.fn_callconv := cc_default;
+  Clight.fn_params := nil;
+  Clight.fn_vars := nil;
+  Clight.fn_temps := ((_b, tint) :: (_t'1, tint) :: nil);
+  Clight.fn_body :=
+(Clight.Ssequence
+  (Clight.Ssequence
+    (Clight.Scall (Some _t'1)
+      (Clight.Evar _f (Ctypes.Tfunction (Ctypes.Tcons tint Ctypes.Tnil) tint cc_default))
+      ((Clight.Econst_int (Int.repr 3) tint) :: nil))
+    (Clight.Sset _b (Clight.Etempvar _t'1 tint)))
+  (Clight.Sreturn (Some (Clight.Econst_int (Int.repr 0) tint))))
+|}. *)
+  
+(* Compute transl_function 1%positive 1%positive test_main. *)
 
   (* Local Open Scope string_scope. *)
   

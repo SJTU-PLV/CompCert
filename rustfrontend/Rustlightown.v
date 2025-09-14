@@ -394,6 +394,7 @@ Fixpoint place_dominator (p: place) : option place :=
   | Pdowncast p' _ _ => Some p'
   | Plocal _ _ => None
   | Pparenthesize _ _ _ => None
+  | Ppair _ _ => None
   | ParrayIndex p' _ _ => Some p'
   end.
 
@@ -406,6 +407,7 @@ Fixpoint place_dominators (p: place) : list place :=
       po :: place_dominators po
   | Plocal _ _ => nil
   | Pparenthesize _ _ _ => nil
+  | Ppair _ _ => nil
   | ParrayIndex p' _ _ => place_dominators p'
   end.
 

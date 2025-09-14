@@ -7,6 +7,33 @@ open! Rusttypes
 (* open Rustsyntax *)
 open PrintCsyntax
 
+(* Do not print these unsafe function in rust file *)
+let suppressed_functions = [
+  "__compcert_va_int32";
+  "__compcert_va_int64";
+  "__compcert_va_float64";
+  "__compcert_va_composite";
+  "__compcert_i64_dtos";
+  "__compcert_i64_dtou";
+  "__compcert_i64_stod";
+  "__compcert_i64_utod";
+  "__compcert_i64_stof";
+  "__compcert_i64_utof";
+  "__compcert_i64_sdiv";
+  "__compcert_i64_udiv";
+  "__compcert_i64_smod";
+  "__compcert_i64_umod";
+  "__compcert_i64_shl";
+  "__compcert_i64_shr";
+  "__compcert_i64_sar";
+  "__compcert_i64_smulh";
+  "__compcert_i64_umulh";
+  "__builtin_debug";
+  "printf";
+]
+(* Create a hashtable to store string literals *)
+let string_literals : (string, string) Hashtbl.t = Hashtbl.create 101
+
 let dummy_origin_ref = ref BinNums.Coq_xH
 
 let dummy_origin () = !dummy_origin_ref
@@ -348,8 +375,25 @@ let print_fundecl p id fd =
                 (name_rust_decl_fn (extern_atom id) (Rustsyntax.type_of_function f))
   | _ -> ()
 
+
 let print_string_array p id ty il =
-  (* p: formatter, id: 变量名, ty: Rusttypes.type, il: Init_int8 列表 *)
+  (* Convert the list of Init_int8 to an OCaml string *)
+  let s_buffer = Buffer.create (List.length il) in
+  List.iter
+    (fun init ->
+      match init with
+      | Init_int8 n ->
+        let n_int32 = camlint_of_coqint n in
+        (* Ignore the null terminator at the end of the string *)
+        if n_int32 <> Int32.zero then
+          Buffer.add_char s_buffer (Char.chr (Int32.to_int n_int32))
+      | _ -> ()
+    ) il;
+  let str_content = Buffer.contents s_buffer in
+  (* Store the string content in our hashtable with its identifier *)
+  Hashtbl.add string_literals (extern_atom id) str_content;
+
+  (* The original printing logic remains unchanged below *)
   let len = List.length il in
   fprintf p "[";
   List.iteri
@@ -362,12 +406,12 @@ let print_string_array p id ty il =
           else if n_int32 = Int32.of_int 13 then "\\r"
           else if n_int32 = Int32.of_int 9 then "\\t"
           else if n_int32 = Int32.of_int 0 then "\\0"
-          else if n_int32 = Int32.of_int 39 then "\\'"  (* 单引号特殊处理 *)
+          else if n_int32 = Int32.of_int 39 then "\\'"
           else if n_int32 >= Int32.of_int 32 && n_int32 <= Int32.of_int 126 then
             String.make 1 (Char.chr (Int32.to_int n_int32))
           else Printf.sprintf "\\x%02x" (Int32.to_int n_int32)
           in
-          fprintf p "    b'%s' as i8" c;
+        fprintf p "    b'%s' as i8" c;
           if i < len - 1 then fprintf p ",\n" else fprintf p "\n"
       | _ -> ()
     ) il;
@@ -425,7 +469,7 @@ let print_composite_init_rust var_info p il =
       il; 
     fprintf p "}"
 
-let print_globvar p id v = 
+let print_globvar p id v =
   let name1 = extern_atom id in
   let name2 = if v.gvar_readonly then "const " ^ name1 else name1 in
   let name3 = name2 ^ " : " in
@@ -446,26 +490,8 @@ let print_globvar p id v =
       | var_info, il ->
           if Str.string_match re_string_literal (extern_atom id) 0
           && List.for_all (function Init_int8 _ -> true | _ -> false) il
-          then print_string_array p (extern_atom id) v.gvar_info il
-          (* 对于需要动态分配的类型，使用Box包装 *)
-          (*1. 1.
-   全局变量与内存分配的关系 ：
-   
-   - 在C/C++中，全局变量有时会持有通过 malloc 分配的内存指针
-   - 当我们将整个代码库从使用 malloc/free 转换为使用Rust的 Box 时，需要确保全局变量的初始化方式也随之调整
-  2.
-   Rust的所有权模型要求 ：
-   
-   - Rust的所有权模型要求明确谁负责内存的分配和释放
-   - 全局变量如果持有原始指针( *mut T / *const T )，会绕过Rust的所有权检查
-   - 使用 Box<T> 可以确保全局变量遵循Rust的所有权规则
-  3.
-   代码一致性 ：
-   
-   - 既然我们已经在函数调用中替换了 malloc/free ，也应该确保全局变量的初始化方式与之保持一致
-   - 否则可能会出现混合使用两种不同内存管理方式的情况
-   - 全局变量如果持有原始指针( *mut T / *const T )，会绕过Rust的所有权检查
-   - 使用 Box<T> 可以确保全局变量遵循Rust的所有权规则 *)
+          (* FIX IS HERE: Pass 'id' directly, not 'extern_atom id' *)
+          then print_string_array p id v.gvar_info il
           else match var_info with
                | Rusttypes.Traw_pointer _ ->
                    fprintf p "Box::new(%a)" (print_composite_init_rust var_info) il

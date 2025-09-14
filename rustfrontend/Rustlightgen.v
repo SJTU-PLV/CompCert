@@ -342,6 +342,8 @@ Fixpoint replace_binder_in_place (id: ident) (p1: place) (p2: place) : place :=
       if ident_eq id id' then p1 else p2
   | ParrayIndex p' aid ty =>
       ParrayIndex (replace_binder_in_place id p1 p') aid ty
+  | Ppair p3 p4 =>
+      Ppair (replace_binder_in_place id p1 p3) (replace_binder_in_place id p1 p4)
   end.
 
 Fixpoint replace_binder_in_pexpr (id: ident) (p: place) (e: pexpr) : pexpr :=

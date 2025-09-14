@@ -497,6 +497,7 @@ with place_depth (p: place) : nat :=
   | Pdowncast p' _ _ => place_depth p' + 1
   | Pparenthesize _ _ ls => pexpr_depth ls + 1
   | ParrayIndex p' _ _ => place_depth p' + 1
+  | Ppair p1 p2 => place_depth p1 + place_depth p2 + 1
   end.
 
 

@@ -115,6 +115,7 @@ Fixpoint show_place (p: place) : string :=
   | Pderef p' ty => "Pderef(" ++ show_place p' ++ ")"
   | Pdowncast p' n ty => "Pdowncast(" ++ show_place p' ++ ")"
   | Pparenthesize id _ _ => "Pparen(" ++ z_to_string id ++ ")"
+  | Ppair p1 p2 => "Ppair(" ++ show_place p1 ++ ", " ++ show_place p2 ++ ")"
   | ParrayIndex p' e ty => "ParrayIndex(" ++ show_place p' ++ ")"
   end.
 

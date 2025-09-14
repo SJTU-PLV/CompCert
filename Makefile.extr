@@ -48,7 +48,7 @@ rustparser/RustsurfaceParserM.ml:
 
 DIRS=extraction \
   lib common $(ARCH) backend cfrontend cparser driver rustfrontend rustparser \
-  export debug
+  export debug clight2rustlight
 
 INCLUDES=$(patsubst %,-I %, $(DIRS))
 

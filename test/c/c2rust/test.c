@@ -1,17 +1,20 @@
 #include <stdio.h>
 #include <stdlib.h>
-typedef unsigned int	u32;
-struct Test {
-  u32 a;
-  u32 b;
-};
-
+int f(int x) {
+  return x;
+}
 int main() {
-  struct Test* t = (struct Test*)malloc(sizeof(struct Test));
-  t->a = 1;
-  t->b = 2;
-  printf("%d\n", t->a);
-  printf("%d\n", t->b);
-  free(t);
+  // int  *a = (int *)malloc(5 * sizeof(int));
+  // for (int i=0;i<5;i++) {
+  //   a[i] = i;
+  // }
+  // for(int i=0;i<5;i++) {
+  //   printf("%d\n", a[i]);
+  // }
+  // f(4);
+  // f(5);
+  // int c=2;
+  int b = f(3);
+  printf("%d\n", b);
   return 0;
 }

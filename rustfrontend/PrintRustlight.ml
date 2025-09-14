@@ -68,32 +68,27 @@ let precedence = function
   | Emoveplace(_,_) -> (16,NA)
   | Epure pe -> precedence' pe
 
-  let rec print_place out (p: place) =
-    match p with
-    | Plocal(id, _) ->
-      fprintf out "%s" (extern_atom id)
-    | Pderef(p', _) ->
-      (* fprintf out "*%a" print_place p' *)
-      fprintf out "%a" print_place p'
-      (* fprintf out "*%a" print_place p' *)
-      fprintf out "%a" print_place p'
-    | Pfield(p', fid, _) ->
-      fprintf out "%a.%s" print_place p' (extern_atom fid)
-    | Pdowncast(p',fid, _) ->
-      fprintf out "(%a as %s)" print_place p' (extern_atom fid)
-    | Pparenthesize(pid, _, ll) ->
-      begin
-      match ll with
-      | Ebinop(op, lb, lr, _) ->
-          fprintf out "%a[%a]" pexpr (0, lb) pexpr (0, lr);
-          ()
-      | _ -> 
-        fprintf out "error in Pparenthesize";()
-      end
-    | ParrayIndex(p', aid, _) ->
-        fprintf out "(%a as %s)" print_place p' (extern_atom aid)
+(* 在 rustfrontend/PrintRustlight.ml 中 *)
 
-(* Expressions *)
+let rec print_place out (p: place) =
+  match p with
+  | Plocal(id, _) ->
+      fprintf out "%s" (extern_atom id)
+  | Pderef(Pparenthesize(_, _, Ebinop(Oadd, base, index, _)), _) ->
+      (* 关键修复 #2: 在索引表达式后添加 'as usize' *)
+      fprintf out "%a[%a as usize]" pexpr (0, base) pexpr (0, index)
+  | Pderef(p', _) ->
+      fprintf out "(*%a)" print_place p'
+  | Pfield(p', fid, _) ->
+      fprintf out "%a.%s" print_place p' (extern_atom fid)
+  | Pdowncast(p',fid, _) ->
+      fprintf out "(%a as %s)" print_place p' (extern_atom fid)
+  | Pparenthesize(_, _, ll) ->
+      fprintf out "(%a)" pexpr (0, ll)
+  | ParrayIndex(p_base, p_index, _) ->
+      fprintf out "%a[%s as usize]" print_place p_base (extern_atom p_index)
+  | Ppair (p1, p2) -> (* 添加这个 case *)
+    fprintf out "(%a, %a)" print_place p1 print_place p2
 
 and pexpr p (prec, e) =
   let (prec', assoc) = precedence' e in
@@ -105,9 +100,15 @@ and pexpr p (prec, e) =
   then fprintf p "@[<hov 2>("
   else fprintf p "@[<hov 2>";
   begin match e with
+  | Ederef(Ebinop(Oadd, base, index, _), _) ->
+      (* 关键修复 #2: 在索引表达式后添加 'as usize' *)
+      fprintf p "%a[%a as usize]" pexpr (0, base) pexpr (0, index)
+  | Ederef(pe, ty) ->
+      fprintf p "*(%a)" pexpr (prec', pe)
   | Eunit ->  fprintf p "tt"
   | Eplace(v, _) ->
     fprintf p "%a" print_place v
+  (* ... pexpr 函数的其余部分保持不变 ... *)
   | Econst_int(n, Rusttypes.Tint(I32, Unsigned)) ->
     fprintf p "%lu_u32" (camlint_of_coqint n)
   | Econst_int(n, _) ->
@@ -137,9 +138,6 @@ and pexpr p (prec, e) =
       fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty)
   | Esizeof(ty1, ty2) ->
       fprintf p "::core::mem::size_of::<%s>()" (name_rust_type ty1)
-  | Ederef(pe, ty) ->
-      fprintf p "*(%a)" pexpr (prec', pe)
-      (* fprintf p "(%a)" pexpr (prec', pe) *)
   end;
   if prec' < prec then fprintf p ")@]" else fprintf p "@]"
 
@@ -219,48 +217,34 @@ let rec typelist_to_list = function
   | Rusttypes.Tnil -> []
   | Rusttypes.Tcons(ty, rest) -> ty :: typelist_to_list rest
 
-(* 辅助函数:解析malloc的参数并生成对应的Rust Box代码 *)
-let parse_malloc_param p v param = 
+let parse_malloc_param p v param =
   match param with
+  (* 匹配 sizeof(T) * N 的模式 *)
   | Epure (Ebinop(Omul, pe1, pe2, _)) ->
-      (
+      let sizeof_expr, count_expr =
         match pe1, pe2 with
-        | (Esizeof(ty, _), Econst_int(n, _)) ->
-            let rust_type = name_rust_type ty in
-            let count = camlint_of_coqint n in
-            fprintf p "@[<hv 2>%a =@ vec![0; %ld].into_boxed_slice() as Box<[%s]>;@]" 
-              print_place v count rust_type
-        | (Econst_int(n, _), Esizeof(ty, _)) ->
-            let rust_type = name_rust_type ty in
-            let count = camlint_of_coqint n in
-            fprintf p "@[<hv 2>%a =@ vec![0; %ld].into_boxed_slice() as Box<[%s]>;@]" 
-              print_place v count rust_type
-        | _ ->
-            fprintf p "@[<hv 2>/* Error:类型信息不足,建议改为sizeof(type)*n的形式 */@]"
-      )
+        | (Esizeof _, _) -> (pe1, pe2)
+        | (_, Esizeof _) -> (pe2, pe1)
+        | _ -> (Eunit, Eunit) (* 错误情况 *)
+      in
+      (match sizeof_expr, count_expr with
+       | (Esizeof(ty, _), count_pe) ->
+           let rust_type = name_rust_type ty in
+           (*
+             关键修复 #1: 使用 `let mut` 直接绑定。
+             这会遮蔽掉函数顶部错误的声明，并创建一个类型正确的 Box。
+           *)
+           fprintf p "@[<hv 2>let mut %a = vec![%s::default(); %a].into_boxed_slice();@]"
+             print_place v rust_type pexpr (0, count_pe)
+       | _ ->
+           fprintf p "@[<hv 2>/* Error: could not parse malloc for array */@]")
+  (* 匹配 sizeof(T) 的模式 *)
   | Epure (Esizeof(ty, _)) ->
       let rust_type = name_rust_type ty in
-      fprintf p "@[<hv 2>%a =@ Box::new(0) as Box<%s>;@]" 
+      fprintf p "@[<hv 2>let mut %a = Box::new(%s::default());@]"
         print_place v rust_type
-  | Epure (Eas(pe, _)) ->
-      (* 处理各种类型转换的情况 *)
-      let rec extract_sizeof_expr expr = 
-        match expr with
-        | Esizeof(ty, _) -> Some ty
-        | Eas(pe', _) -> extract_sizeof_expr pe'
-        | _ -> None
-      in
-      (
-        match extract_sizeof_expr pe with
-        | Some ty ->
-            let rust_type = name_rust_type ty in
-            fprintf p "@[<hv 2>%a =@ Box::new(0) as Box<%s>;@]" 
-              print_place v rust_type
-        | None ->
-            fprintf p "@[<hv 2>/* 错误:无法从参数中提取类型信息 */@]"
-      )
   | _ ->
-      fprintf p "@[<hv 2>/* 错误:类型信息不足,建议改为sizeof(type)*n的形式 */@]"
+      fprintf p "@[<hv 2>/* Error: could not parse malloc parameter */@]"
 
 let get_callee_name (e: expr) : string option =
   match e with
@@ -268,44 +252,101 @@ let get_callee_name (e: expr) : string option =
   | Epure (Eglobal(id, _))           -> Some (String.lowercase_ascii (extern_atom id))
   | _                                -> None
 
+(* Convert C format string to Rust format *)
+let convert_c_format_to_rust s =
+  let b = Buffer.create (String.length s) in
+  let i = ref 0 in
+  while !i < String.length s do
+    if s.[!i] = '%' then (
+      i := !i + 1;
+      if !i < String.length s then (
+        match s.[!i] with
+        | '%' -> Buffer.add_char b '%'
+        | 'd' | 'i' | 'u' | 'x' | 'X' | 'o' | 'f' | 'F' | 'e' | 'E' | 'g' | 'G' | 'a' | 'A' | 's' | 'c' ->
+            Buffer.add_string b "{}"
+        | 'p' -> Buffer.add_string b "{:p}"
+        | _ -> () (* Ignore unsupported format specifiers for now *)
+      )
+    ) else (
+      Buffer.add_char b s.[!i]
+    );
+    i := !i + 1
+  done;
+  Buffer.contents b
+
+let escape_rust_string s =
+  let b = Buffer.create (String.length s + 10) in
+  String.iter (function
+    | '\n' -> Buffer.add_string b "\\n"
+    | '\t' -> Buffer.add_string b "\\t"
+    | '\r' -> Buffer.add_string b "\\r"
+    | '\\' -> Buffer.add_string b "\\\\"
+    | '"' -> Buffer.add_string b "\\\""
+    | c -> Buffer.add_char b c) s;
+  Buffer.contents b
+
 let rec print_stmt p (s: Rustlight.statement) = 
   match s with
   | Sskip ->
     (* comment *)
     fprintf p "/*skip*/"
   | Sassign(v, e) ->
-    fprintf p "@[<hv 2>%a =@ %a;@]" print_place v print_expr e
+      (* FIX: 检查 v 是否是我们定义的 Ppair 类型 *)
+      (match v with
+      | Ppair(id_l, id_r) ->
+          fprintf p "@[<hv 2>let %a =@ %a;@]"
+            print_place v
+            print_expr e
+      | _ ->
+          fprintf p "@[<hv 2>%a =@ %a;@]" print_place v print_expr e
+      )
   | Sassign_variant (v, enum_id, id, e) ->
     fprintf p "@[<hv 2>%a =@ %s::%s(%a);@]" print_place v (extern_atom enum_id)(extern_atom id) print_expr e
   | Scall(v, e1, el) ->
-    (* 检测是否为malloc或free调用 *)
-    let is_malloc_call = match e1 with
-      | Epure (Eglobal(id, _)) -> 
-          let name = extern_atom id in
-          let lower_name = String.lowercase_ascii name in
-          (* 处理各种可能的malloc变体 *)
-          lower_name = "malloc" || lower_name = "__malloc" 
-      | _ -> false
+    (* 检查被调用的函数是否是 "printf" *)
+    let callee_name =
+      match get_callee_name e1 with
+      | Some name -> name
+      | None -> ""
     in
-    let is_free_call = match e1 with
-      | Epure (Eglobal(id, _)) -> 
-          let name = extern_atom id in
-          let lower_name = String.lowercase_ascii name in
-          (* 处理各种可能的free变体 *)
-          lower_name = "free" || lower_name = "__free" 
-      | _ -> false
-    in
-    if is_malloc_call then (
-      (* 解析malloc参数并生成对应的Box代码 *)
-      match el with
-      | [param] -> parse_malloc_param p v param
-      | _ ->
-          fprintf p "@[<hv 2>/* 错误：malloc参数数量错误 */@]"
-    ) else if is_free_call then (
-      (* free调用不需要输出，Rust的Box会自动处理释放 *)
-      fprintf p "/* free call replaced by Rust's ownership system */"
-    ) else (
-      (* 正常函数调用 *)
+    if callee_name = "printf" || callee_name = "__printf" then
+      (* 是printf调用，进行特殊处理 *)
+      let format_arg, other_args =
+        match el with
+        | hd :: tl -> (hd, tl)
+        | [] -> (Epure Eunit, []) (* printf 不应该没有参数 *)
+      in
+
+      (* 修正后的逻辑：正确识别字符串字面量的ID，无论它是Eglobal还是Plocal *)
+      let string_id_option =
+        match format_arg with
+        | Epure (Eglobal (id, _)) -> Some (extern_atom id)
+        | Epure (Eplace (Plocal (id, _), _)) -> Some (extern_atom id)
+        | _ -> None
+      in
+      let format_string_literal =
+        match string_id_option with
+        | Some string_id ->
+            (try Hashtbl.find PrintRustsyntax.string_literals string_id
+             with Not_found -> Printf.sprintf "<error: string '%s' not found>" string_id)
+        | None -> "<error: format argument is not a string literal>"
+      in
+
+      (* 将C格式字符串转换为Rust格式 *)
+      let rust_format_string = convert_c_format_to_rust format_string_literal in
+
+      (* 在打印前对Rust格式化字符串进行转义，处理\n等特殊字符 *)
+      let escaped_format_string = escape_rust_string rust_format_string in
+
+      (* 生成println!宏 *)
+      fprintf p "println!(\"%s\"" escaped_format_string;
+      if other_args <> [] then (
+        fprintf p ", ";
+        print_expr_list p (true, other_args)
+      );
+      fprintf p ");"
+    else (
+      (* 这是处理所有其他函数调用的原始逻辑 *)
       (match get_callee_name e1 with
      | Some ("malloc" | "__malloc") ->
          (match el with
@@ -314,18 +355,17 @@ let rec print_stmt p (s: Rustlight.statement) =
      | Some ("free" | "__free") ->
          fprintf p "/* free call removed, handled by Box drop */;"
      | _ ->
-         (* 正常的函数调用逻辑 (这是你原来的 else 分支) *)
          let fun_ty = type_of_expr e1 in
-           let param_tys = 
-             match fun_ty with 
+           let param_tys =
+             match fun_ty with
              | Rusttypes.Tfunction(_, _, args, _, _) ->  typelist_to_list args
-             | _ -> List.map (fun _ -> Rusttypes.Tunit) el  (* fallback: 全部Tunit *)
+             | _ -> List.map (fun _ -> Rusttypes.Tunit) el
            in
            fprintf p "@[<hv 2>%a =@ %a@,(@[<hov 0>%a@]);@]"
              print_place v
              expr (15, e1)
              print_expr_list_with_type (true, el, param_tys)
-    )
+      )
     )
   | Ssequence(Sskip, s2) ->
       print_stmt p s2
@@ -410,22 +450,23 @@ let print_fundef p id fd =
   | Rusttypes.Internal f ->
       print_function p id f
 
-let print_fundecl p id fd = 
-  match fd with 
-  | Rusttypes.External(_, _, (AST.EF_external _ | AST.EF_runtime _), args, res, cconv) ->
-      fprintf p "unsafe extern \"C\" { %s; }@ "
-                (name_rust_decl_fn (extern_atom id) 
-                  (Rusttypes.Tfunction([], [], args, res, cconv)))
-  | Rusttypes.External(_, _ ,_, _, _, _) ->
-      ()
-  | Rusttypes.Internal f ->
-      (* We should not print fundecl in rust*)
-      ()
-      (* We should not print fundecl of main function *)
-      (* if is_main_id id then () else
-      fprintf p "%s;@ "
-                (name_rust_decl_fn (extern_atom id) 
-                  (Rustlight.type_of_function f))) *)
+let print_fundecl p id fd =
+  let fun_name = extern_atom id in
+  (* 检查函数名是否在屏蔽列表中 *)
+  if List.mem fun_name PrintRustsyntax.suppressed_functions then
+    () (* if in unsafe function list, do noting *)
+  else
+    (* if not in unsafe function list, print it *)
+    match fd with
+    | Rusttypes.External(_, _, (AST.EF_external _ | AST.EF_runtime _), args, res, cconv) ->
+        fprintf p "unsafe extern \"C\" { %s; }@ "
+                  (name_rust_decl_fn (extern_atom id)
+                    (Rusttypes.Tfunction([], [], args, res, cconv)))
+    | Rusttypes.External(_, _ ,_, _, _, _) ->
+        ()
+    | Rusttypes.Internal f ->
+        ()
+
 
 let print_globdef p (id, gd) =
   match gd with

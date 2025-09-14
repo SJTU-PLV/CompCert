@@ -1,17 +1,17 @@
 (* *********************************************************************)
-(*                                                                     *)
-(*              The Compcert verified compiler                         *)
-(*                                                                     *)
-(*          Xavier Leroy, INRIA Paris-Rocquencourt                     *)
-(*                                                                     *)
-(*  Copyright Institut National de Recherche en Informatique et en     *)
-(*  Automatique.  All rights reserved.  This file is distributed       *)
-(*  under the terms of the GNU Lesser General Public License as        *)
-(*  published by the Free Software Foundation, either version 2.1 of   *)
-(*  the License, or  (at your option) any later version.               *)
-(*  This file is also distributed under the terms of the               *)
-(*  INRIA Non-Commercial License Agreement.                            *)
-(*                                                                     *)
+(* *)
+(* The Compcert verified compiler                         *)
+(* *)
+(* Xavier Leroy, INRIA Paris-Rocquencourt                     *)
+(* *)
+(* Copyright Institut National de Recherche en Informatique et en     *)
+(* Automatique.  All rights reserved.  This file is distributed       *)
+(* under the terms of the GNU Lesser General Public License as        *)
+(* published by the Free Software Foundation, either version 2.1 of   *)
+(* the License, or  (at your option) any later version.               *)
+(* This file is also distributed under the terms of the               *)
+(* INRIA Non-Commercial License Agreement.                            *)
+(* *)
 (* *********************************************************************)
 
 Require Coqlib.
@@ -136,6 +136,10 @@ Extract Constant Clight2Rustlight.malloc_id => "Dropglue.malloc_id".
 Extract Constant Clightgen.free_id => "Dropglue.free_id".
 Extract Constant Clight2Rustlight.free_id => "Dropglue.free_id".
 Extract Constant Clight2Rustlight.fresh_atom => "Camlcoq.fresh_atom".
+
+(* This is the corrected mapping for your split tree function *)
+Extract Constant Clight2Rustlight.external_find_and_split => "SplitTree.find_and_split_wrapper".
+
 Extract Constant Clightgen.param_id => "Dropglue.param_id".
 Extract Constant Clightgen.fresh_atom => "Camlcoq.fresh_atom".
 Extract Constant ElaborateDrop.fresh_atom => "Camlcoq.fresh_atom".
