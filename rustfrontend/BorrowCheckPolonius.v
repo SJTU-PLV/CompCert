@@ -19,7 +19,8 @@ Definition error_msg (pc: node) : errmsg :=
 
 (** Initialization *)
 
-(* The rule I-Fun *)
+(* The rule I-Fun. Maybe we should just initialize the generic origins
+that appear in the arguments? *)
 Definition init_function (f: function) : LOrgEnv.t :=
   fold_left (fun acc elt =>
                let os := Live (LoanSet.singleton (Lextern elt)) in

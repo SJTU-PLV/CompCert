@@ -240,8 +240,8 @@ Section TYPE_ENV.
         do l' <- replace_origin_exprlist l;
         OK (Scall p' f' l')             
     | Sreturn p =>
-        do e' <- replace_origin_place p;
-        OK (Sreturn p)
+        do p' <- replace_origin_place p;
+        OK (Sreturn p')
     | Ssequence s1 s2 =>
         do s1' <- replace_origin_statement s1;
         do s2' <- replace_origin_statement s2;

@@ -7,7 +7,7 @@ fn main() {
 }
 
 fn return_ref<'a, 'b, 'c>(x: &'a i32, y: &'b i32) -> &'c i32 
-    where 'b: 'a, 'a: 'c
+    where 'b: 'c, 'a: 'c
 {
     if *x > 3 {
         return &*x;

@@ -55,7 +55,8 @@ let rec print_stmt p (s: RustIR.statement) =
   (* | Sreturn None ->
     fprintf p "return;" *)
   | Sreturn v ->
-    fprintf p "return %a;" print_place v
+    fprintf p "return %a;" print_place v 
+    (* (name_rust_type (Rustlight.typeof_place v)) *)
   | Sbox(v, e) ->
     fprintf p "@[<hv 2>%a =@ Box::new(%a);@]" print_place v   print_expr e
   | Sstoragelive id ->

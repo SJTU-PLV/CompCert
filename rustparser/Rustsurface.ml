@@ -1357,16 +1357,16 @@ module To_syntax = struct
 
 
 
-  let rec lower_case (c: case) (t: Rusttypes.coq_type) (retv: ident) (retty: Rusttypes.coq_type) : case' monad =
+  let rec lower_case (c: case) (t: Rusttypes.coq_type) (retv: ident) : case' monad =
      lower_pat c.pattern t >>= fun p ->
-     transl_stmt retv retty c.body >>= fun s ->
+     transl_stmt retv c.body >>= fun s ->
      return { pattern' = p; body' = s }
 
   (* We pass a return variable to the translation *)
-  and transl_stmt (retv: ident) (retty: Rusttypes.coq_type) (s: stmt)
+  and transl_stmt (retv: ident) (s: stmt)
       : Rustsyntax.statement monad =
     let module S = Rustsyntax in
-    let transl_stmt = transl_stmt retv retty in
+    let transl_stmt = transl_stmt retv in
     match s with
     | Sskip -> return S.Sskip
     | Sdo e ->
@@ -1433,7 +1433,6 @@ module To_syntax = struct
     | Sbreak -> return S.Sbreak
     | Scontinue -> return S.Scontinue
     | Sreturn v ->
-      let rete = S.Evar(retv,retty) in
       (* rete is the return variable, we need to assign the return
       expression to the return variable. Note that this code is not
       debugged yet *)
@@ -1442,15 +1441,18 @@ module To_syntax = struct
         (* FIXME: this inserted assignment can slow down the
           performance because unit value would be compiled to int in
           our compiler. *)
+        let rete = S.Evar(retv,Rusttypes.Tunit) in
         let assign_ret = S.Sdo (S.Eassign(rete, S.Eunit, Rusttypes.Tunit)) in
         return (S.Ssequence(assign_ret, (S.Sreturn rete)))
        | Option.Some e ->
          transl_expr e >>= fun e' ->
+         let retty = Rustsyntax.typeof e' in
+         let rete = S.Evar(retv, retty) in
          let assign_ret = S.Sdo (S.Eassign(rete, e', Rusttypes.Tunit)) in
          return (S.Ssequence(assign_ret, (S.Sreturn rete))))
     | Smatch (e, cases) ->
       transl_expr e >>= fun e' ->
-      map_m cases (fun case -> lower_case case (S.typeof e') retv retty) >>= fun cases' ->
+      map_m cases (fun case -> lower_case case (S.typeof e') retv) >>= fun cases' ->
       let table = Trans_match.skeleton_table cases' e' in
       Trans_match.transl_pat_table table
     | Sscope s ->
@@ -1473,7 +1475,7 @@ module To_syntax = struct
        return (i, t')) >>= fun fn_params ->
     (* Generate the return variable *)
     get_or_new_ident "_retv" >>= fun retv ->
-    transl_stmt retv fn_return f.body >>= fun fn_body ->
+    transl_stmt retv f.body >>= fun fn_body ->
     restore_locals old_locals >>= fun _ ->
     let open Rustsyntax in
     (* We should add explicit return variable in Rustsyntax function
