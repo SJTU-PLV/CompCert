@@ -138,7 +138,7 @@ Extract Constant Clight2Rustlight.free_id => "Dropglue.free_id".
 Extract Constant Clight2Rustlight.fresh_atom => "Camlcoq.fresh_atom".
 
 (* This is the corrected mapping for your split tree function *)
-Extract Constant Clight2Rustlight.external_find_and_split => "SplitTree.find_and_split_wrapper".
+Extract Constant Clight2Rustlight.external_find_and_split => "SplitTree.find_and_split".
 
 Extract Constant Clightgen.param_id => "Dropglue.param_id".
 Extract Constant Clightgen.fresh_atom => "Camlcoq.fresh_atom".

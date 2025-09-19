@@ -543,7 +543,7 @@ Fixpoint elim_switch (s: Clight.statement) : Clight.statement :=
               ret (Rustlight.Ssequence rs1 rs2) *)
     | Clight.Sskip => ret Rustlight.Sskip
     | Clight.Ssequence s1 s2 => 
-        match s2 with
+        match s1 with
         | Clight.Scall _ _ _ =>
             error (msg "Not implemented yet: Scall")
         | Clight.Sset _ _ =>
