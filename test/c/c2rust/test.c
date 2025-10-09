@@ -1,35 +1,19 @@
-#include <stdio.h>
-#include <stdlib.h>
-// int f(int x) {
-//   return x;
-// }
 int main() {
-  // int  *a = (int *)malloc(5 * sizeof(int));
-  // for (int i=0;i<5;i++) {
-  //   a[i] = i;
-  // }
-  // for(int i=0;i<5;i++) {
-  //   printf("%d\n", a[i]);
-  // }
-  // f(4);
-  // f(5);
-  // int c=2;
-
-  // int b = f(3);
-  // printf("%d\n", b);
-
   int abcd[32];
-  // for (int i=0;i<32;i++) {
-  //   a[i] = i;
-  // }
-  // a[3] = 100;
-  int* a = &a[0];
+  abcd[0] = 1;
+  abcd[1+2] = 2;
+  int n = 3;
+  abcd[n] = 3;
+  abcd[n+4] = 4;
+  abcd[1+2+3] = 100;
+  (void)abcd;
+  int* a = abcd;
   int* b = abcd + 8;
   int* c = abcd + 16;
   int* d = abcd + 24;
-  // for (int i=0;i<32;i++) {
-  //   printf("%d\n", a[i]);
-  // }
-
+  b[1] = 42;
+  c[2] = 43;
+  abcd[10] = 100;
+  d[3] = 44;
   return 0;
-}
+} 

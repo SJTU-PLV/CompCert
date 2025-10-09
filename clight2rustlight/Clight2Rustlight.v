@@ -29,6 +29,8 @@ Require Import cfrontend.Clight.
 Require Import rustfrontend.Rustlight.
 
 Import ListNotations.
+Require Import Lists.List.
+
 
 (** State and error monad for generating fresh identifiers. *)
 
@@ -39,7 +41,12 @@ Parameter fresh_atom : unit -> ident.
 
 Definition max_nat_limit := 1000000%positive.
 
-Parameter external_find_and_split : ident -> ident -> Z -> Rustlight.statement.
+Parameter external_find_and_split : ident -> ident -> Z -> Z -> Rustlight.statement.
+Parameter external_flush_assignments_for_vars : list ident -> Rustlight.statement.
+Parameter external_is_base_ptr_managed : ident -> bool.
+Parameter external_resolve_direct_access : ident -> Z.t -> (ident * Z.t).
+
+
 (** State and error monad for generating fresh identifiers. *)
 
 Record generator : Type := mkgenerator {
@@ -216,6 +223,103 @@ Section TRANSL.
     | Clight.Etempvar _ _ => 2
     end.
 
+  Fixpoint get_vars_from_expr (e: Clight.expr) : list ident :=
+  match e with
+  | Clight.Evar id _ | Etempvar id _ => [id]
+  | Clight.Ederef e' _ 
+  | Clight.Eaddrof e' _ 
+  | Clight.Eunop _ e' _ 
+  | Clight.Ecast e' _ 
+  | Clight.Efield e' _ _ => get_vars_from_expr e'
+  | Clight.Ebinop _ e1 e2 _ => get_vars_from_expr e1 ++ get_vars_from_expr e2
+  | Clight.Econst_int _ _
+  | Clight.Econst_float _ _
+  | Clight.Econst_single _ _
+  | Clight.Econst_long _ _
+  | Clight.Esizeof _ _
+  | Clight.Ealignof _ _ => []
+  end.
+
+Fixpoint get_vars_from_expr_list (el: list Clight.expr) : list ident :=
+  match el with
+  | [] => []
+  | e :: rest => get_vars_from_expr e ++ get_vars_from_expr_list rest
+  end.
+
+Fixpoint get_vars_from_stmt (s: Clight.statement) : list ident :=
+  let get_vars_from_opt_id (optid: option ident) : list ident :=
+    match optid with
+    | Some id => [id]
+    | None => []
+    end
+  in
+  match s with
+  | Clight.Sskip 
+  | Clight.Sbreak 
+  | Clight.Scontinue 
+  | Clight.Sgoto _
+  | Clight.Sreturn None => []
+  | Clight.Sassign e1 e2 => get_vars_from_expr e1 ++ get_vars_from_expr e2
+  | Clight.Sset id e => id :: get_vars_from_expr e
+  | Clight.Scall optid e args =>
+      get_vars_from_opt_id optid ++ get_vars_from_expr e ++ get_vars_from_expr_list args
+  | Sbuiltin optid _ _ args =>
+      get_vars_from_opt_id optid ++ get_vars_from_expr_list args
+  | Clight.Sifthenelse e s1 s2 => 
+      get_vars_from_expr e ++ get_vars_from_stmt s1 ++ get_vars_from_stmt s2
+  | Clight.Sloop s1 s2 => 
+      get_vars_from_stmt s1 ++ get_vars_from_stmt s2
+  | Clight.Sreturn (Some e) => 
+      get_vars_from_expr e
+  | Clight.Sswitch e cases => 
+      get_vars_from_expr e ++ get_vars_from_labeled_stmts cases
+  | Clight.Slabel _ s1 => 
+      get_vars_from_stmt s1
+  | Clight.Ssequence s1 s2 =>
+      get_vars_from_stmt s1 ++ get_vars_from_stmt s2
+  end
+with get_vars_from_labeled_stmts (ls: Clight.labeled_statements) : list ident :=
+  match ls with
+  | LSnil => []
+  | LScons _ st rest => get_vars_from_stmt st ++ get_vars_from_labeled_stmts rest
+  end.
+
+(* 新增：常量表达式求值器 *)
+Fixpoint eval_const_expr (e: Clight.expr) : option Z :=
+  match e with
+  | Clight.Econst_int i _ => Some (Int.unsigned i)
+  | Clight.Ebinop op e1 e2 _ =>
+      match eval_const_expr e1, eval_const_expr e2 with
+      | Some v1, Some v2 =>
+          match op with
+          | Oadd => Some (Z.add v1 v2)
+          | Osub => Some (Z.sub v1 v2)
+          | Omul => Some (Z.mul v1 v2)
+          | Odiv => if Z.eqb v2 0%Z then None else Some (Z.div v1 v2)
+          | Omod => if Z.eqb v2 0%Z then None else Some (Z.rem v1 v2)
+          | _ => None (* 其他二元运算不认为是常量整数运算 *)
+          end
+      | _, _ => None
+      end
+  | Clight.Ecast e' _ =>
+      (* 简单处理类型转换，只关心其内部表达式 *)
+      eval_const_expr e'
+  | _ => None (* 其他所有表达式（如变量）都认为不是常量 *)
+  end.
+
+  Definition find_base_and_index (ptr_expr: Clight.expr) 
+  : option (ident * Ctypes.type * Clight.expr) :=
+    match ptr_expr with
+    (* 匹配 a[i] 这种形式，它在 C light 中通常表示为 *(a+i) *)
+    | Clight.Ebinop Cop.Oadd (Clight.Evar base_id base_ty) index_expr _ =>
+        Some (base_id, base_ty, index_expr)
+    (* 匹配 a[0] 这种形式，它在 C light 中可能简化为 *a *)
+    | Clight.Evar base_id base_ty =>
+        Some (base_id, base_ty, Clight.Econst_int (Int.zero) (Ctypes.Tint Ctypes.I32 Ctypes.Signed noattr))
+    | _ => None
+    end.
+
+  (* This helper function is used to generate a place for sub-expr of deref expr in c *)
   Fixpoint sub_cexpr_to_place (locals: list ident) (depth: nat) (e: Clight.expr): mon Rustlight.place :=
     let sub_cexpr_to_place := sub_cexpr_to_place locals depth in
     match depth with
@@ -270,16 +374,43 @@ Section TRANSL.
       | Clight.Evar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
       | Clight.Etempvar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
       | Clight.Ederef e' ty=>
-          match e' with
-          | Clight.Ebinop op e1 e2 ty1 =>
-              match op with
-              | Oadd => 
+          match find_base_and_index e' with
+          | Some (base_id, base_ty, index_expr) =>
+               if external_is_base_ptr_managed base_id then
+                  (* 基指针是分裂树的根，必须特殊处理 *)
+                  match eval_const_expr index_expr with
+                  | Some const_index =>
+                      (* 索引是常量，重写访问 *)
+                      let '(new_base_id, new_index_z) := external_resolve_direct_access base_id const_index in
+                      (* ty 是 C 中数组元素类型，rty 是对应的 Rust 类型, e.g., i32 *)
+                      let rty := to_rusttype ty in
+                      (* new_base_id 是一个切片，其类型是 &mut [i32] *)
+                      let slice_ty := Rusttypes.Tslice Rusttypes.Mutable rty in
+                      (* index 的类型是 usize *)
+                      let usize_ty := Rusttypes.Tint I32 Unsigned in
+
+                      (* 1. 创建代表切片的 pexpr: e.g., `_b` *)
+                      let new_base_pexpr := Eplace (Plocal new_base_id slice_ty) slice_ty in
+                      (* 2. 创建代表新索引的 pexpr: e.g., `2` *)
+                      let new_index_pexpr := Econst_int (Int.repr new_index_z) usize_ty in
+
+                      (* 3. 构造 (_b + 2) 这个中间表达式，它的类型是一个指向元素的指针 *)
+                      let pointer_ty := to_rusttype (Ctypes.Tpointer ty Ctypes.noattr) in
+                      let binop_expr := Ebinop Oadd new_base_pexpr new_index_pexpr pointer_ty in
+
+                      (* 4. 构造最终的 place: *(_b + 2)，这会被打印成 _b[2] *)
+                      do temp_id <- gensym locals pointer_ty;
+                      ret (Rustlight.Pderef (Pparenthesize temp_id pointer_ty binop_expr) rty)
+                  | None =>
+                      (* 索引是动态的，禁止在已分裂的根数组上使用 *)
+                      error (msg "Dynamic index on a split array is not allowed.")
+                  end
+               else
+                  (* 基指针是叶子节点或普通指针，恢复到原始的翻译逻辑 *)
                   do p <- sub_cexpr_to_place e';
                   ret (Rustlight.Pderef p (to_rusttype ty))
-              | _ =>
-                  error (msg "Unsupported lvalue expression: binary operation in dereference")
-              end
-          | _ =>
+          | None =>
+              (* 不符合 base[index] 模式，作为普通指针解引用处理，恢复到原始逻辑 *)
               do p <- sub_cexpr_to_place e';
               ret (Rustlight.Pderef p (to_rusttype ty))
           end
@@ -524,210 +655,148 @@ Fixpoint elim_switch (s: Clight.statement) : Clight.statement :=
       error (msg "Cannot get return value id of function: Clight2Rustlight")
   end.
 
+  Fixpoint nub {A} (eq_dec: forall x y : A, {x = y} + {x <> y}) (l: list A) : list A :=
+  match l with
+  | [] => []
+  | x :: xs =>
+    if in_dec eq_dec x xs
+    then nub eq_dec xs
+    else x :: nub eq_dec xs
+  end.
+
   Fixpoint transl_stmt (locals: list ident) (s: Clight.statement): mon Rustlight.statement :=
-    let transl_stmt := transl_stmt locals in
-    let cexpr_to_place := cexpr_to_place locals in
-    let cexpr_to_pexpr := cexpr_to_pexpr locals in
-    (* let transl_stmt_list := transl_stmt_list locals in *)
-    match s with
-            (* if andb (ident_eq tmp1 tmp2) (is_malloc f) then *)
-                (* do rid <- get_temp_id e; *)
-                (* do pf <- cexpr_to_pexpr (expr_depth f) f;
-                do pargs <- transl_expr_list locals args;
-                let target_place := Rustlight.Plocal var (to_rusttype (Clight.typeof e)) in
-                ret (Rustlight.Scall target_place (Rustlight.Epure pf) (map pexpr_to_expr pargs)) *)
-            (* else
-              (* normal sequence *)
-              do rs1 <- transl_stmt (Clight.Scall (Some tmp1) f args);
-              do rs2 <- transl_stmt (Clight.Sset var (Clight.Ecast (Clight.Etempvar tmp2 tyt) ty));
-              ret (Rustlight.Ssequence rs1 rs2) *)
-    | Clight.Sskip => ret Rustlight.Sskip
-    | Clight.Ssequence s1 s2 => 
-        match s1 with
-        | Clight.Scall _ _ _ =>
-            error (msg "Not implemented yet: Scall")
-        | Clight.Sset _ _ =>
-            error (msg "Not implemented yet: Sset")
-        | Clight.Sbuiltin _ _ _ _ =>
-            error (msg "Not implemented yet: Sbuiltin")
-        (* | Clight.Sskip => 
-            do rs1 <- transl_stmt s1;
-            do rs2 <- transl_stmt s2;
-            ret (Rustlight.Ssequence rs1 rs2) *)
-        | Clight.Slabel _ _ => error (msg "Not implemented yet: Slabel in sequence")
-        | Clight.Sgoto _ => error (msg "Not implemented yet: Sgoto in sequence")
-        | Clight.Sreturn _ => error (msg "Not implemented yet: Sreturn in sequence")
-        | Clight.Sswitch _ _ => error (msg "Not implemented yet: Sswitch in sequence")
-        | Clight.Sloop _ _ => error (msg "Not implemented yet: Sloop in sequence")
-        | Clight.Sbreak => error (msg "Not implemented yet: Sbreak in sequence")
-        | Clight.Scontinue => error (msg "Not implemented yet: Scontinue in sequence")
-        | Clight.Sassign _ _ => 
-            error (msg "Not implemented yet: Sassign in sequence")
-        | Clight.Sifthenelse _ _ _ =>
-            error (msg "Not implemented yet: Sifthenelse in sequence")
-        (* | Clight.Ssequence _ _ =>
-            error (msg "Not implemented yet: nested sequence in sequence") *)
-        | _ =>
-            do rs1 <- transl_stmt s1;
-            do rs2 <- transl_stmt s2;
-            ret (Rustlight.Ssequence rs1 rs2)
+  let cexpr_to_place := cexpr_to_place locals in
+  let cexpr_to_pexpr := cexpr_to_pexpr locals in
+  
+  match s with
+  | Clight.Sskip => ret Rustlight.Sskip
+  | Clight.Sbreak => ret Rustlight.Sbreak
+  | Clight.Scontinue => ret Rustlight.Scontinue
+
+  | Clight.Sassign e1 e2 =>
+    (* 1. 定义 uncast 辅助函数，使用 let fix *)
+    let fix uncast (e: Clight.expr) : Clight.expr :=
+      match e with
+      | Clight.Ecast e' _ => uncast e'
+      | _ => e
+      end
+    in
+    (* 2. 定义 default_assign 辅助函数 *)
+    let do_default_assign (_:unit) :=
+      let vars_to_flush := nub ident_eq (get_vars_from_expr e1 ++ get_vars_from_expr e2) in
+      let flush_stmts := external_flush_assignments_for_vars vars_to_flush in
+      do p <- cexpr_to_place (expr_depth e1) e1;
+      do pe <- cexpr_to_pexpr (expr_depth e2) e2;
+      ret (Ssequence flush_stmts (Rustlight.Sassign p (Rustlight.Epure pe)))
+    in
+    (* 3. 定义 split 辅助函数 *)
+    let handle_as_split base_ptr_id ty new_ptr_id c_offset :=
+      let ty_arr := 
+        match ty with
+        | Tpointer ty' _ => ty' (* Look through one level of pointer *)
+        | _ => ty
         end
-        (* match (s1,s2) with
-        | ( (Clight.Scall (Some tmp1) f args), (Clight.Sset var e) ) =>
-            error (msg "Not implemented yet: sequence of call and set")
-        | ( (Clight.Scall _ _ _), (Clight.Sset _ _) ) =>
-            error (msg "Not implemented yet: sequence of call and set")
-        | _ =>
-            do rs1 <- transl_stmt s1;
-            do rs2 <- transl_stmt s2;
-            ret (Rustlight.Ssequence rs1 rs2)
-        end *)
-    | Clight.Sifthenelse e s1 s2 => 
-        do pe <- cexpr_to_pexpr (expr_depth e) e;
-        do rs1 <- transl_stmt s1;
-        do rs2 <- transl_stmt s2;
-        ret (Rustlight.Sifthenelse (Rustlight.Epure pe) rs1 rs2)
-    | Clight.Sloop s1 s2 => 
-        do rs1 <- transl_stmt s1;
-        do set2 <- transl_stmt s2;
-        let rs2 := (Rustlight.Ssequence rs1 set2) in
-        ret (Rustlight.Sloop rs2)
-    | Clight.Sbreak => ret Rustlight.Sbreak
-    | Clight.Scontinue => ret Rustlight.Scontinue
-    | Clight.Sassign e1 e2 => 
-        match e2 with
-        | Clight.Ebinop Oadd (Clight.Evar base_ptr_id _) (Clight.Econst_int offset _) _ =>
-            (* 检测到模式： new_ptr = base_ptr + constant *)
-            match e1 with
-            | Clight.Evar new_ptr_id _ =>
-                (* 这是我们要处理的指针运算！*)
-                let c_offset := Int.unsigned offset in
-                (* 我们调用在 Coq 中定义的外部函数 *)
-                let split_stmt := external_find_and_split base_ptr_id new_ptr_id c_offset in
-                (* 使用 'ret' 将纯粹的 statement 提升到 monad 中，这修复了原始的类型错误 *)
-                ret split_stmt
-            | _ => (* 左边不是简单变量，按原逻辑处理 *)
-                do p <- cexpr_to_place (expr_depth e1) e1;
-                do pe <- cexpr_to_pexpr (expr_depth e2) e2;
-                ret (Rustlight.Sassign p (Rustlight.Epure pe))
-            end
-        | _ =>
-            (* 不是指针加法，按原逻辑处理 *)
-            do p <- cexpr_to_place (expr_depth e1) e1;
-            do pe <- cexpr_to_pexpr (expr_depth e2) e2;
-            ret (Rustlight.Sassign p (Rustlight.Epure pe))
-        end
-    | Clight.Sset id e => 
-        do pe <- cexpr_to_pexpr (expr_depth e) e;
-        ret (Rustlight.Sassign (Rustlight.Plocal id (to_rusttype (Clight.typeof e))) 
-               (Rustlight.Epure pe))
-    | Clight.Scall optid e args =>
+      in
+      match ty_arr with
+      | Ctypes.Tarray _ sz _ =>
+          let array_size := Z.abs sz in
+          if Z.eqb array_size 0%Z then
+            error (msg "SplitTree: Array size is zero or unknown.")
+          else
+            ret (external_find_and_split base_ptr_id new_ptr_id c_offset array_size)
+      | _ =>
+          do_default_assign tt
+      end
+    in
+    (* 4. 现在开始主逻辑，所有辅助函数都在作用域内 *)
+    match e1 with
+    | Evar new_ptr_id _ =>
+      (* L-value is a simple variable, this might be a BUILD operation *)
+      match uncast e2 with (* uncast is now visible here! *)
+      | Clight.Ebinop Oadd (Clight.Evar base_ptr_id ty) (Clight.Econst_int offset _) _ =>
+          (* Case: ptr = arr + const *)
+          handle_as_split base_ptr_id ty new_ptr_id (Int.unsigned offset)
+      | Clight.Evar base_ptr_id ty_arr =>
+          (* Case: ptr = arr (array decay) *)
+          handle_as_split base_ptr_id ty_arr new_ptr_id 0%Z
+      | _ =>
+          (* Not a recognized pointer arithmetic, treat as a USE operation *)
+          do_default_assign tt
+      end
+    | _ =>
+      (* L-value is complex (e.g., *p, p->field, p[i]), so this is a USE operation *)
+      do_default_assign tt
+    end
+
+  | Clight.Sset id e =>
+      let vars_to_flush := nub ident_eq (get_vars_from_expr e) in
+      let flush_stmts := external_flush_assignments_for_vars vars_to_flush in
+      do pe <- cexpr_to_pexpr (expr_depth e) e;
+      let assign_stmt := Rustlight.Sassign (Rustlight.Plocal id (to_rusttype (Clight.typeof e))) (Rustlight.Epure pe) in
+      ret (Ssequence flush_stmts assign_stmt)
+
+  | Clight.Sifthenelse e s1 s2 =>
+      let vars_to_flush := nub ident_eq (get_vars_from_expr e) in
+      let flush_stmts := external_flush_assignments_for_vars vars_to_flush in
+      do pe <- cexpr_to_pexpr (expr_depth e) e;
+      do rs1 <- transl_stmt locals s1;
+      do rs2 <- transl_stmt locals s2;
+      let if_stmt := Rustlight.Sifthenelse (Rustlight.Epure pe) rs1 rs2 in
+      ret (Ssequence flush_stmts if_stmt)
+
+  | Clight.Scall optid e args =>
+      let vars_to_flush := nub ident_eq (get_vars_from_expr e ++ get_vars_from_expr_list args) in
+      let flush_stmts := external_flush_assignments_for_vars vars_to_flush in
+      do translated_call <- (
         do pe <- cexpr_to_pexpr (expr_depth e) e;
         do pargs <- transl_expr_list locals args;
         match optid with
         | None => 
-            (* without return value *)
             do dummy_place <- empty_place locals;
             ret (Rustlight.Scall dummy_place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
         | Some id => 
-            (* with return value *)
-            (* let func_ty := to_rusttype (Clight.typeof e) in *)
             match get_return_type e with
             | Some ty' =>
                 let place := Rustlight.Plocal id ty' in
                 ret (Rustlight.Scall place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
             | None => 
-                error (msg "Cannot get return type of function in transl_stmt: Clight2Rustlight")
+                error (msg "Cannot get return type of function in Scall: Clight2Rustlight")
             end
         end
-    | Clight.Sreturn None => 
-        (* no return value*)
-        do dummy_place <- empty_place locals;
-        ret (Rustlight.Sreturn dummy_place)
-    | Clight.Sreturn (Some e) => 
-        do pe <- cexpr_to_pexpr (expr_depth e) e;
-        (* create a temp variable to store return value *)
-        do i <- gensym locals (to_rusttype (Clight.typeof e));
-        let ret_place := Rustlight.Plocal i (to_rusttype (Clight.typeof e)) in
-        (* assign the return value to the temp variable and return *)
-        ret (Rustlight.Ssequence
-               (Rustlight.Sassign ret_place (Rustlight.Epure pe))
-               (Rustlight.Sreturn ret_place))
-    (* | Clight.Sswitch e cases =>
-        let stmt := switch_to_ifelse e cases in
-        do rstmt <- transl_stmt stmt;
-        ret rstmt        *)
-    (* | Clight.Sswitch e cases =>
-        do pe <- cexpr_to_pexpr (expr_depth e) e;
-        let case_conds := collect_case_conds cases in
-        let fix convert_cases (ls: Clight.labeled_statements) : mon Rustlight.statement :=
-          match ls with
-          | Clight.LSnil => ret Rustlight.Sskip
-          | Clight.LScons (Some n) st rest =>
-              let cond := Rustlight.Ebinop Oeq pe
-                            (Rustlight.Econst_int (Int.repr n) (to_rusttype (Clight.typeof e)))
-                            (Rusttypes.Tint IBool Unsigned) in
-              do (stmts, rest_ls) <- collect_until_break_and_rest ls;
-              do rstmts <- transl_stmt stmts;
-              do rest_stmt <- convert_cases rest_ls;
-              ret (Rustlight.Sifthenelse cond rstmts rest_stmt)
-          | Clight.LScons None st rest =>
-              let default_cond :=
-              fold_right (fun n acc =>
-                Rustlight.Ebinop Oand
-                    (Rustlight.Ebinop Oeq pe
-                      (Rustlight.Econst_int (Int.repr n) (to_rusttype (Clight.typeof e)))
-                      (Rusttypes.Tint IBool Unsigned)) acc
-                    (Rusttypes.Tint IBool Unsigned))
-            (Rustlight.Econst_int Int.one (Rusttypes.Tint IBool Unsigned))
-            case_conds in
-              do (stmts, rest_ls) <- collect_until_break_and_rest ls;
-              do rstmts <- transl_stmt stmts;
-              do rest_stmt <- convert_cases rest_ls;
-              ret (Rustlight.Sifthenelse default_cond rstmts rest_stmt)
-          end
-        in convert_cases cases *)
-    (* | Clight.Sswitch e cases =>
-        do pe <- cexpr_to_pexpr (expr_depth e) e;
-        let case_conds := collect_case_conds cases in
-        let rec_convert_cases :=
-          fix convert_cases (ls: Clight.labeled_statements) (fallthrough: Rustlight.statement) : mon Rustlight.statement :=
-            match ls with
-            | Clight.LSnil => ret fallthrough
-            | Clight.LScons (Some n) st rest =>
-                do rs <- transl_stmt st;
-                let cond := Rustlight.Ebinop Oeq pe
-                             (Rustlight.Econst_int (Int.repr n) (to_rusttype (Clight.typeof e)))
-                             (Rusttypes.Tint IBool Unsigned) in
-                do rest_stmt <- convert_cases rest fallthrough;
-                if ends_with_break rs then
-                  ret (Rustlight.Sifthenelse cond rs rest_stmt)
-                else
-                  (* do rest_stmt <- convert_cases rest fallthrough; *)
-                  ret (Rustlight.Sifthenelse cond (Rustlight.Ssequence rs rest_stmt) rest_stmt)
-            | Clight.LScons None st rest =>
-                do rs <- transl_stmt st;
-                let default_cond :=
-                  fold_right (fun n acc =>
-                    Rustlight.Ebinop Oand
-                        (Rustlight.Ebinop Oeq pe
-                          (Rustlight.Econst_int (Int.repr n) (to_rusttype (Clight.typeof e)))
-                          (Rusttypes.Tint IBool Unsigned)) acc
-                        (Rusttypes.Tint IBool Unsigned))
-                    (Rustlight.Econst_int Int.one (Rusttypes.Tint IBool Unsigned))
-                    case_conds in
-                do rest_stmt <- convert_cases rest fallthrough;
-                if ends_with_break rs then
-                  ret (Rustlight.Sifthenelse default_cond rs rest_stmt)
-                else
-                  (* do rest_stmt <- convert_cases rest fallthrough; *)
-                  ret (Rustlight.Sifthenelse default_cond (Rustlight.Ssequence rs rest_stmt) rest_stmt)
-            end
-        in
-        rec_convert_cases cases Rustlight.Sskip *)
-    | _ => error (msg "Unsupported statement type")
-    end.
-  
+      );
+      ret (Ssequence flush_stmts translated_call)
+
+  | Clight.Sreturn (Some e) => 
+      let vars_to_flush := nub ident_eq (get_vars_from_expr e) in
+      let flush_stmts := external_flush_assignments_for_vars vars_to_flush in
+      do pe <- cexpr_to_pexpr (expr_depth e) e;
+      do i <- gensym locals (to_rusttype (Clight.typeof e));
+      let ret_place := Rustlight.Plocal i (to_rusttype (Clight.typeof e)) in
+      let translated_return := Rustlight.Ssequence
+          (Rustlight.Sassign ret_place (Rustlight.Epure pe))
+          (Rustlight.Sreturn ret_place)
+      in
+      ret (Ssequence flush_stmts translated_return)
+      
+  | Clight.Sreturn None => 
+      do dummy_place <- empty_place locals;
+      ret (Rustlight.Sreturn dummy_place)
+
+  | Clight.Ssequence s1 s2 => 
+      do rs1 <- transl_stmt locals s1;
+      do rs2 <- transl_stmt locals s2;
+      ret (Rustlight.Ssequence rs1 rs2)
+
+  | Clight.Sloop s1 s2 => 
+      do rs1 <- transl_stmt locals s1;
+      do rs2 <- transl_stmt locals s2;
+      ret (Rustlight.Sloop (Rustlight.Ssequence rs1 rs2))
+
+  | _ => error (msg "Unsupported statement type in transl_stmt")
+  end.
+
+
+
   (* with transl_stmt_list (locals: list ident) (ls: list Clight.statement): mon (list Rustlight.statement) :=
     let transl_stmt := transl_stmt locals in
     let transl_stmt_list := transl_stmt_list locals in

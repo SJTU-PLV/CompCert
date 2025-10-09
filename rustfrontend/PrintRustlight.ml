@@ -198,9 +198,12 @@ let rec print_expr_list_with_type p (first, exprs, param_tys) =
       (match type_of_expr r with
        | Rusttypes.Tarray _ | Rusttypes.Traw_pointer _ -> fprintf p ".as_ptr()"
        | _ -> ());
-      (* 打印参数类型 *)
-      fprintf p " as %s" (name_rust_decl "" ty);
+      (* 只有当类型不是 Tunit 时才打印 'as' 类型转换 *)
+      (match ty with
+      | Rusttypes.Tunit -> () (* 如果类型是 Tunit，则什么都不打印 *)
+      | _ -> fprintf p " as %s" (name_rust_decl "" ty));
       print_expr_list_with_type p (false, rl, tyl)
+
   | r :: rl, [] ->
       if not first then fprintf p ",@ ";
       expr p (2, r);

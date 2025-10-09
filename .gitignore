@@ -82,3 +82,11 @@
 .nia.cache
 .nra.cache
 .csdp.cache
+
+# test files
+test/c/
+test/rust/
+.rs 
+.rust
+.c0
+.vscode/
