@@ -256,7 +256,7 @@ let get_callee_name (e: expr) : string option =
   | _                                -> None
 
 (* Convert C format string to Rust format *)
-let convert_c_format_to_rust s =
+(* let convert_c_format_to_rust s =
   let b = Buffer.create (String.length s) in
   let i = ref 0 in
   while !i < String.length s do
@@ -286,7 +286,7 @@ let escape_rust_string s =
     | '\\' -> Buffer.add_string b "\\\\"
     | '"' -> Buffer.add_string b "\\\""
     | c -> Buffer.add_char b c) s;
-  Buffer.contents b
+  Buffer.contents b *)
 
 let rec print_stmt p (s: Rustlight.statement) = 
   match s with
@@ -306,70 +306,54 @@ let rec print_stmt p (s: Rustlight.statement) =
   | Sassign_variant (v, enum_id, id, e) ->
     fprintf p "@[<hv 2>%a =@ %s::%s(%a);@]" print_place v (extern_atom enum_id)(extern_atom id) print_expr e
   | Scall(v, e1, el) ->
-    (* 检查被调用的函数是否是 "printf" *)
-    let callee_name =
-      match get_callee_name e1 with
-      | Some name -> name
-      | None -> ""
+        (* detect malloc or free *)
+    let is_malloc_call = match e1 with
+      | Epure (Eglobal(id, _)) -> 
+          let name = extern_atom id in
+          let lower_name = String.lowercase_ascii name in
+          (* 处理各种可能的malloc变体 *)
+          lower_name = "malloc" || lower_name = "__malloc" 
+      | _ -> false
     in
-    if callee_name = "printf" || callee_name = "__printf" then
-      (* 是printf调用，进行特殊处理 *)
-      let format_arg, other_args =
-        match el with
-        | hd :: tl -> (hd, tl)
-        | [] -> (Epure Eunit, []) (* printf 不应该没有参数 *)
+    let is_free_call = match e1 with
+      | Epure (Eglobal(id, _)) -> 
+          let name = extern_atom id in
+          let lower_name = String.lowercase_ascii name in
+          (* handle all type of free *)
+          lower_name = "free" || lower_name = "__free" 
+      | _ -> false
       in
-
-      (* 修正后的逻辑：正确识别字符串字面量的ID，无论它是Eglobal还是Plocal *)
-      let string_id_option =
-        match format_arg with
-        | Epure (Eglobal (id, _)) -> Some (extern_atom id)
-        | Epure (Eplace (Plocal (id, _), _)) -> Some (extern_atom id)
-        | _ -> None
-      in
-      let format_string_literal =
-        match string_id_option with
-        | Some string_id ->
-            (try Hashtbl.find PrintRustsyntax.string_literals string_id
-             with Not_found -> Printf.sprintf "<error: string '%s' not found>" string_id)
-        | None -> "<error: format argument is not a string literal>"
-      in
-
-      (* 将C格式字符串转换为Rust格式 *)
-      let rust_format_string = convert_c_format_to_rust format_string_literal in
-
-      (* 在打印前对Rust格式化字符串进行转义，处理\n等特殊字符 *)
-      let escaped_format_string = escape_rust_string rust_format_string in
-
-      (* 生成println!宏 *)
-      fprintf p "println!(\"%s\"" escaped_format_string;
-      if other_args <> [] then (
-        fprintf p ", ";
-        print_expr_list p (true, other_args)
-      );
-      fprintf p ");"
-    else (
-      (* 这是处理所有其他函数调用的原始逻辑 *)
-      (match get_callee_name e1 with
-     | Some ("malloc" | "__malloc") ->
-         (match el with
-          | [param] -> parse_malloc_param p v param
-          | _ -> fprintf p "@[<hv 2>/* Error: wrong number of arguments for malloc */@]")
-     | Some ("free" | "__free") ->
-         fprintf p "/* free call removed, handled by Box drop */;"
-     | _ ->
-         let fun_ty = type_of_expr e1 in
-           let param_tys =
-             match fun_ty with
+      if is_malloc_call then (
+      (* 解析malloc参数并生成对应的Box代码 *)
+      match el with
+      | [param] -> parse_malloc_param p v param
+      | _ ->
+          fprintf p "@[<hv 2>/* 错误：malloc参数数量错误 */@]"
+      ) else if is_free_call then (
+        (* free调用不需要输出，Rust的Box会自动处理释放 *)
+        fprintf p "/* free call replaced by Rust's ownership system */"
+      ) else (
+        (* 这是处理所有其他函数调用的原始逻辑 *)
+          (match get_callee_name e1 with
+        | Some ("malloc" | "__malloc") ->
+            (match el with
+              | [param] -> parse_malloc_param p v param
+              | _ -> fprintf p "@[<hv 2>/* Error: wrong number of arguments for malloc */@]")
+        | Some ("free" | "__free") ->
+            fprintf p "/* free call removed, handled by Box drop */;"
+        | _ ->
+          let fun_ty = type_of_expr e1 in
+           let param_tys = 
+             match fun_ty with 
              | Rusttypes.Tfunction(_, _, args, _, _) ->  typelist_to_list args
-             | _ -> List.map (fun _ -> Rusttypes.Tunit) el
-           in
+             | _ -> List.map (fun _ -> Rusttypes.Tunit) el  (* fallback: 全部Tunit *)
+             in
            fprintf p "@[<hv 2>%a =@ %a@,(@[<hov 0>%a@]);@]"
              print_place v
              expr (15, e1)
              print_expr_list_with_type (true, el, param_tys)
+         )
       )
-    )
   | Ssequence(Sskip, s2) ->
       print_stmt p s2
   | Ssequence(s1, Sskip) ->

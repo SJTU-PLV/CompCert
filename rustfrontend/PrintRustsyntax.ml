@@ -29,7 +29,6 @@ let suppressed_functions = [
   "__compcert_i64_smulh";
   "__compcert_i64_umulh";
   "__builtin_debug";
-  "printf";
 ]
 (* Create a hashtable to store string literals *)
 let string_literals : (string, string) Hashtbl.t = Hashtbl.create 101
