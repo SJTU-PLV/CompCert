@@ -165,7 +165,10 @@ CFRONTEND=Ctypes.v Cop.v Csyntax.v Csem.v Ctyping.v Cstrategy.v \
 # Cexec.v
 
 # c2rust-light
-CLIGHT2RUSTLIGHT=Clight2Rustlight.v
+CLIGHT2RUSTLIGHT=clight2rustlight/Clight2Rustlight.v clight2rustlight/SplitTree.v \
+  clight2rustlight/TranslationEnv.v
+# CLIGHT2RUSTLIGHT=Clight2Rustlight.v SplitTree.v TranslationEnv.v
+
 
 # Rust front-end
 
@@ -222,7 +225,7 @@ GENERATED=\
   backend/SelectDiv.v backend/SplitLong.v \
   cparser/Parser.v
 
-all:
+all:copy
 	@test -f .depend || $(MAKE) depend
 	$(MAKE) proof
 	$(MAKE) extraction
@@ -388,6 +391,14 @@ ifeq ($(INSTALL_COQDEV),true)
 	@(echo "To use, pass the following to coq_makefile or add the following to _CoqProject:"; echo "-R $(COQDEVDIR) compcert") > $(DESTDIR)$(COQDEVDIR)/README
 endif
 
+SOURCE_DIR_COPY = clight2rustlight
+TARGET_DIR_COPY = extraction
+SOURCE_FILES_COPY = SplitTreeOcaml.ml SplitTreeOcaml.mli
+
+copy:
+	@mkdir -p $(TARGET_DIR_COPY)
+	cp $(addprefix $(SOURCE_DIR_COPY)/,$(SOURCE_FILES_COPY)) $(TARGET_DIR_COPY)/
+	@echo "Files copied successfully to $(TARGET_DIR_COPY)/"
 
 clean:
 	rm -f $(patsubst %, %/*.vo*, $(DIRS))

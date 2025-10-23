@@ -138,11 +138,11 @@ Extract Constant Clight2Rustlight.free_id => "Dropglue.free_id".
 Extract Constant Clight2Rustlight.fresh_atom => "Camlcoq.fresh_atom".
 
 (* This is the corrected mapping for your split tree function *)
-Extract Constant Clight2Rustlight.external_find_and_split => "SplitTree.find_and_split".
-(* Extract Constant Clight2Rustlight.external_flush_and_destroy_for_vars => "SplitTree.flush_and_destroy_for_vars". *)
-Extract Constant Clight2Rustlight.external_flush_assignments_for_vars => "SplitTree.flush_assignments_for_vars".
-Extract Constant Clight2Rustlight.external_is_base_ptr_managed => "SplitTree.is_base_ptr_managed".
-Extract Constant Clight2Rustlight.external_resolve_direct_access => "SplitTree.resolve_direct_access".
+Extract Constant Clight2Rustlight.external_find_and_split_stateful => "SplitTreeOcaml.find_and_split_stateful".
+(* Extract Constant Clight2Rustlight.external_flush_and_destroy_for_vars => "SplitTreeOcaml.flush_and_destroy_for_vars". *)
+Extract Constant Clight2Rustlight.external_flush_assignments_for_vars => "SplitTreeOcaml.flush_assignments_for_vars".
+Extract Constant Clight2Rustlight.external_is_base_ptr_managed => "SplitTreeOcaml.is_base_ptr_managed".
+Extract Constant Clight2Rustlight.external_resolve_direct_access => "SplitTreeOcaml.resolve_direct_access".
 
 Extract Constant Clightgen.param_id => "Dropglue.param_id".
 Extract Constant Clightgen.fresh_atom => "Camlcoq.fresh_atom".
