@@ -25,6 +25,9 @@ int main() {
   // c[2+n] = 43;
   // abcd[10] = 100;
   // d[3] = 44;
-  printf("done\n");
+  _Bool a = 1;
+  int b = 2;
+  a = b;
+
   return 0;
 } 

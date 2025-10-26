@@ -139,6 +139,12 @@ let rec name_rust_decl id ty =
   | Tslice(mut, ty) ->
     "&" ^ string_of_mut mut ^ " [" ^ (name_rust_decl ""  ty) ^ "]" ^ name_optid id
 
+(*  IBool used in variable context should be i32, not bool *)
+let name_inttype_for_var sz sg =
+  match sz, sg with
+  | Ctypes.IBool, _ -> "i32"  (* In C, _Bool can be used as integer *)
+  | _ -> name_inttype sz sg
+
 let rec name_rust_decl_var id ty =
   match ty with
   | Rusttypes.Tunit ->
@@ -146,7 +152,7 @@ let rec name_rust_decl_var id ty =
   | Rusttypes.Tvoid ->
     name_optid_no_space id ^ "std::ffi::c_void"    
   | Rusttypes.Tint(sz, sg) ->
-    name_optid_no_space id ^ name_inttype sz sg
+    name_optid_no_space id ^ name_inttype_for_var sz sg
   | Rusttypes.Tfloat(sz) ->
     name_optid_no_space id  ^ name_floattype sz
   | Rusttypes.Tlong(sg) ->
@@ -322,6 +328,46 @@ let rec name_rust_decl_fn id ty =
 
 let name_rust_type ty = name_rust_decl "" ty
 
+(* Special type printing for FFI - convert slices to raw pointers *)
+let name_rust_type_ffi ty = 
+  match ty with
+  | Tslice(Mutable, elem_ty) ->
+      "*mut " ^ (name_rust_decl "" elem_ty)
+  | Tslice(Immutable, elem_ty) ->
+      "*const " ^ (name_rust_decl "" elem_ty)
+  | _ -> name_rust_type ty
+
+(* FFI-safe version of name_rust_decl_fn for extern "C" functions *)
+let name_rust_decl_fn_ffi id ty =
+  match ty with
+  | Tfunction( _, _, args, res, cconv) ->
+      let b = Buffer.create 20 in
+      if id = ""
+      then Buffer.add_string b "(*)"
+      else Buffer.add_string b id;
+      Buffer.add_char b '(';
+      let rec add_args first = function
+      | Tnil ->
+          if first then
+            Buffer.add_string b
+               (if cconv.cc_vararg <> None then "..." else "")
+          else if cconv.cc_vararg <> None then
+            Buffer.add_string b ", ..."
+          else
+            ()
+      | Tcons(t1, tl) ->
+          if not first then Buffer.add_string b ", ";
+          Buffer.add_string b ("_ : " ^ name_rust_type_ffi t1);
+          add_args false tl in
+      if not cconv.cc_unproto then add_args true args;
+      Buffer.add_char b ')';
+      let result_str = match res with
+        | Tunit -> ""
+        | _ -> " -> " ^ name_rust_type_ffi res
+      in
+      "fn " ^ (Buffer.contents b) ^ result_str
+  | _ -> name_rust_decl_fn id ty
+
 (* TODO: print expressions and statements *)
 
 let name_function_parameters name_param fun_name params cconv name_origins rels = 
@@ -470,16 +516,36 @@ let print_composite_init_rust var_info p il =
 
 let print_globvar p id v =
   let name1 = extern_atom id in
-  (* let name2 = if v.gvar_readonly then "const " ^ name1 else "const " ^ name1 in *)
-  let name2 = "const " ^ name1 in
+  (* Use 'static mut' for string literals so they can be referenced *)
+  let is_string_literal = Str.string_match re_string_literal name1 0 in
+  let name2 = if is_string_literal then "static mut " ^ name1 else "const " ^ name1 in
   let name3 = name2 ^ " : " in
   match v.gvar_init with
   | [] ->
       fprintf p "extern %s;@ @ "
               (name_rust_decl_fn_arg name3 v.gvar_info)
   | [Init_space _] ->
-      fprintf p "%s;@ @ "
-              (name_rust_decl_fn_arg name3 v.gvar_info)
+      (* Uninitialized arrays need default initialization in Rust *)
+      (match v.gvar_info with
+       | Rusttypes.Tarray(mut, elem_ty, sz) ->
+           let sz_val = camlint_of_coqint sz in
+           (* Use literal zero for numeric types instead of ::default() *)
+           let default_val = match elem_ty with
+             | Rusttypes.Tint(_, _) -> "0"
+             | Rusttypes.Tlong(_) -> "0"
+             | Rusttypes.Tfloat(_) -> "0.0"
+             | _ -> (name_rust_type elem_ty) ^ "::default()"
+           in
+           fprintf p "static mut %s : [%s; %ld] = [%s; %ld];@ @ "
+             name1
+             (name_rust_type elem_ty)
+             sz_val
+             default_val
+             sz_val
+       | _ ->
+           fprintf p "%s = %s::default();@ @ "
+                   (name_rust_decl_fn_arg name3 v.gvar_info)
+                   (name_rust_type v.gvar_info))
   | _ ->
       fprintf p "@[<hov 2>%s = "
               (name_rust_decl_fn_arg name3 v.gvar_info);
@@ -488,7 +554,7 @@ let print_globvar p id v =
         [i1] ->
           print_rust_init p v.gvar_info i1
       | var_info, il ->
-          if Str.string_match re_string_literal (extern_atom id) 0
+          if is_string_literal
           && List.for_all (function Init_int8 _ -> true | _ -> false) il
           (* FIX IS HERE: Pass 'id' directly, not 'extern_atom id' *)
           then print_string_array p id v.gvar_info il
