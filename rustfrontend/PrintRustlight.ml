@@ -38,6 +38,12 @@ let string_of_op op=
   | Oge -> ">="
   (* | _ -> "no support this operation" *)
 
+let print_rust_float p f =
+  let s = Printf.sprintf "%.18g" f in
+  if String.contains s '.' || String.contains s 'e' then
+    fprintf p "%s" s
+  else
+    fprintf p "%s.0" s
 
 (* Precedences and associativity (copy from PrintClight.ml) *)
 
@@ -70,13 +76,42 @@ let precedence = function
 
 (* 在 rustfrontend/PrintRustlight.ml 中 *)
 
+let is_float_type ty =
+  match ty with
+  | Rusttypes.Tfloat _ -> true
+  | _ -> false
+
+(* Helper function to check if a pexpr is an integer constant *)
+let is_int_const pe =
+  match pe with
+  | Econst_int _ -> true
+  | _ -> false
+
+(* Get the type of a pexpr - moved here to be available in pexpr function *)
+let type_of_pexpr (p : Rustlight.pexpr) : Rusttypes.coq_type =
+  match p with
+  | Eunit -> Rusttypes.Tunit
+  | Econst_int (_, ty) -> ty
+  | Econst_float (_, ty) -> ty
+  | Econst_single (_, ty) -> ty
+  | Econst_long (_, ty) -> ty
+  | Eplace (_, ty) -> ty
+  | Ecktag (_, _) -> Rusttypes.Tint (Ctypes.I32, Ctypes.Signed)
+  | Eref (_, _, _, ty) -> ty
+  | Eunop (_, _, ty) -> ty
+  | Ebinop (_, _, _, ty) -> ty
+  | Eglobal (_, ty) -> ty
+  | Eas (_, ty) -> ty
+  | Esizeof (_, ty) -> ty
+  | Ederef (_, ty) -> ty
+
 let rec print_place out (p: place) =
   match p with
   | Plocal(id, _) ->
       fprintf out "%s" (extern_atom id)
   | Pderef(Pparenthesize(_, _, Ebinop(Oadd, base, index, _)), _) ->
       (* 关键修复 #2: 在索引表达式后添加 'as usize' *)
-      fprintf out "%a[%a as usize]" pexpr (0, base) pexpr (0, index)
+      fprintf out "%a[(%a) as usize]" pexpr (0, base) pexpr (0, index)
   | Pderef(p', _) ->
       fprintf out "(*%a)" print_place p'
   | Pfield(p', fid, _) ->
@@ -86,7 +121,7 @@ let rec print_place out (p: place) =
   | Pparenthesize(_, _, ll) ->
       fprintf out "(%a)" pexpr (0, ll)
   | ParrayIndex(p_base, p_index, _) ->
-      fprintf out "%a[%s as usize]" print_place p_base (extern_atom p_index)
+      fprintf out "%a[(%s) as usize]" print_place p_base (extern_atom p_index)
   | Ppair (p1, p2) -> (* 添加这个 case *)
     fprintf out "(%a, %a)" print_place p1 print_place p2
 
@@ -102,7 +137,7 @@ and pexpr p (prec, e) =
   begin match e with
   | Ederef(Ebinop(Oadd, base, index, _), _) ->
       (* 关键修复 #2: 在索引表达式后添加 'as usize' *)
-      fprintf p "%a[%a as usize]" pexpr (0, base) pexpr (0, index)
+      fprintf p "%a[(%a) as usize]" pexpr (0, base) pexpr (0, index)
   | Ederef(pe, ty) ->
       fprintf p "*(%a)" pexpr (prec', pe)
   | Eunit ->  fprintf p "tt"
@@ -114,7 +149,7 @@ and pexpr p (prec, e) =
   | Econst_int(n, _) ->
     fprintf p "%ld" (camlint_of_coqint n)
   | Econst_float(f, _) ->
-    fprintf p "%.18g" (camlfloat_of_coqfloat f)
+    print_rust_float p (camlfloat_of_coqfloat f)
   | Econst_single(f, _) ->
     fprintf p "%.18g_f32" (camlfloat_of_coqfloat32 f)
   | Econst_long(n, Rusttypes.Tlong(Unsigned)) ->
@@ -127,15 +162,39 @@ and pexpr p (prec, e) =
     fprintf p "__builtin_fabs(%a)" pexpr (2, a1)
   | Eunop(op, a1, _) ->
     fprintf p "%s%a" (name_unop op) pexpr (prec', a1)
-  | Ebinop(op, a1, a2, _) ->
-    fprintf p "%a@ %s %a"
-      pexpr (prec1, a1) (name_binop op) pexpr (prec2, a2)
+  | Ebinop(op, a1, a2, ty) ->
+    (* Check if this is a float operation - if so, convert int literals to float *)
+    let is_float_op = is_float_type ty || is_float_type (type_of_pexpr a1) || is_float_type (type_of_pexpr a2) in
+    (* Print first operand *)
+    (match a1 with
+     | Econst_int(n, _) when is_float_op ->
+         fprintf p "%ld.0" (camlint_of_coqint n)
+     | _ ->
+         pexpr p (prec1, a1));
+    fprintf p "@ %s " (name_binop op);
+    (* Print second operand *)
+    (match a2 with
+     | Econst_int(n, _) when is_float_op ->
+         fprintf p "%ld.0" (camlint_of_coqint n)
+     | _ ->
+         pexpr p (prec2, a2))
   | Ecktag(v, fid) ->
     fprintf p "%s(%a, %s)" "cktag" print_place v (extern_atom fid)
   | Eref(org, mut, v, _) ->
     fprintf p "&%s %s%a" (extern_atom org) (string_of_mut mut) print_place v
   | Eas(pe, ty) ->
-      fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty)
+      (* In Rust, comparison operators return bool, not int like in C *)
+      (* So we should never cast to bool, instead cast comparison results to int if needed *)
+      let is_casting_to_bool = 
+        match ty with
+        | Rusttypes.Tint(Ctypes.IBool, _) -> true
+        | _ -> false
+      in
+      (* Skip redundant 'as bool' casts since comparisons already return bool *)
+      if is_casting_to_bool then
+        fprintf p "%a" pexpr (prec', pe)
+      else
+        fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty)
   | Esizeof(ty1, ty2) ->
       fprintf p "::core::mem::size_of::<%s>()" (name_rust_type ty1)
   end;
@@ -154,23 +213,8 @@ let expr p (prec, e) =
 
 let print_expr p e = expr p (0, e)
 
-let type_of_pexpr (p : Rustlight.pexpr) : Rusttypes.coq_type =
-  match p with
-  | Eunit -> Rusttypes.Tunit
-  | Econst_int (_, ty) -> ty
-  | Econst_float (_, ty) -> ty
-  | Econst_single (_, ty) -> ty
-  | Econst_long (_, ty) -> ty
-  | Eplace (_, ty) -> ty
-  | Ecktag (_, _) -> Rusttypes.Tint (Ctypes.I32, Ctypes.Signed)  (* 或者你需要的类型 *)
-  | Eref (_, _, _, ty) -> ty
-  | Eunop (_, _, ty) -> ty
-  | Ebinop (_, _, _, ty) -> ty
-  | Eglobal (_, ty) -> ty
-  | Eas (_, ty) -> ty
-  | Esizeof (_, ty) -> ty
-  | Ederef (_, ty) -> ty
-  
+(* type_of_pexpr already defined above *)
+
 let type_of_expr (e : expr) : Rusttypes.coq_type =
   match e with
   | Emoveplace (_, ty) -> ty
@@ -183,9 +227,9 @@ let rec print_expr_list p (first, rl) =
       if not first then fprintf p ",@ ";
       expr p (2, r);
       (* 判断类型，如果是数组或指针，加 .as_ptr() *)
-      (match type_of_expr r with
+      (* (match type_of_expr r with
        | Rusttypes.Tarray _ | Rusttypes.Traw_pointer _ -> fprintf p ".as_ptr()"
-       | _ -> ());
+       | _ -> ()); *)
       print_expr_list p (false, rl)
 
 let rec print_expr_list_with_type p (first, exprs, param_tys) =
@@ -195,9 +239,9 @@ let rec print_expr_list_with_type p (first, exprs, param_tys) =
       if not first then fprintf p ",@ ";
       expr p (2, r);
       (* 判断类型，如果是数组或指针，加 .as_ptr() *)
-      (match type_of_expr r with
+      (* (match type_of_expr r with
        | Rusttypes.Tarray _ | Rusttypes.Traw_pointer _ -> fprintf p ".as_ptr()"
-       | _ -> ());
+       | _ -> ()); *)
       (* 只有当类型不是 Tunit 时才打印 'as' 类型转换 *)
       (match ty with
       | Rusttypes.Tunit -> () (* 如果类型是 Tunit，则什么都不打印 *)
@@ -208,9 +252,9 @@ let rec print_expr_list_with_type p (first, exprs, param_tys) =
       if not first then fprintf p ",@ ";
       expr p (2, r);
       (* 判断类型，如果是数组或指针，加 .as_ptr() *)
-      (match type_of_expr r with
+      (* (match type_of_expr r with
       | Rusttypes.Tarray _ | Rusttypes.Traw_pointer _ -> fprintf p ".as_ptr()"
-      | _ -> ());
+      | _ -> ()); *)
       print_expr_list_with_type p (false, rl, [])
   | _ ->
       (* error *)
@@ -254,6 +298,77 @@ let get_callee_name (e: expr) : string option =
   | Epure (Eplace(Plocal(id, _), _)) -> Some (String.lowercase_ascii (extern_atom id))
   | Epure (Eglobal(id, _))           -> Some (String.lowercase_ascii (extern_atom id))
   | _                                -> None
+
+(* Helper to check if pexpr is a comparison that returns bool *)
+let rec is_comparison_pexpr pe =
+  match pe with
+  | Ebinop((Oeq | One | Olt | Ogt | Ole | Oge), _, _, _) -> true
+  | Eplace(p, _) -> 
+      (* Check if the place contains a comparison expression *)
+      (match p with
+       | Pparenthesize(_, _, inner_pe) -> is_comparison_pexpr inner_pe
+       | _ -> false)
+  | _ -> false
+
+(* Helper to check if expression is a comparison that returns bool *)
+let is_comparison_expr e =
+  match e with
+  | Epure pe -> is_comparison_pexpr pe
+  | _ -> false
+
+(* Helper to get the type of a place *)
+let type_of_place (p : place) : Rusttypes.coq_type =
+  match p with
+  | Plocal(_, ty) -> ty
+  | Pderef(_, ty) -> ty
+  | Pfield(_, _, ty) -> ty
+  | Pdowncast(_, _, ty) -> ty
+  | Pparenthesize(_, ty, _) -> ty
+  | ParrayIndex(_, _, ty) -> ty
+  | Ppair(_, _) -> Rusttypes.Tunit (* pairs are special, not sure about type *)
+
+(* Helper to create a printer for expression with auto bool->int conversion if needed *)
+let make_expr_printer_with_conversion place_ty e =
+  fun p ->
+    (* In Rust, comparison operators return bool, but we may be assigning to int *)
+    let place_is_int = match place_ty with
+      | Rusttypes.Tint(Ctypes.IBool, _) -> false
+      | Rusttypes.Tint(_, _) -> true
+      | _ -> false
+    in
+    let expr_ty = type_of_expr e in
+    let expr_is_bool_like = match expr_ty with
+      | Rusttypes.Tint(Ctypes.IBool, _) -> true
+      | _ -> false
+    in
+    (* Need cast if: (1) expr is comparison that returns bool, OR (2) expr type is bool and place is int *)
+    let needs_bool_to_int_cast = 
+      (is_comparison_expr e && place_is_int) || 
+      (expr_is_bool_like && place_is_int)
+    in
+    if needs_bool_to_int_cast then
+      fprintf p "(%a as i32)" print_expr e
+    else
+      fprintf p "%a" print_expr e
+
+(* Helper to print if condition - adds '!= 0' for int types but not for comparisons *)
+let print_if_condition p e =
+  (* Comparison operators in Rust return bool, so they don't need conversion *)
+  if is_comparison_expr e then
+    fprintf p "%a" print_expr e
+  else
+    (* Non-comparison expressions that are int types need '!= 0' *)
+    let expr_ty = type_of_expr e in
+    let is_int_type = match expr_ty with
+      | Rusttypes.Tint(Ctypes.IBool, _) -> false (* bool doesn't need conversion *)
+      | Rusttypes.Tint(_, _) -> true
+      | Rusttypes.Tlong(_) -> true
+      | _ -> false
+    in
+    if is_int_type then
+      fprintf p "(%a) != 0" print_expr e
+    else
+      fprintf p "%a" print_expr e
 
 (* Convert C format string to Rust format *)
 (* let convert_c_format_to_rust s =
@@ -301,7 +416,9 @@ let rec print_stmt p (s: Rustlight.statement) =
             print_place v
             print_expr e
       | _ ->
-          fprintf p "@[<hv 2>%a =@ %a;@]" print_place v print_expr e
+          let place_ty = type_of_place v in
+          (* let expr_ty = type_of_expr e in *)
+          fprintf p "@[<hv 2>%a =@ (%t) as %s;@]" print_place v (make_expr_printer_with_conversion place_ty e) (name_rust_type place_ty)
       )
   | Sassign_variant (v, enum_id, id, e) ->
     fprintf p "@[<hv 2>%a =@ %s::%s(%a);@]" print_place v (extern_atom enum_id)(extern_atom id) print_expr e
@@ -362,15 +479,15 @@ let rec print_stmt p (s: Rustlight.statement) =
       fprintf p "%a@ %a" print_stmt s1 print_stmt s2
   | Sifthenelse(e, s1, Sskip) ->
       fprintf p "@[<v 2>if %a {@ %a@;<0 -2>}@]"
-              print_expr e
+              print_if_condition e
               print_stmt s1
   | Sifthenelse(e, Sskip, s2) ->
-    fprintf p "@[<v 2>if ! %a {@ %a@;<0 -2>}@]"
-              expr (15, e)
+      fprintf p "@[<v 2>if !(%a) {@ %a@;<0 -2>}@]"
+              print_if_condition e
               print_stmt s2
   | Sifthenelse(e, s1, s2) ->
-    fprintf p "@[<v 2>if (%a) {@ %a@;<0 -2>} else {@ %a@;<0 -2>}@]"
-              print_expr e
+      fprintf p "@[<v 2>if %a {@ %a@;<0 -2>} else {@ %a@;<0 -2>}@]"
+              print_if_condition e
               print_stmt s1
               print_stmt s2
   | Sloop(s1) ->
@@ -398,15 +515,15 @@ let print_stmt_direct stmt = print_stmt (formatter_of_out_channel stdout) stmt
 let is_main_id id =
   let fun_name = extern_atom id in
   fun_name = "main"
+
 let print_function p id f =
   if is_main_id id then 
     begin
-    fprintf p "fn%s"
-        (name_rust_decl_fn (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
-        fprintf p "{@;@[<v 2>  @[<v 1>@;";
+    fprintf p "fn main()";
+    fprintf p "{@;@[<v 2>  @[<v 1>@;";
         List.iter 
         (fun (id, ty) ->
-          fprintf p "let mut %s;@ " (name_rust_decl_fn_arg (extern_atom id ^ " : ") ty))
+          fprintf p "let mut %s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty))
         f.fn_vars;
         print_stmt p f.fn_body;
     fprintf p "@]@;<0 -2>}@]@ @ "
@@ -437,6 +554,40 @@ let print_fundef p id fd =
   | Rusttypes.Internal f ->
       print_function p id f
 
+(* List of unsafe C functions that need safe wrappers *)
+let unsafe_c_functions = [
+  (* Math functions *)
+  "floor"; "floorf"; "ceil"; "ceilf"; "sqrt"; "sqrtf"; "pow"; "powf";
+  "sin"; "sinf"; "cos"; "cosf"; "tan"; "tanf"; "asin"; "asinf"; "acos"; "acosf"; "atan"; "atanf"; "atan2"; "atan2f";
+  "sinh"; "sinhf"; "cosh"; "coshf"; "tanh"; "tanhf";
+  "exp"; "expf"; "log"; "logf"; "log10"; "log10f"; "log2"; "log2f";
+  "fabs"; "fabsf"; "fmod"; "fmodf"; "remainder"; "remainderf";
+  "round"; "roundf"; "trunc"; "truncf"; "rint"; "rintf";
+  "fma"; "fmaf"; "fmin"; "fminf"; "fmax"; "fmaxf";
+  "hypot"; "hypotf"; "ldexp"; "ldexpf"; "frexp"; "frexpf"; "modf"; "modff";
+  
+  (* String functions *)
+  "strlen"; "strcmp"; "strncmp"; "strcpy"; "strncpy"; "strcat"; "strncat";
+  "strchr"; "strrchr"; "strstr"; "strtok"; "memcpy"; "memmove"; "memset"; "memcmp";
+  
+  (* I/O functions *)
+  "printf";
+  "fprintf"; "sprintf"; "snprintf"; "vprintf"; "vfprintf"; "vsprintf"; "vsnprintf";
+  "scanf"; "fscanf"; "sscanf"; "vscanf"; "vfscanf"; "vsscanf";
+  "puts"; "fputs"; "gets"; "fgets"; "putchar"; "fputc"; "getchar"; "fgetc"; "ungetc";
+  "fopen"; "fclose"; "fread"; "fwrite"; "fseek"; "ftell"; "rewind"; "feof"; "ferror";
+  
+  (* Memory functions *)
+  "calloc"; "realloc";
+  
+  (* Other standard functions *)
+  "abort"; "exit"; "atexit"; "system"; "getenv";
+  "abs"; "labs"; "llabs"; "div"; "ldiv"; "lldiv";
+  "atoi"; "atol"; "atoll"; "atof"; "strtol"; "strtoll"; "strtoul"; "strtoull"; "strtod"; "strtof";
+  "rand"; "srand"; "qsort"; "bsearch";
+  "time"; "clock"; "difftime"; "mktime"; "localtime"; "gmtime"; "strftime";
+]
+
 let print_fundecl p id fd =
   let fun_name = extern_atom id in
   (* 检查函数名是否在屏蔽列表中 *)
@@ -446,9 +597,29 @@ let print_fundecl p id fd =
     (* if not in unsafe function list, print it *)
     match fd with
     | Rusttypes.External(_, _, (AST.EF_external _ | AST.EF_runtime _), args, res, cconv) ->
-        fprintf p "unsafe extern \"C\" { %s; }@ "
-                  (name_rust_decl_fn (extern_atom id)
-                    (Rusttypes.Tfunction([], [], args, res, cconv)))
+        (* Check if this is an unsafe C function that needs wrapping *)
+        (* Don't wrap variadic functions (functions with varargs) *)
+        let is_vararg = cconv.AST.cc_vararg <> None in
+        if List.mem fun_name unsafe_c_functions && not is_vararg then begin
+          (* Print the unsafe extern with a different name *)
+          fprintf p "unsafe extern \"C\" { fn %s_unsafe(" fun_name;
+          let rec print_params first = function
+            | Rusttypes.Tnil -> ()
+            | Rusttypes.Tcons(ty, rest) ->
+                if not first then fprintf p ", ";
+                fprintf p "_ : %s" (name_rust_type ty);
+                print_params false rest
+          in
+          print_params true args;
+          fprintf p ")";
+          (match res with
+           | Rusttypes.Tunit -> ()
+           | _ -> fprintf p " -> %s" (name_rust_type res));
+          fprintf p "; }@ "
+        end else
+          fprintf p "unsafe extern \"C\" { %s; }@ "
+                    (name_rust_decl_fn (extern_atom id)
+                      (Rusttypes.Tfunction([], [], args, res, cconv)))
     | Rusttypes.External(_, _ ,_, _, _, _) ->
         ()
     | Rusttypes.Internal f ->
@@ -465,11 +636,59 @@ let print_globdecl p (id, gd) =
   | AST.Gfun f -> print_fundecl p id f
   | AST.Gvar v -> ()
 
+(* Generate safe wrapper functions for unsafe C functions *)
+let print_safe_wrappers p (prog: Rustlight.program) =
+  (* Collect all unsafe C functions that are used in the program *)
+  let used_unsafe_fns = ref [] in
+  List.iter (fun (id, gd) ->
+    match gd with
+    | AST.Gfun (Rusttypes.External(_, _, (AST.EF_external _ | AST.EF_runtime _), args, res, cconv)) ->
+        let fun_name = extern_atom id in
+        let is_vararg = cconv.AST.cc_vararg <> None in
+        (* Only wrap non-variadic functions *)
+        if List.mem fun_name unsafe_c_functions && not is_vararg then
+          used_unsafe_fns := (fun_name, args, res, cconv) :: !used_unsafe_fns
+    | _ -> ()
+  ) prog.Rusttypes.prog_defs;
+  
+  (* Print safe wrapper for each unsafe function *)
+  List.iter (fun (name, args, res, cconv) ->
+    (* Print function signature with parameter names *)
+    fprintf p "@[<v 2>fn %s(" name;
+    let rec print_sig_params first idx = function
+      | Rusttypes.Tnil -> ()
+      | Rusttypes.Tcons(ty, rest) ->
+          if not first then fprintf p ", ";
+          fprintf p "_arg%d: %s" idx (name_rust_type ty);
+          print_sig_params false (idx + 1) rest
+    in
+    print_sig_params true 0 args;
+    fprintf p ")";
+    (* Print return type *)
+    (match res with
+     | Rusttypes.Tunit -> ()
+     | _ -> fprintf p " -> %s" (name_rust_type res));
+    fprintf p "@ {@ ";
+    fprintf p "unsafe { %s_unsafe(" name;
+    (* Print parameter names for the call *)
+    let rec print_call_params first idx = function
+      | Rusttypes.Tnil -> ()
+      | Rusttypes.Tcons(_, rest) ->
+          if not first then fprintf p ", ";
+          fprintf p "_arg%d" idx;
+          print_call_params false (idx + 1) rest
+    in
+    print_call_params true 0 args;
+    fprintf p ") }@ ";
+    fprintf p "@]@,}@ @ "
+  ) !used_unsafe_fns
+
 let print_program p (prog: Rustlight.program) =
   fprintf p "@[<v 0>";
   List.iter (PrintRustsyntax.declare_composite p) prog.Rusttypes.prog_types;
   List.iter (PrintRustsyntax.define_composite p) prog.Rusttypes.prog_types;
   List.iter (print_globdecl p) prog.Rusttypes.prog_defs;
+  print_safe_wrappers p prog;
   List.iter (print_globdef p) prog.Rusttypes.prog_defs;
   fprintf p "@]@."
 

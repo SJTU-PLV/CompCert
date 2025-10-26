@@ -142,7 +142,7 @@ let rec name_rust_decl id ty =
 let rec name_rust_decl_var id ty =
   match ty with
   | Rusttypes.Tunit ->
-    name_optid_no_space id ^ "i32 /*this is unit */"
+    name_optid_no_space id ^ "()"
   | Rusttypes.Tvoid ->
     name_optid_no_space id ^ "std::ffi::c_void"    
   | Rusttypes.Tint(sz, sg) ->
@@ -195,12 +195,12 @@ let rec name_rust_decl_var id ty =
         name_optid_no_space id ^ "[" ^ name_rust_decl "" ty ^ ";" ^ sprintf "%ld" (camlint_of_coqint sz) ^ "]"
     (* end *)
   | Tslice(mut, ty) ->
-    "&" ^ string_of_mut mut ^ " [" ^ (name_rust_decl ""  ty) ^ "]" ^ name_optid id
+    name_optid_no_space id ^ "&" ^  string_of_mut mut ^ " [" ^ (name_rust_decl ""  ty) ^ "]"
 
 let rec name_rust_decl_fn_arg id ty =
   match ty with
   | Rusttypes.Tunit ->
-    name_optid_no_space id ^ "i32 /*this is unit */"
+    name_optid_no_space id ^ "()"
   | Rusttypes.Tvoid ->
     name_optid_no_space id ^ "std::ffi::c_void"    
   | Rusttypes.Tint(sz, sg) ->
@@ -357,7 +357,7 @@ let name_function_parameters name_param fun_name params cconv name_origins rels 
             if cconv.cc_vararg <> None then Buffer.add_string b ",..." 
         | (id, ty) :: rem -> 
             if not first then Buffer.add_string b ", "; 
-            Buffer.add_string b ((name_param id)^": "^(name_rust_decl_fn_arg "" ty)); 
+            Buffer.add_string b ("mut "^(name_param id)^": "^(name_rust_decl_fn_arg "" ty)); 
             add_params false rem in 
         add_params true params 
     end;
@@ -470,7 +470,8 @@ let print_composite_init_rust var_info p il =
 
 let print_globvar p id v =
   let name1 = extern_atom id in
-  let name2 = if v.gvar_readonly then "const " ^ name1 else name1 in
+  (* let name2 = if v.gvar_readonly then "const " ^ name1 else "const " ^ name1 in *)
+  let name2 = "const " ^ name1 in
   let name3 = name2 ^ " : " in
   match v.gvar_init with
   | [] ->
