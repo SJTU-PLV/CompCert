@@ -597,6 +597,53 @@ let rec print_stmt p (s: Rustlight.statement) =
                print_expr_list_with_type (true, el, param_tys)
          )
       )
+  | Smethod_call(v, receiver, method_name, el) ->
+      (* Method call: place = receiver.method(args) *)
+      (* Check if the destination variable type is Tunit - if so, don't print assignment *)
+      let place_ty = type_of_place v in
+      let is_ignored_return = match place_ty with
+        | Rusttypes.Tunit -> true
+        | _ -> false
+      in
+      (* For method calls, we need to determine if the method is mutable (takes &mut self) or not *)
+      (* For now, we'll use a simple heuristic: methods that modify the receiver are typically mutable *)
+      (* Common patterns: push, pop, insert, remove, clear, etc. *)
+      let method_str = extern_atom method_name in
+      let is_mut_method = 
+        let lower = String.lowercase_ascii method_str in
+        (* Common mutable methods *)
+        lower = "push" || lower = "pop" || lower = "insert" || lower = "remove" ||
+        lower = "clear" || lower = "append" || lower = "extend" || lower = "drain" ||
+        lower = "truncate" || lower = "resize" || lower = "swap" || lower = "sort" ||
+        lower = "reverse" || lower = "dedup" || lower = "retain" || lower = "fill"
+      in
+      (* Print the method call *)
+      if is_ignored_return then
+        (* No assignment, just the method call *)
+        if is_mut_method then
+          fprintf p "@[<hv 2>(%a).%s@,(@[<hov 0>%a@]);@]"
+            print_expr receiver
+            method_str
+            print_expr_list (true, el)
+        else
+          fprintf p "@[<hv 2>(%a).%s@,(@[<hov 0>%a@]);@]"
+            print_expr receiver
+            method_str
+            print_expr_list (true, el)
+      else
+        (* With assignment *)
+        if is_mut_method then
+          fprintf p "@[<hv 2>%a =@ (%a).%s@,(@[<hov 0>%a@]);@]"
+            print_place v
+            print_expr receiver
+            method_str
+            print_expr_list (true, el)
+        else
+          fprintf p "@[<hv 2>%a =@ (%a).%s@,(@[<hov 0>%a@]);@]"
+            print_place v
+            print_expr receiver
+            method_str
+            print_expr_list (true, el)
   | Ssequence(Sskip, s2) ->
       print_stmt p s2
   | Ssequence(s1, Sskip) ->

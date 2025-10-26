@@ -620,6 +620,8 @@ Fixpoint transl_stmt (end_node: node) (stmt: statement) (sel: selector)
       add_instr (Isel sel succ)
   | Scall p a al =>
       add_instr (Isel sel succ)
+  | Smethod_call p receiver method_name al =>
+      add_instr (Isel sel succ)
   | Sreturn e =>
       add_instr (Isel sel end_node)
     end.
@@ -845,6 +847,11 @@ statement -> node -> node -> option node -> option node -> node -> Prop :=
     (STMT: select_stmt body sel = Some (Scall p e l))
     (TR: transl_stmt (get_an ae pc) (Scall p e l) = OK ts),
     match_stmt body cfg (Scall p e l) ts pc next cont brk endn
+| match_Smethod_call: forall pc next sel ts p receiver method_name l cont brk endn
+    (SEL: cfg ! pc = Some (Isel sel next))
+    (STMT: select_stmt body sel = Some (Smethod_call p receiver method_name l))
+    (TR: transl_stmt (get_an ae pc) (Smethod_call p receiver method_name l) = OK ts),
+    match_stmt body cfg (Smethod_call p receiver method_name l) ts pc next cont brk endn
 | match_Ssequence: forall s1 ts1 s2 ts2 n1 n2 n3 cont brk endn
     (MSTMT1: match_stmt body cfg s1 ts1 n1 n2 cont brk endn)
     (MSTMT2: match_stmt body cfg s2 ts2 n2 n3 cont brk endn),
@@ -2163,7 +2170,7 @@ Proof.
   induction s; intros; simpl in TRSTMT.
 
   (* atomic statement *)
-  2-8: exploit add_instr_charact; eauto;
+  2-9: exploit add_instr_charact; eauto;
   intros (ts & A1 & A2 & A3);
   exists ts; split; auto;
   econstructor; eauto.

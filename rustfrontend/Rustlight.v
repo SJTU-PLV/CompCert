@@ -263,6 +263,8 @@ Inductive statement : Type :=
 | Scall: place -> expr -> list expr -> statement (**r function call, p =
   f(...). The assignee is mandatory, because we need to ensure that
   the return value (may be a box) is received *)
+| Smethod_call: place -> expr -> ident -> list expr -> statement (**r method call, p = 
+  receiver.method(...). Used for Rust method syntax like vec.push(item) *)
 | Ssequence : statement -> statement -> statement  (**r sequence *)
 | Sifthenelse : expr  -> statement -> statement -> statement (**r conditional *)
 | Sloop: statement -> statement (**r infinite loop *)
@@ -1426,6 +1428,7 @@ Notation "p :=b e " := (Sbox p e) (in custom rustlight at level 80, p custom rus
 Notation " p := e " := (Sassign p e) (in custom rustlight at level 80, p custom rustlight_place at level 20, e custom rustlight_expr at level 15) : rustlight_scope.
 Notation " p :=v f1 :: f2 ( e ) " := (Sassign_variant p f1 f2 e) (in custom rustlight at level 80, p custom rustlight_place at level 20, e custom rustlight_expr at level 15, f1 global, f2 global) : rustlight_scope.
 Notation " p <- f < fty > @ l " := (Scall p (Eglobal f fty)l) (in custom rustlight at level 80, p custom rustlight_place at level 20, f global, fty global, l custom rustlight_expr at level 20) : rustlight_scope.
+Notation " p <. receiver . method @ l " := (Smethod_call p receiver method l) (in custom rustlight at level 80, p custom rustlight_place at level 20, receiver custom rustlight_expr at level 20, method global, l custom rustlight_expr at level 20) : rustlight_scope.
 
 
 (* Notation for place *)

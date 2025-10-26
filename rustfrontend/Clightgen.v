@@ -755,6 +755,10 @@ Fixpoint transl_stmt (locals: list ident) (stmt: statement) : mon Clight.stateme
       dosym temp <- gensym cty;      
       let assign := Clight.Sassign pe (Etempvar temp cty) in
       ret (Clight.Ssequence (Clight.Scall (Some temp) e' el') assign)
+  | Smethod_call p receiver method_name el =>
+      (* Method calls don't exist in C, so we translate them as function calls *)
+      (* This is a placeholder - in practice, method calls should be resolved before Clight generation *)
+      error (Errors.msg "Method call cannot be translated to Clight - methods are Rust-specific")
   | Ssequence s1 s2 =>
       dosym s1' <- transl_stmt s1;
       dosym s2' <- transl_stmt s2;

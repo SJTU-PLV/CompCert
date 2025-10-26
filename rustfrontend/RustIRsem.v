@@ -304,6 +304,15 @@ Inductive step : state -> trace -> state -> Prop :=
     function_not_drop_glue fd ->
     step (State f (Scall p a al) k le m) E0 (Callstate vf vargs (Kcall (Some p) f le k) m)
 
+| step_smethod_call: forall f p receiver method_name al k le m vf vargs fd orgs org_rels tyargs tyres cconv,
+    eval_expr ge le m ge receiver vf ->
+    eval_exprlist ge le m ge al tyargs vargs ->
+    Genv.find_funct ge vf = Some fd ->
+    type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv ->
+    function_not_drop_glue fd ->
+    (* Method call is treated similarly to function call *)
+    step (State f (Smethod_call p receiver method_name al) k le m) E0 (Callstate vf vargs (Kcall (Some p) f le k) m)
+
 | step_internal_function: forall vf f vargs k m e m'
     (FIND: Genv.find_funct ge vf = Some (Internal f))
     (NORMAL: f.(fn_drop_glue) = None),
@@ -565,6 +574,12 @@ Inductive step_mem_error : state -> Prop :=
     Genv.find_funct ge vf = Some fd ->
     type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv ->
     step_mem_error (State f (Scall p a al) k le m)
+| step_method_call_error: forall f p receiver method_name al k le m tyargs vf fd cconv tyres orgs org_rels,
+    eval_expr ge le m ge receiver vf ->
+    eval_exprlist_mem_error ge le m ge al tyargs ->
+    Genv.find_funct ge vf = Some fd ->
+    type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv ->
+    step_mem_error (State f (Smethod_call p receiver method_name al) k le m)
 | step_internal_function_error: forall vf f vargs k m e
     (FIND: Genv.find_funct ge vf = Some (Internal f)),
     function_entry_mem_error f vargs m e ->

@@ -96,6 +96,9 @@ Fixpoint transl_stmt (params: list (ident * type)) (* (retv: place) *) (stmt: Ru
   | Rustlight.Scall p e el =>
       let drop := gen_drop p in
       Ssequence drop (Scall p e el)
+  | Rustlight.Smethod_call p receiver method_name el =>
+      let drop := gen_drop p in
+      Ssequence drop (Smethod_call p receiver method_name el)
   | Rustlight.Ssequence s1 s2 =>
       let s1' := transl_stmt s1 vars in
       let s2' := transl_stmt s2 vars in

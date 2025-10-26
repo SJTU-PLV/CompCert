@@ -41,6 +41,18 @@ Definition transfer (S: PathsMap.t) (flag: bool) (f: function) (cfg: rustcfg) (p
                     IM.State (add_place S p (remove_place_list pl before))
                   else
                     IM.State (remove_place p (add_place_list S pl before))
+              | Smethod_call p receiver _ al =>
+                  (* Method call: receiver.method(args). Handle like function call but also consider receiver *)
+                  let receiver_moved := moved_place receiver in
+                  let args_moved := moved_place_list al in
+                  let all_moved := match receiver_moved with
+                                   | Some rp => rp :: args_moved
+                                   | None => args_moved
+                                   end in
+                  if flag then
+                    IM.State (add_place S p (remove_place_list all_moved before))
+                  else
+                    IM.State (remove_place p (add_place_list S all_moved before))
               | Sreturn p =>
                   (* let p' := moved_place e in *)
                   (* if flag then *)

@@ -302,6 +302,12 @@ Inductive wt_stmt: statement -> Prop :=
     (WT4: typeof_place p = rty),
     (* We only support this kind of function call *)
     wt_stmt (Scall p (Eglobal id ty) al)
+| wt_Smethod_call: forall p receiver method_name al
+    (WT1: wt_place p)
+    (WT2: wt_expr receiver)
+    (WT3: wt_exprlist al),
+    (* Method call: receiver.method(args) *)
+    wt_stmt (Smethod_call p receiver method_name al)
 | wt_Sifthenelse: forall e s1 s2
     (WT1: wt_expr e)
     (WT2: wt_stmt s1)
@@ -830,6 +836,13 @@ Fixpoint type_check_stmt (stmt: statement) : res unit :=
       | _ =>
           Error (msg "callee is not a global variable")
       end
+  | Smethod_call p receiver method_name al =>
+      do _ <- type_check_place p;
+      do _ <- type_check_expr receiver;
+      do _ <- type_check_exprlist al;
+      (* For method calls, we don't have full type information at this stage *)
+      (* Type checking would need to be done by the Rust type system *)
+      OK tt
   | Sifthenelse e s1 s2 =>
       do _ <- type_check_expr e;
       do _ <- type_check_stmt s1;
@@ -977,6 +990,11 @@ Proof.
     eapply type_check_place_sound; eauto.
     eapply type_check_exprlist_sound; eauto.
     destruct type_eq in CK; try congruence.    
+  - monadInv CK. destruct x. destruct x0. destruct x1.
+    econstructor; eauto.
+    eapply type_check_place_sound; eauto.
+    eapply type_check_expr_sound; eauto.
+    eapply type_check_exprlist_sound; eauto.
   - monadInv CK. destruct x.
     econstructor; eauto.
   - monadInv CK. destruct x. destruct x0.

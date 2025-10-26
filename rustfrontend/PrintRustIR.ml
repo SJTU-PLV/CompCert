@@ -64,6 +64,12 @@ let rec print_stmt p (s: RustIR.statement) =
     fprintf p "storagedead %s;" (extern_atom id)
   | Sdrop v ->
     fprintf p "drop(%a of %s);" print_place v (name_rust_type (Rustlight.typeof_place v))
+  | Smethod_call(v, receiver, method_name, el) ->
+    fprintf p "@[<hv 2>%a =@ (%a).%s@,(@[<hov 0>%a@]);@]"
+              print_place v
+              print_expr receiver
+              (extern_atom method_name)
+              print_expr_list (true, el)
     
 
 (* Print cfg of RustIR *)
