@@ -50,7 +50,7 @@ Definition max_nat_limit := 1000000%positive.
  * This is the function you will implement in OCaml after extraction.
  *)
 Parameter external_find_and_split_stateful
-  : ident -> ident -> Z -> Z -> TranslationEnv.t -> (Rustlight.statement * TranslationEnv.t).
+  : ident -> ident -> Z -> Z -> TranslationEnv.t -> (Rustlight.statement * list (ident * Rusttypes.type) * TranslationEnv.t).
 
 Parameter external_flush_assignments_for_vars : list ident -> TranslationEnv.t -> (Rustlight.statement * TranslationEnv.t).
 Parameter external_is_base_ptr_managed : ident -> TranslationEnv.t -> bool.
@@ -181,11 +181,11 @@ Definition find_and_split_m (base_ptr_id: ident) (new_ptr_id: ident) (c_offset: 
   (* 1. Get the current generator state *)
   bind get_gen (fun g =>
     (* 2. Call the external stateful function with the arguments and the current scopes *)
-    let '(stmt, new_scopes) :=
+    let '((stmt, new_vars), new_scopes) :=
       external_find_and_split_stateful base_ptr_id new_ptr_id c_offset array_size g.(gen_scopes)
     in
-    (* 3. Create a new generator with the updated scopes *)
-    let g' := mkgenerator g.(gen_next) g.(gen_trail) new_scopes in
+    (* 3. Create a new generator with the updated scopes and add new vars to trail *)
+    let g' := mkgenerator g.(gen_next) (g.(gen_trail) ++ new_vars) new_scopes in
     (* 4. Update the state with the new generator and return the statement *)
     bind (set_gen g') (fun _ =>
       ret stmt)).

@@ -91,15 +91,15 @@ let rec find_and_split_rec (tree: t) (target_c_offset: int) : ((statement list *
         let left_tmp_id = fresh_atom () in
         let right_tmp_id = fresh_atom () in
         let slice_type = Tslice(Mutable, Tint(Ctypes.I32, Ctypes.Signed)) in
-        let usize_type = Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned) in
-        let result_place = Ppair (Plocal (left_tmp_id, Tunit), Plocal (right_tmp_id, Tunit)) in
+        let usize_type = Rusttypes.Tlong(Ctypes.Unsigned) in  (* Use u64 for usize on 64-bit systems *)
+        let result_place = Ppair (Plocal (left_tmp_id, slice_type), Plocal (right_tmp_id, slice_type)) in
         let split_stmt =
-          Scall(
+          Smethod_call(
             result_place,
-            (Epure (Eplace (Rustlight.Plocal (intern_string "split_at_mut", Tunit), Tunit))),
+            (Epure (Eplace (Plocal (l.rust_var, slice_type), slice_type))),  (* receiver *)
+            (intern_string "split_at_mut"),  (* method_name *)
             [
-              Epure (Eplace (Plocal (l.rust_var, slice_type), slice_type));
-              Epure (Econst_int (Z.of_uint relative_offset, usize_type))
+              Epure (Econst_long (Z.of_uint relative_offset, usize_type))
             ]
           )
         in
@@ -129,7 +129,25 @@ let sequence_of_statements (stmts: statement list) : statement =
     Sskip
 
 (*** MODIFICATION: Update the main function signature and logic ***)
-let find_and_split_stateful (base_ptr_id: ident) (new_ptr_id: ident) (c_offset: Z.t) (array_size_z: Z.t) (coq_env: TranslationEnv.t) : (statement * TranslationEnv.t) =
+(* Helper function to extract variables from Ppair places *)
+let rec extract_vars_from_place (p: place) : (ident * Rusttypes.coq_type) list =
+  match p with
+  | Plocal (id, ty) -> [(id, ty)]
+  | Ppair (p1, p2) -> extract_vars_from_place p1 @ extract_vars_from_place p2
+  | _ -> []
+
+(* Helper function to extract new variables from split statements *)
+let extract_new_vars_from_stmts (stmts: statement list) : (ident * Rusttypes.coq_type) list =
+  List.fold_left (fun acc stmt ->
+    match stmt with
+    | Smethod_call (p, _, _, _) ->
+        (* For split_at_mut, p is typically a Ppair *)
+        let vars = extract_vars_from_place p in
+        acc @ vars
+    | _ -> acc
+  ) [] stmts
+
+let find_and_split_stateful (base_ptr_id: ident) (new_ptr_id: ident) (c_offset: Z.t) (array_size_z: Z.t) (coq_env: TranslationEnv.t) : (statement * (ident * Rusttypes.coq_type) list) * TranslationEnv.t =
   let env = unpack_env coq_env in (* Unpack to internal format *)
   let c_offset_int = Z.to_int c_offset in
   let array_size_int = Z.to_int array_size_z in
@@ -153,7 +171,8 @@ let find_and_split_stateful (base_ptr_id: ident) (new_ptr_id: ident) (c_offset: 
       let new_forest = PTree.set base_ptr_id new_state env.forest in
       let new_pointer_map = PTree.set new_ptr_id base_ptr_id env.pointer_to_base_map in
       let new_internal_env = { forest = new_forest; pointer_to_base_map = new_pointer_map } in
-      (sequence_of_statements split_stmts, pack_env new_internal_env coq_env) (* Pack back *)
+      let new_vars = extract_new_vars_from_stmts split_stmts in
+      ((sequence_of_statements split_stmts, new_vars), pack_env new_internal_env coq_env) (* Pack back *)
   | Error msg ->
       failwith ("SplitTree Error: " ^ msg)
 

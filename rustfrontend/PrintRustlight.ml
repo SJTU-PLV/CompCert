@@ -153,7 +153,7 @@ and pexpr p (prec, e) =
   | Econst_single(f, _) ->
     fprintf p "%.18g_f32" (camlfloat_of_coqfloat32 f)
   | Econst_long(n, Rusttypes.Tlong(Unsigned)) ->
-    fprintf p "%Lu_u64" (camlint64_of_coqint n)
+    fprintf p "(%Lu as usize)" (camlint64_of_coqint n)
   | Econst_long(n, _) ->
     fprintf p "%Ldi64" (camlint64_of_coqint n)
   | Eglobal(id, _) ->
@@ -369,7 +369,10 @@ let type_of_place (p : place) : Rusttypes.coq_type =
   | Pdowncast(_, _, ty) -> ty
   | Pparenthesize(_, ty, _) -> ty
   | ParrayIndex(_, _, ty) -> ty
-  | Ppair(_, _) -> Rusttypes.Tunit (* pairs are special, not sure about type *)
+  | Ppair(p1, p2) -> 
+      (* For pairs, return a tuple type instead of Tunit *)
+      (* This ensures the assignment is printed for method calls returning tuples *)
+      Rusttypes.Tint(Ctypes.I32, Ctypes.Signed) (* Placeholder: pairs should have their own type *)
 
 (* Helper to create a printer for expression with auto bool->int conversion if needed *)
 let make_expr_printer_with_conversion place_ty e =
@@ -697,7 +700,22 @@ let print_function p id f =
         fprintf p "unsafe {@ ";  (* Wrap in unsafe for static mut access *)
         List.iter 
         (fun (id, ty) ->
-          fprintf p "let mut %s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty))
+          match ty with
+          | Rusttypes.Tarray(_, elem_ty, sz) ->
+              (* Initialize arrays with default values *)
+              let sz_val = camlint_of_coqint sz in
+              let default_val = match elem_ty with
+                | Rusttypes.Tint(_, _) -> "0"
+                | Rusttypes.Tlong(_) -> "0"
+                | Rusttypes.Tfloat(_) -> "0.0"
+                | _ -> "Default::default()"
+              in
+              fprintf p "let mut %s = [%s; %ld];@ " 
+                (extern_atom id)
+                default_val
+                sz_val
+          | _ ->
+              fprintf p "let mut %s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty))
         f.fn_vars;
         print_stmt p f.fn_body;
         fprintf p "@;<0 -2>}@ ";
@@ -712,7 +730,22 @@ let print_function p id f =
         (* Print variables and their types *)
         List.iter 
         (fun (id, ty) ->
-          fprintf p "let mut %s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty))
+          match ty with
+          | Rusttypes.Tarray(_, elem_ty, sz) ->
+              (* Initialize arrays with default values *)
+              let sz_val = camlint_of_coqint sz in
+              let default_val = match elem_ty with
+                | Rusttypes.Tint(_, _) -> "0"
+                | Rusttypes.Tlong(_) -> "0"
+                | Rusttypes.Tfloat(_) -> "0.0"
+                | _ -> "Default::default()"
+              in
+              fprintf p "let mut %s = [%s; %ld];@ " 
+                (extern_atom id)
+                default_val
+                sz_val
+          | _ ->
+              fprintf p "let mut %s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty))
         f.fn_vars;
         (*
         List.iter

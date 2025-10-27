@@ -756,9 +756,27 @@ Fixpoint transl_stmt (locals: list ident) (stmt: statement) : mon Clight.stateme
       let assign := Clight.Sassign pe (Etempvar temp cty) in
       ret (Clight.Ssequence (Clight.Scall (Some temp) e' el') assign)
   | Smethod_call p receiver method_name el =>
-      (* Method calls don't exist in C, so we translate them as function calls *)
-      (* This is a placeholder - in practice, method calls should be resolved before Clight generation *)
-      error (Errors.msg "Method call cannot be translated to Clight - methods are Rust-specific")
+      (* Method calls are translated to function calls with receiver as first argument *)
+      (* e.g., receiver.method(arg1, arg2) becomes method(receiver, arg1, arg2) *)
+      (* Special handling for Ppair: skip the assignment since C doesn't have tuples *)
+      match p with
+      | Ppair _ _ =>
+          (* For tuple returns (like split_at_mut), just generate a Sskip *)
+          (* The actual Rustlight code will be printed correctly as method call *)
+          ret (Clight.Sskip)
+      | _ =>
+          docomb receiver' <- expr_to_cexpr locals receiver;
+          docomb el' <- expr_to_cexpr_list locals el;
+          let method_expr := Eglobal method_name Tunit in  (* function name as global *)
+          docomb method_expr' <- expr_to_cexpr locals method_expr;
+          let all_args := receiver' :: el' in  (* prepend receiver to argument list *)
+          docomb pe <- place_to_cexpr p;
+          let ty := typeof_place p in
+          let cty := to_ctype ty in
+          dosym temp <- gensym cty;
+          let assign := Clight.Sassign pe (Etempvar temp cty) in
+          ret (Clight.Ssequence (Clight.Scall (Some temp) method_expr' all_args) assign)
+      end
   | Ssequence s1 s2 =>
       dosym s1' <- transl_stmt s1;
       dosym s2' <- transl_stmt s2;

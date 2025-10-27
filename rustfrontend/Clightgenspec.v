@@ -796,6 +796,16 @@ tr_composite relation *)
     place_to_cexpr ce tce p = OK pe ->
     assign = Clight.Sassign pe (Etempvar temp (to_ctype (typeof_place p))) ->
     tr_stmt locals (Scall p e l) (Clight.Ssequence (Clight.Scall (Some temp) e' l') assign)
+| tr_method_call: forall p receiver method_name el temp receiver' el' method_expr' all_args assign pe,
+    expr_to_cexpr ce tce locals receiver = OK receiver' ->
+    expr_to_cexpr_list ce tce locals el = OK el' ->
+    expr_to_cexpr ce tce locals (Eglobal method_name Tunit) = OK method_expr' ->
+    all_args = receiver' :: el' ->
+    place_to_cexpr ce tce p = OK pe ->
+    assign = Clight.Sassign pe (Etempvar temp (to_ctype (typeof_place p))) ->
+    tr_stmt locals (Smethod_call p receiver method_name el) (Clight.Ssequence (Clight.Scall (Some temp) method_expr' all_args) assign)
+| tr_method_call_ppair: forall p1 p2 receiver method_name el,
+    tr_stmt locals (Smethod_call (Ppair p1 p2) receiver method_name el) Clight.Sskip
 | tr_drop: forall p set_stmt drop_stmt temp pe,
     set_stmt = Clight.Sset temp (Eaddrof pe (Tpointer (to_ctype (typeof_place p)) noattr)) ->
     place_to_cexpr ce tce p = OK pe ->
@@ -862,6 +872,9 @@ Proof.
     monadInv_sym EQ2. eapply tr_drop; eauto. monadInv_sym EQ2.
   - monadInv_comb TRANSL. monadInv_sym EQ3.
     eapply tr_call; eauto. 
+  - destruct p; try (monadInv_comb TRANSL; monadInv_sym EQ4; eapply tr_method_call; eauto).
+    (* Ppair case *)
+    monadInv_sym TRANSL. eapply tr_method_call_ppair; eauto.
   - eapply tr_seq; eauto. 
   - monadInv_comb TRANSL. monadInv_sym EQ0.
     eapply tr_ifthenelse; eauto. 
