@@ -159,9 +159,9 @@ let process_rust_file test_case =
                           |> debug_Rustlightgen
                           |> debug_RustIRgen
                           |> debug_RustCFG
-                          |> debug_InitAnalysis
                           (* |> debug_MoveChecking *)
                           |> debug_BorrowCheck
+                          |> debug_InitAnalysis
                           |> debug_ElaborateDrop
                           |> debug_ClightComposite
                           |> debug_Clightgen in

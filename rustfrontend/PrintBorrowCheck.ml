@@ -12,6 +12,7 @@ open BorrowCheckDomain
 open BorrowCheckPolonius
 open Driveraux
 open UnionFindDelete
+open RegionLiveness
 
 let print_mutkind pp (mut: mutkind) =
   match mut with
@@ -59,14 +60,18 @@ let print_origin_state pp (org_st: origin list * LOrgSt.t) =
 let find_same_set (org: origin) (uf: UFD.unionfind) : origin list =
   let all_orgs = List.map fst (PTree.elements uf) in
   (* all_orgs may be empty *)
-  org :: (List.filter (fun o -> o != org && UFD.repr uf o == UFD.repr uf org) all_orgs)
+  (* Be careful of the structural equality and physical equality in Ocaml! *)
+  org :: (List.filter (fun o -> (o <> org) && (UFD.repr uf o = UFD.repr uf org)) all_orgs)
 
 let print_origin_env pp (e: LOrgEnv.t) =
   fprintf pp "OrgEnv: ";
   let l = (PTree.elements (LOrgEnv.m e)) in
+  (* collect the repr nodes *)
+  let repr_l = List.filter (fun (org, _) -> UFD.repr (LOrgEnv.uf e) org = org) l in
+  (* only print the representative elements of each set *)
   (* collect the equivalent set where each element uses the element
   (same position) in l as the repr node *)
-  let (orgs, ls) = List.split l in
+  let (orgs, ls) = List.split repr_l in
   let orgs_ds = List.map (fun o -> find_same_set o (LOrgEnv.uf e)) orgs in
   List.iter (print_origin_state pp) (List.combine orgs_ds ls)
 
@@ -92,12 +97,17 @@ let print_ae pp ae =
     (* TODO: print alias graph *)
     fprintf pp "%a@.@." print_origin_env org_env
 
-let print_instruction_debug pp prog (pc, (i, ae)) =
+let print_live_regions pp live =
+  let orgs = RegionSet.elements live in
+  fprintf pp "Live regions: %s@." (origin_list_to_string orgs) 
+
+let print_instruction_debug pp prog (pc, (i, (live, ae))) =
   PrintRustIR.print_instruction pp prog (pc,i);
+  print_live_regions pp live;
   print_ae pp ae
 
-let print_cfg_body_borrow_check pp (body, entry, cfg) ae =
-  let cfg' = PTree.combine PrintRustIR.combine cfg ae in
+let print_cfg_body_borrow_check pp (body, entry, cfg) live ae =
+  let cfg' = PTree.combine PrintRustIR.combine cfg (PTree.combine PrintRustIR.combine live ae) in
   let instrs =
     List.sort
     (fun (pc1, _) (pc2, _) -> compare pc2 pc1)
@@ -113,7 +123,7 @@ let print_cfg_borrow_check ce pp id f  =
   match generate_cfg f.fn_body with
   | Errors.OK(entry, cfg) ->
     (match borrow_check ce f cfg entry with
-    | Errors.OK ae ->
+    | Errors.OK (live, ae) ->
       fprintf pp "%s@ "
           (PrintRustsyntax.name_rust_decl (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
       fprintf pp "@[<v 2>{@ ";
@@ -122,7 +132,7 @@ let print_cfg_borrow_check ce pp id f  =
       List.iter
       (fun (id, ty) ->
         fprintf pp "%s;@ " (PrintRustsyntax.name_rust_decl (extern_atom id) ty)) f.fn_vars;
-      print_cfg_body_borrow_check pp (f.fn_body, entry, cfg) (snd ae)
+      print_cfg_body_borrow_check pp (f.fn_body, entry, cfg) (snd live) (snd ae)
     | Errors.Error msg ->
       Diagnostics.fatal_error Diagnostics.no_loc "Error in borrow check: %a@ " Driveraux.print_error msg)
   | Errors.Error msg ->

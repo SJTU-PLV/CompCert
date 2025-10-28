@@ -59,7 +59,7 @@ fn main() {
 	println!("{}", r3);
 }
 ```
-7. dangling reference(crashed)
+7. dangling reference
 ```
 fn main() {
 
@@ -102,3 +102,8 @@ fn no_dangle() -> i32 {
 23. Problem case #4 from NLL RFC
 24. check the functionality of function call. `assign` is similar to the `assign` function in [https://doc.rust-lang.org/nomicon/subtyping.html#variance]
 25. List implemented with reference. An interesting point is that if we change `add_one` to `fn add_one<'a>(l: &'a mut list<'a>)`, this code does not compile because `l2` is borrowed until the end of println which is inferred by the lifetime `'a` of `l2`. And the lifetime of borrow expression `&mut l2` in `add_one` is also `'a`.
+29. mutable borrow after move (not supported yet)
+30. WRONG: An example from minimized from https://github.com/rust-lang/rust/issues/134554, which cannot be passed in Polonius and NLL but can be passed in our borrow checker. Actually, it can pass Polonius but not NLL. The example in the above url is more complicated. May be related to trait bound?
+31. [untested] An example to illustrate that we do not use invariant relation to check that two region are aliased or not.
+32. The running example that we use to illustrate our borrow checker
+33. An example rejected by Polonius. The reason may be the time-traveling problem. To solve this problem, we should maintain flow information in the relations between regions (may be some fancy union-find structure)

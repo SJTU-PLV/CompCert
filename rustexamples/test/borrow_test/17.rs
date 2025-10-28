@@ -3,7 +3,7 @@ fn main(){
     let p: &mut i32 = &mut v;
     *p = 4;
     loop{
-        *p = 4;
+        *p = 4; // report error here
         v = 3;
     }
 }

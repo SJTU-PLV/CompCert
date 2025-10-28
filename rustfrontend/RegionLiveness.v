@@ -63,36 +63,47 @@ Fixpoint reg_exprlis_live (l: list expr) (rs: RegionSet.t) : RegionSet.t :=
       reg_exprlis_live l' (reg_expr_live e rs)
   end.
 
-Definition reg_place_dead (p: place) (rs: RegionSet.t) : RegionSet.t :=
+Fixpoint root_type_of_place (p: place) : type :=
+  match p with
+  | Plocal _ ty => ty
+  | Pderef p' _ 
+  | Pfield p' _ _
+  | Pdowncast p' _ _ => root_type_of_place p'
+  end.
+
+(* Assigning a place may use some regions (if it is not a local) or
+kill its regions (it is a local) *)
+Definition reg_assign_place (p: place) (rs: RegionSet.t) : RegionSet.t :=
   match p with
   (* conservative kill: we only kill the regions whose place is a local *)
-  | Plocal id ty => reg_list_dead (origins_of_type ty) rs
-  | _ => rs
+  | Plocal id ty => 
+      reg_list_dead (origins_of_type ty) rs
+  | _ => reg_list_live (origins_of_type (root_type_of_place p)) rs
   end.
 
 (* Transfer function *)
      
-Definition transfer (f: function) (cfg: rustcfg) (pc: node) (after: RegionSet.t) : RegionSet.t :=
+Definition transfer (f: function) (cfg: rustcfg) (generic_regions: RegionSet.t) (pc: node) (after: RegionSet.t) : RegionSet.t :=
   match cfg ! pc with
-  | None => RegionSet.empty
+  | None => generic_regions
   | Some (Inop _) => after
   | Some (Icond e _ _) => reg_expr_live e after
-  | Some Iend => after
+  | Some Iend => generic_regions
   | Some (Isel sel _) =>
           match select_stmt f.(fn_body) sel with
-          | None => RegionSet.empty
+          | None => generic_regions
           | Some s =>
               match s with
               | Sassign p e
               | Sassign_variant p _ _ e
               | Sbox p e =>
-                  reg_expr_live e (reg_place_dead p after)
+                  reg_expr_live e (reg_assign_place p after)
               | Scall p _ l =>
-                  reg_exprlis_live l (reg_place_dead p after)
+                  reg_exprlis_live l (reg_assign_place p after)
               | Sdrop p =>
                   reg_place_live p after
               | Sreturn p =>
-                  reg_place_live p after
+                  reg_place_live p generic_regions
               | _ => after
               end 
           end
@@ -101,5 +112,14 @@ Definition transfer (f: function) (cfg: rustcfg) (pc: node) (after: RegionSet.t)
 Module RegionSetLat := LFSet(RegionSet).
 Module DS := Backward_Dataflow_Solver(RegionSetLat)(NodeSetBackward).
 
+Fixpoint live_generic_regions (l: list origin) : RegionSet.t := 
+  match l with
+  | nil => RegionSet.empty
+  | r :: l' =>
+      RegionSet.add r (live_generic_regions l')
+  end.
+
 Definition analyze (f: function) (cfg: rustcfg) : option (PMap.t RegionSet.t) :=
-  DS.fixpoint cfg successors_instr (transfer f cfg).
+  (* All the generic regions are live at all points *)  
+  let generic_regions := live_generic_regions f.(fn_generic_origins) in
+  DS.fixpoint cfg successors_instr (transfer f cfg generic_regions).

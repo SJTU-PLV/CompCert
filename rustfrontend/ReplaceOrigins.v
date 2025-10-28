@@ -11,13 +11,6 @@ Local Open Scope error_monad_scope.
 
 (** ** Replace origins in RustIR *)
 
-Definition find_elt {A: Type} (id: ident) (l: list (ident * A)) : option A :=
-  match find (fun '(id', v) => ident_eq id id') l with
-  | Some (_, v) => Some v
-  | None => None
-  end.
-
-
 Parameter fresh_atom: unit -> ident.
 
 Fixpoint gensym_list (n: nat) : list ident :=
@@ -27,34 +20,6 @@ Fixpoint gensym_list (n: nat) : list ident :=
       let id := fresh_atom tt in
       let l := gensym_list n' in
       (id :: l)
-  end.
-
-(* replace org with the the origin in rels *)
-Definition replace_origin (rels: list origin_rel) (org: origin) : origin :=
-  match find_elt org rels with
-  | Some org' =>
-      org'
-  | None =>
-      org
-  end.
-
-Fixpoint replace_origin_in_type (ty: type) (rels: list origin_rel) : type :=
-  match ty with
-  | Treference org mut ty =>
-      let ty' := replace_origin_in_type ty rels in
-      Treference (replace_origin rels org) mut ty'
-  | Tbox ty =>
-      let ty' := replace_origin_in_type ty rels in
-      Tbox ty'
-  | Tstruct orgs id  =>
-      let orgs' := map (replace_origin rels) orgs in
-      Tstruct orgs' id
-  | Tvariant orgs id =>
-      let orgs' := map (replace_origin rels) orgs in
-      Tvariant orgs' id
-  (* What if it is function? But we should forbid passing function
-  pointer? *)
-  | _ => ty
   end.
     
 (* replace origins in type with fresh origins *)
@@ -262,10 +227,12 @@ End TYPE_ENV.
 Open Scope error_monad_scope.
 
 Definition replace_origin_function (ce: composite_env) (gvars: list ident) (f: function) : Errors.res function :=
-  let generic_orgs := f.(fn_generic_origins) in
   let vars := replace_origin_vars f.(fn_vars) in
-  let locals := f.(fn_params) ++ vars in
-  if list_norepet_dec ident_eq (map fst vars) then
+  (* We also replace regions in parameter to treat them as local
+  variables *)
+  let params := replace_origin_vars f.(fn_params) in
+  let locals := params ++ vars in
+  if list_norepet_dec ident_eq (map fst locals) then
     let type_env := PTree_Properties.of_list locals in
     do stmt <- replace_origin_statement ce gvars type_env f.(fn_body);
     (* we need to check origins are no repeated *)
@@ -273,10 +240,11 @@ Definition replace_origin_function (ce: composite_env) (gvars: list ident) (f: f
                  f.(fn_generic_origins)
                  f.(fn_origins_relation)
                  f.(fn_drop_glue)
+                 f.(fn_param_types)
                  f.(fn_return)
                  f.(fn_callconv)
                  vars
-                 f.(fn_params)      
+                 params
                  stmt)
   else Errors.Error [MSG "repeated idents in vars and params (replace_origin_function)"]
 .

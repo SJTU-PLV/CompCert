@@ -162,6 +162,7 @@ Definition transl_function (f: Rustlight.function) : function :=
   (mkfunction f.(Rustlight.fn_generic_origins)
             f.(Rustlight.fn_origins_relation)
             f.(Rustlight.fn_drop_glue)
+            (map snd (f.(Rustlight.fn_params)))
             f.(Rustlight.fn_return)
             f.(Rustlight.fn_callconv)
             (f.(Rustlight.fn_vars))

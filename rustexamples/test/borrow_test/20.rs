@@ -8,8 +8,8 @@ fn main(){
         p = q;
         x = x + 1;
     } else {
-        y = y + 1;
+        y = y + 1; // the error should not be reported here
     }
-    y = y + 1;
+    y = y + 1; // it should be reported here
     printf("%d", *p);
 }

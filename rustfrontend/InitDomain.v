@@ -4,7 +4,6 @@ Require Import Lattice Kildall.
 Require Import AST.
 Require Import Errors.
 Require Import FSetWeakList DecidableType.
-(** TODO: Rustlightbase also depends on InitDomain *)
 Require Import Rusttypes Rustlight.
 
 Local Open Scope list_scope.
@@ -38,16 +37,21 @@ Section COMP_ENV.
 
 Variable ce : composite_env.
 
+Definition field_of_place (p: place) (rels: list origin_rel) (mem: member) :=
+  match mem with
+  | Member_plain fid fty =>
+      (** When we construct a field place, we need to
+          subsitute the generic origins of this field with the
+          origins in place [p] *)
+      (Pfield p fid (replace_origin_in_type fty rels))
+  end.
+
 (* get { p.1, p.2 ...}. We need to track the initialized information
 of all the locations no matter they are own_type or not *)
-Definition places_of_members (p: place) (mems: members) :=
-  fold_left (fun acc elt =>
-               match elt with
-               | Member_plain fid ty =>
+Definition places_of_members (p: place) (mems: members) (rels: list origin_rel) :=
+  fold_left (fun acc elt =>               
                    (* if own_type ce ty then *)
-                     Paths.add (Pfield p fid ty) acc
-                   (* else acc *)
-               end) mems Paths.empty.
+                     Paths.add (field_of_place p rels elt) acc) mems Paths.empty.
 
 (* siblings of p *)
 Definition siblings (p: place) : Paths.t :=
@@ -55,10 +59,10 @@ Definition siblings (p: place) : Paths.t :=
   | Plocal _ _ => Paths.empty
   | Pfield p' fid _ =>
       match typeof_place p' with
-      | Tstruct _ id =>
+      | Tstruct orgs1 id =>
           match ce!id with
           | Some co =>
-              let siblings := places_of_members p' co.(co_members) in
+              let siblings := places_of_members p' co.(co_members) (combine (co_generic_origins co) orgs1) in
               let siblings' := Paths.diff siblings (Paths.singleton p) in
               siblings'
           | _ => Paths.empty
@@ -68,7 +72,7 @@ Definition siblings (p: place) : Paths.t :=
   | Pderef p' _ => Paths.empty
   | Pdowncast _ _ _ => Paths.empty
   end.
-                                                        
+
 
 Fixpoint parents (p: place) : Paths.t :=
   match p with
@@ -399,7 +403,7 @@ can check whether this place is initialized or not. So the fully owned
 flag is necessary *)
 Fixpoint split_drop_place' (p: place) (ty: type) : res (list (place * bool)) :=
   match ty with
-  | Tstruct _ id =>
+  | Tstruct orgs1 id =>
       (* p in universe indicates that p is fully owned/moved (no p's
       children mentioned in this function) *)
       if Paths.mem p universe then
@@ -408,13 +412,10 @@ Fixpoint split_drop_place' (p: place) (ty: type) : res (list (place * bool)) :=
       else
         match get_composite ce id with
         | co_some i co P _ =>
-            let children := map (fun elt => match elt with
-                                         | Member_plain fid fty =>
-                                             (Pfield p fid fty, fty) end)
-                              co.(co_members) in
-            let foldf '(subfld, fty) acc :=
+            let children := map (field_of_place p (combine (co_generic_origins co) orgs1)) co.(co_members) in
+            let foldf subfld acc :=
               do drops <- acc;
-              do drops' <- rec (PTree.remove i ce) (PTree_Properties.cardinal_remove P) subfld fty;
+              do drops' <- rec (PTree.remove i ce) (PTree_Properties.cardinal_remove P) subfld (typeof_place subfld);
               OK (drops' ++ drops) in
             fold_right foldf (OK nil) children
         | co_none => Error[CTX id; MSG ": Unfound struct id in composite_env or wrong recursive data: split_drop_place"]
@@ -749,21 +750,17 @@ Proof.
      rewrite A. destruct (Paths.mem p u2) eqn: MEM; auto.
      destruct (get_composite x i); auto.
      (* induction on the list of fields *)
-     generalize (OK (@nil (place * bool))).          
-     generalize ((map
-       (fun elt : member =>
-        match elt with
-        | Member_plain fid fty => (Pfield p fid fty, fty)
-        end) (co_members co))).
+     generalize (OK (@nil (place * bool))).
+     generalize ((map (field_of_place p (combine (co_generic_origins co) l)) (co_members co))).
      induction l0.
      + auto.
-     + intros. simpl. destruct a. erewrite IHl0.
+     + intros. simpl. erewrite IHl0.
        destruct (fold_right
-     (fun '(subfld, fty) (acc : res (list (place * bool))) =>
+     (fun (subfld : place) (acc : res (list (place * bool))) =>
       do drops <- acc;
       do drops' <-
       Fixm (PTree_Properties.cardinal (V:=composite)) (split_drop_place' u2)
-        (PTree.remove id1 x) subfld fty; OK (drops' ++ drops))) eqn: FOLD.
+        (PTree.remove id1 x) subfld (typeof_place subfld); OK (drops' ++ drops))) eqn: FOLD.
        * simpl. erewrite H; eauto.
          red. eapply PTree_Properties.cardinal_remove. eauto.
        * simpl. auto.

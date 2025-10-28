@@ -301,7 +301,7 @@ Inductive rs_own_reply : rs_own_world -> rust_reply -> Prop :=
 | rs_own_reply_intro: forall rfp m rv sg fp Hm,
     let ce := rs_sig_comp_env sg in
     forall (SEMWT: sem_wt_val ce m rfp rv)
-    (WTFP: wt_footprint (rs_sig_comp_env sg) (rs_sig_res sg) rfp)
+    (WTFP: wt_footprint ce (rs_sig_res sg) rfp)
     (CAST: val_casted rv (rs_sig_res sg))
     (* rfp is extracted from fpl *)
     (INCL: incl (footprint_flat rfp) fp)

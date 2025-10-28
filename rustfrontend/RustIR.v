@@ -59,6 +59,10 @@ Record function : Type := mkfunction {
   fn_generic_origins : list origin;
   fn_origins_relation: list (origin * origin);
   fn_drop_glue: option ident;
+  fn_param_types: list type;    (* We store parameters types bound
+  with generic origin here because after ReplaceOrigin pass, the
+  regions in fn_params would be replaced with some fresh region
+  names*)
   fn_return: type;
   fn_callconv: calling_convention;
   fn_vars: list (ident * type);
@@ -188,6 +192,7 @@ Fixpoint collect_stmt (s: statement) (m: PathsMap.t) : PathsMap.t :=
       collect_stmt s1 (collect_stmt s2 (collect_expr ce e m))
   | Sloop s =>
       collect_stmt s m
+  (* Why don't we collect/gather moved place for Sdrop statement? see the PR in https://github.com/rust-lang/rust/pull/107271/commits/68c1e2fd484b430726881f822311b4e9aa9c044d#diff-83e1d55fcc627d5cbfe2d48e75165908a0616728af5facd1381c0431935bf6fcL395 *)
   | _ => m
   end.
 

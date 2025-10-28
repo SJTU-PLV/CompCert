@@ -6,7 +6,7 @@ Require Import Lattice Kildall.
 Require Import Rusttypes Rustlight RustIR RustIRcfg.
 Require Import Errors.
 Require Import ReplaceOrigins.
-Require Import BorrowCheckDomain.
+Require Import RegionLiveness BorrowCheckDomain.
 
 Import ListNotations.
 Open Scope error_monad_scope.
@@ -16,15 +16,6 @@ Open Scope error_monad_scope.
 Definition error_msg (pc: node) : errmsg :=
   [MSG "error at pc "; POS pc; MSG " : "].
 
-
-(** Initialization *)
-
-(* The rule I-Fun. Maybe we should just initialize the generic origins
-that appear in the arguments? *)
-Definition init_function (f: function) : LOrgEnv.t :=
-  fold_left (fun acc elt =>
-               let os := Live (LoanSet.singleton (Lextern elt)) in
-               LOrgEnv.set elt os acc) f.(fn_generic_origins) LOrgEnv.bot.
  
 (* Initialize the variable origins (InitInternOrigins in rule
 BORROW-CHECL), which may be unnecessary because all the origins of
@@ -83,32 +74,30 @@ Fixpoint mutable_place (p: place) :=
 Fixpoint transfer_pure_expr (pc: node) (e: LOrgEnv.t) (pe: pexpr) : res LOrgEnv.t :=
   match pe with
   | Eplace p ty =>
-      if valid_access e p then
-        (* invalide origins contain loans relevant to [p] *)
-        OK (invalidate_origins e p Adeep Aread)
+      if illegal_access e p Adeep Aread then
+        Error (error_msg pc ++ [MSG "access a place (transfer_pure_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Eplace"])
       else
-        Error (error_msg pc ++ [MSG "access an invalidated place (transfer_pure_expr); id is "; CTX (local_of_place p); MSG " in Eplace"])
+        OK e
   | Eref org mut p ty =>
-      if valid_access e p then
-        let ak := match mut with | Mutable => Awrite | Immutable => Aread end in
-        let e' := invalidate_origins e p Adeep ak in
+      let ak := match mut with | Mutable => Awrite | Immutable => Aread end in
+      if illegal_access e p Adeep ak then
+        Error (error_msg pc ++ [MSG "access a place (transfer_pure_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Eref"])
+      else
         let l := Lintern mut p in
         (* handle reborrow: add all the loans in the support
          prefix to org *)
         let support_orgs := support_origins p in
         (* aggregate the loans in the support origins *)
-        let org_st := aggregate_origin_states e' support_orgs in
+        let org_st := aggregate_origin_states e support_orgs in
         (* FIXME: is it correct to just combine two state? *)
         let s' := LOrgSt.lub org_st (Live (LoanSet.singleton (Lintern mut p))) in
-        let e'' := LOrgEnv.set org s' e' in
-        OK e''
-      else
-        Error (error_msg pc ++ [MSG "access an invalidated place (transfer_pure_expr); id is "; CTX (local_of_place p); MSG " in Eref"])
+        let e' := LOrgEnv.set org s' e in
+        OK e'
   | Ecktag p id =>
-      if valid_access e p then
-        OK (invalidate_origins e p Ashallow Aread)
+      if illegal_access e p Ashallow Aread then
+        Error (error_msg pc ++ [MSG "access a place (transfer_pure_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Ecktag"])
       else
-        Error (error_msg pc ++ [MSG "access an invalidated place (transfer_pure_expr); id is "; CTX (local_of_place p); MSG " in Ecktag"])
+        OK e
   | Eunop _ pe _ =>
       transfer_pure_expr pc e pe
   | Ebinop _ pe1 pe2 _ =>
@@ -116,17 +105,17 @@ Fixpoint transfer_pure_expr (pc: node) (e: LOrgEnv.t) (pe: pexpr) : res LOrgEnv.
       transfer_pure_expr pc e' pe2
   (* Other constants *)
   | _ => OK e
-  end.                      
+  end.
 
 (* transfer expression *)
 
 Definition transfer_expr (pc: node) (oe: LOrgEnv.t) (e: expr) : res LOrgEnv.t :=
   match e with
   | Emoveplace p ty =>
-      if valid_access oe p then      
-        OK (invalidate_origins oe p Adeep Awrite)
-      else
-        Error (error_msg pc ++ [MSG "access an invalidated place (transfer_expr); id is "; CTX (local_of_place p); MSG " in Emoveplace"])
+      if illegal_access oe p Adeep Awrite then
+        Error (error_msg pc ++ [MSG "access a place (transfer_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Emoveplace"])
+      else 
+        OK oe
   | Epure pe =>
       transfer_pure_expr pc oe pe
   end.
@@ -176,29 +165,39 @@ Fixpoint flow_loans (e: LOrgEnv.t) (s d: type) (k: flow_kind) : LOrgEnv.t :=
   | _, _ => e
   end.      
           
+Fixpoint flow_loans_list (e: LOrgEnv.t) (ls ld: list type) (k: flow_kind) : LOrgEnv.t :=
+  match ls, ld with
+  | s :: ls', d :: ld' =>
+      flow_loans_list (flow_loans e s d k) ls' ld' k
+  | _, _ =>
+      e
+  end.
+
 (* Shallow write a place *)
 
 Definition shallow_write_place (pc: node) (f: function) (e: LOrgEnv.t) (p: place) : res LOrgEnv.t :=
-  let e' := invalidate_origins e p Ashallow Awrite in
-  (* let e' := e in *)
-  match p with
-  | (Plocal id ty) =>
-      if in_dec ident_eq id (var_names f.(fn_vars)) then
-        (* This place is a local variable, we can kill its loans
-        (i.e., its stored loans become inactive) *)
-        let orgs := origins_of_type ty in
-        let e'' := fold_left (fun acc elt => LOrgEnv.delete elt acc) orgs e' in
-        OK e''
-      else
-        (* TODO: is it necessary to kill the loans mapped from the generic origins? *)
-        OK e'
-  | _ => 
-      if valid_access e p then
-        OK e'
-      else
-        Error (error_msg pc ++ [MSG "access an invalidated place (shallow_write_place); id is "; CTX (local_of_place p)])
-  end.
+  if illegal_access e p Ashallow Awrite then
+    Error (error_msg pc ++ [MSG "access a place (shallow_write_place) which is borrowed; id is "; CTX (local_of_place p)])    
+  else
+    OK e.
 
+  (*   match p with *)
+  (*   | (Plocal id ty) => *)
+  (*     if in_dec ident_eq id (var_names f.(fn_vars)) then *)
+  (*       (* This place is a local variable, we can kill its loans *)
+  (*       (i.e., its stored loans become inactive) *) *)
+  (*       let orgs := origins_of_type ty in *)
+  (*       let e'' := fold_left (fun acc elt => LOrgEnv.delete elt acc) orgs e' in *)
+  (*       OK e'' *)
+  (*     else *)
+  (*       (* TODO: is it necessary to kill the loans mapped from the generic origins? *) *)
+  (*       OK e' *)
+  (* | _ =>  *)
+  (*     if valid_access e p then *)
+  (*       OK e' *)
+  (*     else *)
+  (*       Error (error_msg pc ++ [MSG "access an invalidated place (shallow_write_place); id is "; CTX (local_of_place p)]) *)
+  (* end. *)
 
 (* Auxilary functions for transition of statements *)
 
@@ -212,7 +211,7 @@ Definition clear_loans (p: place) (st: LOrgSt.t) : LOrgSt.t :=
   | Dead => Dead
   end.
 
-
+(* When some loan [p] is overwritten, it should be cleared *)
 Definition clear_dead_loans (e: LOrgEnv.t) (p: place) : LOrgEnv.t :=
   LOrgEnv.map1 (clear_loans p) e.
 
@@ -269,6 +268,21 @@ Definition transfer_assign_variant (pc: node) (f: function) (ce: composite_env) 
   (*     else Error (error_msg pc ++ [MSG "enum id mismatch between LHS and RHS (check_assign_variant)"]) *)
   (* | _ => *)
   (*     Error (error_msg pc ++ [MSG "target is not a variant (check_assign_variant)"]) *)
+
+Definition transfer_Sbox (pc: node) (f: function) (oe: LOrgEnv.t) (p: place) (e: expr) : res LOrgEnv.t :=
+  (* [typeof_place p] must be Tbox, which should be checked at type
+  checking phase *)
+  let ty_dest := typeof_place p in
+  let ty_src := Tbox (typeof e) in
+  (* assigning p would clear all the loans that are children of p in
+  the origin state. For example, if we assign something to a, than
+  loan **a is not live anymore, as we cannot access the original
+  location of **a. *)
+  do oe1 <- transfer_expr pc oe e;
+  do oe2 <- shallow_write_place pc f oe1 p;
+  let oe3 := clear_dead_loans oe2 p in
+  OK (flow_loans oe3 ty_src ty_dest ByVal).
+
   
 (* bind the origins in two type *)
 Fixpoint bind_type_origins (ty1 ty2: type) (fk: flow_kind) : list (origin * origin * flow_kind) :=
@@ -418,10 +432,12 @@ Definition transfer_storagedead (pc: node) (f: function) (oe1: LOrgEnv.t) (id: i
       OK oe1
   end.
 
+(** TODO: we need to consider p is initialized or not *)
 Definition transfer_drop (pc: node) (oe1: LOrgEnv.t) (p: place) : res LOrgEnv.t :=
-  if valid_access oe1 p then
-    OK (invalidate_origins oe1 p Adeep Awrite)
-  else Error (error_msg pc ++ [MSG "access an invalidated place "; CTX (local_of_place p); MSG "in (check_drop)"]).
+  if illegal_access oe1 p Adeep Awrite then
+    Error (error_msg pc ++ [MSG "access a place which is borrowed: "; CTX (local_of_place p); MSG "in (check_drop)"])
+  else OK oe1.
+
   (* (* if valid_access oe1 p then *) *)
   (*   let ls := relevant_loans live1 p Adeep in *)
   (*   let oe2 := invalidate_origins ls Awrite oe1 in *)
@@ -450,7 +466,17 @@ Definition check_dangle (f: function) (e: LOrgEnv.t) : bool :=
 (** All the relations between the generic origins after the function
 call must be declared in the function sigature *)
 
+Definition live_origin (st: origin_state) : bool :=
+  match st with
+  | Live _ => true
+  | Dead => false
+  end.
+
 Definition check_generic_origins_relations (f: function) (e: LOrgEnv.t) : bool :=
+  (* This property can be guaranteed by the liveness analysis: All the
+  generic origin must not be dead otherwise we are returing a dangling
+  pointer *)
+  (* forallb (fun org => live_origin (LOrgEnv.get org e)) f.(fn_generic_origins) && *)
   forallb (fun org1 =>
              forallb (fun org2 =>
                         if Pos.eqb org1 org2 then true
@@ -461,7 +487,8 @@ Definition check_generic_origins_relations (f: function) (e: LOrgEnv.t) : bool :
                                  else if LoanSet.subset ls2 ls1 then
                                         in_dec origin_rel_eq_dec (org2, org1) f.(fn_origins_relation)
                                       else true
-                             (* generic origins must be live *)
+                             (* generic origins must be live which
+                             should be already checked *)
                              | _, _ => false
                              end) f.(fn_generic_origins)) f.(fn_generic_origins).
   
@@ -477,58 +504,69 @@ Definition check_generic_origins_relations (f: function) (e: LOrgEnv.t) : bool :
 
 
 Definition transfer_return (pc: node) (oe1: LOrgEnv.t) (p: place) (rety: type) : res LOrgEnv.t :=
-  if valid_access oe1 p then
-    let oe2 := invalidate_origins oe1 p Adeep Aread in
-    OK (flow_loans oe2 (typeof_place p) rety ByVal)
-  else Error (error_msg pc ++ [MSG "access an invalidated place "; CTX (local_of_place p); MSG "in (transfer_return)"]).
+  if illegal_access oe1 p  Adeep Aread then
+    (* Question: this error should be impossible (or the error has
+    been found before this return statement)? Because there is no live
+    regions (except generic regions) after the return statement. *)
+    Error (error_msg pc ++ [MSG "access a place which is borrowed"; CTX (local_of_place p); MSG "in (transfer_return)"])
+  else
+    OK oe1.
 
-  (*     do r <- check_return_expr pc live1 oe1 ag1 e rety; *)
-  (*     let '(live2, oe2, ag2) := r in      *)
-  (*     OK (live2, oe2, ag2) *)
-  (* | None => *)
-  (*     (* simple type checking *) *)
-  (*     if type_eq Tunit f.(fn_return) then *)
-  (*       OK (live1, oe1, ag1) *)
-  (*     else *)
-  (*       Error (error_msg pc ++ [MSG "no return value but return type is not Tunit!"]) *)
-  (* end. *)
-
-Definition finish_check (pc: node) (r: res LOrgEnv.t) : BORCK.t :=
+Definition finish_check_without_liveness (pc: node) (r: res LOrgEnv.t) : BORCK.t :=
   match r with
   | OK oe => BORCK.State oe
   | Error msg =>
       BORCK.Err pc msg
   end.
 
+Definition finish_check (pc: node) (r: res LOrgEnv.t) (live: RegionSet.t) : BORCK.t :=
+  match r with
+  | OK oe => 
+      (* We need to apply liveness result after transfer to prevent
+      applying liveness after the join between two branches, which may
+      cause some unprecision. This is because apply_liveness (e1 ⊔ e2)
+      <> apply_liveness e1 ⊔ apply_liveness e2. *)
+      let oe1 := LOrgEnv.apply_liveness live oe in
+      BORCK.State oe1
+  | Error msg =>
+      BORCK.Err pc msg
+  end.
+
+
 (* Transition of statements *)
         
-Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (pc: node) (before: BORCK.t) : BORCK.t :=
+Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap.t RegionSet.t) (pc: node) (before: BORCK.t) : BORCK.t :=
   match before with
   | BORCK.Bot => before
   | BORCK.Err _ _ =>
       (* Error propagation *)
       before
   | BORCK.State oe =>
+      (* apply liveness result before transfer *)
+      let oe := LOrgEnv.apply_liveness (PMap.get pc live) oe in
       match cfg ! pc with
       | None => BORCK.Bot
       | Some (Inop _) => before
-      | Some (Icond e _ _) => finish_check pc (transfer_expr pc oe e)
+      | Some (Icond e _ _) => finish_check_without_liveness pc (transfer_expr pc oe e)
       | Some Iend => before
-      | Some (Isel sel _) =>
+      | Some (Isel sel next) =>
           match select_stmt f.(fn_body) sel with
           | None => BORCK.Bot
           | Some s =>
+              let next_live := PMap.get next live in
               match s with
               | Sassign p e => 
-                  finish_check pc (transfer_assignment pc f oe p e)
+                  finish_check pc (transfer_assignment pc f oe p e) next_live
               | Sassign_variant p enum_id fid e =>
-                  finish_check pc (transfer_assign_variant pc f ce oe p enum_id fid e)
+                  finish_check pc (transfer_assign_variant pc f ce oe p enum_id fid e) next_live
+              | Sbox p e =>
+                  finish_check pc (transfer_Sbox pc f oe p e) next_live
               | Scall p e l =>
-                  finish_check pc (transfer_function_call pc f oe p e l)
+                  finish_check pc (transfer_function_call pc f oe p e l) next_live
               | Sstoragedead id =>
-                  finish_check pc (transfer_storagedead pc f oe id)
+                  finish_check pc (transfer_storagedead pc f oe id) next_live
               | Sdrop p =>
-                  finish_check pc (transfer_drop pc oe p)
+                  finish_check pc (transfer_drop pc oe p) next_live
               | Sreturn p =>
                   let check_result := transfer_return pc oe p f.(fn_return) in
                   match check_result with
@@ -551,15 +589,34 @@ Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (pc: node) 
 
 Module BorrowCheck := Dataflow_Solver(BORCK)(NodeSetForward).
 
+(** Initialization *)
+
+(* The rule I-Fun. Maybe we should just initialize the generic origins
+that appear in the arguments? *)
+Definition init_function (f: function) : LOrgEnv.t :=
+  (* initialize the loans of generic regions *)
+  let oe1 := fold_left (fun acc elt =>
+                          let os := Live (LoanSet.singleton (Lextern elt)) in
+                          LOrgEnv.set elt os acc) f.(fn_generic_origins) LOrgEnv.bot in
+  (* flow the loans from the function arguments to the parameters *)
+  flow_loans_list oe1 f.(fn_param_types) (map snd f.(fn_params)) ByVal.
+  
 
 (** Run Borrow Checking! *)
 
-Definition borrow_check (ce: composite_env) (f: function) (cfg: rustcfg) (entry: node) : Errors.res (PMap.t BORCK.t) :=
-  let init_oe := init_function f in
-  match BorrowCheck.fixpoint cfg successors_instr (transfer ce f cfg) entry (BORCK.State init_oe) with
-  | Some m => OK m
-  | None =>
-      Error [MSG "The borrow checking fails with unknown reason"]
+Definition borrow_check (ce: composite_env) (f: function) (cfg: rustcfg) (entry: node) : Errors.res (PMap.t RegionSet.t * (PMap.t BORCK.t)) :=
+  (* Liveness analysis for regions *)
+  match RegionLiveness.analyze f cfg with
+  | Some live =>
+      let init_oe := init_function f in
+      match BorrowCheck.fixpoint cfg successors_instr (transfer ce f cfg live) entry (BORCK.State init_oe) with
+      (* For now we return liveness result for debug purpose *)
+      | Some m => OK (live, m)
+      | None =>
+          Error [MSG "The borrow checking fails with unknown reason"]
+      end
+  | None => 
+      Error [MSG "The borrow checking fails due to the failure of liveness analysis"]
   end.
 
 (** Checking functions that are used in the transl_on_cfg *)
@@ -584,8 +641,8 @@ Definition get_borck_result (borck_res: (PMap.t BORCK.t)) (pc: node) : BORCK.t :
 
 (* After calling borrow_check, we should find if there is any borrow
 check error *)
-Definition collect_borrow_check_result (ce: composite_env) (f: function) (cfg: rustcfg) (borck_res: (PMap.t BORCK.t)) : res unit :=
-  do _ <- transl_on_cfg get_borck_result borck_res collect_borck_result_stmt collect_borck_result_expr f.(fn_body) cfg;
+Definition collect_borrow_check_result (ce: composite_env) (f: function) (cfg: rustcfg) (borck_res: (PMap.t RegionSet.t * (PMap.t BORCK.t))) : res unit :=
+  do _ <- transl_on_cfg get_borck_result (snd borck_res) collect_borck_result_stmt collect_borck_result_expr f.(fn_body) cfg;
   OK tt.
 
 (** TODO: we should combine it with move_check_function *)

@@ -318,6 +318,7 @@ Definition transf_function (ce: composite_env) (f: function) : Errors.res functi
     Errors.OK (mkfunction f.(fn_generic_origins)
                           f.(fn_origins_relation)
                           f.(fn_drop_glue)
+                          f.(fn_param_types)
                           f.(fn_return)
                           f.(fn_callconv)
                           (f.(fn_vars) ++ flag_vars)

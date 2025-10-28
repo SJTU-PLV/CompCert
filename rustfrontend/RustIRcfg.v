@@ -781,10 +781,10 @@ Definition transl_on_instr (src: statement) (pc: node) (instr: instruction)
           | OK ts =>
              set_stmt pc src sel ts
           | Error msg =>
-             Error ((CTX pc) :: msg)
+             Error (MSG "At pc: " :: (CTX pc) :: msg)
           end
       | None =>
-          Error [CTX pc; MSG " select_stmt error in transl_on_instr"]
+          Error [MSG "At pc: "; CTX pc; MSG " select_stmt error in transl_on_instr"]
       end
   | Icond e _ _ =>
       do _ <- check_expr (get_an ae pc) e;

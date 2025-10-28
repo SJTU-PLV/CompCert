@@ -8,6 +8,7 @@ Require Import Ordered.
 Require FSetAVL.
 Require Import Errors.
 Require Import UnionFindDelete.
+Require Import RegionLiveness.
 
 Import ListNotations.
 Scheme Equality for list.
@@ -51,7 +52,7 @@ Inductive origin_state : Type :=
 
 (* Origin state is a lattice *)
 
-Module LOrgSt <: SEMILATTICE_WITH_TOP.
+Module LOrgSt <: SEMILATTICE.
   
 Definition t := origin_state.
 
@@ -99,8 +100,8 @@ Qed.
   
 Definition ge (x y: t) : Prop :=
   match x, y with
-  | Dead, _ => True
-  | _, Dead => False
+  | _, Dead => True
+  | Dead, _ => False                
   | Live ls1, Live ls2 => LoanSetL.ge ls1 ls2
   end.
 
@@ -118,27 +119,30 @@ Proof.
   contradiction.
 Qed.
 
-Definition bot := Live LoanSetL.bot.
+(* Definition bot := Live LoanSetL.bot. *)
+
+(* If a region points to Dead, it means that this region would be
+redefined later and not be used before this redefinition *)
+Definition bot := Dead.
 
 Lemma ge_bot: forall x, ge x bot.
 Proof.
-  intros. red. destruct x. simpl.
-  eapply LoanSetL.ge_bot.
-  auto.
+  intros. red. destruct x. simpl. auto.
+  simpl. auto.
 Qed.
 
-Definition top := Dead.
+(* Definition top := Dead. *)
 
-Lemma ge_top: forall x, ge top x.
-Proof.
-  intros. red. destruct x; simpl; auto.
-Qed.
+(* Lemma ge_top: forall x, ge top x. *)
+(* Proof. *)
+(*   intros. red. destruct x; simpl; auto. *)
+(* Qed. *)
 
 
 Definition lub (x y: t) :=
   match x, y with
-  | Dead, _ => Dead
-  | _, Dead => Dead
+  | Dead, _ => y
+  | _, Dead => x
   | Live ls1, Live ls2 => Live(LoanSetL.lub ls1 ls2)
   end.
 
@@ -146,14 +150,17 @@ Lemma ge_lub_left: forall x y, ge (lub x y) x.
 Proof.
   intros. destruct x, y; simpl; auto.
   apply LoanSetL.ge_lub_left.
+  eapply LoanSetL.ge_refl.
+  eapply LoanSetL.eq_refl.
 Qed.
 
 Lemma ge_lub_right: forall x y, ge (lub x y) y.
 Proof.
   intros. destruct x, y; simpl; auto.
   apply LoanSetL.ge_lub_right.
+  eapply LoanSetL.ge_refl.
+  eapply LoanSetL.eq_refl.
 Qed.
-
 
 End LOrgSt.
 
@@ -484,7 +491,9 @@ Definition union (a b: positive) (dm: t) : t :=
   let dm1 := set b (L.lub (get a dm) (get b dm)) dm in
   mk (m dm1) (UFD.union (uf dm1) a b).
 
-(* Deletion of a node in the equivalent set *)
+(* Deletion of a node in the equivalent set. Maybe we can first
+determinte whether this node is in the set or not and then delete it
+if it is actually in the set? *)
 
 Definition delete (p: positive) (dm: t) : t :=
   let (uf1, or) := UFD.delete (uf dm) p in
@@ -506,7 +515,28 @@ Definition delete (p: positive) (dm: t) : t :=
       mk m1 uf1
   end.
 
-  
+
+(* Applying liveness result to the disjoint-set map to remove dead
+region from the domain of the map *)
+
+Fixpoint remove_dead_regions (live: RegionSet.t) (regs: list origin) (dm: t) : t :=
+  match regs with
+  | nil => dm
+  | r :: l' =>
+      if RegionSet.mem r live then
+        remove_dead_regions live l' dm
+      else
+        remove_dead_regions live l' (delete r dm)
+  end.
+
+Definition apply_liveness (live: RegionSet.t) (dm: t) : t :=
+  (* We also append the domain in the (m dm) as we should consider the
+  region that belongs to a singleton equivalent set *)
+  let region_dom := map fst (PTree.elements (UFD.m (uf dm))) ++ map fst (PTree.elements (m dm)) in
+  (* for each region in region_dom, if it is not live (i.e., not in
+  live set), then it is deleted from the disjoint-set map *)
+  remove_dead_regions live region_dom dm.
+
 End LUFMap.
 
   
@@ -556,44 +586,49 @@ Definition conflict_loan p (am: access_mode_bor) (ak: access_kind) (l: loan) : b
 Definition conflict p (ls: LoanSet.t) am ak :=
   LoanSet.exists_ (conflict_loan p am ak) ls.
 
-
 (* Invalidate an origin *)
-Definition invalidate_origin (p: place) (am: access_mode_bor) (ak: access_kind) (os: origin_state) : origin_state :=
+Definition illegal_access_in_origin_state (p: place) (am: access_mode_bor) (ak: access_kind) (r: origin) (os: origin_state) : bool :=
   match os with
   | Live ls =>
-      if conflict p ls am ak then Dead
-      else os
-  | Dead => Dead
+      if conflict p ls am ak then true
+      else false
+  | Dead => false
   end.
 
 (* Check whether we should invalidate each origin in the origin *)
 (* environment *)
-Definition invalidate_origins (oe: LOrgEnv.t) (p: place) (am: access_mode_bor) (ak: access_kind) : LOrgEnv.t :=
-  LOrgEnv.map1 (invalidate_origin p am ak) oe.
+Definition illegal_access (oe: LOrgEnv.t) (p: place) (am: access_mode_bor) (ak: access_kind) : bool :=
+  let m := (LOrgEnv.m oe) in
+  PTree_Properties.exists_ m (illegal_access_in_origin_state p am ak).
 
+(* Legacy code *)
+(* (* Invalidate an origin *) *)
+(* Definition invalidate_origin (p: place) (am: access_mode_bor) (ak: access_kind) (os: origin_state) : origin_state := *)
+(*   match os with *)
+(*   | Live ls => *)
+(*       if conflict p ls am ak then Dead *)
+(*       else os *)
+(*   | Dead => Dead *)
+(*   end. *)
 
-(* All the origins appear in the type [ty] *)
-Fixpoint origins_of_type (ty: type) : list origin :=
-  match ty with
-  | Tbox ty => origins_of_type ty
-  | Treference org _ ty => org :: origins_of_type ty
-  | Tstruct orgs _ => orgs
-  | Tvariant orgs _ => orgs
-  | _ => []
-  end.
+(* (* Check whether we should invalidate each origin in the origin *) *)
+(* (* environment *) *)
+(* Definition invalidate_origins (oe: LOrgEnv.t) (p: place) (am: access_mode_bor) (ak: access_kind) : LOrgEnv.t := *)
+(*   LOrgEnv.map1 (invalidate_origin p am ak) oe. *)
+
 
 (* Definition of valid access of a place: check whether there is any *)
 (* dead origin in the type of the place. Return an error report if *)
 (* invalid access happens *)
-Definition valid_access (oe: LOrgEnv.t) (p: place) : bool :=
-  let ty := local_type_of_place p in
-  let orgs := origins_of_type ty in
-  let check org :=
-    match LOrgEnv.get org oe with
-    | Live _ => true
-    | Dead => false
-    end in
-  forallb check orgs.
+(* Definition valid_access (oe: LOrgEnv.t) (p: place) : bool := *)
+(*   let ty := local_type_of_place p in *)
+(*   let orgs := origins_of_type ty in *)
+(*   let check org := *)
+(*     match LOrgEnv.get org oe with *)
+(*     | Live _ => true *)
+(*     | Dead => false *)
+(*     end in *)
+(*   forallb check orgs. *)
 
 (** Top level environment for borrow checking *)
 

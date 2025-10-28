@@ -108,6 +108,16 @@ Fixpoint type_eq_except_origins (ty1 ty2: type) : bool :=
   | _, _ => type_eq ty1 ty2
   end.
 
+Fixpoint origins_of_type (ty: type) : list origin :=
+  match ty with
+  | Tbox ty => origins_of_type ty
+  | Treference org _ ty => org :: origins_of_type ty
+  | Tstruct orgs _ 
+  | Tvariant orgs _ =>
+      orgs
+  | _ => nil
+  end.
+
 Fixpoint origin_in_type org ty : bool :=
   match ty with
   | Tbox ty => origin_in_type org ty
@@ -134,6 +144,39 @@ Fixpoint replace_type_with_dummy_origin (dummy: origin) (ty: type) : type :=
   | _ => ty                      (* Is it correct? *)
   end.
 
+Definition find_elt {A: Type} (id: ident) (l: list (ident * A)) : option A :=
+  match find (fun '(id', v) => ident_eq id id') l with
+  | Some (_, v) => Some v
+  | None => None
+  end.
+
+(* replace org with the the origin in rels *)
+Definition replace_origin (rels: list origin_rel) (org: origin) : origin :=
+  match find_elt org rels with
+  | Some org' =>
+      org'
+  | None =>
+      org
+  end.
+
+Fixpoint replace_origin_in_type (ty: type) (rels: list origin_rel) : type :=
+  match ty with
+  | Treference org mut ty =>
+      let ty' := replace_origin_in_type ty rels in
+      Treference (replace_origin rels org) mut ty'
+  | Tbox ty =>
+      let ty' := replace_origin_in_type ty rels in
+      Tbox ty'
+  | Tstruct orgs id  =>
+      let orgs' := map (replace_origin rels) orgs in
+      Tstruct orgs' id
+  | Tvariant orgs id =>
+      let orgs' := map (replace_origin rels) orgs in
+      Tvariant orgs' id
+  (* What if it is function? But we should forbid passing function
+  pointer? *)
+  | _ => ty
+  end.
 
 (* Definition attr_of_type (ty: type) := *)
 (*   match ty with *)
