@@ -535,7 +535,7 @@ Definition finish_check (pc: node) (r: res LOrgEnv.t) (live: RegionSet.t) : BORC
 
 (* Transition of statements *)
         
-Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap.t RegionSet.t) (pc: node) (before: BORCK.t) : BORCK.t :=
+Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap.t RegionSet.t) (generic_regions: RegionSet.t) (pc: node) (before: BORCK.t) : BORCK.t :=
   match before with
   | BORCK.Bot => before
   | BORCK.Err _ _ =>
@@ -543,7 +543,9 @@ Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap
       before
   | BORCK.State oe =>
       (* apply liveness result before transfer *)
-      let oe := LOrgEnv.apply_liveness (PMap.get pc live) oe in
+      let live_after := PMap.get pc live in
+      let live_before := RegionLiveness.transfer f cfg generic_regions pc live_after in
+      let oe := LOrgEnv.apply_liveness live_before oe in
       match cfg ! pc with
       | None => BORCK.Bot
       | Some (Inop _) => before
@@ -553,20 +555,19 @@ Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap
           match select_stmt f.(fn_body) sel with
           | None => BORCK.Bot
           | Some s =>
-              let next_live := PMap.get next live in
               match s with
               | Sassign p e => 
-                  finish_check pc (transfer_assignment pc f oe p e) next_live
+                  finish_check pc (transfer_assignment pc f oe p e) live_after
               | Sassign_variant p enum_id fid e =>
-                  finish_check pc (transfer_assign_variant pc f ce oe p enum_id fid e) next_live
+                  finish_check pc (transfer_assign_variant pc f ce oe p enum_id fid e) live_after
               | Sbox p e =>
-                  finish_check pc (transfer_Sbox pc f oe p e) next_live
+                  finish_check pc (transfer_Sbox pc f oe p e) live_after
               | Scall p e l =>
-                  finish_check pc (transfer_function_call pc f oe p e l) next_live
+                  finish_check pc (transfer_function_call pc f oe p e l) live_after
               | Sstoragedead id =>
-                  finish_check pc (transfer_storagedead pc f oe id) next_live
+                  finish_check pc (transfer_storagedead pc f oe id) live_after
               | Sdrop p =>
-                  finish_check pc (transfer_drop pc oe p) next_live
+                  finish_check pc (transfer_drop pc oe p) live_after
               | Sreturn p =>
                   let check_result := transfer_return pc oe p f.(fn_return) in
                   match check_result with
@@ -606,10 +607,11 @@ Definition init_function (f: function) : LOrgEnv.t :=
 
 Definition borrow_check (ce: composite_env) (f: function) (cfg: rustcfg) (entry: node) : Errors.res (PMap.t RegionSet.t * (PMap.t BORCK.t)) :=
   (* Liveness analysis for regions *)
+  let generic_regions := live_generic_regions (fn_generic_origins f) in
   match RegionLiveness.analyze f cfg with
   | Some live =>
       let init_oe := init_function f in
-      match BorrowCheck.fixpoint cfg successors_instr (transfer ce f cfg live) entry (BORCK.State init_oe) with
+      match BorrowCheck.fixpoint cfg successors_instr (transfer ce f cfg live generic_regions) entry (BORCK.State init_oe) with
       (* For now we return liveness result for debug purpose *)
       | Some m => OK (live, m)
       | None =>
