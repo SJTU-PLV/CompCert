@@ -131,26 +131,28 @@ Fixpoint transfer_exprlist (pc: node) (oe: LOrgEnv.t) (l: list expr) : res LOrgE
 
 (* Flowing loans from source type to destination type *)
 
-Inductive flow_kind : Type := ByVal | ByRef.
-
 (* Subtyping rules of rust borrow checker *)
 Fixpoint flow_loans (e: LOrgEnv.t) (s d: type) (k: flow_kind) : LOrgEnv.t :=
   match s,d with
-  | Treference org1 _ ty1, Treference org2 _ ty2 =>
-      let e' := flow_loans e ty1 ty2 ByRef in
-      match k with
-      | ByVal =>
-          let st := LOrgSt.lub (LOrgEnv.get org1 e') (LOrgEnv.get org2 e') in
-          LOrgEnv.set org2 st e'
-      | ByRef =>
-          (* TODO: improve it to follow the subtyping rules instead of
-          just using invariance *)
-          LOrgEnv.union org1 org2 e'
-      end
+  | Treference org1 mut1 ty1, Treference org2 mut2 ty2 =>      
+        match k with
+        | ByVal =>
+            let st := LOrgSt.lub (LOrgEnv.get org1 e) (LOrgEnv.get org2 e) in
+            let e1 := LOrgEnv.set org2 st e in
+            (* Rust does not support "types differ in mutability", so we can
+               assume that the type checking has check that mut1 = mut2 *)
+            let fk := match mut1 with
+                      | Mutable => ByRef
+                      | Immutable => ByVal
+                      end in
+            flow_loans e1 ty1 ty2 fk
+        | ByRef =>
+            let e1 := LOrgEnv.union org1 org2 e in
+            flow_loans e1 ty1 ty2 ByRef
+        end
   | Tbox ty1, Tbox ty2 =>
-      (* TODO: Box is covariant over ty1/ty2, so there is no need to
-      pass ByRef *)
-      flow_loans e ty1 ty2 ByRef
+      (* Box is covariant over ty1/ty2, so we pass ByVal *)
+      flow_loans e ty1 ty2 ByVal
   | Tstruct orgs1 id1, Tstruct orgs2 id2 
   | Tvariant orgs1 id1 , Tvariant orgs2 id2 =>
       (* type checking must ensure that id1 == id2 and len(orgs1) ==
@@ -163,7 +165,7 @@ Fixpoint flow_loans (e: LOrgEnv.t) (s d: type) (k: flow_kind) : LOrgEnv.t :=
       fold_left (fun acc '(o1, o2) => LOrgEnv.union o1 o2 acc) orgs e
   (* scalar type *)
   | _, _ => e
-  end.      
+  end.
           
 Fixpoint flow_loans_list (e: LOrgEnv.t) (ls ld: list type) (k: flow_kind) : LOrgEnv.t :=
   match ls, ld with
