@@ -134,8 +134,8 @@ let rec name_rust_decl id ty =
   | Traw_pointer(mut, ty) ->
     "*" ^ string_of_pmut mut ^ (name_rust_decl ""  ty) ^ name_optid id
   | Tarray(mut, ty, sz) ->
-    (* string_of_mut mut ^ " "^ *)
-    name_rust_decl (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
+    (* Multi-dimensional arrays: [[T; M]; N] *)
+    name_optid id ^ "[" ^ name_rust_decl "" ty ^ "; " ^ sprintf "%ld" (camlint_of_coqint sz) ^ "]"
   | Tslice(mut, ty) ->
     "&" ^ string_of_mut mut ^ " [" ^ (name_rust_decl ""  ty) ^ "]" ^ name_optid id
 
@@ -491,20 +491,44 @@ let print_rust_init p typ init =
   | _ -> 
       print_init p init
 
-let print_composite_init_rust var_info p il = 
+let rec print_composite_init_rust var_info p il = 
   match var_info with 
   | Rusttypes.Tarray(mut, elem_ty, sz) -> 
-    fprintf p "[@ "; 
-    let last_index = List.length il - 1 in 
-    List.iteri (fun idx i -> 
-      print_rust_init p elem_ty i;
-      match i with 
-      | Init_space _ -> () 
-      | _ -> 
-          if idx < last_index then 
-            fprintf p ",@ " 
-    ) il; 
-    fprintf p "]"
+    (* For multi-dimensional arrays, group the flat init list *)
+    (match elem_ty with
+     | Rusttypes.Tarray(_, _, inner_sz) ->
+         (* Inner dimension is also an array - need to group *)
+         let inner_count = Int32.to_int (camlint_of_coqint inner_sz) in
+         fprintf p "[@ ";
+         let rec print_groups remaining first =
+           if remaining = [] then ()
+           else begin
+             if not first then fprintf p ",@ ";
+             let group, rest = 
+               let rec take n lst acc =
+                 if n = 0 || lst = [] then (List.rev acc, lst)
+                 else take (n-1) (List.tl lst) (List.hd lst :: acc)
+               in take inner_count remaining []
+             in
+             print_composite_init_rust elem_ty p group;
+             print_groups rest false
+           end
+         in
+         print_groups il true;
+         fprintf p "]"
+     | _ ->
+         (* Single dimension or element type - print directly *)
+         fprintf p "[@ ";
+         let last_index = List.length il - 1 in 
+         List.iteri (fun idx i -> 
+           print_rust_init p elem_ty i;
+           match i with 
+           | Init_space _ -> () 
+           | _ -> 
+               if idx < last_index then 
+                 fprintf p ",@ " 
+         ) il; 
+         fprintf p "]")
   | _ -> 
     fprintf p "{@ "; 
     List.iter 

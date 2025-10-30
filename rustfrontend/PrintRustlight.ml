@@ -157,7 +157,7 @@ and pexpr p (prec, e) =
   | Econst_long(n, _) ->
     fprintf p "%Ldi64" (camlint64_of_coqint n)
   | Eglobal(id, _) ->
-    fprintf p "glob %s" (extern_atom id)
+    fprintf p "%s" (extern_atom id)
   | Eunop(Oabsfloat, a1, _) ->
     fprintf p "__builtin_fabs(%a)" pexpr (2, a1)
   | Eunop(op, a1, _) ->
@@ -258,42 +258,79 @@ let rec print_expr_list p (first, rl) =
        | _ -> ()); *)
       print_expr_list p (false, rl)
 
-let rec print_expr_list_with_type p (first, exprs, param_tys) =
+let rec print_expr_list_with_type p (first, exprs, param_tys, is_c_function) =
   match exprs, param_tys with
   | [], [] -> ()
   | r :: rl, ty :: tyl ->
       if not first then fprintf p ",@ ";
-      (* Check if casting to slice type - use .as_ptr() or .as_mut_ptr() for FFI safety *)
-      let is_casting_to_slice = 
-        match ty with
-        | Rusttypes.Tslice(_, _) -> true
+      (* Check if we MUST add .as_mut_ptr() for C FFI compatibility *)
+      let expr_ty = type_of_expr r in
+      (* Debug: print types *)
+      let _ = if false then begin
+        Printf.eprintf "DEBUG: is_c_function=%b, param_ty=%s, expr_ty=%s\n%!"
+          is_c_function
+          (PrintRustsyntax.name_rust_type ty)
+          (PrintRustsyntax.name_rust_type expr_ty)
+      end in
+      let needs_ptr_conversion = is_c_function && (
+        match ty, expr_ty with
+        (* C function expects raw pointer, but we have array or slice - MUST convert *)
+        | Rusttypes.Traw_pointer(_, _), Rusttypes.Tarray(_, _, _) -> true
+        | Rusttypes.Traw_pointer(_, _), Rusttypes.Tslice(_, _) -> true
+        (* C function expects slice (represented as pointer in FFI), but we have array - MUST convert *)
+        | Rusttypes.Tslice(_, _), Rusttypes.Tarray(_, _, _) -> true
         | _ -> false
-      in
-      if is_casting_to_slice then
-        (* When casting to slice for FFI, use .as_ptr() or .as_mut_ptr() *)
-        (match ty with
-         | Rusttypes.Tslice(Rusttypes.Mutable, _) ->
-             (* Print expression, then call .as_mut_ptr() *)
-             expr p (2, r);
-             fprintf p ".as_mut_ptr()"
-         | Rusttypes.Tslice(Rusttypes.Immutable, _) ->
-             expr p (2, r);
-             fprintf p ".as_ptr()"
-         | _ ->
-             expr p (2, r);
-             fprintf p " as %s" (name_rust_decl "" ty))
-      else
-        (expr p (2, r);
-         (* 只有当类型不是 Tunit 时才打印 'as' 类型转换 *)
-         match ty with
-         | Rusttypes.Tunit -> () (* 如果类型是 Tunit，则什么都不打印 *)
-         | _ -> fprintf p " as %s" (name_rust_decl "" ty));
-      print_expr_list_with_type p (false, rl, tyl)
+      ) in
+      
+      if needs_ptr_conversion then begin
+        (* MUST use .as_mut_ptr() for FFI safety *)
+        expr p (2, r);
+        fprintf p ".as_mut_ptr()"
+      end else begin
+        (* For Rust functions with slice parameters, check if we need to add &mut *)
+        let needs_ref = not is_c_function && (
+          match ty, expr_ty with
+          | Rusttypes.Tslice(Rusttypes.Mutable, _), Rusttypes.Tarray(_, _, _) -> true
+          | Rusttypes.Tslice(Rusttypes.Immutable, _), Rusttypes.Tarray(_, _, _) -> true
+          | _ -> false
+        ) in
+        if needs_ref then begin
+          (* Need to add &mut or & for array to slice conversion *)
+          match ty with
+          | Rusttypes.Tslice(Rusttypes.Mutable, _) ->
+              fprintf p "&mut ";
+              expr p (2, r)
+          | Rusttypes.Tslice(Rusttypes.Immutable, _) ->
+              fprintf p "&";
+              expr p (2, r)
+          | _ -> expr p (2, r)
+        end else begin
+          expr p (2, r);
+          (* Only cast if type is not Tunit and not a slice for Rust functions *)
+          match ty with
+          | Rusttypes.Tunit -> () 
+          | Rusttypes.Tslice(_, _) when not is_c_function -> () (* Rust functions accept slices directly (when already a slice) *)
+          | _ -> fprintf p " as %s" (name_rust_decl "" ty)
+        end
+      end;
+      print_expr_list_with_type p (false, rl, tyl, is_c_function)
 
   | r :: rl, [] ->
+      (* No more parameter types - this happens with variadic functions like printf *)
       if not first then fprintf p ",@ ";
-      expr p (2, r);
-      print_expr_list_with_type p (false, rl, [])
+      (* For C variadic functions, check if we MUST convert arrays/slices to pointers *)
+      if is_c_function then
+        let expr_ty = type_of_expr r in
+        (match expr_ty with
+         | Rusttypes.Tarray(_, _, _) | Rusttypes.Tslice(_, _) ->
+             (* Arrays and slices MUST be converted to raw pointers for C variadic functions *)
+             expr p (2, r);
+             fprintf p ".as_mut_ptr()"
+         | _ ->
+             expr p (2, r))
+      else
+        expr p (2, r);
+      print_expr_list_with_type p (false, rl, [], is_c_function)
   | _ ->
       (* error *)
       ()
@@ -578,6 +615,16 @@ let rec print_stmt p (s: Rustlight.statement) =
              | Rusttypes.Tfunction(_, _, args, _, _) ->  typelist_to_list args
              | _ -> List.map (fun _ -> Rusttypes.Tunit) el  (* fallback: 全部Tunit *)
              in
+           (* Check if this is a C function call *)
+           let is_c_function = match e1 with
+             | Epure (Eglobal(id, _)) ->
+                 let name = extern_atom id in
+                 List.mem name unsafe_c_functions
+             | Epure (Eplace(Plocal(id, _), _)) ->
+                 let name = extern_atom id in
+                 List.mem name unsafe_c_functions
+             | _ -> false
+           in
            (* Check if the destination variable type is Tunit - if so, don't print assignment *)
            (* This happens when the return value is ignored in the original C code *)
            let place_ty = type_of_place v in
@@ -591,13 +638,13 @@ let rec print_stmt p (s: Rustlight.statement) =
              (* Only print the function call, no assignment *)
              fprintf p "@[<hv 2>%a@,(@[<hov 0>%a@]);@]"
                print_function_call_name e1
-               print_expr_list_with_type (true, el, param_tys)
+               print_expr_list_with_type (true, el, param_tys, is_c_function)
            else
              (* Print full assignment statement *)
              fprintf p "@[<hv 2>%a =@ %a@,(@[<hov 0>%a@]);@]"
                print_place v
                print_function_call_name e1
-               print_expr_list_with_type (true, el, param_tys)
+               print_expr_list_with_type (true, el, param_tys, is_c_function)
          )
       )
   | Smethod_call(v, receiver, method_name, el) ->
