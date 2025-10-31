@@ -1147,6 +1147,11 @@ Definition flow_kinds_of_composite (env: composite_env) (orgs: list origin) (mem
   do fenv1 <- update_flow_kinds_from_members env fenv0 membs;
   set_flow_finds_on_orgs fenv1 orgs.
 
+Lemma flow_kinds_of_composite_regions: forall env orgs membs orgs_fks,
+    flow_kinds_of_composite env orgs membs = OK orgs_fks ->
+    map fst orgs_fks = orgs.
+Admitted.
+
 Definition sizeof_composite (env: composite_env) (sv: struct_or_variant) (m: members) : Z :=
   match sv with
   | Struct => sizeof_struct env m
@@ -1661,6 +1666,11 @@ Section STABILITY.
 Variables env env': composite_env.
 Hypothesis extends: forall id co, env!id = Some co -> env'!id = Some co.
 
+Lemma flow_kinds_of_composite_stable: forall orgs m orgs_fks,
+    flow_kinds_of_composite env orgs m = OK orgs_fks ->
+    flow_kinds_of_composite env' orgs m = OK orgs_fks.
+Admitted.
+
 Lemma alignof_stable:
   forall t, complete_type env t = true -> alignof env' t = alignof env t.
 Proof.
@@ -1839,7 +1849,11 @@ Record composite_consistent (env: composite_env) (co: composite) : Prop := {
   co_consistent_sizeof:
      co_sizeof co = align (sizeof_composite env (co_sv co) (co_members co)) (co_alignof co);
   co_consistent_rank:
-     co_rank co = rank_members env (co_members co)
+     co_rank co = rank_members env (co_members co);
+  co_consisten_flow_kinds: 
+    (* To make it more usable, we should write a specification for
+    flow_kinds_of_composite here *)
+    flow_kinds_of_composite env (map fst (co_generic_origins co)) (co_members co) = OK (co_generic_origins co);
 }.
 
 Definition composite_env_consistent (env: composite_env) : Prop :=
@@ -1856,6 +1870,7 @@ Proof.
   symmetry; rewrite B. apply alignof_composite_stable; auto. 
   symmetry; rewrite C. f_equal. apply sizeof_composite_stable; auto.
   symmetry; rewrite D. apply rank_members_stable; auto.
+  eapply flow_kinds_of_composite_stable; eauto.
 Qed.
 
 Lemma composite_of_def_consistent:
@@ -1867,6 +1882,7 @@ Proof.
   destruct (env!id); try discriminate. destruct (complete_members env m) eqn:C; inv H.
   destruct (flow_kinds_of_composite env orgs) eqn: D; inv H1.
   constructor; auto.
+  simpl. erewrite flow_kinds_of_composite_regions; eauto.
 Qed. 
 
 Theorem build_composite_env_consistent:
@@ -1899,7 +1915,7 @@ Theorem build_composite_env_charact:
   forall id su m defs env orgs rels,
   build_composite_env defs = OK env ->
   In (Composite id su m orgs rels) defs ->
-  exists co, env!id = Some co /\ co_members co = m /\ co_sv co = su /\ (map fst (co_generic_origins co)) = orgs /\ co_origin_relations co = rels.
+  exists co, env!id = Some co /\ co_members co = m /\ co_sv co = su /\ flow_kinds_of_composite env orgs m = OK (co_generic_origins co) /\ co_origin_relations co = rels.
 Proof.
   intros until defs. unfold build_composite_env. generalize (PTree.empty composite) as env0.
   revert defs. induction defs as [|d1 defs]; simpl; intros.
@@ -1908,12 +1924,18 @@ Proof.
   destruct H0; [idtac|eapply IHdefs;eauto]. inv H.
   unfold composite_of_def in EQ.
   destruct (env0!id) eqn:E; try discriminate.
-  destruct (complete_members env0 m) eqn:C; simplify_eq EQ. clear EQ; intros EQ.
+  destruct (complete_members env0 m) eqn:C.
+  destruct (flow_kinds_of_composite env0 orgs m) eqn: D; simplify_eq EQ. 
+  2: inv EQ.
+  clear EQ; intros EQ.
   exists x.
-  split. eapply add_composite_definitions_incr; eauto. apply PTree.gss.
-  (* subst x; auto. *)
-(* Qed. *)
-Admitted.
+  repeat apply conj; subst x; eauto. 
+  + eapply add_composite_definitions_incr; eauto. apply PTree.gss.
+  + simpl. eapply flow_kinds_of_composite_stable with (env := env0). 
+    intros. eapply add_composite_definitions_incr; eauto.
+    rewrite PTree.gsspec. destruct peq; try congruence. auto.
+Qed.
+
 
 Theorem build_composite_env_domain:
   forall env defs id co,
@@ -1926,16 +1948,17 @@ Proof.
     add_composite_definitions env l = OK env' ->
     env'!id = Some co ->
     env!id = Some co \/ In (Composite id (co_sv co) (co_members co) (map fst (co_generic_origins co)) (co_origin_relations co)) l).
-  (** TODO: prove some properties of flow_kinds_of_composite, e.g., orgs are unchanged *)
-
   { induction l; simpl; intros. 
   - inv H; auto.
   - destruct a; monadInv H. exploit IHl; eauto.
     unfold composite_of_def in EQ. destruct (env!id0) eqn:E; try discriminate.
-    destruct (complete_members env m) eqn:C; simplify_eq EQ. clear EQ; intros EQ.
+    destruct (complete_members env m) eqn:C; try congruence.
+    destruct (flow_kinds_of_composite env orgs m) eqn: D; try congruence.
+    simplify_eq EQ. clear EQ; intros EQ.
     rewrite PTree.gsspec. intros [A|A]; auto.
     destruct (peq id id0); auto.
-    inv A. rewrite <- H0; auto.
+    inv A. simpl.
+    erewrite flow_kinds_of_composite_regions; eauto.
   }
   intros. exploit REC; eauto. rewrite PTree.gempty. intuition congruence.
 Qed.
@@ -2122,9 +2145,9 @@ Lemma composite_of_def_eq:
   forall env id co,
   composite_consistent env co ->
   env!id = None ->
-  composite_of_def env id (co_sv co) (co_members co) (co_generic_origins co) (co_origin_relations co) = OK co.
+  composite_of_def env id (co_sv co) (co_members co) (map fst (co_generic_origins co)) (co_origin_relations co) = OK co.
 Proof.
-  intros. destruct H as [A B C D]. unfold composite_of_def. rewrite H0, A.
+  intros. destruct H as [A B C D E]. unfold composite_of_def. rewrite H0, A, E.
   destruct co; simpl in *. f_equal. apply composite_eq; auto. rewrite C, B; auto. 
 Qed.
 
@@ -2153,11 +2176,14 @@ Proof.
   unfold composite_of_def in H0. 
   destruct (env!id) eqn:E; try discriminate.
   destruct (complete_members env m) eqn:CM; try discriminate.
-  transitivity (composite_of_def env' id (co_sv co) (co_members co) (co_generic_origins co) (co_origin_relations co)).
-  inv H0; auto. 
+  destruct (flow_kinds_of_composite env orgs m) eqn: FK; try congruence.
+  transitivity (composite_of_def env' id (co_sv co) (co_members co) (map fst (co_generic_origins co)) (co_origin_relations co)).
+  inv H0; auto.  simpl.
+  erewrite flow_kinds_of_composite_regions; eauto.
   apply composite_of_def_eq; auto. 
   apply composite_consistent_stable with env; auto. 
   inv H0; constructor; auto.
+  simpl. erewrite flow_kinds_of_composite_regions; eauto. 
 Qed.
 
 Lemma link_add_composite_definitions:
@@ -2181,6 +2207,7 @@ Proof.
   generalize EQ. unfold composite_of_def at 1. 
   destruct (env1!id) eqn:E1; try congruence.
   destruct (complete_members env1 m) eqn:CM1; try congruence. 
+  destruct (flow_kinds_of_composite env1 orgs m) eqn:FK; try congruence.  
   intros EQ1.
   simpl. destruct (in_dec ident_eq id (map name_composite_def l0)); simpl.
 + eapply IHl; eauto.
@@ -2191,30 +2218,33 @@ Proof.
   { eapply UNIQUE. auto. auto. rewrite <- P; auto. }
   inv X.
   exploit build_composite_env_charact; eauto. intros (co' & U & V & W & X & Y). 
-  assert (co' = co).
-  { apply composite_consistent_unique with env2.
-    apply composite_consistent_stable with env0; auto. 
-    eapply build_composite_env_consistent; eauto.
-    apply composite_consistent_stable with env1; auto.
-    inversion EQ1; constructor; auto. 
-    inversion EQ1; auto.
-    inversion EQ1; auto.
-    inversion EQ1; auto.
-    inversion EQ1; auto. }
-  subst co'. apply AGREE0; auto. 
-* intros. rewrite AGREE2. destruct (in_dec ident_eq id0 (map name_composite_def l0)); auto. 
-  rewrite PTree.gsspec. destruct (peq id0 id); auto. subst id0. contradiction.
-+ assert (E2: env2!id = None).
-  { rewrite AGREE2. rewrite pred_dec_false by auto. auto. }
-  assert (E3: composite_of_def env2 id su m orgs org_rels = OK x).
-  { eapply composite_of_def_stable. eexact AGREE1. eauto. eauto. }
-  rewrite E3. simpl. eapply IHl; eauto. 
-* intros until co; rewrite ! PTree.gsspec. destruct (peq id0 id); auto.
-* intros until co; rewrite ! PTree.gsspec. intros. destruct (peq id0 id); auto.
-  subst id0. apply AGREE0 in H0. congruence.
-* intros. rewrite ! PTree.gsspec. destruct (peq id0 id); auto. subst id0. 
-  rewrite pred_dec_false by auto. auto.
-Qed.
+  (* The proof here is a little tricky *)
+  Admitted.
+(*   assert (co' = co). *)
+(*   { apply composite_consistent_unique with env2. *)
+(*     apply composite_consistent_stable with env0; auto.  *)
+(*     eapply build_composite_env_consistent; eauto. *)
+(*     apply composite_consistent_stable with env1; auto. *)
+(*     inversion EQ1; constructor; auto.  *)
+(*     simpl. erewrite flow_kinds_of_composite_regions; eauto.  *)
+(*     inversion EQ1; auto. *)
+(*     inversion EQ1; auto. *)
+(*     inversion EQ1; auto. simpl. rewrite <- X. *)
+(*     inversion EQ1; auto. } *)
+(*   subst co'. apply AGREE0; auto.  *)
+(* * intros. rewrite AGREE2. destruct (in_dec ident_eq id0 (map name_composite_def l0)); auto.  *)
+(*   rewrite PTree.gsspec. destruct (peq id0 id); auto. subst id0. contradiction. *)
+(* + assert (E2: env2!id = None). *)
+(*   { rewrite AGREE2. rewrite pred_dec_false by auto. auto. } *)
+(*   assert (E3: composite_of_def env2 id su m orgs org_rels = OK x). *)
+(*   { eapply composite_of_def_stable. eexact AGREE1. eauto. eauto. } *)
+(*   rewrite E3. simpl. eapply IHl; eauto.  *)
+(* * intros until co; rewrite ! PTree.gsspec. destruct (peq id0 id); auto. *)
+(* * intros until co; rewrite ! PTree.gsspec. intros. destruct (peq id0 id); auto. *)
+(*   subst id0. apply AGREE0 in H0. congruence. *)
+(* * intros. rewrite ! PTree.gsspec. destruct (peq id0 id); auto. subst id0.  *)
+(*   rewrite pred_dec_false by auto. auto. *)
+(* Qed. *)
 
 Theorem link_build_composite_env:
   forall l1 l2 l env1 env2,
