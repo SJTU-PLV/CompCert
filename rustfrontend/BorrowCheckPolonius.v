@@ -131,28 +131,30 @@ Fixpoint transfer_exprlist (pc: node) (oe: LOrgEnv.t) (l: list expr) : res LOrgE
 
 (* Flowing loans from source type to destination type *)
 
+Definition flow_loans_by_regions (e: LOrgEnv.t) (org_src org_tgt: origin) (fk: flow_kind) : LOrgEnv.t :=
+  match fk with
+  | ByVal =>
+      let st := LOrgSt.lub (LOrgEnv.get org_src e) (LOrgEnv.get org_tgt e) in
+      LOrgEnv.set org_tgt st e
+  | ByRef =>
+      LOrgEnv.union org_src org_tgt e
+  end.
+
 (* Subtyping rules of rust borrow checker *)
-Fixpoint flow_loans (e: LOrgEnv.t) (s d: type) (k: flow_kind) : LOrgEnv.t :=
+Fixpoint flow_loans (e: LOrgEnv.t) (s d: type) (fk: flow_kind) : LOrgEnv.t :=
   match s,d with
-  | Treference org1 mut1 ty1, Treference org2 mut2 ty2 =>      
-        match k with
-        | ByVal =>
-            let st := LOrgSt.lub (LOrgEnv.get org1 e) (LOrgEnv.get org2 e) in
-            let e1 := LOrgEnv.set org2 st e in
-            (* Rust does not support "types differ in mutability", so we can
-               assume that the type checking has check that mut1 = mut2 *)
-            let fk := match mut1 with
-                      | Mutable => ByRef
-                      | Immutable => ByVal
-                      end in
-            flow_loans e1 ty1 ty2 fk
-        | ByRef =>
-            let e1 := LOrgEnv.union org1 org2 e in
-            flow_loans e1 ty1 ty2 ByRef
-        end
+  | Treference org1 mut1 ty1, Treference org2 mut2 ty2 =>
+      let e1 := flow_loans_by_regions e org1 org2 fk in
+      (* Rust does not support "types differ in mutability", so we can
+         assume that the type checking has check that mut1 = mut2 *)
+      let fk' := match mut1 with
+                | Mutable => ByRef
+                | Immutable => ByVal
+                 end in
+      flow_loans e1 ty1 ty2 (meet_flow_kinds fk fk')
   | Tbox ty1, Tbox ty2 =>
-      (* Box is covariant over ty1/ty2, so we pass ByVal *)
-      flow_loans e ty1 ty2 ByVal
+      (* Box is covariant over ty1/ty2*)
+      flow_loans e ty1 ty2 (meet_flow_kinds fk ByVal)
   | Tstruct orgs1 id1, Tstruct orgs2 id2 
   | Tvariant orgs1 id1 , Tvariant orgs2 id2 =>
       (* type checking must ensure that id1 == id2 and len(orgs1) ==
