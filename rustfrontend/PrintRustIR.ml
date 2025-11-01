@@ -81,7 +81,7 @@ let print_instruction pp prog (pc, i) =
     (match select_stmt prog sel with
     | Some stmt ->
       let s = P.to_int s in
-      fprintf pp "%a%s@." print_stmt stmt (if s <> pc - 1 then (sprintf " goto %d" s) else "")
+      fprintf pp "%a%s@." print_stmt stmt ((sprintf " goto %d" s))
     | None ->
       fprintf pp "Error: cannot find statement@.")
   | Icond(e, s1, s2) ->

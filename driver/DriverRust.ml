@@ -99,7 +99,6 @@ let debug_ElaborateDrop rustir_prog =
 
 let debug_borrow_check = true
 
-(* Unsupported now *)
 let debug_BorrowCheck (prog: RustIR.program) =
   match ReplaceOrigins.transl_program prog with
   | Errors.OK rustir_after_replace_origins ->

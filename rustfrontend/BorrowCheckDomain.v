@@ -639,9 +639,9 @@ Lemma errcode_eq : forall (c1 c2: errcode), {c1 = c2} + {c1 <> c2}.
   decide equality.
 Defined.
 
-Module BORCK <: SEMILATTICE.
+Module LoansEnv <: SEMILATTICE.
   
-  Inductive t' := | Bot | Err (loc: node) (msg: errmsg) | State (org_env: LOrgEnv.t).
+  Inductive t' := | Bot (* | Err (loc: node) (msg: errmsg)  *)| State (org_env: LOrgEnv.t).
   
   Definition t := t'.
  
@@ -650,8 +650,8 @@ Module BORCK <: SEMILATTICE.
     | Bot, Bot => True
     | State oe1, State oe2 =>
         LOrgEnv.eq oe1 oe2
-    | Err pc1 msg1, Err pc2 msg2 =>
-        Pos.eq pc1 pc2 /\ list_forall2 eq msg1 msg2
+    (* | Err pc1 msg1, Err pc2 msg2 => *)
+    (*     Pos.eq pc1 pc2 /\ list_forall2 eq msg1 msg2 *)
     | _, _ => False
     end.
 
@@ -660,8 +660,8 @@ Module BORCK <: SEMILATTICE.
     | Bot, Bot => false
     | State oe1, State oe2 =>
         LOrgEnv.beq oe1 oe2
-    | Err pc1 msg1, Err pc2 msg2 =>
-        Pos.eqb pc1 pc2 && List.list_eq_dec errcode_eq msg1 msg2
+    (* | Err pc1 msg1, Err pc2 msg2 => *)
+    (*     Pos.eqb pc1 pc2 && List.list_eq_dec errcode_eq msg1 msg2 *)
     | _, _ => false
     end.
 
@@ -670,9 +670,9 @@ Module BORCK <: SEMILATTICE.
     | _, Bot => True
     | Bot, _ => False
     (* Err is the top *)
-    | Err pc1 _, Err pc2 _ => Pos.ge pc1 pc2
-    | Err _ _, _ => True
-    | _, Err _ _ => False
+    (* | Err pc1 _, Err pc2 _ => Pos.ge pc1 pc2 *)
+    (* | Err _ _, _ => True *)
+    (* | _, Err _ _ => False *)
     | State oe1, State oe2 =>
         LOrgEnv.ge oe1 oe2
     end.
@@ -683,10 +683,10 @@ Module BORCK <: SEMILATTICE.
     match x,y with
     | _, Bot => x
     | Bot, _ => y
-    | Err pc1 msg1, Err pc2 msg2 =>
-        if Pos.ltb pc1 pc2 then Err pc2 msg2 else Err pc1 msg1
-    | Err _ _, State _ => x
-    | State _, Err _ _ => y
+    (* | Err pc1 msg1, Err pc2 msg2 => *)
+    (*     if Pos.ltb pc1 pc2 then Err pc2 msg2 else Err pc1 msg1 *)
+    (* | Err _ _, State _ => x *)
+    (* | State _, Err _ _ => y *)
     | State oe1, State oe2 =>
         State (LOrgEnv.lub oe1 oe2) 
     end.
@@ -706,7 +706,7 @@ Module BORCK <: SEMILATTICE.
   Axiom ge_lub_left: forall x y, ge (lub x y) x.
   Axiom ge_lub_right: forall x y, ge (lub x y) y.
 
-End BORCK.
+End LoansEnv.
 
 (* (* Update Alias graph *) *)
 

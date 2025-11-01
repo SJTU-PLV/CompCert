@@ -10,7 +10,6 @@ open PrintRustlight
 open Maps
 open BorrowCheckDomain
 open BorrowCheckPolonius
-open Driveraux
 open UnionFindDelete
 open RegionLiveness
 
@@ -89,11 +88,9 @@ let print_live_loans pp (ls: LoanSet.t) =
 
 let print_ae pp ae =
   match ae with
-  | BORCK.Err(pc', msg) ->
-    fprintf pp "Error found in %d: %a@.@." (P.to_int pc') print_error msg
-  | BORCK.Bot ->
+  | LoansEnv.Bot ->
     fprintf pp "Unreachable point@.@."
-  | BORCK.State(org_env) ->
+  | LoansEnv.State(org_env) ->
     (* TODO: print alias graph *)
     fprintf pp "%a@.@." print_origin_env org_env
 
@@ -122,7 +119,7 @@ let print_cfg_body_borrow_check pp (body, entry, cfg) live ae =
 let print_cfg_borrow_check ce pp id f  =
   match generate_cfg f.fn_body with
   | Errors.OK(entry, cfg) ->
-    (match borrow_check ce f cfg entry with
+    (match loans_flow_analyze ce f cfg entry with
     | Errors.OK (live, ae) ->
       fprintf pp "%s@ "
           (PrintRustsyntax.name_rust_decl (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
