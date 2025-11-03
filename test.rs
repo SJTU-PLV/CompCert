@@ -11,7 +11,7 @@ fn main(){
    let mut _10000 : &mut  [i32];
    let mut _1 : &mut  [i32];
    let mut _2 : &mut  [i32];
-   let mut _128 = vec![i32::default(); 10].into_boxed_slice();
+   let mut _128 = vec![i32::default(); (10) as usize].into_boxed_slice();
    a = (&mut _128 as &mut  [i32]);
    a[(1) as usize] = (5) as i32;
    a[(2) as usize] = (10) as i32;

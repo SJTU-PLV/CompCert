@@ -165,19 +165,47 @@ and pexpr p (prec, e) =
   | Ebinop(op, a1, a2, ty) ->
     (* Check if this is a float operation - if so, convert int literals to float *)
     let is_float_op = is_float_type ty || is_float_type (type_of_pexpr a1) || is_float_type (type_of_pexpr a2) in
+    (* Check if this is a comparison with mixed signed/unsigned types *)
+    let is_comparison_op = match op with
+      | Cop.Olt | Cop.Ogt | Cop.Ole | Cop.Oge | Cop.Oeq | Cop.One -> true
+      | _ -> false
+    in
+    let ty1 = type_of_pexpr a1 in
+    let ty2 = type_of_pexpr a2 in
+    let needs_type_conversion = is_comparison_op && (
+      match ty1, ty2 with
+      (* u32 compared with i32 - convert i32 to u32 *)
+      | Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned), Rusttypes.Tint(Ctypes.I32, Ctypes.Signed)
+      | Rusttypes.Tint(Ctypes.I32, Ctypes.Signed), Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned) -> true
+      | _ -> false
+    ) in
     (* Print first operand *)
     (match a1 with
      | Econst_int(n, _) when is_float_op ->
          fprintf p "%ld.0" (camlint_of_coqint n)
      | _ ->
-         pexpr p (prec1, a1));
+         if needs_type_conversion then
+           match ty1, ty2 with
+           | Rusttypes.Tint(Ctypes.I32, Ctypes.Signed), Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned) ->
+               (* a1 is i32, a2 is u32 - convert a1 to u32 *)
+               fprintf p "(%a as u32)" pexpr (0, a1)
+           | _ -> pexpr p (prec1, a1)
+         else
+           pexpr p (prec1, a1));
     fprintf p "@ %s " (name_binop op);
     (* Print second operand *)
     (match a2 with
      | Econst_int(n, _) when is_float_op ->
          fprintf p "%ld.0" (camlint_of_coqint n)
      | _ ->
-         pexpr p (prec2, a2))
+         if needs_type_conversion then
+           match ty1, ty2 with
+           | Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned), Rusttypes.Tint(Ctypes.I32, Ctypes.Signed) ->
+               (* a1 is u32, a2 is i32 - convert a2 to u32 *)
+               fprintf p "(%a as u32)" pexpr (0, a2)
+           | _ -> pexpr p (prec2, a2)
+         else
+           pexpr p (prec2, a2))
   | Ecktag(v, fid) ->
     fprintf p "%s(%a, %s)" "cktag" print_place v (extern_atom fid)
   | Eref(org, mut, v, _) ->
@@ -276,27 +304,43 @@ let rec print_expr_list_with_type p (first, exprs, param_tys, is_c_function) =
       if not first then fprintf p ",@ ";
       (* Check if we MUST add .as_mut_ptr() for C FFI compatibility *)
       let expr_ty = type_of_expr r in
-      (* Debug: print types *)
-      let _ = if false then begin
-        Printf.eprintf "DEBUG: is_c_function=%b, param_ty=%s, expr_ty=%s\n%!"
-          is_c_function
-          (PrintRustsyntax.name_rust_type ty)
-          (PrintRustsyntax.name_rust_type expr_ty)
-      end in
       let needs_ptr_conversion = is_c_function && (
         match ty, expr_ty with
         (* C function expects raw pointer, but we have array or slice - MUST convert *)
         | Rusttypes.Traw_pointer(_, _), Rusttypes.Tarray(_, _, _) -> true
         | Rusttypes.Traw_pointer(_, _), Rusttypes.Tslice(_, _) -> true
-        (* C function expects slice (represented as pointer in FFI), but we have array - MUST convert *)
+        (* C function parameter is slice (this represents a pointer in FFI) - MUST convert to raw pointer *)
+        (* This handles both: 1) slice→slice (atoi case), 2) array→slice, 3) void*→any slice *)
         | Rusttypes.Tslice(_, _), Rusttypes.Tarray(_, _, _) -> true
+        | Rusttypes.Tslice(_, _), Rusttypes.Tslice(_, _) -> true
         | _ -> false
       ) in
       
       if needs_ptr_conversion then begin
         (* MUST use .as_mut_ptr() for FFI safety *)
-        expr p (2, r);
-        fprintf p ".as_mut_ptr()"
+        (* Check if expression is an Eas (cast) - if so, wrap the whole expression *)
+        let expr_contains_cast = match r with
+          | Epure (Eas(_, _)) -> true
+          | _ -> false
+        in
+        (* Check if target is c_void pointer and we need extra cast *)
+        let needs_cvoid_cast = match ty with
+          | Rusttypes.Traw_pointer(_, Rusttypes.Tvoid) -> true
+          | Rusttypes.Tslice(_, Rusttypes.Tvoid) -> true
+          | _ -> false
+        in
+        if expr_contains_cast then begin
+          if needs_cvoid_cast then
+            fprintf p "(%a).as_mut_ptr() as %s" expr (2, r) (PrintRustsyntax.name_rust_type_ffi ty)
+          else
+            fprintf p "(%a).as_mut_ptr()" expr (2, r)
+        end else begin
+          expr p (2, r);
+          if needs_cvoid_cast then
+            fprintf p ".as_mut_ptr() as %s" (PrintRustsyntax.name_rust_type_ffi ty)
+          else
+            fprintf p ".as_mut_ptr()"
+        end
       end else begin
         (* For Rust functions with slice parameters, check if we need to add &mut *)
         let needs_ref = not is_c_function && (
@@ -366,8 +410,9 @@ let parse_malloc_param p v param =
            (*
              关键修复 #1: 使用 `let mut` 直接绑定。
              这会遮蔽掉函数顶部错误的声明，并创建一个类型正确的 Box。
+             Count expression needs to be usize for vec![]
            *)
-           fprintf p "@[<hv 2>let mut %a = vec![%s::default(); %a].into_boxed_slice();@]"
+           fprintf p "@[<hv 2>let mut %a = vec![%s::default(); (%a) as usize].into_boxed_slice();@]"
              print_place v rust_type pexpr (0, count_pe)
        | _ ->
            fprintf p "@[<hv 2>/* Error: could not parse malloc for array */@]")
@@ -801,6 +846,12 @@ let print_function p id f =
     fprintf p "fn main()";
     fprintf p "{@;@[<v 2>  @[<v 1>@;";
         fprintf p "unsafe {@ ";  (* Wrap in unsafe for static mut access *)
+        (* If C main had parameters (argc, argv), declare them as local variables *)
+        List.iter 
+        (fun (param_id, param_ty) ->
+          fprintf p "let mut %s;@ " (name_rust_decl_var (extern_atom param_id ^ " : ") param_ty))
+        f.fn_params;
+        (* Print local variables *)
         List.iter 
         (fun (id, ty) ->
           match ty with

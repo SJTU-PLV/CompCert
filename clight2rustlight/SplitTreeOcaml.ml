@@ -151,7 +151,7 @@ let find_and_split_stateful (base_ptr_id: ident) (new_ptr_id: ident) (c_offset: 
   let env = unpack_env coq_env in (* Unpack to internal format *)
   let c_offset_int = Z.to_int c_offset in
   let array_size_int = Z.to_int array_size_z in
-  
+
   (* If base_ptr_id is not in forest, check if it's a derived pointer *)
   let actual_base_id = 
     match PTree.get base_ptr_id env.forest with
