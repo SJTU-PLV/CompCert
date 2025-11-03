@@ -36,8 +36,16 @@ Fixpoint reg_list_dead (l: list origin) (rs: RegionSet.t) : RegionSet.t :=
       (reg_list_dead l' (reg_dead r rs))
   end.
 
+Fixpoint root_type_of_place (p: place) : type :=
+  match p with
+  | Plocal _ ty => ty
+  | Pderef p' _ 
+  | Pfield p' _ _
+  | Pdowncast p' _ _ => root_type_of_place p'
+  end.
+
 Definition reg_place_live (p: place) (rs: RegionSet.t) : RegionSet.t :=
-  reg_list_live (origins_of_type (typeof_place p)) rs.
+  reg_list_live (origins_of_type (root_type_of_place p)) rs.
 
 Fixpoint reg_pexpr_live (pe: pexpr) (rs: RegionSet.t) : RegionSet.t :=
   match pe with 
@@ -61,14 +69,6 @@ Fixpoint reg_exprlis_live (l: list expr) (rs: RegionSet.t) : RegionSet.t :=
   | nil => rs
   | e :: l' =>
       reg_exprlis_live l' (reg_expr_live e rs)
-  end.
-
-Fixpoint root_type_of_place (p: place) : type :=
-  match p with
-  | Plocal _ ty => ty
-  | Pderef p' _ 
-  | Pfield p' _ _
-  | Pdowncast p' _ _ => root_type_of_place p'
   end.
 
 (* Assigning a place may use some regions (if it is not a local) or
