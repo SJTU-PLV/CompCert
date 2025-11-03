@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 // void foo(int* abcd) {
 //   int* a = abcd + 0;
 //   int* b = abcd + 8;
@@ -25,13 +26,13 @@ int main() {
   // c[2+n] = 43;
   // abcd[10] = 100;
   // d[3] = 44;
-  int a[10] = {0};
-  int* rk = a;
-  rk[1] = 5;
-  rk[2] = 10;
-  rk[3] = rk[1] + rk[2];
-  rk = rk + 1;
-  rk[1] = 20;
+  int *a = malloc(10 * sizeof(int));
+  a[1] = 5;
+  a[2] = 10;
+  a[3] = a[1] + a[2];
+  a = a + 1;
+  a[1] = 20;
+  free(a);
   // int *p = rk + 2;
   // p[1] = 15;
   return 0;

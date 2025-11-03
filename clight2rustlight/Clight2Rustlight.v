@@ -800,13 +800,19 @@ Section TRANSL.
                Since `find_and_split_m` already returns a `mon` value, we don't need `ret`. *)
             find_and_split_m base_ptr_id new_ptr_id c_offset array_size
       | _ =>
-          (* Not an array - check if base_ptr itself is a pointer derived from an array *)
-          do g <- get_gen;
-          if external_is_base_ptr_managed base_ptr_id g.(gen_scopes) then
-            (* base_ptr is a managed pointer, proceed with split *)
-            find_and_split_m base_ptr_id new_ptr_id c_offset 0%Z  (* array_size is unknown, use 0 as placeholder *)
-          else
-            do_default_assign tt
+          (* Not an array - check if it's a pointer type (could be from malloc) *)
+          match ty with
+          | Tpointer _ _ =>
+              (* It's a pointer type - treat as potentially malloc'd array, use large size *)
+              find_and_split_m base_ptr_id new_ptr_id c_offset 1000000%Z
+          | _ =>
+              do g <- get_gen;
+              if external_is_base_ptr_managed base_ptr_id g.(gen_scopes) then
+                (* base_ptr is a managed pointer, proceed with split *)
+                find_and_split_m base_ptr_id new_ptr_id c_offset 0%Z
+              else
+                do_default_assign tt
+          end
       end
     in
     (* 4. The main logic remains exactly the same. *)
@@ -825,11 +831,59 @@ Section TRANSL.
     end
 
   | Clight.Sset id e =>
-      let vars_to_flush := nub ident_eq (get_vars_from_expr e) in
-      do flush_stmts <- flush_assignments_m vars_to_flush;
-      do pe <- cexpr_to_pexpr (expr_depth e) e;
-      let assign_stmt := Rustlight.Sassign (Rustlight.Plocal id (to_rusttype (Clight.typeof e))) (Rustlight.Epure pe) in
-      ret (Ssequence flush_stmts assign_stmt)
+      (* Check if this is a pointer assignment that should use split tree *)
+      let uncast e :=
+        match e with
+        | Clight.Ecast e' _ => e'
+        | _ => e
+        end
+      in
+      let do_default_set (_:unit) :=
+        let vars_to_flush := nub ident_eq (get_vars_from_expr e) in
+        do flush_stmts <- flush_assignments_m vars_to_flush;
+        do pe <- cexpr_to_pexpr (expr_depth e) e;
+        let assign_stmt := Rustlight.Sassign (Rustlight.Plocal id (to_rusttype (Clight.typeof e))) (Rustlight.Epure pe) in
+        ret (Ssequence flush_stmts assign_stmt)
+      in
+      let handle_as_split_set base_ptr_id ty new_ptr_id c_offset :=
+        let ty_arr :=
+          match ty with
+          | Tpointer ty' _ => ty'
+          | _ => ty
+          end
+        in
+        match ty_arr with
+        | Ctypes.Tarray _ sz _ =>
+            let array_size := Z.abs sz in
+            if Z.eqb array_size 0%Z then
+              error (msg "SplitTree: Array size is zero or unknown.")
+            else
+              find_and_split_m base_ptr_id new_ptr_id c_offset array_size
+        | _ =>
+            (* Not an array type - check if managed OR if it's a pointer type (could be from malloc) *)
+            match ty with
+            | Tpointer _ _ =>
+                (* It's a pointer type - treat as potentially malloc'd, use large size *)
+                find_and_split_m base_ptr_id new_ptr_id c_offset 1000000%Z
+            | _ =>
+                do g <- get_gen;
+                if external_is_base_ptr_managed base_ptr_id g.(gen_scopes) then
+                  find_and_split_m base_ptr_id new_ptr_id c_offset 0%Z
+                else
+                  do_default_set tt
+            end
+        end
+      in
+      match uncast e with
+      | Clight.Ebinop Oadd (Clight.Evar base_ptr_id ty) (Clight.Econst_int offset _) _ =>
+          handle_as_split_set base_ptr_id ty id (Int.unsigned offset)
+      | Clight.Evar base_ptr_id ty_arr =>
+          (* For simple assignments like a = _128, use a large placeholder size *)
+          (* This allows malloc-derived pointers to be managed by split tree *)
+          handle_as_split_set base_ptr_id ty_arr id 0%Z
+      | _ =>
+          do_default_set tt
+      end
 
   | Clight.Sifthenelse e s1 s2 =>
     let vars_to_flush := nub ident_eq (get_vars_from_expr e) in

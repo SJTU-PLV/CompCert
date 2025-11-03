@@ -151,7 +151,7 @@ let find_and_split_stateful (base_ptr_id: ident) (new_ptr_id: ident) (c_offset: 
   let env = unpack_env coq_env in (* Unpack to internal format *)
   let c_offset_int = Z.to_int c_offset in
   let array_size_int = Z.to_int array_size_z in
-
+  
   (* If base_ptr_id is not in forest, check if it's a derived pointer *)
   let actual_base_id = 
     match PTree.get base_ptr_id env.forest with
@@ -245,9 +245,9 @@ let flush_assignments_for_vars (vars: ident list) (coq_env: TranslationEnv.t) : 
             : statement list =
             match find_leaf_at_offset state.tree c_offset with
             | Some rust_leaf_var ->
-                let ty = Tslice(Mutable, Tint(Ctypes.I32, Ctypes.Signed)) in
-                let assign_stmt = Sassign(Plocal(c_var, ty), Epure(Eplace(Plocal(rust_leaf_var, ty), ty))) in
-                assign_stmt :: inner_acc
+                (* Don't generate assignment statements - they cause borrow conflicts *)
+                (* The resolve_direct_access will handle variable resolution *)
+                inner_acc
             | None ->
                 let error_msg = Printf.sprintf "SplitTree flush: could not find leaf for C var at offset %d" c_offset in
                 failwith error_msg

@@ -212,14 +212,24 @@ and pexpr p (prec, e) =
         (* Skip redundant cast to bool since expression already returns bool *)
         pexpr p (prec', pe)
       else if is_casting_to_slice then
-        (* When casting to slice, need to borrow the array/global variable first *)
-        (match ty with
-         | Rusttypes.Tslice(Rusttypes.Mutable, _) ->
-             fprintf p "(&mut %a as %s)" pexpr (prec', pe) (name_rust_type ty)
-         | Rusttypes.Tslice(Rusttypes.Immutable, _) ->
-             fprintf p "(&%a as %s)" pexpr (prec', pe) (name_rust_type ty)
-         | _ ->
-             fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty))
+        (* When casting to slice, check if we need to add &mut *)
+        (* Don't add &mut if the expression is already a reference (Eref) *)
+        let is_already_ref = match pe with
+          | Eref(_, _, _, _) -> true
+          | _ -> false
+        in
+        if not is_already_ref then
+          (* Need to add &mut or & for the cast *)
+          (match ty with
+           | Rusttypes.Tslice(Rusttypes.Mutable, _) ->
+               fprintf p "(&mut %a as %s)" pexpr (prec', pe) (name_rust_type ty)
+           | Rusttypes.Tslice(Rusttypes.Immutable, _) ->
+               fprintf p "(&%a as %s)" pexpr (prec', pe) (name_rust_type ty)
+           | _ ->
+               fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty))
+        else
+          (* Already has &mut, just cast *)
+          fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty)
       else
         fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty)
   | Esizeof(ty1, ty2) ->
@@ -557,7 +567,43 @@ let rec print_stmt p (s: Rustlight.statement) =
           in
           (* Determine if target is bool by checking the actual declared type name *)
           let is_bool_target = (cast_type_name = "bool") in
-          (* Handle different cases of bool/int conversions *)
+          (* Check if we're casting to a slice type and need to add &mut *)
+          let is_slice_target = match place_ty with
+            | Rusttypes.Tslice(_, _) -> true
+            | _ -> false
+          in
+          let needs_borrow_for_slice = is_slice_target && (
+            match e with
+            | Epure (Eref(_, _, _, _)) -> false  (* Already a reference *)
+            | Epure (Eplace(place, ty)) -> 
+                (* Check if this is likely a malloc-generated Box variable *)
+                let is_likely_box = match place with
+                  | Plocal(id, _) ->
+                      let var_name = extern_atom id in
+                      (* Temporary variables like _128 (large numbers) that are declared as slice type 
+                         but might be redeclared as Box by malloc.
+                         Exclude small numbers like _1, _2 which are split_at_mut results *)
+                      (String.length var_name > 1 && var_name.[0] = '_' && 
+                       try 
+                         let num = int_of_string (String.sub var_name 1 (String.length var_name - 1)) in
+                         num >= 100  (* Only large temp variable IDs are from Clight, small ones from split_at_mut *)
+                       with _ -> false) &&
+                      (match ty with
+                       | Rusttypes.Tslice(_, _) -> true  (* Type mismatch: declared as slice but redeclared as Box *)
+                       | _ -> false)
+                  | _ -> false
+                in
+                (* Only borrow if NOT already a slice AND (is Box OR is Array OR likely Box from malloc) *)
+                (match ty with
+                 | Rusttypes.Tslice(_, _) when not is_likely_box -> false  (* Already a slice, no borrow *)
+                 | Rusttypes.Treference(_, _, _) -> false  (* Already a reference *)
+                 | Rusttypes.Tbox _ -> true  (* Box needs &mut *)
+                 | Rusttypes.Tarray(_, _, _) -> true  (* Array needs &mut *)
+                 | _ when is_likely_box -> true  (* Likely a Box from malloc *)
+                 | _ -> false)
+            | _ -> false  (* Complex expression - don't add &mut to avoid precedence issues *)
+          ) in
+          (* Handle different cases of bool/int conversions and slice conversions *)
           if is_bool_target && expr_returns_bool then
             (* bool expr → bool var: direct assignment *)
             fprintf p "@[<hv 2>%a =@ %a;@]" print_place v print_expr e
@@ -567,6 +613,15 @@ let rec print_stmt p (s: Rustlight.statement) =
           else if (not is_bool_target) && expr_returns_bool then
             (* bool expr → int var: need to cast bool to int *)
             fprintf p "@[<hv 2>%a =@ ((%a) as %s);@]" print_place v print_expr e cast_type_name
+          else if needs_borrow_for_slice then
+            (* Casting to slice: add &mut prefix *)
+            (match place_ty with
+             | Rusttypes.Tslice(Rusttypes.Mutable, _) ->
+                 fprintf p "@[<hv 2>%a =@ (&mut %a as %s);@]" print_place v print_expr e cast_type_name
+             | Rusttypes.Tslice(Rusttypes.Immutable, _) ->
+                 fprintf p "@[<hv 2>%a =@ (&%a as %s);@]" print_place v print_expr e cast_type_name
+             | _ ->
+                 fprintf p "@[<hv 2>%a =@ (%a) as %s;@]" print_place v print_expr e cast_type_name)
           else
             (* int expr → int var: standard cast *)
             fprintf p "@[<hv 2>%a =@ (%a) as %s;@]" print_place v print_expr e cast_type_name
