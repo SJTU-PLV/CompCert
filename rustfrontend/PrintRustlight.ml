@@ -179,6 +179,18 @@ and pexpr p (prec, e) =
       | Rusttypes.Tint(Ctypes.I32, Ctypes.Signed), Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned) -> true
       | _ -> false
     ) in
+    (* Helper to check if a type is an integer type *)
+    let is_int_type t = match t with
+      | Rusttypes.Tint(_, _) -> true
+      | Rusttypes.Tlong(_) -> true
+      | _ -> false
+    in
+    (* Determine target float type name *)
+    let float_type_name = match ty with
+      | Rusttypes.Tfloat(Ctypes.F32) -> "f32"
+      | Rusttypes.Tfloat(Ctypes.F64) -> "f64"
+      | _ -> "f64"  (* default to f64 *)
+    in
     (* Print first operand *)
     (match a1 with
      | Econst_int(n, _) when is_float_op ->
@@ -190,6 +202,9 @@ and pexpr p (prec, e) =
                (* a1 is i32, a2 is u32 - convert a1 to u32 *)
                fprintf p "(%a as u32)" pexpr (0, a1)
            | _ -> pexpr p (prec1, a1)
+         else if is_float_op && is_int_type ty1 then
+           (* Float operation with int expression - need conversion *)
+           fprintf p "(%a as %s)" pexpr (prec1, a1) float_type_name
          else
            pexpr p (prec1, a1));
     fprintf p "@ %s " (name_binop op);
@@ -204,6 +219,9 @@ and pexpr p (prec, e) =
                (* a1 is u32, a2 is i32 - convert a2 to u32 *)
                fprintf p "(%a as u32)" pexpr (0, a2)
            | _ -> pexpr p (prec2, a2)
+         else if is_float_op && is_int_type ty2 then
+           (* Float operation with int expression - need conversion *)
+           fprintf p "(%a as %s)" pexpr (prec2, a2) float_type_name
          else
            pexpr p (prec2, a2))
   | Ecktag(v, fid) ->
