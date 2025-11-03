@@ -800,7 +800,13 @@ Section TRANSL.
                Since `find_and_split_m` already returns a `mon` value, we don't need `ret`. *)
             find_and_split_m base_ptr_id new_ptr_id c_offset array_size
       | _ =>
-          do_default_assign tt
+          (* Not an array - check if base_ptr itself is a pointer derived from an array *)
+          do g <- get_gen;
+          if external_is_base_ptr_managed base_ptr_id g.(gen_scopes) then
+            (* base_ptr is a managed pointer, proceed with split *)
+            find_and_split_m base_ptr_id new_ptr_id c_offset 0%Z  (* array_size is unknown, use 0 as placeholder *)
+          else
+            do_default_assign tt
       end
     in
     (* 4. The main logic remains exactly the same. *)

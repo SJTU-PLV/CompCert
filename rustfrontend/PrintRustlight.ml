@@ -181,7 +181,8 @@ and pexpr p (prec, e) =
   | Ecktag(v, fid) ->
     fprintf p "%s(%a, %s)" "cktag" print_place v (extern_atom fid)
   | Eref(org, mut, v, _) ->
-    fprintf p "&%s %s%a" (extern_atom org) (string_of_mut mut) print_place v
+    (* Rust reference syntax: &mut place or &place *)
+    fprintf p "&%s%a" (string_of_mut mut) print_place v
   | Eas(pe, ty) ->
       (* Check if this is casting a comparison or bool-valued expression to bool - skip it *)
       let rec is_bool_valued_expr pe = 
@@ -838,7 +839,7 @@ let print_globdef p (id, gd) =
 let print_globdecl p (id, gd) =
   match gd with
   | AST.Gfun f -> print_fundecl p id f
-  | AST.Gvar v -> ()
+  | AST.Gvar v -> PrintRustsyntax.print_globvardecl p id v
 
 (* Generate safe wrapper functions for unsafe C functions *)
 (* Note: We no longer generate safe wrappers since we automatically wrap 
@@ -866,7 +867,10 @@ let print_program p (prog: Rustlight.program) =
   (* Add allow attribute if there are static mut variables *)
   if has_static_mut then
     fprintf p "#![allow(static_mut_refs)]@ ";
-  List.iter (PrintRustsyntax.declare_composite p) prog.Rusttypes.prog_types;
+  (* Don't print forward declarations - Rust doesn't support them *)
+  (* List.iter (PrintRustsyntax.declare_composite p) prog.Rusttypes.prog_types; *)
+  (* Add placeholder for commonly undefined system types *)
+  fprintf p "pub struct __sFILEX;@ ";
   List.iter (PrintRustsyntax.define_composite p) prog.Rusttypes.prog_types;
   List.iter (print_globdecl p) prog.Rusttypes.prog_defs;
   print_safe_wrappers p prog;

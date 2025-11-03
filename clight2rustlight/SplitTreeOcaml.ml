@@ -152,24 +152,56 @@ let find_and_split_stateful (base_ptr_id: ident) (new_ptr_id: ident) (c_offset: 
   let c_offset_int = Z.to_int c_offset in
   let array_size_int = Z.to_int array_size_z in
 
-  let state =
+  (* If base_ptr_id is not in forest, check if it's a derived pointer *)
+  let actual_base_id = 
     match PTree.get base_ptr_id env.forest with
-    | Some state -> state
+    | Some _ -> base_ptr_id  (* It's already a base pointer *)
     | None ->
-        let initial_tree = Leaf {
-          rust_var = base_ptr_id;
-          start_offset = 0;
-          end_offset = array_size_int;
-        } in
-        { tree = initial_tree; pending_assignments = PTree.empty }
+        (* Check if it's a derived pointer that maps to a real base *)
+        match PTree.get base_ptr_id env.pointer_to_base_map with
+        | Some real_base -> real_base
+        | None -> base_ptr_id  (* Use itself as base *)
   in
 
-  match find_and_split_rec state.tree c_offset_int with
+  let state_opt =
+    match PTree.get actual_base_id env.forest with
+    | Some state -> Some state
+    | None ->
+        (* If array_size is 0, we can't create initial tree - skip split *)
+        if array_size_int = 0 then
+          None
+        else
+          let initial_tree = Leaf {
+            rust_var = actual_base_id;
+            start_offset = 0;
+            end_offset = array_size_int;
+          } in
+          Some { tree = initial_tree; pending_assignments = PTree.empty }
+  in
+  
+  match state_opt with
+  | None ->
+      (* Cannot proceed with split - return no-op and unchanged environment *)
+      ((Sskip, []), coq_env)
+  | Some state ->
+
+  (* Adjust offset if base_ptr_id is a derived pointer *)
+  let adjusted_offset =
+    if base_ptr_id = actual_base_id then
+      c_offset_int
+    else
+      (* Get the offset of base_ptr_id relative to actual_base_id *)
+      match PTree.get base_ptr_id state.pending_assignments with
+      | Some base_offset -> base_offset + c_offset_int
+      | None -> c_offset_int  (* Assume 0 if not found *)
+  in
+
+  match find_and_split_rec state.tree adjusted_offset with
   | Ok (split_stmts, updated_tree, _target_rust_var) ->
-      let new_pending = PTree.set new_ptr_id c_offset_int state.pending_assignments in
+      let new_pending = PTree.set new_ptr_id adjusted_offset state.pending_assignments in
       let new_state = { tree = updated_tree; pending_assignments = new_pending } in
-      let new_forest = PTree.set base_ptr_id new_state env.forest in
-      let new_pointer_map = PTree.set new_ptr_id base_ptr_id env.pointer_to_base_map in
+      let new_forest = PTree.set actual_base_id new_state env.forest in
+      let new_pointer_map = PTree.set new_ptr_id actual_base_id env.pointer_to_base_map in
       let new_internal_env = { forest = new_forest; pointer_to_base_map = new_pointer_map } in
       let new_vars = extract_new_vars_from_stmts split_stmts in
       ((sequence_of_statements split_stmts, new_vars), pack_env new_internal_env coq_env) (* Pack back *)
@@ -236,9 +268,14 @@ let flush_assignments_for_vars (vars: ident list) (coq_env: TranslationEnv.t) : 
 (*** MODIFICATION: Update is_base_ptr_managed signature and logic ***)
 let is_base_ptr_managed (base_ptr_id: ident) (coq_env: TranslationEnv.t) : bool =
   let env = unpack_env coq_env in
+  (* Check if it's directly in forest, OR if it's a derived pointer that maps to a base *)
   match PTree.get base_ptr_id env.forest with
   | Some _ -> true
-  | None   -> false
+  | None   -> 
+      (* Not a direct base - check if it's a derived pointer *)
+      (match PTree.get base_ptr_id env.pointer_to_base_map with
+       | Some _ -> true  (* It's managed because it derives from a base *)
+       | None -> false)
 
 (* ... (find_leaf_for_abs_offset remains the same) ... *)
 let rec find_leaf_for_abs_offset (tree: t) (target_offset: int) : (ident * int) option =

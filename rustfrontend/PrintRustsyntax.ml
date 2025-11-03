@@ -92,6 +92,7 @@ let rec name_rust_decl id ty =
   | Tbox(t) ->
       "Box<" ^ (name_rust_decl ""  t) ^ ">" ^ name_optid id
   | Tfunction( _, _, args, res, cconv) ->
+      (* Rust function pointer syntax: name : fn(args) -> ret *)
       let has_lifetime = ref false in
       let rec check_args = function
       | Tnil -> ()
@@ -106,16 +107,15 @@ let rec name_rust_decl id ty =
       in
       check_args args;
       let b = Buffer.create 20 in
-      if id = ""
-      then Buffer.add_string b "(*)"
-      else Buffer.add_string b id;
+      (* For function pointers, use Rust syntax: fn(...) -> ... *)
+      Buffer.add_string b (name_optid id);
       if !has_lifetime then Buffer.add_string b "<'a>";
-      Buffer.add_char b '(';
+      Buffer.add_string b "fn(";
       let rec add_args first = function
       | Tnil ->
           if first then
             Buffer.add_string b
-               (if cconv.cc_vararg <> None then "..." else "void")
+               (if cconv.cc_vararg <> None then "..." else "")
           else if cconv.cc_vararg <> None then
             Buffer.add_string b ", ..."
           else
@@ -125,12 +125,18 @@ let rec name_rust_decl id ty =
           Buffer.add_string b (name_rust_decl "" t1);
           add_args false tl in
       if not cconv.cc_unproto then add_args true args;
-      Buffer.add_char b ')';
-      name_rust_decl (Buffer.contents b) res
+      Buffer.add_string b ")";
+      (* Add return type *)
+      (match res with
+       | Rusttypes.Tunit -> Buffer.add_string b ""
+       | _ -> 
+           Buffer.add_string b " -> ";
+           Buffer.add_string b (name_rust_decl "" res));
+      Buffer.contents b
   | Tstruct(orgs, name) ->
-      "struct" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      extern_atom name ^ print_origins orgs ^ name_optid id
   | Tvariant(orgs, name) ->
-      "variant" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      extern_atom name ^ print_origins orgs ^ name_optid id
   | Traw_pointer(mut, ty) ->
     "*" ^ string_of_pmut mut ^ (name_rust_decl ""  ty) ^ name_optid id
   | Tarray(mut, ty, sz) ->
@@ -184,9 +190,9 @@ let rec name_rust_decl_var id ty =
       Buffer.add_char b ')';
       "fn" ^ name_rust_decl_var (Buffer.contents b) res
   | Tstruct(orgs, name) ->
-      "struct" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      extern_atom name ^ print_origins orgs ^ name_optid id
   | Tvariant(orgs, name) ->
-      "variant" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      extern_atom name ^ print_origins orgs ^ name_optid id
   | Traw_pointer(mut, ty) ->
     name_optid_no_space id ^ "*" ^ string_of_pmut mut ^ (name_rust_decl ""  ty)
   | Tarray(mut, ty, sz) ->
@@ -242,9 +248,9 @@ let rec name_rust_decl_fn_arg id ty =
       Buffer.add_char b ')';
       "fn" ^ name_rust_decl_fn_arg (Buffer.contents b) res
   | Tstruct(orgs, name) ->
-      "struct" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      extern_atom name ^ print_origins orgs ^ name_optid id
   | Tvariant(orgs, name) ->
-      "variant" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      extern_atom name ^ print_origins orgs ^ name_optid id
   | Traw_pointer(mut, ty) ->
     name_optid_no_space id ^ "*" ^ string_of_pmut mut ^ (name_rust_decl ""  ty)
   | Tarray(mut, ty, sz) ->
@@ -314,9 +320,9 @@ let rec name_rust_decl_fn id ty =
       Buffer.add_char b ')';
       "fn" ^ name_rust_decl_fn (Buffer.contents b) res
   | Tstruct(orgs, name) ->
-      "struct" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      extern_atom name ^ print_origins orgs ^ name_optid id
   | Tvariant(orgs, name) ->
-      "variant" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      extern_atom name ^ print_origins orgs ^ name_optid id
   | Traw_pointer(pmut, ty) ->
       name_optid id ^ " -> " ^ "*" ^ string_of_pmut pmut ^ (name_rust_decl ""  ty)
   | Tarray(mut, ty, sz) ->
@@ -546,8 +552,9 @@ let print_globvar p id v =
   let name3 = name2 ^ " : " in
   match v.gvar_init with
   | [] ->
-      fprintf p "extern %s;@ @ "
-              (name_rust_decl_fn_arg name3 v.gvar_info)
+      (* Extern variables with no initialization are already printed in print_globvardecl *)
+      (* Don't print them again here to avoid duplication *)
+      ()
   | [Init_space _] ->
       (* Uninitialized arrays need default initialization in Rust *)
       (match v.gvar_info with
@@ -592,9 +599,26 @@ let print_globvar p id v =
 
 let print_globvardecl p id v =
   let name = extern_atom id in
-  let name = if v.gvar_readonly then "const "^name else name in
   let linkage = if C2C.atom_is_static id then "static" else "extern" in
-  fprintf p "%s %s;@ @ " linkage (name_rust_decl name v.gvar_info)
+  (* Only print declaration for extern variables with no initialization *)
+  if linkage = "extern" && v.gvar_init = [] then
+    (* Rust extern variables must be in extern "C" block and use 'static' keyword *)
+    let mutability = if v.gvar_readonly then "" else "mut " in
+    (* Add 'static lifetime for slice/reference types in extern *)
+    let type_str = match v.gvar_info with
+      | Rusttypes.Tslice(Rusttypes.Mutable, elem_ty) ->
+          "&'static mut [" ^ (name_rust_decl "" elem_ty) ^ "]"
+      | Rusttypes.Tslice(Rusttypes.Immutable, elem_ty) ->
+          "&'static [" ^ (name_rust_decl "" elem_ty) ^ "]"
+      | _ -> name_rust_type v.gvar_info
+    in
+    fprintf p "extern \"C\" { static %s%s : %s; }@ @ " 
+      mutability
+      name
+      type_str
+  else
+    (* For static variables or extern with init, don't print declaration here - will be printed in print_globvar *)
+    ()
 
 let print_globdecl p (id,gd) =
   match gd with
@@ -623,7 +647,15 @@ let declare_composite p (Composite(id, su, m, orgs, rels)) =
   fprintf p "@;<0 -2>};@]@ @ " *)
 let print_member p = function
   | Member_plain(id, ty) ->
-      fprintf p "pub %s: %s," (extern_atom id) (name_rust_type ty)
+      (* For struct members with references, use raw pointers to avoid lifetime requirements *)
+      let member_type = match ty with
+        | Rusttypes.Tslice(Rusttypes.Mutable, elem_ty) ->
+            "*mut " ^ (name_rust_decl "" elem_ty)
+        | Rusttypes.Tslice(Rusttypes.Immutable, elem_ty) ->
+            "*const " ^ (name_rust_decl "" elem_ty)
+        | _ -> name_rust_type ty
+      in
+      fprintf p "pub %s: %s," (extern_atom id) member_type
 
 let define_composite p (Composite(id, su, m, orgs, rels)) =
   let (keyword, derive_macro) =
@@ -639,7 +671,5 @@ let define_composite p (Composite(id, su, m, orgs, rels)) =
         keyword
         (extern_atom id) (print_origins orgs) (origin_relations_string rels);
       List.iter (fun member -> fprintf p "@,%a" print_member member) m;
-      (* 修正结尾：只在有成员时才添加换行符，然后打印右括号 *)
-      if m <> [] then fprintf p "@,";
-      fprintf p "}@];@ @ "
+      fprintf p "@;<0 -2>}@]@ @ "
   | _ -> ()
