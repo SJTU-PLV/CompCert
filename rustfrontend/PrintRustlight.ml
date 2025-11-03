@@ -846,10 +846,17 @@ let print_function p id f =
     fprintf p "fn main()";
     fprintf p "{@;@[<v 2>  @[<v 1>@;";
         fprintf p "unsafe {@ ";  (* Wrap in unsafe for static mut access *)
-        (* If C main had parameters (argc, argv), declare them as local variables *)
+        (* If C main had parameters (argc, argv), declare them as local variables with default values *)
         List.iter 
         (fun (param_id, param_ty) ->
-          fprintf p "let mut %s;@ " (name_rust_decl_var (extern_atom param_id ^ " : ") param_ty))
+          let var_name = extern_atom param_id in
+          (* Provide default initialization based on parameter name *)
+          match var_name with
+          | "argc" -> fprintf p "let mut argc : i32 = 0;@ "
+          | "argv" -> 
+              (* For argv, use a dangling non-null pointer for empty slice to avoid UB *)
+              fprintf p "let mut argv : &mut [&mut [i8]] = unsafe { std::slice::from_raw_parts_mut(std::ptr::NonNull::<&mut [i8]>::dangling().as_ptr(), 0) };@ "
+          | _ -> fprintf p "let mut %s;@ " (name_rust_decl_var (var_name ^ " : ") param_ty))
         f.fn_params;
         (* Print local variables *)
         List.iter 
@@ -869,7 +876,15 @@ let print_function p id f =
                 default_val
                 sz_val
           | _ ->
-              fprintf p "let mut %s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty))
+              (* Initialize all variables with default values to avoid E0381 errors *)
+              let default_init = match ty with
+                | Rusttypes.Tint(_, _) -> " = 0"
+                | Rusttypes.Tlong(_) -> " = 0"
+                | Rusttypes.Tfloat(_) -> " = 0.0"
+                | Rusttypes.Tunit -> ""
+                | _ -> " = Default::default()"
+              in
+              fprintf p "let mut %s%s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty) default_init)
         f.fn_vars;
         print_stmt p f.fn_body;
         fprintf p "@;<0 -2>}@ ";
@@ -899,7 +914,15 @@ let print_function p id f =
                 default_val
                 sz_val
           | _ ->
-              fprintf p "let mut %s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty))
+              (* Initialize all variables with default values to avoid E0381 errors *)
+              let default_init = match ty with
+                | Rusttypes.Tint(_, _) -> " = 0"
+                | Rusttypes.Tlong(_) -> " = 0"
+                | Rusttypes.Tfloat(_) -> " = 0.0"
+                | Rusttypes.Tunit -> ""
+                | _ -> " = Default::default()"
+              in
+              fprintf p "let mut %s%s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty) default_init)
         f.fn_vars;
         (*
         List.iter
