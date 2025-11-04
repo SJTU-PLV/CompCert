@@ -301,10 +301,13 @@ Definition check_shallow_write_place (e: LOrgEnv.t) (p: place) : res unit :=
 
 (* Auxilary functions for transition of statements *)
 
-Definition clear_loans (p: place) (st: LOrgSt.t) : LOrgSt.t :=
+Definition kill_place_related_loans (p: place) (st: LOrgSt.t) : LOrgSt.t :=
   match st with
   | Live ls =>
       Live (LoanSet.filter (fun elt => match elt with
+                              (* Note that we also clear p, so
+                              clear_dead_loans should be perfomed
+                              after check_shallow_write_place *)
                               | Lintern _ p' => negb (is_prefix p p')
                               | _ => true
                               end) ls)
@@ -312,27 +315,28 @@ Definition clear_loans (p: place) (st: LOrgSt.t) : LOrgSt.t :=
   end.
 
 (* When some loan [p] is overwritten, it should be cleared *)
-Definition clear_dead_loans (e: LOrgEnv.t) (p: place) : LOrgEnv.t :=
-  LOrgEnv.map1 (clear_loans p) e.
+Definition kill_loans (e: LOrgEnv.t) (p: place) : LOrgEnv.t :=
+  LOrgEnv.map1 (kill_place_related_loans p) e.
 
 (* Borrow check an assign statement *)
 
 Definition transfer_assign_base (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t :=
-  let oe1 := transfer_expr oe e in
-  clear_dead_loans oe1 p.
+  transfer_expr oe e.
 
 Definition transfer_assignment (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t :=
   (* simple type checking *)
   let ty_dest := typeof_place p in
   let ty_src := typeof e in
   let oe1 := transfer_assign_base oe p e in
-  flow_loans oe1 ty_src ty_dest ByVal.
+  (* After checking the evaluation of e *)
+  let oe2 := kill_loans oe1 p in
+  flow_loans oe2 ty_src ty_dest ByVal.
 
 (* The checking function is used for all kinds of assignment *)
 Definition check_assignment (oe: LOrgEnv.t) (p: place) (e: expr) : res unit :=
   do _ <- check_expr oe e;
   let oe1 := transfer_assign_base oe p e in
-  check_shallow_write_place oe p.
+  check_shallow_write_place oe1 p.
 
 
 Definition transfer_assign_variant (oe: LOrgEnv.t) (p: place) (enum_id: ident) (fid: ident) (e: expr) : LOrgEnv.t :=
@@ -347,7 +351,9 @@ Definition transfer_assign_variant (oe: LOrgEnv.t) (p: place) (enum_id: ident) (
               let orgs_src := co.(co_generic_origins) in
               let ty_dest := replace_origin_in_type ty_i (combine orgs_src orgs_dest) in
               let oe1 := transfer_assign_base oe p e in
-              flow_loans oe1 ty_src ty_dest ByVal
+              (* After checking the evaluation of e *)
+              let oe2 := kill_loans oe1 p in
+              flow_loans oe2 ty_src ty_dest ByVal
           (* It would cause error before borrow checking *)
           | _ => oe
           end
@@ -364,7 +370,9 @@ Definition transfer_Sbox (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t :=
   let ty_dest := typeof_place p in
   let ty_src := Tbox (typeof e) in
   let oe1 := transfer_assign_base oe p e in
-  flow_loans oe1 ty_src ty_dest ByVal.
+  (* After checking the evaluation of e *)
+  let oe2 := kill_loans oe1 p in
+  flow_loans oe2 ty_src ty_dest ByVal.
 
   
 (* bind the origins in two type *)
@@ -490,7 +498,8 @@ Definition transfer_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: 
           let oe3 := flow_alias_after_call rels foe3 oe2 in
           (* shallow write to p *)
           (* do oe4 <- shallow_write_place pc f oe3 p; *)
-          let oe4 := clear_dead_loans oe3 p in
+          (* after check_shallow_write_place *)
+          let oe4 := kill_loans oe3 p in
           (flow_return_after_call foe3 oe4 rty tgt_rety)
           (* (* kill relevant loans *) *)
           (*   let live3 := kill_loans live2 p in *)
@@ -533,8 +542,7 @@ Definition check_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: lis
           let oe3 := flow_alias_after_call rels foe3 oe2 in
           (* shallow write to p *)
           (* do oe4 <- shallow_write_place pc f oe3 p; *)
-          let oe4 := clear_dead_loans oe3 p in
-          check_shallow_write_place oe4 p
+          check_shallow_write_place oe3 p
       end
   | _ => OK tt
   end.
@@ -544,7 +552,8 @@ End COMP_ENV.
 Definition transfer_storagedead (f: function) (oe1: LOrgEnv.t) (id: ident) : LOrgEnv.t :=
   match find_elt id f.(fn_vars) with
   | Some ty =>
-      (clear_dead_loans oe1 (Plocal id ty))
+      (* After check_shallow_write_place *)
+      (kill_loans oe1 (Plocal id ty))
   | None =>
       (* report errors in the type checking *)
       oe1
