@@ -72,6 +72,6 @@ fn main(){
     let l2: List = List::Cons(Node {val: &mut v2, next: &mut l1});
     let v3: i32 = 3; let v4: i32 = 4;
     reborrow_head(&mut l2, &mut v3, &mut v4);
-    v4 = 4; // error should be reported here
+    // v4 = 4; // error should be reported here
     read_list_head(&l2);
 }

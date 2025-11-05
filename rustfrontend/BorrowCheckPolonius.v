@@ -590,7 +590,7 @@ Definition live_origin (st: origin_state) : bool :=
 Definition absence_of_internal_loans (st: LOrgSt.t) : bool :=
   match st with
   | Live ls =>
-      LoanSet.exists_ (fun ln => match ln with
+      LoanSet.for_all (fun ln => match ln with
                               | Lintern _ _ => false
                               | Lextern _ => true
                               end) ls

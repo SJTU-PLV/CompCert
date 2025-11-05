@@ -1461,6 +1461,10 @@ module To_syntax = struct
       restore_locals old_locals >>= fun _ ->
       return s'
 
+  let warp_return_stmt (retv: ident) (rety: Rusttypes.coq_type) (s: Rustsyntax.statement) : Rustsyntax.statement =
+    let rete = Rustsyntax.Evar(retv, rety) in
+    Rustsyntax.Ssequence(s, (Rustsyntax.Sreturn rete))
+
   let transl_fn (f: fn) : Rustsyntax.coq_function monad =
     backup_locals >>= fun old_locals ->
     (* convert origins from string to ident *)
@@ -1477,10 +1481,12 @@ module To_syntax = struct
     get_or_new_ident "_retv" >>= fun retv ->
     transl_stmt retv f.body >>= fun fn_body ->
     restore_locals old_locals >>= fun _ ->
+    (* We add return statement to the end to ensure no UB and help the borrow checking *)
+    let body = warp_return_stmt retv fn_return fn_body in
     let open Rustsyntax in
     (* We should add explicit return variable in Rustsyntax function
     to prevent from not collecting it in Rustlightgen *)
-    return ({fn_generic_origins = orgs; fn_origins_relation = rels; fn_drop_glue = None; fn_return = (retv, fn_return); fn_params; fn_body; fn_callconv = AST.cc_default })
+    return ({fn_generic_origins = orgs; fn_origins_relation = rels; fn_drop_glue = None; fn_return = (retv, fn_return); fn_params; fn_body = body; fn_callconv = AST.cc_default })
 
   (* Convert state to string tables (Camlcoq.atom_of_string and
   Camcoq.string_of_atom) which are used in the pretty printing in the
