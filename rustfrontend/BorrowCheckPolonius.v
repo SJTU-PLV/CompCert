@@ -622,10 +622,37 @@ Definition check_generic_origins_relations (f: function) (e: LOrgEnv.t) : bool :
                              | _, _ => false
                              end) f.(fn_generic_origins)) f.(fn_generic_origins).
   
+
+(* We use it to ensure that we cannot return the address of stack blocks of the parameters *)
+Fixpoint check_storagedead_list (l: list (ident * type)) (e: LOrgEnv.t) : res unit :=
+  match l with
+  | nil => OK tt
+  | (id, ty) :: l' =>
+      do _ <- check_shallow_write_place e (Plocal id ty);
+      check_storagedead_list l' e
+  end.
+ 
+(* We use it to clear the reborrow of parameters at the function return *)
+Fixpoint kill_loans_list (e: LOrgEnv.t) (l: list (ident * type)) : LOrgEnv.t :=
+  match l with
+  | nil => e
+  | (id, ty) :: l' =>
+      kill_loans_list (kill_loans e (Plocal id ty)) l'
+  end.
+
 (* We need to transfer the loans from the return variable to the
 return type of this function *)
-Definition transfer_return (oe1: LOrgEnv.t) (p: place) (rety: type) : LOrgEnv.t :=
-  flow_loans oe1 (typeof_place p) rety ByVal.
+Definition transfer_return (f: function) (oe1: LOrgEnv.t) (p: place) : LOrgEnv.t :=
+  (** The following code is copied from check_return *)
+  let oe2 := flow_loans oe1 (typeof_place p) f.(fn_return) ByVal in
+  (* To accept more programs, we clear all the regions except the
+    generic ones before checking dangling references. *)
+  let generic_regions := live_generic_regions (fn_generic_origins f) in
+  let oe3 := LOrgEnv.apply_liveness generic_regions oe2 in
+  (* kill the loans related to parameter *)
+  let oe4 := kill_loans_list oe3 f.(fn_params) in
+  oe4.
+ 
 
 Definition check_return (f: function) (oe1: LOrgEnv.t) (p: place) : res unit :=
   if illegal_access oe1 p  Adeep Aread then
@@ -634,12 +661,18 @@ Definition check_return (f: function) (oe1: LOrgEnv.t) (p: place) : res unit :=
     regions (except generic regions) after the return statement. *)
     Error [MSG "access a place which is borrowed"; CTX (local_of_place p); MSG "in (transfer_return)"]
   else
-    let oe2 := transfer_return oe1 p f.(fn_return) in
-    (** TODO: we still do not know how to check generic origins
-        at the end of the function using the Rustcfg
-        framework.... *)
-    if check_dangling f oe2 then
-      if check_generic_origins_relations f oe2 then
+    let oe2 := flow_loans oe1 (typeof_place p) f.(fn_return) ByVal in
+    (* To accept more programs, we clear all the regions except the
+    generic ones before checking dangling references. *)
+    let generic_regions := live_generic_regions (fn_generic_origins f) in
+    let oe3 := LOrgEnv.apply_liveness generic_regions oe2 in
+    (* check if there is reference to parameters that are stored in
+    the generic regions *)
+    do _ <- check_storagedead_list f.(fn_params) oe3;
+    (* kill the loans related to parameter *)
+    let oe4 := kill_loans_list oe3 f.(fn_params) in
+    if check_dangling f oe4 then
+      if check_generic_origins_relations f oe4 then
         OK tt
       else
         Error [MSG "some relations in function return are not declared in the function signature"]
@@ -683,8 +716,10 @@ Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap
               of drop check for now. *)
               | Sreturn p =>
                   (* This transfer may be useless as we do not look up
-                  the abstract state after the return *)
-                  LoansEnv.State (transfer_return oe p f.(fn_return))
+                  the abstract state after the return, but we want to
+                  use it to see what is the result of transfer at the
+                  function return *)
+                  LoansEnv.State (transfer_return f oe p)
               | _ => before
               end 
           end
