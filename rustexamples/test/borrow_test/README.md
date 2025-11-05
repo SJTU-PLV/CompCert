@@ -107,3 +107,9 @@ fn no_dangle() -> i32 {
 31. [untested] An example to illustrate that we do not use invariant relation to check that two region are aliased or not.
 32. The running example that we use to illustrate our borrow checker
 33. An example rejected by Polonius. The reason may be the time-traveling problem. To solve this problem, we should maintain flow information in the relations between regions (may be some fancy union-find structure)
+34. Example to test time-traveling in Polonis
+35. Test covariance rules for Box type
+36. Test covariance rules for immutable reference type
+37. An example to demonstrate the imprecision of reborrow when there is reborrow through struct field access
+38. A simple example to illustrate the effect of function call
+39. A linked-list example illustrate the effect of function call

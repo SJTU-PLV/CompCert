@@ -632,9 +632,11 @@ Lemma type_eq_except_origins_to_ctype: forall ty1 ty2,
 Proof.
   induction ty1; destruct ty2;simpl; try congruence;
     intros TYEQ; try eapply proj_sumbool_true in TYEQ; try congruence.
-    erewrite IHty1. eauto.
+    erewrite IHty1. eauto. auto.
     destruct m; destruct m0; auto.
+    1-3: erewrite IHty1; eauto; auto.
     congruence. congruence.
+    erewrite IHty1; eauto; auto.
 Qed.
 
 Lemma place_to_cexpr_type: forall p e,

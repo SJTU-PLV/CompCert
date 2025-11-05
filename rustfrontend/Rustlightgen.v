@@ -114,11 +114,11 @@ Fixpoint fields_assign (p: place) (ids : list ident) (args: list expr) (membs: m
           do stmts <- fields_assign p ids' args' membs';
           ret (Sassign (Pfield p fid fty) arg :: stmts)
         else
-          error [CTX (local_of_place p); CTX id; CTX fid; MSG ": have different type in fiedls_assign"]
+          error [CTX (local_of_place p); CTX id; CTX fid; MSG ": have different type in fields_assign"]
       else
-        error [CTX (local_of_place p); CTX id; CTX fid; MSG ": have different ident in fiedls_assign"]
+        error [CTX (local_of_place p); CTX id; CTX fid; MSG ": have different ident in fields_assign"]
   | _, _ , _ =>
-      error [CTX (local_of_place p); MSG ": inconsistent number of fields ident, arg idents and members in fiedls_assign"]
+      error [CTX (local_of_place p); MSG ": inconsistent number of fields ident, arg idents and members in fields_assign"]
   end.
 
 Definition dummy_expr := Econst_int Int.zero type_int32s.

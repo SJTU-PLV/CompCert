@@ -117,6 +117,7 @@ Fixpoint type_eq_except_origins (ty1 ty2: type) : bool :=
       | Immutable, Immutable => type_eq_except_origins ty1 ty2
       | _, _ => false
       end
+  | Tbox ty1, Tbox ty2 => type_eq_except_origins ty1 ty2
   | Tstruct _ id1, Tstruct _ id2
   | Tvariant _ id1, Tvariant _ id2 =>
       ident_eq id1 id2

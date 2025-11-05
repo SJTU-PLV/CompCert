@@ -101,7 +101,9 @@ Definition transfer (f: function) (cfg: rustcfg) (generic_regions: RegionSet.t) 
               | Scall p _ l =>
                   reg_exprlis_live l (reg_assign_place p after)
               | Sdrop p =>
-                  reg_place_live p after
+                  (*FIXME: We do not consider drop check for now, so there is no need to consider the regions in p live before this drop statement? Because (1) drop cannot access the region and (2) execution of drop depends on init-analysis *)
+                  (* reg_place_live p after *)
+                  after
               | Sreturn p =>
                   reg_place_live p generic_regions
               | _ => after

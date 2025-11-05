@@ -127,10 +127,15 @@ Fixpoint loans_of_place (e: LOrgEnv.t) (mut: mutkind) (p: place) : LOrgSt.t :=
       | Treference org Mutable _ => 
           let ls1 := loans_of_place e mut p1 in
           (* apply deref operation in ls1 *)
-          let ls2 := apply_path_to_origin_state ph_deref ls1 in
+          (** Once we want to make our proof simple if we can make the
+          loan in the region exactly represents the location the place
+          may point to. But I find that when considering the
+          abstraction and flow performed by function call, it is not
+          possible to maintain this property. *)
+          (* let ls2 := apply_path_to_origin_state ph_deref ls1 in *)
           (* ensure the type in e!org is correct *)
           let org_ls := filter_type_origin_state ty (LOrgEnv.get org e) in
-          let ls3 := (LOrgSt.lub org_ls ls2) in
+          let ls3 := (LOrgSt.lub org_ls ls1) in
           LOrgSt.lub ls3 (Live (LoanSet.singleton (Lintern mut p)))
       | Treference org Immutable _ => 
           (** FIXME: for immutable reference, we do not need to
@@ -142,12 +147,12 @@ Fixpoint loans_of_place (e: LOrgEnv.t) (mut: mutkind) (p: place) : LOrgSt.t :=
       end
   | Pfield p1 fid fty =>
       let ls1 := loans_of_place e mut p1 in
-      let ls2 := apply_path_to_origin_state (ph_field fid) ls1 in
-      LOrgSt.lub ls2 (Live (LoanSet.singleton (Lintern mut p)))
+      (* let ls2 := apply_path_to_origin_state (ph_field fid) ls1 in *)
+      LOrgSt.lub ls1 (Live (LoanSet.singleton (Lintern mut p)))
   | Pdowncast p1 fid fty =>
       let ls1 := loans_of_place e mut p1 in
-      let ls2 := apply_path_to_origin_state (ph_downcast (typeof_place p1) fid) ls1 in
-      LOrgSt.lub ls2 (Live (LoanSet.singleton (Lintern mut p)))
+      (* let ls2 := apply_path_to_origin_state (ph_downcast (typeof_place p1) fid) ls1 in *)
+      LOrgSt.lub ls1 (Live (LoanSet.singleton (Lintern mut p)))
   end.
 
 (* Transition of pure expression *)
@@ -582,6 +587,22 @@ Definition live_origin (st: origin_state) : bool :=
   | Dead => false
   end.
 
+Definition absence_of_internal_loans (st: LOrgSt.t) : bool :=
+  match st with
+  | Live ls =>
+      LoanSet.exists_ (fun ln => match ln with
+                              | Lintern _ _ => false
+                              | Lextern _ => true
+                              end) ls
+  (* Impossible *)
+  | _ => true
+  end.
+
+(* Check if there is a generic region containing some internal loans
+at the function return *)
+Definition check_dangling (f: function) (e: LOrgEnv.t) : bool :=
+  forallb (fun org => absence_of_internal_loans (LOrgEnv.get org e)) f.(fn_generic_origins).
+
 Definition check_generic_origins_relations (f: function) (e: LOrgEnv.t) : bool :=
   (* This property can be guaranteed by the liveness analysis: All the
   generic origin must not be dead otherwise we are returing a dangling
@@ -618,11 +639,13 @@ Definition check_return (f: function) (oe1: LOrgEnv.t) (p: place) : res unit :=
     (** TODO: we still do not know how to check generic origins
         at the end of the function using the Rustcfg
         framework.... *)
-    if check_generic_origins_relations f oe2 then
-      OK tt
+    if check_dangling f oe2 then
+      if check_generic_origins_relations f oe2 then
+        OK tt
+      else
+        Error [MSG "some relations in function return are not declared in the function signature"]
     else
-      Error [MSG "some relations in function return are not declared in the function signature"].
-
+      Error [MSG "Dangling pointer! There should not be internal loans in the generic regions at the function return"].
 
 (* Transition of statements *)
         
@@ -638,7 +661,7 @@ Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap
       match cfg ! pc with
       | None => LoansEnv.Bot
       | Some (Inop _) => before
-      | Some (Icond e _ _) => LoansEnv.State (transfer_expr ce oe e)
+      | Some (Icond e _ _) => LoansEnv.State (transfer_expr oe e)
       | Some Iend => before
       | Some (Isel sel next) =>
           match select_stmt f.(fn_body) sel with
@@ -646,21 +669,19 @@ Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap
           | Some s =>
               match s with
               | Sassign p e => 
-                  finish_transfer (transfer_assignment ce oe p e)
+                  finish_transfer (transfer_assignment oe p e)
               | Sassign_variant p enum_id fid e =>
                   finish_transfer (transfer_assign_variant ce oe p enum_id fid e)
               | Sbox p e =>
-                  finish_transfer (transfer_Sbox ce oe p e)
+                  finish_transfer (transfer_Sbox oe p e)
               | Scall p e l =>
-                  finish_transfer (transfer_function_call ce oe p e l)
+                  finish_transfer (transfer_function_call oe p e l)
               | Sstoragedead id =>
                   finish_transfer (transfer_storagedead f oe id)
               (** Because our drop cannot access the region (i.e., the
               reference), so there is no need to make the region live
               until this drop statement. We do not need the technique
               of drop check for now. *)
-              (* | Sdrop p => *)
-              (*     finish_check pc (transfer_drop pc oe p) live_after *)
               | Sreturn p =>
                   (* This transfer may be useless as we do not look up
                   the abstract state after the return *)
@@ -706,16 +727,16 @@ Definition loans_flow_analyze (ce: composite_env) (f: function) (cfg: rustcfg) (
 
 (** Checking functions that are used in the transl_on_cfg *)
 
-Definition borrow_check_stmt_aux (ce: composite_env) (f: function) (le: LoansEnv.t) (stmt: statement) : res unit :=
+Definition borrow_check_stmt_aux (f: function) (le: LoansEnv.t) (stmt: statement) : res unit :=
   match le with
   | LoansEnv.State oe =>
       match stmt with
       | Sassign p e
       | Sassign_variant p _ _ e
       | Sbox p e =>
-          check_assignment ce oe p e
+          check_assignment oe p e
       | Scall p e l =>
-          check_function_call ce oe p e l
+          check_function_call oe p e l
       | Sstoragedead id =>
           check_storagedead f oe id
       | Sdrop p =>
@@ -725,22 +746,24 @@ Definition borrow_check_stmt_aux (ce: composite_env) (f: function) (le: LoansEnv
       | _ =>
           OK tt
       end
-  (* Impossible *)
+  (* Impossible execution, but we should not report error *)
   | _ =>
-      Error [MSG "Impossible: it is unreachable point"]
+      (* Error [MSG "Impossible: it is unreachable point"] *)
+      OK tt
   end.
   
-Definition borrow_check_stmt (ce: composite_env) (f: function) (le: LoansEnv.t) (stmt: statement) : res statement :=
-  do _ <- borrow_check_stmt_aux ce f le stmt;
+Definition borrow_check_stmt (f: function) (le: LoansEnv.t) (stmt: statement) : res statement :=
+  do _ <- borrow_check_stmt_aux f le stmt;
   OK stmt.
 
-Definition borrow_check_cond_expr (ce: composite_env) (le: LoansEnv.t) (e: expr) : res unit :=
+Definition borrow_check_cond_expr (le: LoansEnv.t) (e: expr) : res unit :=
   match le with
   | LoansEnv.State oe =>
-      check_expr ce oe e
+      check_expr oe e
   (* Impossible *)
   | _ =>
-      Error [MSG "Impossible: it is unreachable point"]
+      (* Error [MSG "Impossible: it is unreachable point"] *)
+      OK tt
   end.
 
 Definition get_borck_result (borck_res: (PMap.t LoansEnv.t)) (pc: node) : LoansEnv.t :=
@@ -749,7 +772,7 @@ Definition get_borck_result (borck_res: (PMap.t LoansEnv.t)) (pc: node) : LoansE
 (* After calling borrow_check, we should find if there is any borrow
 check error *)
 Definition collect_borrow_check_result (ce: composite_env) (f: function) (cfg: rustcfg) (loans_flow_res: (PMap.t RegionSet.t * (PMap.t LoansEnv.t))) : res unit :=
-  do _ <- transl_on_cfg get_borck_result (snd loans_flow_res) (borrow_check_stmt ce f) (borrow_check_cond_expr ce) f.(fn_body) cfg;
+  do _ <- transl_on_cfg get_borck_result (snd loans_flow_res) (borrow_check_stmt f) borrow_check_cond_expr f.(fn_body) cfg;
   OK tt.
 
 (** TODO: we should combine it with move_check_function *)
