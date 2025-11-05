@@ -116,6 +116,8 @@ Definition filter_type_origin_state (ty: type) (st: LOrgSt.t) : LOrgSt.t :=
   | Dead => Dead
   end.
 
+(** Unused for now as we do not compute the loan that actually
+represents the location of p *)
 (* [pty] is the type of the loans that we expect *)
 Fixpoint loans_of_place (e: LOrgEnv.t) (mut: mutkind) (p: place) : LOrgSt.t :=
   (* We should make sure that the loans we return must have the same type as typeof(p) *)
@@ -160,17 +162,14 @@ Fixpoint loans_of_place (e: LOrgEnv.t) (mut: mutkind) (p: place) : LOrgSt.t :=
 Fixpoint transfer_pure_expr (e: LOrgEnv.t) (pe: pexpr) : LOrgEnv.t :=
   match pe with
   | Eref org mut p ty =>
-      (* (* handle reborrow: add all the loans in the support *)
-      (*    prefix to org *) *)
-      (* let support_orgs := support_origins p in *)
-      (* (* aggregate the loans in the support origins *) *)
-      (* let org_st := aggregate_origin_states e support_orgs in *)
-      (* (* FIXME: is it correct to just combine two state? *) *)
-      (* let s' := LOrgSt.lub org_st (Live (LoanSet.singleton (Lintern mut p))) in *)
-      (* let e' := LOrgEnv.set org s' e in *)
-      (* e' *)
-      let st := loans_of_place e mut p in
-      LOrgEnv.set org st e
+      (* handle reborrow: add all the loans in the support *)
+      (* prefix to org *)
+      let support_orgs := support_origins p in
+      (* aggregate the loans in the support origins *)
+      let org_st := aggregate_origin_states e support_orgs in
+      let s' := LOrgSt.lub org_st (Live (LoanSet.singleton (Lintern mut p))) in
+      (* let st := loans_of_place e mut p in *)
+      LOrgEnv.set org s' e
   | Eunop _ pe _ =>
       transfer_pure_expr e pe
   | Ebinop _ pe1 pe2 _ =>
