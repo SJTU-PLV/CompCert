@@ -24,14 +24,14 @@ Fixpoint gensym_list (n: nat) : list ident :=
     
 (* replace origins in type with fresh origins *)
 
-Fixpoint replace_origin_type (ty: type) : type :=
+Fixpoint generate_fresh_origin_type (ty: type) : type :=
   match ty with
   | Treference _ mut ty1 =>
-      let ty2 := replace_origin_type ty1 in
+      let ty2 := generate_fresh_origin_type ty1 in
       let org := fresh_atom tt in
       Treference org mut ty2
   | Tbox ty1 =>
-      let ty2 := replace_origin_type ty1 in
+      let ty2 := generate_fresh_origin_type ty1 in
       Tbox ty2
   | Tstruct orgs id =>
       let orgs' := gensym_list (length orgs) in
@@ -39,28 +39,28 @@ Fixpoint replace_origin_type (ty: type) : type :=
   | Tvariant orgs id =>
       let orgs' := gensym_list (length orgs) in
       Tvariant orgs' id
-  (* For now, we do not replace the origins for function variable
-  because it may make the definition of invariant for callstate
-  difficult due to these new names of origins that are different from
-  those in the function sigature found in the genv? *)
   (* When calling a function, we replace the origins in this function
   signature with some unique origins. For example, we may call f<'a,
-  'b> but we should replace 'a and 'b with fresh origins *)
-  (* | Tfunction orgs rels tyl rety cc => *)
-  (*     let orgs' := gensym_list (length orgs) in *)
-  (*     let replace_rels := combine orgs' orgs in *)      
+  'b> but we should replace 'a and 'b with fresh origins. We should
+  check that the region relations are the same as in the function
+  declaration when we check the uniqueness of regions names in the
+  borrow checking pass *)
+  | Tfunction orgs rels tyl rety cc =>
+      let orgs1 := gensym_list (length orgs) in      
+      let subst_pairs := combine orgs1 orgs in
+      replace_origin_in_type (Tfunction orgs rels tyl rety cc) subst_pairs
   | _ => ty
   end.
             
 (* replace origins in variables *)
 
-Definition replace_origin_var (var: ident * type) (l: list (ident * type)) : list (ident * type) :=
+Definition  generate_fresh_origin_var (var: ident * type) (l: list (ident * type)) : list (ident * type) :=
   let (id, ty) := var in
-  let ty' := replace_origin_type ty in
+  let ty' :=  generate_fresh_origin_type ty in
   (id, ty') :: l.
 
-Definition replace_origin_vars (vars: list (ident * type)) : list (ident * type) :=
-  fold_right replace_origin_var nil vars.
+Definition generate_fresh_origin_vars (vars: list (ident * type)) : list (ident * type) :=
+  fold_right  generate_fresh_origin_var nil vars.
 
 
 Section TYPE_ENV.
@@ -159,6 +159,10 @@ Section TYPE_ENV.
         do pe1' <- replace_origin_pure_expr pe1;
         do pe2' <- replace_origin_pure_expr pe2;
         OK (Ebinop bop pe1' pe2' ty)
+    (* Replace regions for function signature *)
+    | Eglobal id ty =>
+        (* We need to generate fresh origins for each function call we encounter *)
+        OK (Eglobal id (generate_fresh_origin_type ty))
     | _ => OK pe
     end.
 
@@ -227,10 +231,10 @@ End TYPE_ENV.
 Open Scope error_monad_scope.
 
 Definition replace_origin_function (ce: composite_env) (gvars: list ident) (f: function) : Errors.res function :=
-  let vars := replace_origin_vars f.(fn_vars) in
+  let vars := generate_fresh_origin_vars f.(fn_vars) in
   (* We also replace regions in parameter to treat them as local
   variables *)
-  let params := replace_origin_vars f.(fn_params) in
+  let params := generate_fresh_origin_vars f.(fn_params) in
   let locals := params ++ vars in
   if list_norepet_dec ident_eq (map fst locals) then
     let type_env := PTree_Properties.of_list locals in

@@ -166,8 +166,9 @@ Definition find_elt {A: Type} (id: ident) (l: list (ident * A)) : option A :=
   | None => None
   end.
 
+(** TODO: use a map to maintain the substitution information *)
 (* replace org with the the origin in rels *)
-Definition replace_origin (rels: list origin_rel) (org: origin) : origin :=
+Definition replace_origin (rels: list (origin * origin)) (org: origin) : origin :=
   match find_elt org rels with
   | Some org' =>
       org'
@@ -175,24 +176,45 @@ Definition replace_origin (rels: list origin_rel) (org: origin) : origin :=
       org
   end.
 
-Fixpoint replace_origin_in_type (ty: type) (rels: list origin_rel) : type :=
+Fixpoint replace_origin_in_origin_rels (rels: list origin_rel) (subst: list (origin * origin)) : list origin_rel :=
+  match rels with
+  | nil => nil
+  | (org1, org2) :: rels1 =>
+      ((replace_origin subst org1), (replace_origin subst org2)) :: (replace_origin_in_origin_rels rels1 subst)
+  end.
+
+
+Fixpoint replace_origin_in_type (ty: type) (substs: list (origin * origin)) : type :=
   match ty with
   | Treference org mut ty =>
-      let ty' := replace_origin_in_type ty rels in
-      Treference (replace_origin rels org) mut ty'
+      let ty' := replace_origin_in_type ty substs in
+      Treference (replace_origin substs org) mut ty'
   | Tbox ty =>
-      let ty' := replace_origin_in_type ty rels in
+      let ty' := replace_origin_in_type ty substs in
       Tbox ty'
   | Tstruct orgs id  =>
-      let orgs' := map (replace_origin rels) orgs in
+      let orgs' := map (replace_origin substs) orgs in
       Tstruct orgs' id
   | Tvariant orgs id =>
-      let orgs' := map (replace_origin rels) orgs in
+      let orgs' := map (replace_origin substs) orgs in
       Tvariant orgs' id
-  (* What if it is function? But we should forbid passing function
-  pointer? *)
+  | Tfunction orgs rels tyl rty cc =>
+      let tyl1 := replace_origin_in_typelist tyl rels in
+      let ty1 := replace_origin_in_type rty rels in
+      let orgs1 := map (replace_origin rels) orgs in
+      let rels1 := replace_origin_in_origin_rels rels substs in
+      Tfunction orgs1 rels1 tyl1 ty1 cc
   | _ => ty
-  end.
+  end
+
+with replace_origin_in_typelist (tyl: typelist) (rels: list (origin * origin)) : typelist :=
+       match tyl with
+       | Tnil => Tnil
+       | Tcons ty1 tyl1 =>
+           Tcons (replace_origin_in_type ty1 rels) (replace_origin_in_typelist tyl1 rels)
+       end
+.
+
 
 (* Definition attr_of_type (ty: type) := *)
 (*   match ty with *)

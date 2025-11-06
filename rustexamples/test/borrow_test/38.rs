@@ -2,7 +2,7 @@
 // rustc +nightly 38.rs -Z polonius=next
 
 // The following example is too compilcated
-fn test1<'a,'b,'c,'d>(mut q: &'a mut &'b mut i32, mut p1: &'c mut i32, mut p2: &'d mut i32) 
+fn test1<'a,'b,'c,'d>(q: &'a mut &'b mut i32, p1: &'c mut i32, p2: &'d mut i32) 
     where 'c: 'b, 'd: 'b{
         if true {
             *q = p1;
@@ -13,10 +13,10 @@ fn test1<'a,'b,'c,'d>(mut q: &'a mut &'b mut i32, mut p1: &'c mut i32, mut p2: &
 
 fn test2<'a,'b,'c>(a: &'a mut i32, b: &'b mut i32) -> &'c mut i32
     where 'a: 'c, 'b: 'c{
-        if true {
-            return a;
+        if *a > *b {
+            return &mut *a;
         } else {
-            return b;
+            return &mut *b;
         }
 }
 
@@ -25,10 +25,10 @@ fn test2<'a,'b,'c>(a: &'a mut i32, b: &'b mut i32) -> &'c mut i32
 //     q = &mut p;
 // }
 fn main(){
-    let mut v1 = 1;
-    let mut v2 = 2;
-    let mut v3 = 3;
-    let mut p = &mut v1; // p1: &mut i32
+    let v1: i32 = 1;
+    let v2: i32 = 2;
+    let v3: i32 = 3;
+    let p: &mut i32 = &mut v1; // p1: &mut i32
     test1(&mut p, &mut v2, &mut v3);
 //  v1 = 5;
     *p = 4;

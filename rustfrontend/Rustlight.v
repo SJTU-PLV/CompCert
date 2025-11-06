@@ -55,7 +55,7 @@ Inductive pexpr : Type :=
 | Eref:  origin -> mutkind -> place -> type -> pexpr     (**r &[mut] p  *)
 | Eunop: unary_operation -> pexpr -> type -> pexpr  (**r unary operation *)
 | Ebinop: binary_operation -> pexpr -> pexpr -> type -> pexpr (**r binary operation *)
-| Eglobal: ident -> type -> pexpr.                          (**r constant global variable, we do not give it semantics for now *)
+| Eglobal: ident -> type -> pexpr.                          (**r constant global variable, used as function id *)
 
 (* The evaluaiton of expr may produce a moved-out place *)
 Inductive expr : Type :=
