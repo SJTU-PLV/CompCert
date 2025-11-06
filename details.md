@@ -18,6 +18,13 @@ bool → int: 使用 as i32
 int → int: 使用 as <type>
 3. 增强比较表达式识别：递归识别通过 cast 和括号包裹的比较表达式
 
+### 问题2 （空指针的处理）
+1. 这里空指针直接使用空切片 []
+2. 与 NULL 切片比较
+之前会生成 a != (&mut 0 as &mut [c_void])，既比较类型不匹配，也有 &mut 0 的非法 cast。
+现在检测到“切片 与 (0 cast 成切片)”的 ==/!=，改为切片判空：
+a == NULL → a.is_empty()
+a != NULL → !(a).is_empty()
 
 ## 具体实现
 ### Rust 方法调用功能实现

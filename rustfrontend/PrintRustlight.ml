@@ -163,6 +163,45 @@ and pexpr p (prec, e) =
   | Eunop(op, a1, _) ->
     fprintf p "%s%a" (name_unop op) pexpr (prec', a1)
   | Ebinop(op, a1, a2, ty) ->
+    (* Special-case: slice compared with NULL-like slice cast (0 as &mut [..]) *)
+    let is_slice_type t = match t with Rusttypes.Tslice(_, _) -> true | _ -> false in
+    let is_zero_slice_cast_expr pe =
+      match pe with
+      | Eas (Econst_int(n, _), Rusttypes.Tslice(_, _)) -> Int32.compare (camlint_of_coqint n) 0l = 0
+      | _ -> false
+    in
+    (match op with
+     | Cop.Oeq | Cop.One ->
+         let ty1 = type_of_pexpr a1 in
+         let ty2 = type_of_pexpr a2 in
+         if is_zero_slice_cast_expr a1 && is_slice_type ty2 then begin
+           (* a1 is NULL slice, a2 is a slice: use is_empty check on a2 *)
+           (match op with
+            | Cop.Oeq -> fprintf p "%a.is_empty()" pexpr (0, a2)
+            | Cop.One -> fprintf p "!(%a).is_empty()" pexpr (0, a2)
+            | _ -> ());
+           ()
+         end else if is_zero_slice_cast_expr a2 && is_slice_type ty1 then begin
+           (* a2 is NULL slice, a1 is a slice: use is_empty check on a1 *)
+           (match op with
+            | Cop.Oeq -> fprintf p "%a.is_empty()" pexpr (0, a1)
+            | Cop.One -> fprintf p "!(%a).is_empty()" pexpr (0, a1)
+            | _ -> ());
+           ()
+         end else begin
+           (* fall through to generic printing below *)
+           ()
+         end
+     | _ -> ());
+    (* If the special-case above printed, the rest must be skipped.
+       We detect this by re-checking and returning early. *)
+    let handled_null_slice_cmp =
+      (match op with
+       | Cop.Oeq | Cop.One -> is_zero_slice_cast_expr a1 && is_slice_type (type_of_pexpr a2)
+                             || is_zero_slice_cast_expr a2 && is_slice_type (type_of_pexpr a1)
+       | _ -> false)
+    in
+    if handled_null_slice_cmp then () else
     (* Check if this is a float operation - if so, convert int literals to float *)
     let is_float_op = is_float_type ty || is_float_type (type_of_pexpr a1) || is_float_type (type_of_pexpr a2) in
     (* Check if this is a comparison with mixed signed/unsigned types *)
@@ -394,13 +433,18 @@ let rec print_expr_list_with_type p (first, exprs, param_tys, is_c_function) =
       (* For C variadic functions, check if we MUST convert arrays/slices to pointers *)
       if is_c_function then
         let expr_ty = type_of_expr r in
-        (match expr_ty with
-         | Rusttypes.Tarray(_, _, _) | Rusttypes.Tslice(_, _) ->
-             (* Arrays and slices MUST be converted to raw pointers for C variadic functions *)
-             expr p (2, r);
-             fprintf p ".as_mut_ptr()"
+        (match r with
+         | Epure (Eref (_, _, _, _)) ->
+             (* 对引用类型参数：不要追加 .as_mut_ptr() 或指针 cast，保持原样 *)
+             expr p (2, r)
          | _ ->
-             expr p (2, r))
+             (match expr_ty with
+              | Rusttypes.Tarray(_, _, _) | Rusttypes.Tslice(_, _) ->
+                  (* Arrays and slices MUST be converted to raw pointers for C variadic functions *)
+                  expr p (2, r);
+                  fprintf p ".as_mut_ptr()"
+              | _ ->
+                  expr p (2, r)))
       else
         expr p (2, r);
       print_expr_list_with_type p (false, rl, [], is_c_function)
@@ -618,76 +662,114 @@ let rec print_stmt p (s: Rustlight.statement) =
             print_expr e
       | _ ->
           let place_ty = type_of_place v in
-          (* Check if expression already returns bool (comparison expr) *)
-          let expr_returns_bool = is_comparison_expr e in
-          (* Get the cast type name from name_rust_decl_var which matches variable declarations *)
-          let full_decl = name_rust_decl_var " : " place_ty in
-          let cast_type_name = 
-            try
-              let colon_idx = String.index full_decl ':' in
-              String.trim (String.sub full_decl (colon_idx + 1) (String.length full_decl - colon_idx - 1))
-            with Not_found -> "i32"  (* fallback *)
-          in
-          (* Determine if target is bool by checking the actual declared type name *)
-          let is_bool_target = (cast_type_name = "bool") in
-          (* Check if we're casting to a slice type and need to add &mut *)
+          (* A.1 NULL 表达：当目标是切片类型，且右侧将 0 转为切片时，直接生成空切片赋值 *)
           let is_slice_target = match place_ty with
             | Rusttypes.Tslice(_, _) -> true
             | _ -> false
           in
-          let needs_borrow_for_slice = is_slice_target && (
+          let expr_is_null_to_slice =
+            let is_zero_pexpr pe =
+              match pe with
+              | Econst_int(n, _) -> (Int32.compare (camlint_of_coqint n) 0l = 0)
+              | _ -> false
+            in
             match e with
-            | Epure (Eref(_, _, _, _)) -> false  (* Already a reference *)
-            | Epure (Eplace(place, ty)) -> 
-                (* Check if this is likely a malloc-generated Box variable *)
-                let is_likely_box = match place with
-                  | Plocal(id, _) ->
-                      let var_name = extern_atom id in
-                      (* Temporary variables like _128 (large numbers) that are declared as slice type 
-                         but might be redeclared as Box by malloc.
-                         Exclude small numbers like _1, _2 which are split_at_mut results *)
-                      (String.length var_name > 1 && var_name.[0] = '_' && 
-                       try 
-                         let num = int_of_string (String.sub var_name 1 (String.length var_name - 1)) in
-                         num >= 100  (* Only large temp variable IDs are from Clight, small ones from split_at_mut *)
-                       with _ -> false) &&
-                      (match ty with
-                       | Rusttypes.Tslice(_, _) -> true  (* Type mismatch: declared as slice but redeclared as Box *)
-                       | _ -> false)
-                  | _ -> false
-                in
-                (* Only borrow if NOT already a slice AND (is Box OR is Array OR likely Box from malloc) *)
-                (match ty with
-                 | Rusttypes.Tslice(_, _) when not is_likely_box -> false  (* Already a slice, no borrow *)
-                 | Rusttypes.Treference(_, _, _) -> false  (* Already a reference *)
-                 | Rusttypes.Tbox _ -> true  (* Box needs &mut *)
-                 | Rusttypes.Tarray(_, _, _) -> true  (* Array needs &mut *)
-                 | _ when is_likely_box -> true  (* Likely a Box from malloc *)
+            | Epure (Eas (pe_inner, ty')) ->
+                (match ty' with
+                 | Rusttypes.Tslice(_, _) -> is_zero_pexpr pe_inner
                  | _ -> false)
-            | _ -> false  (* Complex expression - don't add &mut to avoid precedence issues *)
-          ) in
-          (* Handle different cases of bool/int conversions and slice conversions *)
-          if is_bool_target && expr_returns_bool then
-            (* bool expr → bool var: direct assignment *)
-            fprintf p "@[<hv 2>%a =@ %a;@]" print_place v print_expr e
-          else if is_bool_target && not expr_returns_bool then
-            (* int expr → bool var: Rust doesn't allow "i32 as bool", use "!= 0" *)
-            fprintf p "@[<hv 2>%a =@ (%a) != 0;@]" print_place v print_expr e
-          else if (not is_bool_target) && expr_returns_bool then
-            (* bool expr → int var: need to cast bool to int *)
-            fprintf p "@[<hv 2>%a =@ ((%a) as %s);@]" print_place v print_expr e cast_type_name
-          else if needs_borrow_for_slice then
-            (* Casting to slice: add &mut prefix *)
-            (match place_ty with
-             | Rusttypes.Tslice(Rusttypes.Mutable, _) ->
-                 fprintf p "@[<hv 2>%a =@ (&mut %a as %s);@]" print_place v print_expr e cast_type_name
-             | Rusttypes.Tslice(Rusttypes.Immutable, _) ->
-                 fprintf p "@[<hv 2>%a =@ (&%a as %s);@]" print_place v print_expr e cast_type_name
-             | _ ->
-                 fprintf p "@[<hv 2>%a =@ (%a) as %s;@]" print_place v print_expr e cast_type_name)
-          else
-            (* int expr → int var: standard cast *)
-            fprintf p "@[<hv 2>%a =@ (%a) as %s;@]" print_place v print_expr e cast_type_name
+            | Epure (Econst_int (n, _)) -> (Int32.compare (camlint_of_coqint n) 0l = 0) && is_slice_target
+            | _ -> false
+          in
+          if is_slice_target && expr_is_null_to_slice then (
+            match place_ty with
+            | Rusttypes.Tslice(Rusttypes.Mutable, _) ->
+                fprintf p "@[<hv 2>%a =@ &mut [];@]" print_place v
+            | Rusttypes.Tslice(Rusttypes.Immutable, _) ->
+                fprintf p "@[<hv 2>%a =@ &[];@]" print_place v
+            | _ -> ()
+          ) else (
+            (* Check if expression already returns bool (comparison expr) *)
+            let expr_returns_bool = is_comparison_expr e in
+            (* Get the cast type name from name_rust_decl_var which matches variable declarations *)
+            let full_decl = name_rust_decl_var " : " place_ty in
+            let cast_type_name = 
+              try
+                let colon_idx = String.index full_decl ':' in
+                String.trim (String.sub full_decl (colon_idx + 1) (String.length full_decl - colon_idx - 1))
+              with Not_found -> "i32"  (* fallback *)
+            in
+            (* Determine if target is bool by checking the actual declared type name *)
+            let is_bool_target = (cast_type_name = "bool") in
+            (* Check if we're casting to a slice type and need to add &mut / 对 Box 使用 as_mut_slice() *)
+            let needs_borrow_for_slice = is_slice_target && (
+              match e with
+              | Epure (Eref(_, _, _, _)) -> false  (* Already a reference *)
+              | Epure (Eplace(place, ty)) -> 
+                  (* Check if this is likely a malloc-generated Box variable *)
+                  let is_likely_box = match place with
+                    | Plocal(id, _) ->
+                        let var_name = extern_atom id in
+                        (String.length var_name > 1 && var_name.[0] = '_' && 
+                         try 
+                           let num = int_of_string (String.sub var_name 1 (String.length var_name - 1)) in
+                           num >= 100
+                         with _ -> false) &&
+                        (match ty with
+                         | Rusttypes.Tslice(_, _) -> true
+                         | _ -> false)
+                    | _ -> false
+                  in
+                  (match ty with
+                   | Rusttypes.Tslice(_, _) when not is_likely_box -> false
+                   | Rusttypes.Treference(_, _, _) -> false
+                   | Rusttypes.Tbox _ -> true
+                   | Rusttypes.Tarray(_, _, _) -> true
+                   | _ when is_likely_box -> true
+                   | _ -> false)
+              | _ -> false
+            ) in
+            (* Handle different cases of bool/int conversions and slice conversions *)
+            if is_bool_target && expr_returns_bool then
+              (* bool expr → bool var: direct assignment *)
+              fprintf p "@[<hv 2>%a =@ %a;@]" print_place v print_expr e
+            else if is_bool_target && not expr_returns_bool then
+              (* int expr → bool var: Rust doesn't allow "i32 as bool", use "!= 0" *)
+              fprintf p "@[<hv 2>%a =@ (%a) != 0;@]" print_place v print_expr e
+            else if (not is_bool_target) && expr_returns_bool then
+              (* bool expr → int var: need to cast bool to int *)
+              fprintf p "@[<hv 2>%a =@ ((%a) as %s);@]" print_place v print_expr e cast_type_name
+            else if needs_borrow_for_slice then
+              (* Casting to slice: prefer .as_mut_slice()/as_slice() for Box, else fall back *)
+              (match place_ty, e with
+               | Rusttypes.Tslice(Rusttypes.Mutable, _), Epure (Eplace(pl_rhs, ty_rhs)) ->
+                   let rhs_likely_box = (match pl_rhs with
+                     | Plocal(id, _) ->
+                         let var_name = extern_atom id in
+                         (String.length var_name > 1 && var_name.[0] = '_' &&
+                          try let num = int_of_string (String.sub var_name 1 (String.length var_name - 1)) in num >= 100 with _ -> false)
+                     | _ -> false) in
+                   (match ty_rhs with
+                    | Rusttypes.Tbox _ -> fprintf p "@[<hv 2>%a =@ %a.as_mut();@]" print_place v print_expr e
+                    | _ when rhs_likely_box -> fprintf p "@[<hv 2>%a =@ %a.as_mut();@]" print_place v print_expr e
+                    | _ -> fprintf p "@[<hv 2>%a =@ (&mut %a as %s);@]" print_place v print_expr e cast_type_name)
+               | Rusttypes.Tslice(Rusttypes.Immutable, _), Epure (Eplace(pl_rhs, ty_rhs)) ->
+                   let rhs_likely_box = (match pl_rhs with
+                     | Plocal(id, _) ->
+                         let var_name = extern_atom id in
+                         (String.length var_name > 1 && var_name.[0] = '_' &&
+                          try let num = int_of_string (String.sub var_name 1 (String.length var_name - 1)) in num >= 100 with _ -> false)
+                     | _ -> false) in
+                   (match ty_rhs with
+                    | Rusttypes.Tbox _ -> fprintf p "@[<hv 2>%a =@ %a.as_ref();@]" print_place v print_expr e
+                    | _ when rhs_likely_box -> fprintf p "@[<hv 2>%a =@ %a.as_ref();@]" print_place v print_expr e
+                    | _ -> fprintf p "@[<hv 2>%a =@ (&%a as %s);@]" print_place v print_expr e cast_type_name)
+               | _ ->
+                   fprintf p "@[<hv 2>%a =@ (%a) as %s;@]" print_place v print_expr e cast_type_name)
+            else
+              (* int expr → int var: standard cast *)
+              fprintf p "@[<hv 2>%a =@ (%a) as %s;@]" print_place v print_expr e cast_type_name
+          )
       )
   | Sassign_variant (v, enum_id, id, e) ->
     fprintf p "@[<hv 2>%a =@ %s::%s(%a);@]" print_place v (extern_atom enum_id)(extern_atom id) print_expr e
