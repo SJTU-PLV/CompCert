@@ -47,7 +47,7 @@ Fixpoint generate_fresh_origin_type (ty: type) : type :=
   borrow checking pass *)
   | Tfunction orgs rels tyl rety cc =>
       let orgs1 := gensym_list (length orgs) in      
-      let subst_pairs := combine orgs1 orgs in
+      let subst_pairs := combine orgs orgs1 in
       replace_origin_in_type (Tfunction orgs rels tyl rety cc) subst_pairs
   | _ => ty
   end.

@@ -199,9 +199,9 @@ Fixpoint replace_origin_in_type (ty: type) (substs: list (origin * origin)) : ty
       let orgs' := map (replace_origin substs) orgs in
       Tvariant orgs' id
   | Tfunction orgs rels tyl rty cc =>
-      let tyl1 := replace_origin_in_typelist tyl rels in
-      let ty1 := replace_origin_in_type rty rels in
-      let orgs1 := map (replace_origin rels) orgs in
+      let tyl1 := replace_origin_in_typelist tyl substs in
+      let ty1 := replace_origin_in_type rty substs in
+      let orgs1 := map (replace_origin substs) orgs in
       let rels1 := replace_origin_in_origin_rels rels substs in
       Tfunction orgs1 rels1 tyl1 ty1 cc
   | _ => ty

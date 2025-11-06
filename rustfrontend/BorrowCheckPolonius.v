@@ -489,22 +489,30 @@ Definition transfer_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: 
           (* Adhoc: If this function has variant-length arguments, we ignore it *)
           oe2
       | None =>
+          (* flow the loans from arguments to the parameter types of the function *)
+          let oe3 := flow_loans_list oe2 args_tyl sig_tyl ByVal in
+          (* apply the effect of the function call *)
+          let oe4 := after_call oe3 org_rels in
+          (* assign the return value to p *)
+          flow_loans oe4 rty tgt_rety ByVal
+          (** The following code is the old-version implementation of
+          function call *)
           (* Move it to rusttyping. if forallb (fun '(ty1, ty2) => type_eq_except_origins ty1 ty2) (combine arg_tyl sig_tyl) && type_eq_except_origins tgt_rety rty then *)
           (* construct empty origin environments for function origins *)
-          let foe1 := LOrgEnv.bot in
-          let (foe2, rels) := bind_param_origins oe2 foe1 args_tyl sig_tyl in
-          (* use the origin relation to simulate the flow of loans
-             in the caller. foe2 is the initial env in the callee,
-             foe3 is the final env *)
-          let foe3 := after_call foe2 org_rels in
-          (* update the invariant relation established by the
-          evaluation of function parameters *)
-          let oe3 := flow_alias_after_call rels foe3 oe2 in
-          (* shallow write to p *)
-          (* do oe4 <- shallow_write_place pc f oe3 p; *)
-          (* after check_shallow_write_place *)
-          let oe4 := kill_loans oe3 p in
-          (flow_return_after_call foe3 oe4 rty tgt_rety)
+          (* let foe1 := LOrgEnv.bot in *)
+          (* let (foe2, rels) := bind_param_origins oe2 foe1 args_tyl sig_tyl in *)
+          (* (* use the origin relation to simulate the flow of loans *)
+          (*    in the caller. foe2 is the initial env in the callee, *)
+          (*    foe3 is the final env *) *)
+          (* let foe3 := after_call foe2 org_rels in *)
+          (* (* update the invariant relation established by the *)
+          (* evaluation of function parameters *) *)
+          (* let oe3 := flow_alias_after_call rels foe3 oe2 in *)
+          (* (* shallow write to p *) *)
+          (* (* do oe4 <- shallow_write_place pc f oe3 p; *) *)
+          (* (* after check_shallow_write_place *) *)
+          (* let oe4 := kill_loans oe3 p in *)
+          (* (flow_return_after_call foe3 oe4 rty tgt_rety) *)
           (* (* kill relevant loans *) *)
           (*   let live3 := kill_loans live2 p in *)
           (*   (* flow loans to the return type and update alias *) *)
@@ -533,20 +541,28 @@ Definition check_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: lis
           (* Adhoc: If this function has variant-length arguments, we ignore it *)
           OK tt
       | None =>
+          (* flow the loans from arguments to the parameter types of the function *)
+          let oe3 := flow_loans_list oe2 args_tyl sig_tyl ByVal in
+          (* apply the effect of the function call *)
+          let oe4 := after_call oe3 org_rels in
+          (* check the assignment of assigning the return value to p *)
+          check_shallow_write_place oe4 p
+          (** The following code is the old-version implementation of
+          function call *)
           (* Move it to rusttyping. if forallb (fun '(ty1, ty2) => type_eq_except_origins ty1 ty2) (combine arg_tyl sig_tyl) && type_eq_except_origins tgt_rety rty then *)
           (* construct empty origin environments for function origins *)
-          let foe1 := LOrgEnv.bot in
-          let (foe2, rels) := bind_param_origins oe2 foe1 args_tyl sig_tyl in
-          (* use the origin relation to simulate the flow of loans
-             in the caller. foe2 is the initial env in the callee,
-             foe3 is the final env *)
-          let foe3 := after_call foe2 org_rels in
-          (* update the invariant relation established by the
-          evaluation of function parameters *)
-          let oe3 := flow_alias_after_call rels foe3 oe2 in
-          (* shallow write to p *)
-          (* do oe4 <- shallow_write_place pc f oe3 p; *)
-          check_shallow_write_place oe3 p
+          (* let foe1 := LOrgEnv.bot in *)
+          (* let (foe2, rels) := bind_param_origins oe2 foe1 args_tyl sig_tyl in *)
+          (* (* use the origin relation to simulate the flow of loans *)
+          (*    in the caller. foe2 is the initial env in the callee, *)
+          (*    foe3 is the final env *) *)
+          (* let foe3 := after_call foe2 org_rels in *)
+          (* (* update the invariant relation established by the *)
+          (* evaluation of function parameters *) *)
+          (* let oe3 := flow_alias_after_call rels foe3 oe2 in *)
+          (* (* shallow write to p *) *)
+          (* (* do oe4 <- shallow_write_place pc f oe3 p; *) *)
+          (* check_shallow_write_place oe3 p *)
       end
   | _ => OK tt
   end.

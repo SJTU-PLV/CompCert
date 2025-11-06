@@ -87,8 +87,8 @@ let rec pexpr p (prec, e) =
     fprintf p "%LuLLU" (camlint64_of_coqint n)
   | Econst_long(n, _) ->
     fprintf p "%LdLL" (camlint64_of_coqint n)
-  | Eglobal(id, _) ->
-    fprintf p "glob %s" (extern_atom id)
+  | Eglobal(id, ty) ->
+    fprintf p "glob %s with %s" (extern_atom id) (name_rust_type ty)
   | Eunop(Oabsfloat, a1, _) ->
     fprintf p "__builtin_fabs(%a)" pexpr (2, a1)
   | Eunop(op, a1, _) ->

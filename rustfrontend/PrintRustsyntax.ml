@@ -53,11 +53,12 @@ let rec name_rust_decl id ty =
       "&" ^ (extern_atom org) ^" "^  string_of_mut mut ^ (name_rust_decl ""  t) ^ name_optid id
   | Tbox(t) ->
       "Box<" ^ (name_rust_decl ""  t) ^ ">" ^ name_optid id
-  | Tfunction( _, _, args, res, cconv) ->
+  | Tfunction( orgs, rels, args, res, cconv) ->
       let b = Buffer.create 20 in
       if id = ""
       then Buffer.add_string b "(*)"
       else Buffer.add_string b id;
+      Buffer.add_string b (print_origins orgs);
       Buffer.add_char b '(';
       let rec add_args first = function
       | Tnil ->
@@ -74,6 +75,7 @@ let rec name_rust_decl id ty =
           add_args false tl in
       if not cconv.cc_unproto then add_args true args;
       Buffer.add_char b ')';
+      Buffer.add_string b (origin_relations_string rels);
       name_rust_decl (Buffer.contents b) res
   | Tstruct(orgs, name) ->
       "struct" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
