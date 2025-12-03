@@ -110,24 +110,24 @@ Local Open Scope error_monad_scope.
 
 (** Deference a location based on the type  *)
 
-Definition deref_loc_stkbor_access ce (ty: type) (sb: bor_stacks) (opt_tag: option tag) (b: block) (ofs: ptrofs) (ak: access_kind) : option bor_stacks :=
-  memory_access sb b (Ptrofs.unsigned ofs) (sizeof ce ty) ak opt_tag.
+Definition deref_loc_stkbor_access ce (ty: type) (sb: bor_stacks) (af: access_from) (b: block) (ofs: ptrofs) (ak: access_kind) : option bor_stacks :=
+  memory_access sb b (Ptrofs.unsigned ofs) (sizeof ce ty) ak af.
 
 
 (* What if ty is nested in some immutable reference? We should rule
 out this situation in borrow checking, which should be significant to
 maintain the invariant *)
-Definition stkbor_perm_of_type (ty: type) : option stkbor_perm := 
+Definition item_of_type (ty: type) (t: tag) : option item := 
   match ty with
   | Tbox _
-  | Treference _ Mutable _ => Some Unique
-  | Treference _ Immutable _ => Some SharedReadOnly
+  | Treference _ Mutable _ => Some (Unique t)
+  | Treference _ Immutable _ => Some (SharedReadOnly t)
   | _ => None
   end.
 
-Definition assign_loc_stkbor_access (ce: composite_env) (ty: type) (sb: bor_stacks) (b: block) (ofs: ptrofs) (bor_tag: option tag) (v: val) : option bor_stacks :=
+Definition assign_loc_stkbor_access (ce: composite_env) (ty: type) (sb: bor_stacks) (b: block) (ofs: ptrofs) (af: access_from) (v: val) : option bor_stacks :=
   (* write access at (b, ofs) *)
-  match memory_access sb b (Ptrofs.unsigned ofs) (sizeof ce ty) AccessWrite bor_tag with
+  match memory_access sb b (Ptrofs.unsigned ofs) (sizeof ce ty) AccessWrite af with
   | Some sb1 =>
       (* if v is a pointer value point to the target location, we push
       (b, ofs) into the stack of the target location *)
@@ -136,9 +136,9 @@ Definition assign_loc_stkbor_access (ce: composite_env) (ty: type) (sb: bor_stac
           (* In our semantics, we do not provide who grant the access
           of this borrowing and just push the new tag onto the
           stack *)
-          match stkbor_perm_of_type ty with
-          | Some p =>
-              grantN sb1 b1 (Ptrofs.unsigned ofs1) (Z.to_nat (sizeof ce (deref_type ty))) None (Tagged (b, (Ptrofs.unsigned ofs))) p
+          match item_of_type ty (b, (Ptrofs.unsigned ofs)) with
+          | Some it =>
+              grantN sb1 b1 (Ptrofs.unsigned ofs1) (Z.to_nat (sizeof ce (deref_type ty))) None it
           | None => None
           end
       | _ => Some sb1
@@ -169,7 +169,7 @@ Inductive bind_parameters (ce: composite_env) (e: env):
       forall m id ty params v1 vl b m1 m2 sb sb1 sb2,
       PTree.get id e = Some(b, ty) ->
       assign_loc ce ty m b Ptrofs.zero v1 m1 ->
-      assign_loc_stkbor_access ce ty sb b Ptrofs.zero None v1 = Some sb1 ->
+      assign_loc_stkbor_access ce ty sb b Ptrofs.zero from_local v1 = Some sb1 ->
       bind_parameters ce e m1 sb1 params vl m2 sb2 ->
       bind_parameters ce e m sb ((id, ty) :: params) (v1 :: vl) m2 sb2.
 
@@ -184,7 +184,7 @@ Fixpoint stkbor_free_list (sb: bor_stacks) (l: list (block * Z * Z)) : option bo
   match l with
   | nil => Some sb
   | (b, lo, hi) :: l' =>
-      match memory_free sb b lo hi None with
+      match memory_free sb b lo hi from_local with
       | None => None
       | Some sb' => stkbor_free_list sb' l'
       end
@@ -199,10 +199,10 @@ Variable m: mem.
 (* Different from the eval_place in Rustlight/RustIR, we also return
 the tag which denotes the permission granted for the access of the
 returned location *)
-Inductive eval_place (sb: bor_stacks) : place -> block -> ptrofs -> bor_stacks -> option tag -> Prop :=
+Inductive eval_place (sb: bor_stacks) : place -> block -> ptrofs -> bor_stacks -> access_from -> Prop :=
 | eval_Plocal: forall id b ty,
     e!id = Some (b, ty) ->
-    eval_place sb (Plocal id ty) b Ptrofs.zero sb None
+    eval_place sb (Plocal id ty) b Ptrofs.zero sb from_local
 | eval_Pfield_struct: forall p ty b ofs delta id i co orgs bor_tag sb1,
     eval_place sb p b ofs sb1 bor_tag ->
     typeof_place p = Tstruct orgs id ->
@@ -227,7 +227,7 @@ Inductive eval_place (sb: bor_stacks) : place -> block -> ptrofs -> bor_stacks -
     deref_loc_stkbor_access ce (typeof_place p) sb1 bor_tag l ofs AccessRead = Some sb2 ->
     (* As the value stored in *(l, ofs) is (Vptr l' ofs'), the granted
     tag for this location is (Tagged l ofs) *)
-    eval_place sb (Pderef p ty) l' ofs' sb2 (Some (Tagged (l, Ptrofs.unsigned ofs))).
+    eval_place sb (Pderef p ty) l' ofs' sb2 (from_ref (l, Ptrofs.unsigned ofs)).
 
 Definition mut_to_access (mut: mutkind) : access_kind :=
   match mut with
@@ -547,7 +547,7 @@ Inductive step : state -> trace -> state -> Prop :=
 | step_storagedead: forall f k le m id own ty b sb1 sb2,
     (* In Miri, storagedead is considered as a deallocation of this local *)
     le ! id = Some (b, ty) ->    (* We should check that this id must be a local variable *)
-    memory_free sb1 b 0 (sizeof ge ty) None = Some sb2 ->
+    memory_free sb1 b 0 (sizeof ge ty) from_local = Some sb2 ->
     step (State f (Sstoragedead id) k le own sb1 m) E0 (State f Sskip k le own sb2 m)
          
 | step_call: forall f a al k le m vargs tyargs vf fd cconv tyres p orgs org_rels own1 own2 sb1 sb2 sb3
@@ -701,4 +701,3 @@ End SEMANTICS.
 
 Definition semantics (p: program) :=
   Semantics_gen step initial_state at_external (fun _ => after_external) (fun _ => final_state) globalenv p.
- 
