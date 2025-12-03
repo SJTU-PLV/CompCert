@@ -821,41 +821,41 @@ Definition get_borck_result (borck_res: (PMap.t LoansEnv.t)) (pc: node) : LoansE
 
 (* After calling borrow_check, we should find if there is any borrow
 check error *)
-Definition collect_borrow_check_result (ce: composite_env) (f: function) (cfg: rustcfg) (loans_flow_res: (PMap.t RegionSet.t * (PMap.t LoansEnv.t))) : res unit :=
+Definition collect_borrow_check_result (f: function) (cfg: rustcfg) (loans_flow_res: (PMap.t RegionSet.t * (PMap.t LoansEnv.t))) : res unit :=
   do _ <- transl_on_cfg get_borck_result (snd loans_flow_res) (borrow_check_stmt f) borrow_check_cond_expr f.(fn_body) cfg;
   OK tt.
 
-(** TODO: we should combine it with move_check_function *)
+(* (** TODO: we should combine it with move_check_function *) *)
 
-Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res unit :=
-  do (entry, cfg) <- generate_cfg f.(fn_body);
-  (** 1. Loans-flow analysis *)
-  do loans_flow_res <- loans_flow_analyze ce f cfg entry;
-  (** 2. Collect result of the borrow checking ! *)
-  collect_borrow_check_result ce f cfg loans_flow_res.
+(* Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res unit := *)
+(*   do (entry, cfg) <- generate_cfg f.(fn_body); *)
+(*   (** 1. Loans-flow analysis *) *)
+(*   do loans_flow_res <- loans_flow_analyze ce f cfg entry; *)
+(*   (** 2. Collect result of the borrow checking ! *) *)
+(*   collect_borrow_check_result ce f cfg loans_flow_res. *)
 
-Definition transf_fundef (ce: composite_env) (id: ident) (fd: fundef) : Errors.res fundef :=
-  match fd with
-  | Internal f =>
-      match borrow_check_function ce f with
-      | OK _ => OK (Internal f)
-      | Error msg => Error ([MSG "In function "; CTX id; MSG " : "] ++ msg)
-      end
-  | External orgs rels ef targs tres cconv => Errors.OK (External orgs rels ef targs tres cconv)
-  end.
+(* Definition transf_fundef (ce: composite_env) (id: ident) (fd: fundef) : Errors.res fundef := *)
+(*   match fd with *)
+(*   | Internal f => *)
+(*       match borrow_check_function ce f with *)
+(*       | OK _ => OK (Internal f) *)
+(*       | Error msg => Error ([MSG "In function "; CTX id; MSG " : "] ++ msg) *)
+(*       end *)
+(*   | External orgs rels ef targs tres cconv => Errors.OK (External orgs rels ef targs tres cconv) *)
+(*   end. *)
 
-Definition transl_globvar (id: ident) (ty: type) := OK ty.
+(* Definition transl_globvar (id: ident) (ty: type) := OK ty. *)
 
-(** TODO  *)
-Definition check_origins_well_formedness (p: program) : bool :=
-  true.
+(* (** TODO  *) *)
+(* Definition check_origins_well_formedness (p: program) : bool := *)
+(*   true. *)
 
-(* borrow check the whole module *)
+(* (* borrow check the whole module *) *)
 
-Definition borrow_check_program (p: program) : res unit :=
-  (* ensure that replaceOrigins has been executed before borrow checking *)
-  if check_origins_well_formedness p then
-    do _ <- transform_partial_program2 (transf_fundef p.(prog_comp_env)) transl_globvar p;
-    OK tt
-  else
-    Error (msg "Origins in the program are not well formed").
+(* Definition borrow_check_program (p: program) : res unit := *)
+(*   (* ensure that replaceOrigins has been executed before borrow checking *) *)
+(*   if check_origins_well_formedness p then *)
+(*     do _ <- transform_partial_program2 (transf_fundef p.(prog_comp_env)) transl_globvar p; *)
+(*     OK tt *)
+(*   else *)
+(*     Error (msg "Origins in the program are not well formed"). *)

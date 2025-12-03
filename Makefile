@@ -177,7 +177,7 @@ RUSTFRONTEND=Rusttypes.v Rustsyntax.v Rustlight.v RustIR.v\
   RustOp.v Rusttyping.v\
   StkBorPermission.v RustIRbor.v\
   BorrowCheckDomain.v ReplaceOrigins.v BorrowCheckPolonius.v\
-  RegionLiveness.v\
+  RegionLiveness.v BorrowCheck.v\
   # BorrowCheckSafe.v
 
 # RUSTDEMO=LinkedList.v LinkedListSafe.v HashMap.v HashMapSafe.v HashMapCommon.v \

@@ -176,7 +176,6 @@ Qed.
 Definition valid_type (ty: type) : bool :=
   match ty with
   | Tarray _ _
-  | Treference _ _ _
   | Tfunction _ _ _ _ _ => false
   | _ => true
   end.
