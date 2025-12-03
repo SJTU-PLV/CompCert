@@ -135,28 +135,28 @@ Variable init uninit universe: PathsMap.t.
   
 Fixpoint move_check_pexpr (pe : pexpr) : bool :=
   match pe with
-  | Eplace p ty =>
+  | Eplace p _
       (* replace all the p with (owner_place p) which can also
       minimize the changes of the move checking proof *)
-      let op := owner_place p in
+      (* let op := owner_place p in *)
       (* if scalar_type ty then *)
         (* dominators are init means that the location if p is valid;
            the children of p is init means that the value of p is
            semantically wel-typed. Note that p may be downcast so we
            just require that the valid owner of p is init *)
-      dominators_must_init init uninit universe op && must_init init uninit universe (valid_owner op)
+      (* dominators_must_init init uninit universe op && must_init init uninit universe (valid_owner op) *)
         (* dominators_must_init init uninit universe p && must_init init uninit universe p *)
       (* else *)
         (* For now only support copy a scalar type value *)
         (* false *)
-  | Ecktag p _ =>
+  | Ecktag p _
+  | Eref _ _ p _ => 
       let op := owner_place p in
-      dominators_must_init init uninit universe op && must_init init uninit universe op
-  (** Eref and Eglobal are unsupported *)        
-  | Eref _ _ _ _ => false
-  | Eglobal _ _ => false
+      dominators_must_init init uninit universe op && must_init init uninit universe (valid_owner op)
   | Eunop _ pe0 _ => move_check_pexpr pe0
   | Ebinop _ pe1 pe2 _ => move_check_pexpr pe1 && move_check_pexpr pe2
+  (** Eglobal are unsupported *)        
+  | Eglobal _ _ => false
   | _ => true
   end.
 
@@ -408,3 +408,4 @@ Definition collect_move_check_result ce f cfg analysis_res :=
 (*      prog_types := prog_types p; *)
 (*      prog_comp_env := prog_comp_env p; *)
 (*      prog_comp_env_eq := prog_comp_env_eq p |}. *)
+ 

@@ -174,7 +174,7 @@ Qed.
 
 (* Some simple type checking (move to Rusttyping.v) *)
 
-(* We do not support array type and reference type for now *)
+(* We do not support array type and function type in the variables for now *)
 Definition valid_type (ty: type) : bool :=
   match ty with
   | Tarray _ _
@@ -187,6 +187,47 @@ Definition not_composite (ty: type) : bool :=
   | Tstruct _ _
   | Tvariant _ _ => false
   | _ => true
+  end.
+
+(* check if a type is copyable *)
+
+Definition is_box (ty: type) :=
+  match ty with
+  | Tbox _ => true
+  | _ => false
+  end.  
+
+Definition is_mutable_ref (ty: type) :=
+  match ty with
+  | Treference _ Mutable _ => true
+  | _ => false
+  end.
+
+Definition is_immutable_ref (ty: type) :=
+  match ty with
+  | Treference _ Immutable _ => true
+  | _ => false
+  end.
+
+Definition is_copyable (ty: type) : bool :=
+  scalar_type ty || is_mutable_ref ty.
+
+(* A place is movable if it is not constructed via reference *)
+Fixpoint is_movable (p: place) : bool :=
+  match p with
+  | Pderef p1 _ =>
+      is_movable p1 && is_box (typeof_place p1)
+  | _ => true
+  end.
+
+Fixpoint is_mutable_place (p: place) : bool :=
+  match p with
+  | Plocal _ _ => true
+  | Pderef p1 _ =>
+      negb (is_immutable_ref (typeof_place p1)) && is_mutable_place p1
+  | Pfield p1 _ _ 
+  | Pdowncast p1 _ _ =>
+      is_mutable_place p1
   end.
 
 Definition typenv := PTree.t type.
@@ -710,10 +751,12 @@ Fixpoint type_check_pexpr (pe: pexpr) : res unit :=
       end
   | Eplace p ty =>
       do _ <- type_check_place p;
-      if type_eq ty (typeof_place p) then
-        OK tt
-      else
-        Error (msg "Eplace type error")
+      if is_copyable (typeof_place p) then
+        if type_eq ty (typeof_place p) then
+          OK tt
+        else
+          Error (msg "Eplace type error")
+      else Error (msg "Eplace copying a non-copyable place")
   | Ecktag p fid =>
       match typeof_place p with
       | Tvariant _ _ =>
@@ -722,7 +765,11 @@ Fixpoint type_check_pexpr (pe: pexpr) : res unit :=
           Error (msg "Ecktag type error")
       end
   | Eref org1 mut1 p ty =>
-      Error (msg "Reference is unsuppored")
+      do _ <- type_check_place p;
+      if type_eq ty (Treference org1 mut1 (typeof_place p)) then
+        OK tt
+      else       
+        Error (msg "Eref type error")
   | Eunop uop pe ty =>
       do _ <- type_check_pexpr pe;
       do ty1 <- type_unop uop (typeof_pexpr pe);
@@ -745,15 +792,20 @@ Fixpoint type_check_pexpr (pe: pexpr) : res unit :=
 Definition type_check_expr (e: expr) : res unit :=
   match e with
   | Emoveplace p ty =>
-      do _ <- type_check_place p;
-      if scalar_type (typeof_place p) then
-        Error (msg "Cannot move scalar type")
-      else
+      do _ <- type_check_place p;      
+      (** We should allow move out scalar type place?  *)
+      (* if scalar_type (typeof_place p) then *)
+      (*   Error (msg "Cannot move scalar type") *)
+      (* else *)
+      if is_movable p then
         if type_eq ty (typeof_place p) then
           OK tt
         else 
           Error (msg "Emoveplace type error")
+      else 
+        Error (msg "Emoveplace move out a non-movable place")
   | Epure pe =>
+      (* Maybe too restricted *)
       if scalar_type (typeof_pexpr pe) then
         type_check_pexpr pe
       else
@@ -774,32 +826,38 @@ Fixpoint type_check_stmt (stmt: statement) : res unit :=
   | Sassign p e =>
       do _ <- type_check_expr e;
       do _ <- type_check_place p;
-      OK tt
+      if is_mutable_place p then
+        OK tt
+      else Error (msg "Sassign: modify a not mutable place")
   | Sassign_variant p id fid e =>
       do _ <- type_check_expr e;
       do _ <- type_check_place p;
-      match ce!id with
-      | Some co =>
-          match co_sv co with
-          | TaggedUnion => OK tt
-          | _ => Error (msg "assign_variant type error")
-          end
-      | _ => Error (msg "assign_variant type error")
-      end
+      if is_mutable_place p then
+        match ce!id with
+        | Some co =>
+            match co_sv co with
+            | TaggedUnion => OK tt
+            | _ => Error (msg "assign_variant type error")
+            end
+        | _ => Error (msg "assign_variant type error")
+        end
+      else Error (msg "Sassign_variant: modify a not mutable place")
   | Sbox p e =>
       do _ <- type_check_expr e;
       do _ <- type_check_place p;
-      match typeof_place p with
-      | Tbox ty =>
-          if Z.eqb (sizeof ce ty) (sizeof ce (typeof e))
-             && Z.ltb 0 (sizeof ce (typeof e))
-             && Z.leb (sizeof ce (typeof e)) Ptrofs.max_unsigned then
-            OK tt
-          else
-            Error (msg "size error in Sbox")
-      | _ =>
-          Error (msg "type error in Sbox")
-      end
+      if is_mutable_place p then
+        match typeof_place p with
+        | Tbox ty =>
+            if Z.eqb (sizeof ce ty) (sizeof ce (typeof e))
+               && Z.ltb 0 (sizeof ce (typeof e))
+               && Z.leb (sizeof ce (typeof e)) Ptrofs.max_unsigned then
+              OK tt
+            else
+              Error (msg "size error in Sbox")
+        | _ =>
+            Error (msg "type error in Sbox")
+        end
+      else Error (msg "Sbox: modify a not mutable place")
   | Sstoragelive _ | Sstoragedead _ => OK tt
   | Sdrop p =>
       do _ <- type_check_place p;
