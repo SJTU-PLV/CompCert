@@ -158,15 +158,17 @@ Definition type_deref (ty: type) : res type :=
   match ty with
   (* Only support box type to be dereferenced for now *)
   | Tbox tyelt => OK tyelt
-  (* | Treference _ _ tyelt => OK tyelt *)
+  | Treference _ _ tyelt => OK tyelt
   | _ => Error (msg "type_deref error")
   end.
 
 Lemma type_deref_some: forall ty1 ty2,
     type_deref ty1 = OK ty2 ->
-    ty1 = Tbox ty2.
+    ty1 = Tbox ty2 \/ (exists r mut, ty1 = Treference r mut ty2).
 Proof.
   destruct ty1; intros; simpl in *; try congruence.
+  left. inv H. auto.
+  right. inv H. eauto.
 Qed.
 
 

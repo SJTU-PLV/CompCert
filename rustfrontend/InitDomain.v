@@ -143,8 +143,7 @@ Fixpoint collect (p: place) (l: Paths.t) : Paths.t :=
   if place_owns_loc p then
     (** FIXME: WHY? If there are some children of [p] in [l], do
       nothing. Because [p] may have been split into sub-fields and we
-      have collected p (s
-      ee Pderef and Pfield cases). *)
+      have collected p (see Pderef and Pfield cases). *)
     if Paths.is_empty (Paths.filter (fun elt => is_prefix p elt) l) then
       match p with
       | Plocal _ _ =>

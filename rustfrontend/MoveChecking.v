@@ -102,6 +102,32 @@ Definition must_movable_fix ce := Fix (@well_founded_removeR composite) must_mov
 
 Definition must_movable ce init uninit universe p := must_movable_fix ce init uninit universe p (typeof_place p).
 
+(* Compute the deepest place of [p] that does not contain reference,
+i.e., it represent a memory location that is no accessed via
+reference. The return value (is_owner, p) satisfies: if is_owner is
+true, than p is the same as the argument place (it is also the deepest
+owner), otherwise p is the deepest owner of the argument *)
+Fixpoint owner_place' (p: place) : bool * place :=
+  match p with
+  | Plocal _ _ => (true, p)
+  | Pderef p1 ty =>
+      let (is_owner, p2) := owner_place' p1 in
+      if is_owner then 
+        match typeof_place p1 with
+        | Tbox _ => (true, p)
+        (* p is not owner place, i.e., it is accessed via reference *)
+        | _ => (false, p2)
+        end
+      else (false, p2)
+  | Pfield p1 fid fty
+  | Pdowncast p1 fid fty =>
+      let (is_owner, p2) := owner_place' p1 in
+      if is_owner then (true, p)
+      else (false, p2)
+  end.
+        
+Definition owner_place (p: place) := snd (owner_place' p).
+
 Section INIT.
 
 Variable ce: composite_env.
@@ -110,23 +136,22 @@ Variable init uninit universe: PathsMap.t.
 Fixpoint move_check_pexpr (pe : pexpr) : bool :=
   match pe with
   | Eplace p ty =>
-      if scalar_type ty then
+      (* replace all the p with (owner_place p) which can also
+      minimize the changes of the move checking proof *)
+      let op := owner_place p in
+      (* if scalar_type ty then *)
         (* dominators are init means that the location if p is valid;
            the children of p is init means that the value of p is
            semantically wel-typed. Note that p may be downcast so we
            just require that the valid owner of p is init *)
-          dominators_must_init init uninit universe p && must_init init uninit universe (valid_owner p)
+      dominators_must_init init uninit universe op && must_init init uninit universe (valid_owner op)
         (* dominators_must_init init uninit universe p && must_init init uninit universe p *)
-      else
+      (* else *)
         (* For now only support copy a scalar type value *)
-        false
+        (* false *)
   | Ecktag p _ =>
-      (* type of p must be enum *)
-      match typeof_place p with
-      | Tvariant _ _ =>
-          dominators_must_init init uninit universe p && must_init init uninit universe p
-      | _ => false
-      end
+      let op := owner_place p in
+      dominators_must_init init uninit universe op && must_init init uninit universe op
   (** Eref and Eglobal are unsupported *)        
   | Eref _ _ _ _ => false
   | Eglobal _ _ => false
@@ -138,6 +163,8 @@ Fixpoint move_check_pexpr (pe : pexpr) : bool :=
 Definition move_check_expr' (e : expr) : bool :=
   match e with
   | Emoveplace p _ =>      
+      (* The type check phase must ensure that p = owner_place p as we
+      cannot move from p if p has type [&mut Box<..>] *)
       if place_eq p (valid_owner p) then
         (* p is not downcast ... *)                
         dominators_must_init init uninit universe p && must_movable ce init uninit universe p 
@@ -153,6 +180,7 @@ place in the expression, which is used to check the lhs of the
 statement *)
 Definition move_check_expr (e: expr) : option (PathsMap.t * PathsMap.t) :=
   if move_check_expr' e then
+    (* Type checking should ensure p = owner_place p *)
     let p := moved_place e in
     match p with
     | Some p =>
@@ -162,7 +190,7 @@ Definition move_check_expr (e: expr) : option (PathsMap.t * PathsMap.t) :=
   else None.
          
 Definition move_check_assign (p : place) :=
-  dominators_must_init init uninit universe p.
+  dominators_must_init init uninit universe (owner_place p).
 
 End INIT.
 
