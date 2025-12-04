@@ -72,7 +72,8 @@ Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res 
   (* 3.1. Loans-flow analysis *)
   do loans_flow_res <- loans_flow_analyze ce f cfg entry;
   (* 3.2. check illegal access of active loans *)
-  collect_borrow_check_result f cfg loans_flow_res.
+  let generic_regions := RegionLiveness.live_generic_regions (fn_generic_origins f) in
+  collect_borrow_check_result generic_regions f cfg loans_flow_res.
 
 Definition borrow_check_fundef (ce : composite_env) (id : ident) (fd : fundef) : Errors.res fundef :=
   match fd with

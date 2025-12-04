@@ -816,13 +816,25 @@ Definition borrow_check_cond_expr (le: LoansEnv.t) (e: expr) : res unit :=
       OK tt
   end.
 
-Definition get_borck_result (borck_res: (PMap.t LoansEnv.t)) (pc: node) : LoansEnv.t :=
-  borck_res !! pc.
+(** FIXME: Get the loans environments before the evaluation of pc. We
+should apply the liveness again here because Kildall only keep the
+most approximated (consider lub operation) result in the loans
+environments. *)
+Definition get_borck_result generic_regions f cfg (live_loan_env: (PMap.t RegionSet.t * (PMap.t LoansEnv.t))) (pc: node) : LoansEnv.t :=
+  let (live, loan_env) := live_loan_env in
+  match loan_env !! pc with
+  | LoansEnv.Bot => LoansEnv.Bot
+  | LoansEnv.State oe =>
+      (* apply liveness result before transfer *)
+      let live_after := PMap.get pc live in
+      let live_before := RegionLiveness.transfer f cfg generic_regions pc live_after in
+      LoansEnv.State (LOrgEnv.apply_liveness live_before oe)
+  end.
 
 (* After calling borrow_check, we should find if there is any borrow
 check error *)
-Definition collect_borrow_check_result (f: function) (cfg: rustcfg) (loans_flow_res: (PMap.t RegionSet.t * (PMap.t LoansEnv.t))) : res unit :=
-  do _ <- transl_on_cfg get_borck_result (snd loans_flow_res) (borrow_check_stmt f) borrow_check_cond_expr f.(fn_body) cfg;
+Definition collect_borrow_check_result generic_region (f: function) (cfg: rustcfg) (loans_flow_res: (PMap.t RegionSet.t * (PMap.t LoansEnv.t))) : res unit :=
+  do _ <- transl_on_cfg (get_borck_result generic_region f cfg) (loans_flow_res) (borrow_check_stmt f) borrow_check_cond_expr f.(fn_body) cfg;
   OK tt.
 
 
@@ -831,10 +843,11 @@ checking, which is not used in the top-level soundness proof. *)
 
 Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res unit :=
   do (entry, cfg) <- generate_cfg f.(fn_body);
+  let generic_regions := live_generic_regions (fn_generic_origins f) in
   (** 1. Loans-flow analysis *)
   do loans_flow_res <- loans_flow_analyze ce f cfg entry;
   (** 2. Collect result of the borrow checking ! *)
-  collect_borrow_check_result f cfg loans_flow_res.
+  collect_borrow_check_result generic_regions f cfg loans_flow_res.
 
 Definition transf_fundef (ce: composite_env) (id: ident) (fd: fundef) : Errors.res fundef :=
   match fd with

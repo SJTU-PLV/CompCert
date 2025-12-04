@@ -98,19 +98,18 @@ let print_live_regions pp live =
   let orgs = RegionSet.elements live in
   fprintf pp "Live regions: %s@." (origin_list_to_string orgs) 
 
-let print_instruction_debug pp prog (pc, (i, ae)) =
+let print_instruction_debug pp prog (pc, (i, (live, ae))) =
   PrintRustIR.print_instruction pp prog (pc,i);
-  (* print_live_regions pp live; *)
+  print_live_regions pp live;
   print_ae pp ae
 
 let print_cfg_body_borrow_check pp (body, entry, cfg) live ae =
   (* Debug code: fprintf pp "Length of cfg, live and ae are %d, %d, %d@." 
      (Nat.to_int (PTree_Properties.cardinal cfg)) (Nat.to_int (PTree_Properties.cardinal live)) (Nat.to_int (PTree_Properties.cardinal ae)); *)
-  (* Since the liveness result does not contain the Iend node which
-  would complicated our debugging, we just turn off showing the result
-  of liveness analysis *)
-  (* let cfg' = PTree.combine PrintRustIR.combine cfg (PTree.combine PrintRustIR.combine live ae) in *)
-  let cfg' = PTree.combine PrintRustIR.combine cfg ae in
+  (* We show the result of liveness analysis as the checking would
+  first apply liveness to the loans environment first *)
+  let cfg' = PTree.combine PrintRustIR.combine cfg (PTree.combine PrintRustIR.combine live ae) in
+  (* let cfg' = PTree.combine PrintRustIR.combine cfg ae in *)
   let instrs =
     List.sort
     (fun (pc1, _) (pc2, _) -> compare pc2 pc1)

@@ -109,16 +109,15 @@ let debug_ReplaceOrigins (prog: RustIR.program) =
     fatal_error no_loc "%a"  print_error msg
 
 let debug_BorrowCheck (prog: RustIR.program) =  
-  if debug_borrow_check then
-    Format.fprintf logout "@.Borrow Check: @.";
-    PrintBorrowCheck.print_cfg_program_borrow_check logout prog;
+  Format.fprintf logout "@.Borrow Check: @.";
+  PrintBorrowCheck.print_cfg_program_borrow_check logout prog;
   (* The top-level borrow check which includes the move checking *)
   match BorrowCheck.borrow_check_program prog with
   | Errors.OK _ ->
     Format.fprintf logout "@.Borrow Check Success@.";
     prog
-   | Errors.Error msg ->
-     fatal_error no_loc "Borrow checking error: %a"  print_error msg
+  | Errors.Error msg ->
+     fatal_error no_loc "@.Borrow checking error: %a"  print_error msg
 
 let debug_MoveChecking (prog: RustIR.program) =
   match MoveChecking.move_check_program prog with

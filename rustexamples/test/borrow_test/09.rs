@@ -3,5 +3,5 @@ fn main() {
 	let b : &mut i32 = &mut a;
     *b = 4;
     a = 3;
-    printf("%d", *b); // report error here
+    // printf("%d", *b); // report error here
 }

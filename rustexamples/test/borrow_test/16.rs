@@ -11,17 +11,6 @@ fn main(){
         q = &mut v;
     }
     v = 4;
-    printf("%d", *p);
-
+    // printf("%d", *p);
+    let tmp: i32 = *p;
 }
-
-// error[E0506]: cannot assign to `v` because it is borrowed
-//   --> src/main.rs:13:5
-//    |
-// 8  |         p = &mut v;
-//    |             ------ `v` is borrowed here
-// ...
-// 13 |     v = 4;
-//    |     ^^^^^ `v` is assigned to here but it was already borrowed
-// 14 |     println!("{}", *p);
-//    |                    -- borrow later used here

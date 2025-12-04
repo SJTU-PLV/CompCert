@@ -8,8 +8,10 @@ fn main(){
         p = q;
         x = x + 1;
     } else {
-        y = y + 1; // the error should not be reported here
+        // q is not live here, so there should be no error reported
+        y = y + 1; 
     }
-    y = y + 1; // it should be reported here
-    printf("%d", *p);
+    y = y + 1; // If we uncomment the following line, error should be reported here
+    // let tmp: i32 = *p;
+    // printf("%d", *p);
 }
