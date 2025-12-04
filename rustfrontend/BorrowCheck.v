@@ -92,22 +92,6 @@ Definition borrow_check_fundef (ce : composite_env) (id : ident) (fd : fundef) :
       end
   end.
 
-(** Check the consistency of composite environment *)
-
-Definition name_members (membs: members) : list ident :=
-  map name_member membs.
-
-Definition check_composite (id: ident) (co: composite) : bool :=
-  Z.leb (co_sizeof co) Integers.Ptrofs.max_unsigned
-  && Z.leb (list_length_z (co_members co)) Int.max_unsigned
-  && list_norepet_dec ident_eq (name_members (co_members co)).
-
-Definition check_composite_env (ce: composite_env) : Errors.res unit :=
-  if PTree_Properties.for_all ce check_composite then
-    OK tt
-  else
-    Error (msg "fail in checking composite environment").
-
 Definition transl_globvar := fun (_ : ident) (ty : type) => OK ty.
 
 Definition borrow_check_program (p : program) :=

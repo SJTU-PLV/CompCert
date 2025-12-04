@@ -1463,7 +1463,13 @@ module To_syntax = struct
 
   let warp_return_stmt (retv: ident) (rety: Rusttypes.coq_type) (s: Rustsyntax.statement) : Rustsyntax.statement =
     let rete = Rustsyntax.Evar(retv, rety) in
-    Rustsyntax.Ssequence(s, (Rustsyntax.Sreturn rete))
+    (* When return type is unit, we should initialize it because the function body may not contain its initialization *)
+    match rety with
+    | Rusttypes.Tunit ->
+      let assign_retv = Rustsyntax.Sdo(Rustsyntax.Eassign(rete, Rustsyntax.Eunit, Rusttypes.Tunit)) in
+      Rustsyntax.Ssequence(s,  Rustsyntax.Ssequence(assign_retv, Rustsyntax.Sreturn rete))
+    | _ ->
+      Rustsyntax.Ssequence(s,  (Rustsyntax.Sreturn rete))
 
   let transl_fn (f: fn) : Rustsyntax.coq_function monad =
     backup_locals >>= fun old_locals ->

@@ -773,6 +773,8 @@ Proof.
   1-4 : solve_exists p.    
   - destruct must_init eqn: INIT; try congruence.
     destruct is_full eqn: FULL in MOVE; try congruence; solve_exists p.
+  (** TODO: reference *)
+  - admit.
   - destruct (get_composite ce1 i) eqn: GCO; try congruence. subst.
     destruct (must_init init uninit universe p) eqn: INIT.
     + destruct is_full eqn: FULL; try congruence.
@@ -791,7 +793,7 @@ Proof.
   - destruct (ce1 ! i) eqn: CO; try congruence.
     eapply andb_true_iff in MOVE as (M1 & M2).
     solve_exists p.
-Qed.
+Admitted.
       
 Lemma maxv:
   Ptrofs.max_unsigned = 18446744073709551615.
@@ -907,6 +909,8 @@ Proof.
       (* get_loc_footprint_map *)
       simpl. destruct (path_of_place p) eqn: POP.
       eapply get_loc_footprint_map_app; eauto.
+    (** TODO: Treference *)
+    + admit.
     (* Tstruct *)
     + destruct (get_composite ce1 i) eqn: GCO; try congruence. subst.
       (* fp is not empty *)
@@ -975,6 +979,8 @@ Proof.
       eapply must_init_sound; eauto.
       erewrite <- is_full_same; eauto.
       eapply sound_own_universe; eauto.      
+  (** TODO: Treference *)
+  - admit.      
   (* Tstruct *)
   - destruct (get_composite ce1 i) eqn: GCO; try congruence. subst.
     destruct (must_init init uninit universe p) eqn: INIT; try congruence.
@@ -1022,7 +1028,7 @@ Proof.
     eapply WTLOC.
     erewrite <- is_full_same; eauto.
     eapply sound_own_universe; eauto.
-Qed.
+Admitted.
 
 (* properties of place_dominator *)
 

@@ -237,6 +237,7 @@ Fixpoint is_mutable_place (p: place) : bool :=
       is_mutable_place p1
   end.
 
+
 Definition typenv := PTree.t type.
 
 Section TYPING.
@@ -316,21 +317,31 @@ Inductive wt_expr: expr -> Prop :=
 Definition wt_exprlist al : Prop :=
   Forall wt_expr al.
 
+
+(* We should ensure that in an assignment, when source and target
+types are reference/box/struct/enum, their types must have the same
+structure but their regions can be different. For other types, there
+should be no need to check that they are equal (as we may have type
+cast), but for simplicity, we check that they are equal. *)
+
 Inductive wt_stmt: statement -> Prop :=
 | wt_Sskip: wt_stmt Sskip
 | wt_Sassign: forall p e
     (WT1: wt_place p)
     (WT2: wt_expr e)
-    (MUT: is_mutable_place p = true),
+    (MUT: is_mutable_place p = true)
+    (TEQ: type_eq_except_origins (typeof e) (typeof_place p) = true),
     (* Require the type of p equal to the type of e? *)
     wt_stmt (Sassign p e)
-| wt_Sassign_variant: forall p id fid e co
+| wt_Sassign_variant: forall p id fid e co fty
     (WT1: wt_place p)
     (WT2: wt_expr e)
     (WT3: ce ! id = Some co)
     (* used to prove assign_loc_variant_sound *)
     (WT4: co.(co_sv) = TaggedUnion)
-    (MUT: is_mutable_place p = true),
+    (MUT: is_mutable_place p = true)
+    (FTY: field_type fid (co_members co) = OK fty)
+    (TEQ: type_eq_except_origins (typeof e) fty = true),
     wt_stmt (Sassign_variant p id fid e)
 | wt_Sbox: forall p e ty
     (WT1: wt_place p)
@@ -339,7 +350,8 @@ Inductive wt_stmt: statement -> Prop :=
     (* used to prove wt_fooprint *)
     (SZEQ: sizeof ce ty = sizeof ce (typeof e))
     (SZCK: 0 < sizeof ce (typeof e) <= Ptrofs.max_unsigned)
-    (MUT: is_mutable_place p = true),
+    (MUT: is_mutable_place p = true)
+    (TEQ: type_eq_except_origins (typeof e) ty = true),
     wt_stmt (Sbox p e)
 | wt_Sstoragelive: forall id,
     wt_stmt (Sstoragelive id)
@@ -353,8 +365,8 @@ Inductive wt_stmt: statement -> Prop :=
     (WT1: wt_place p)
     (WT2: wt_exprlist al)
     (WT3: ty = Tfunction orgs rels tyl rty cc)
-    (WT4: typeof_place p = rty)
-    (MUT: is_mutable_place p = true),
+    (MUT: is_mutable_place p = true)
+    (TEQ: type_eq_except_origins rty (typeof_place p) = true),
     (* We only support this kind of function call *)
     wt_stmt (Scall p (Eglobal id ty) al)
 | wt_Sifthenelse: forall e s1 s2
@@ -532,11 +544,12 @@ Inductive wt_cont : typenv -> function -> cont -> Prop :=
 with wt_call_cont : cont -> type -> Prop :=
 | wt_call_Kstop:
   wt_call_cont Kstop (rs_sig_res sg)
-| wt_call_Kcall: forall p f (le: env) own k
+| wt_call_Kcall: forall p f (le: env) own k rty
     (WT1: wt_cont le f k)
-    (WT2: wt_place le ge p),
+    (WT2: wt_place le ge p)
+    (WT3: type_eq_except_origins rty (typeof_place p) = true),
     (* For simplicity, we do not consider casting in function call *)
-  wt_call_cont (Kcall p f le own k) (typeof_place p)
+  wt_call_cont (Kcall p f le own k) rty
 .
 
 
@@ -565,9 +578,10 @@ Hint Constructors wt_cont wt_stmt wt_state: ty.
 
 Lemma wt_call_cont_type_eq: forall k ty1,
     wt_call_cont k ty1 ->
-    typeof_cont_call (rs_sig_res sg) k = ty1.
+    type_eq_except_origins ty1 (typeof_cont_call (rs_sig_res sg) k) = true.
 Proof.
   induction 1; intros; simpl in *; auto.
+  eapply type_eq_except_origins_refl.
 Qed.
 
 Lemma is_wt_call_cont:
@@ -688,9 +702,9 @@ Variable te: typenv.
             if type_eq ty1 ty2 && valid_type ty1 then
               OK tt
             else
-              Error [CTX id; MSG "has wrong type"]
+              Error [CTX id; MSG " has wrong type"]
         | _ =>
-            Error [CTX id; MSG "is not declared"]
+            Error [CTX id; MSG " is not declared"]
         end
     | Pderef p ty =>
         do _ <- type_check_place p;
@@ -843,7 +857,9 @@ Fixpoint type_check_stmt (stmt: statement) : res unit :=
       do _ <- type_check_expr e;
       do _ <- type_check_place p;
       if is_mutable_place p then
-        OK tt
+        if type_eq_except_origins (typeof e) (typeof_place p) then
+          OK tt
+        else Error (msg "assign: LHS and RHS type differs")             
       else Error (msg "Sassign: modify a not mutable place")
   | Sassign_variant p id fid e =>
       do _ <- type_check_expr e;
@@ -852,8 +868,13 @@ Fixpoint type_check_stmt (stmt: statement) : res unit :=
         match ce!id with
         | Some co =>
             match co_sv co with
-            | TaggedUnion => OK tt
-            | _ => Error (msg "assign_variant type error")
+            | TaggedUnion => 
+                do fty <- field_type fid (co_members co);
+                if type_eq_except_origins (typeof e) fty then
+                  OK tt
+                else
+                  Error (msg "assign_variant: LHS and RHS type differs")
+            | _ => Error (msg "assign_variant: the type of place is not variant")
             end
         | _ => Error (msg "assign_variant type error")
         end
@@ -864,7 +885,7 @@ Fixpoint type_check_stmt (stmt: statement) : res unit :=
       if is_mutable_place p then
         match typeof_place p with
         | Tbox ty =>
-            if Z.eqb (sizeof ce ty) (sizeof ce (typeof e))
+            if type_eq_except_origins (typeof e) ty
                && Z.ltb 0 (sizeof ce (typeof e))
                && Z.leb (sizeof ce (typeof e)) Ptrofs.max_unsigned then
               OK tt
@@ -887,7 +908,7 @@ Fixpoint type_check_stmt (stmt: statement) : res unit :=
       if is_mutable_place p then
         match a with
         | Epure (Eglobal id (Tfunction _ _ _ rty _)) =>
-            if type_eq (typeof_place p) rty then
+            if type_eq_except_origins rty (typeof_place p) then
               OK tt
             else
               Error (msg "return type is not equal to the type of place which receives the return value")
@@ -1020,6 +1041,7 @@ Proof.
   induction s; simpl in *; intros CK; try (econstructor; eauto; fail).
   - monadInv CK. 
     destruct is_mutable_place eqn: MUT in EQ2; try congruence.
+    destruct type_eq_except_origins eqn: TEQ in EQ2; try congruence.
     destruct x. destruct x0.
     econstructor; auto.
     eapply type_check_place_sound; eauto.
@@ -1029,6 +1051,8 @@ Proof.
     destruct x. destruct x0.
     destruct (ce!i) eqn: CO; try congruence.
     destruct (co_sv c) eqn: SV; try congruence.
+    monadInv EQ2.
+    destruct type_eq_except_origins eqn: TEQ in EQ3; try congruence.
     econstructor; eauto.
     eapply type_check_place_sound; eauto.
     eapply type_check_expr_sound; eauto.
@@ -1040,11 +1064,13 @@ Proof.
     rewrite !andb_true_iff in CK.
     rewrite Z.ltb_lt in CK.
     rewrite Z.leb_le in CK.
-    rewrite Z.eqb_eq in CK.
+    (* rewrite Z.eqb_eq in CK. *)
     destruct CK as ((A1 & A2) & A3).
     econstructor; eauto.
     eapply type_check_place_sound; eauto.
     eapply type_check_expr_sound; eauto.
+    symmetry.
+    eapply type_eq_sizeof_eq. auto.
   - monadInv CK. 
     destruct is_movable eqn: MOVE in EQ0; try congruence.
     destruct x.
@@ -1057,10 +1083,10 @@ Proof.
     destruct p0; try congruence.
     destruct t; try congruence.
     destruct u. destruct u0.
+    destruct type_eq_except_origins eqn: TEQ in CK; try congruence.
     econstructor; eauto.
     eapply type_check_place_sound; eauto.
     eapply type_check_exprlist_sound; eauto.
-    destruct type_eq in CK; try congruence.    
   - monadInv CK. destruct x.
     econstructor; eauto.
   - monadInv CK. destruct x. destruct x0.

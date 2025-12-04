@@ -84,7 +84,8 @@ Section REC.
     | Tunit
     | Tint _ _
     | Tlong _
-    | Tfloat _ => must_init init uninit universe p
+    | Tfloat _ 
+    | Treference _ _ _ => must_init init uninit universe p
     (* other types are unsupported to move *)
     | _ => false
     end.
@@ -233,10 +234,8 @@ Definition move_check_stmt ce (an : IM.t * IM.t * PathsMap.t) (stmt : statement)
           | None => Error (msg "move_check_exprlist error in Scall")
           end
       | Sreturn p =>
-          let e := (if scalar_type (typeof_place p) then
-                     Epure (Eplace p (typeof_place p))
-                   else
-                     Emoveplace p (typeof_place p)) in
+          (* Is it ok to assume that return p is moving p? *)
+          let e := Emoveplace p (typeof_place p) in
           if move_check_expr' ce mayinit mayuninit universe e then
             OK stmt
           else
@@ -357,55 +356,78 @@ Definition collect_move_check_result ce f cfg analysis_res :=
   do _ <- transl_on_cfg get_init_info analysis_res (move_check_stmt ce) check_cond_expr f.(fn_body) cfg;
   OK tt.
 
-(* Definition move_check_function (ce: composite_env) (f: function) : Errors.res unit := *)
-(*   do (entry, cfg) <- generate_cfg f.(fn_body); *)
-(*   (** 1. Init Analaysis *) *)
-(*   do analysis_res <- analyze ce f cfg entry; *)
-(*   (** 2. Naive syntactic type checking. The reason we put syntactic type *)
+
+(** Check the consistency of composite environment *)
+
+Definition name_members (membs: members) : list ident :=
+  map name_member membs.
+
+Definition check_composite (id: ident) (co: composite) : bool :=
+  Z.leb (co_sizeof co) Integers.Ptrofs.max_unsigned
+  && Z.leb (list_length_z (co_members co)) Int.max_unsigned
+  && list_norepet_dec ident_eq (name_members (co_members co)).
+
+Definition check_composite_env (ce: composite_env) : Errors.res unit :=
+  if PTree_Properties.for_all ce check_composite then
+    OK tt
+  else
+    Error (msg "fail in checking composite environment").
+
+
+(** The following code is used for printing the result of move
+checking and type checking, which is not used in the top-level
+soundness proof. *)
+
+Definition move_check_function (ce: composite_env) (f: function) : Errors.res unit :=
+  do (entry, cfg) <- generate_cfg f.(fn_body);
+  (** 1. Init Analaysis *)
+  do analysis_res <- analyze ce f cfg entry;
+  (** 2. Naive syntactic type checking. The reason we put syntactic type *)
 (*   checking here instead of using a separated type check function (like *)
 (*   Ctyping) is that sound_state and wt_state rely on each other due to *)
-(*   well typedness property in wf_own_env. *) *)
-(*   let te := (bind_vars (bind_vars (PTree.empty _) f.(fn_params)) f.(fn_vars)) in *)
-(*   let (_, universe) := analysis_res in   *)
-(*   do _ <- check_universe_wf te ce universe; *)
-(*   do _ <- check_cyclic_struct_res ce (var_types (f.(fn_params) ++ f.(fn_vars))); *)
-(*   do _ <- check_valid_types (var_types (f.(fn_params) ++ f.(fn_vars))); *)
-(*   (* type checking *) *)
-(*   do _ <- type_check_stmt ce te (fn_body f); *)
-(*   (** 3. Run move checking ! *) *)
-(*   do _ <- transl_on_cfg get_init_info analysis_res (move_check_stmt ce) check_cond_expr f.(fn_body) cfg; *)
-(*   OK tt. *)
+(*   well typedness property in wf_own_env. *)
+  let te := (bind_vars (bind_vars (PTree.empty _) f.(fn_params)) f.(fn_vars)) in
+  let (_, universe) := analysis_res in
+  do _ <- check_universe_wf te ce universe;
+  do _ <- check_cyclic_struct_res ce (var_types (f.(fn_params) ++ f.(fn_vars)));
+  do _ <- check_valid_types (var_types (f.(fn_params) ++ f.(fn_vars)));
+  (* type checking *)
+  do _ <- type_check_stmt ce te (fn_body f);
+  (** 3. Run move checking ! *)
+  do _ <- transl_on_cfg get_init_info analysis_res (move_check_stmt ce) check_cond_expr f.(fn_body) cfg;
+  OK tt.
 
-(* Definition move_check_fundef (ce : composite_env) (id : ident) (fd : fundef) : Errors.res fundef := *)
-(*   match fd with *)
-(*   | Internal f => *)
-(*       match move_check_function ce f with *)
-(*       | OK _ => OK (Internal f) *)
-(*       | Error msg => Error ([MSG "In function "; CTX id; MSG " , in pc "] ++ msg) *)
-(*       end *)
-(*   | External orgs rels ef targs tres cconv => *)
-(*       (* We do not support builtin external functions for now *) *)
-(*       match ef with *)
-(*       | EF_external _ _ *)
-(*       | EF_malloc *)
-(*       | EF_free => *)
-(*           OK (External orgs rels ef targs tres cconv) *)
-(*       | _ => Error ([MSG "In function "; CTX id; MSG " , unsupported builtin external function"]) *)
-(*       end *)
-(*   end. *)
+Definition move_check_fundef (ce : composite_env) (id : ident) (fd : fundef) : Errors.res fundef :=
+  match fd with
+  | Internal f =>
+      match move_check_function ce f with
+      | OK _ => OK (Internal f)
+      | Error msg => Error ([MSG "In function "; CTX id; MSG " , in pc "] ++ msg)
+      end
+  | External orgs rels ef targs tres cconv =>
+      (* We do not support builtin external functions for now *)
+      match ef with
+      | EF_external _ _
+      | EF_malloc
+      | EF_free =>
+          OK (External orgs rels ef targs tres cconv)
+      | _ => Error ([MSG "In function "; CTX id; MSG " , unsupported builtin external function"])
+      end
+  end.
 
+Definition transl_globvar := fun (_ : ident) (ty : type) => OK ty.
 
-(* Definition move_check_program (p : program) := *)
-(*   (* 1. check composite environment *) *)
-(*   do _ <- check_composite_env (prog_comp_env p); *)
-(*   (* 2. move checking *) *)
-(*   do p1 <- (transform_partial_program2 (move_check_fundef (prog_comp_env p)) transl_globvar p); *)
-(*    OK *)
-(*      {| *)
-(*      prog_defs := AST.prog_defs p1; *)
-(*      prog_public := AST.prog_public p1; *)
-(*      prog_main := AST.prog_main p1; *)
-(*      prog_types := prog_types p; *)
-(*      prog_comp_env := prog_comp_env p; *)
-(*      prog_comp_env_eq := prog_comp_env_eq p |}. *)
+Definition move_check_program (p : program) :=
+  (* 1. check composite environment *)
+  do _ <- check_composite_env (prog_comp_env p);
+  (* 2. move checking *)
+  do p1 <- (transform_partial_program2 (move_check_fundef (prog_comp_env p)) transl_globvar p);
+   OK
+     {|
+     prog_defs := AST.prog_defs p1;
+     prog_public := AST.prog_public p1;
+     prog_main := AST.prog_main p1;
+     prog_types := prog_types p;
+     prog_comp_env := prog_comp_env p;
+     prog_comp_env_eq := prog_comp_env_eq p |}.
  

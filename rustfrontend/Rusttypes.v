@@ -104,6 +104,7 @@ Proof.
   decide equality.
   decide equality.
 Defined.
+  
 
 Global Opaque type_eq typelist_eq.
 
@@ -123,6 +124,22 @@ Fixpoint type_eq_except_origins (ty1 ty2: type) : bool :=
       ident_eq id1 id2
   | _, _ => type_eq ty1 ty2
   end.
+
+Lemma type_eq_except_origins_sym: forall ty1 ty2,
+    type_eq_except_origins ty1 ty2 = type_eq_except_origins ty2 ty1.
+Proof.
+  induction ty1; destruct ty2; simpl; try auto.
+  all: try unfold proj_sumbool; try eapply dec_eq_sym.
+  destruct m; destruct m0; auto.
+Qed.
+
+Lemma type_eq_except_origins_refl: forall ty,
+    type_eq_except_origins ty ty = true.
+Proof.
+  induction ty; simpl; auto.
+  all: try unfold proj_sumbool; try eapply dec_eq_true.
+  destruct m; auto.
+Qed.
 
 Fixpoint origins_of_type (ty: type) : list origin :=
   match ty with
@@ -586,6 +603,15 @@ Fixpoint sizeof (env: composite_env) (t: type) : Z :=
       | None => 0
       end                    
   end.
+
+Lemma type_eq_sizeof_eq (ty1 ty2: type) ce:
+  type_eq_except_origins ty1 ty2 = true ->
+  sizeof ce ty1 = sizeof ce ty2.
+Proof.
+  intros TEQ; induction ty1; destruct ty2; simpl in TEQ; try congruence.
+  all: try eapply proj_sumbool_true in TEQ; inv TEQ.
+  all: try reflexivity.
+Qed.
 
 Lemma sizeof_pos:
   forall env t, sizeof env t >= 0.

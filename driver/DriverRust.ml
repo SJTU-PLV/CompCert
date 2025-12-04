@@ -99,22 +99,26 @@ let debug_ElaborateDrop rustir_prog =
 
 let debug_borrow_check = true
 
-let debug_BorrowCheck (prog: RustIR.program) =
+let debug_ReplaceOrigins (prog: RustIR.program) =
   match ReplaceOrigins.transl_program prog with
   | Errors.OK rustir_after_replace_origins ->
     Format.fprintf logout "@.After Replacing Origins: @.";
     PrintRustIR.print_cfg_program logout rustir_after_replace_origins;
-    (if debug_borrow_check then
-      Format.fprintf logout "@.Borrow Check: @.";
-      PrintBorrowCheck.print_cfg_program_borrow_check logout rustir_after_replace_origins);
-    (match BorrowCheckPolonius.borrow_check_program rustir_after_replace_origins with
-    | Errors.OK _ ->
-      Format.fprintf logout "@.Borrow Check Success@.";
-      rustir_after_replace_origins
-     | Errors.Error msg ->
-       fatal_error no_loc "Borrow checking error: %a"  print_error msg)
+    rustir_after_replace_origins
   | Errors.Error msg ->
     fatal_error no_loc "%a"  print_error msg
+
+let debug_BorrowCheck (prog: RustIR.program) =  
+  if debug_borrow_check then
+    Format.fprintf logout "@.Borrow Check: @.";
+    PrintBorrowCheck.print_cfg_program_borrow_check logout prog;
+  (* The top-level borrow check which includes the move checking *)
+  match BorrowCheck.borrow_check_program prog with
+  | Errors.OK _ ->
+    Format.fprintf logout "@.Borrow Check Success@.";
+    prog
+   | Errors.Error msg ->
+     fatal_error no_loc "Borrow checking error: %a"  print_error msg
 
 let debug_MoveChecking (prog: RustIR.program) =
   match MoveChecking.move_check_program prog with
@@ -153,14 +157,19 @@ let process_rust_file test_case =
       let (syntax_result, symmap) = R.To_syntax.(run_monad m_syntax skeleton_st) in
       (match syntax_result with
       | Result.Ok syntax ->
-        (* Print Rustlight *)
+        (* Print Rustlight. clight_prog is just used to debug. To
+        support only invoking the verified transf_rustlight_program,
+        we should remove the insertion of helper function for the
+        selection pass which force us to separate the compilation
+        chain *)
         let clight_prog = syntax
                           |> debug_Rustlightgen
                           |> debug_RustIRgen
                           |> debug_RustCFG
-                          (* |> debug_MoveChecking *)
-                          |> debug_BorrowCheck
+                          |> debug_ReplaceOrigins
                           |> debug_InitAnalysis
+                          |> debug_MoveChecking
+                          |> debug_BorrowCheck
                           |> debug_ElaborateDrop
                           |> debug_ClightComposite
                           |> debug_Clightgen in
