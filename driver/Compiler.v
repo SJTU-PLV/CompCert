@@ -113,7 +113,7 @@ Require RustIRgenProof.
 Require Clightgenproof.
 Require ElaborateDropProof.
 Require Import MoveCheckingDomain.
-Require MoveCheckingSafe.
+(* Require MoveCheckingSafe. *)
 
 (** Open safety *)
 Require Import SmallstepSafe SmallstepLinkingSafe.
@@ -256,7 +256,7 @@ verified. *)
 Definition transf_rustlight_program (p: Rustlight.program) : res Asm.program :=
   OK p
   !@@ time "Rustlight to RustIR" RustIRgen.transl_program
-  @@@ time "Move checking" (fun p => match MoveChecking.move_check_program p with
+  @@@ time "Borrow checking" (fun p => match BorrowCheck.borrow_check_program p with
                                  | OK _ => OK p
                                  | Error msg => Error msg
                                  end)
@@ -273,7 +273,7 @@ Definition transf_rustlight_program_borck (p: Rustlight.program) : res Asm.progr
   (*                                | Error msg => Error msg *)
   (*                                end) *)
   @@@ time "Replace origins in RustIR" ReplaceOrigins.transl_program
-  @@@ time "Borrow check" (fun p => match BorrowCheckPolonius.borrow_check_program p with
+  @@@ time "Borrow checking" (fun p => match BorrowCheck.borrow_check_program p with
                                  | OK _ => OK p
                                  | Error msg => Error msg
                                  end)
@@ -379,8 +379,8 @@ Definition CompCertO's_passes_rustir :=
 
 Definition CompCertO's_passes_rustlight :=
   mkpass (compose_passes passes_rustlight_rustir)
-    (** Move Checking pass *)
-    ::: pass_partial_identity MoveChecking.move_check_program
+    (** Borrow Checking pass *)
+    ::: pass_partial_identity BorrowCheck.borrow_check_program
     ::: CompCertO's_passes_rustir.
 
 (** Composing the [match_prog] relations above, we obtain the relation
@@ -483,7 +483,7 @@ Theorem transf_rustlight_program_match: forall p tp,
 Proof.
   intros p tp T.
   unfold transf_rustlight_program, time in T. simpl in T.
-  destruct MoveChecking.move_check_program eqn: MOVECHECK in T; simpl in T; try congruence.
+  destruct BorrowCheck.borrow_check_program eqn: MOVECHECK in T; simpl in T; try congruence.
   set (p1 := (RustIRgen.transl_program p)) in *.
   destruct (ElaborateDrop.transl_program p1) as [p2|e] eqn: P2; simpl in T; try discriminate.
   destruct (Clightgen.transl_program p2) as [p3|e] eqn: P3; simpl in T; try discriminate.
@@ -1335,8 +1335,10 @@ Proof.
   exploit @module_partial_safe_preservation; eauto.
   intros PSAFE.
   (* 2. show p1 is total safe after move checking *)  
-  exploit MoveCheckingSafe.move_check_module_safe; eauto.
-  intros TSAFE.
+  (* exploit MoveCheckingSafe.move_check_module_safe; eauto. *)
+  (* intros TSAFE. *)
+  (** TODO: when the proof borrow checking is finished, remove this assert *)
+  assert (TSAFE: module_type_safe ((P @! 1) @@ rs_own) ((Q @! 1) @@ rs_own) (RustIRown.semantics p1) SIF) by admit.
   (* 3. swap rs_own and cc_id in TSAFE *)
   exploit @open_safety_inv_ref. 3: eapply TSAFE.
   eapply inv_commute_ref1. eapply invcc_commute_id1.
@@ -1375,7 +1377,7 @@ Proof.
   eauto. intros TSAFE0.
   eapply open_safety_inv_ref. 3: eapply TSAFE0.
   eapply id_inv_id_equiv.  eapply id_inv_id_equiv.  
-Qed.
+Admitted.
 
 Theorem transf_rustlight_partial_safe_to_total_safe P Q:
   forall p tp,

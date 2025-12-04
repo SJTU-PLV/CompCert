@@ -215,7 +215,7 @@ Variable ge: genv.
 
 (* It corresponds to drop_glue_for_member in Clightgen *)
 Definition type_to_drop_member_state (fid: ident) (fty: type) : option drop_member_state :=
-  if own_type ge fty then
+  if drop_type fty then
     let tys := drop_glue_children_types fty in
     match tys with
     | nil => None

@@ -35,7 +35,7 @@ Fixpoint generate_drop_flags_for_splits (mayinit mayuninit universe: PathsMap.t)
   | nil => nil
   | p :: l' =>
       let flags := generate_drop_flags_for_splits mayinit mayuninit universe l' in
-      if scalar_type (typeof_place p) then
+      if negb (drop_type (typeof_place p)) then
         (* we do not need to generate drop flag for scalar typed place *)
         flags
       else
@@ -162,7 +162,7 @@ Fixpoint elaborate_drop_for_splits (mayinit mayuninit universe: PathsMap.t) (fla
   | nil => Sskip
   | (p, full) :: l' =>
       let stmt := elaborate_drop_for_splits mayinit mayuninit universe flagm l' in
-      if scalar_type (typeof_place p) then
+      if negb (drop_type (typeof_place p)) then
         (* no need to generate drop for scalar typed places *)
         (Ssequence Sskip stmt)
       else

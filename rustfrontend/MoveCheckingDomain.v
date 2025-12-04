@@ -12,7 +12,7 @@ Require Import Rusttypes Rustlight Rustlightown.
 Require Import RustOp RustIR RustIRcfg Rusttyping.
 Require Import Errors.
 Require Import InitDomain InitAnalysis.
-Require Import RustIRown MoveChecking.
+Require Import RustIRown MoveChecking BorrowCheck.
 Require Import MoveCheckingFootprint.
 Require Import Wfsimpl.
 
@@ -680,21 +680,23 @@ Proof.
     exploit MM; eauto. 
     intros (BM & FULL).
     destruct (typeof_place p) eqn: PTY; simpl in WT2; try congruence.
-    inv WT2.
-    (* fp must not be fp_emp that is why we need mmatch *)
-    inv WTFP; inv BM; simpl in *; try congruence.
-    exists b0, 0, fp0. repeat apply conj.    
-    (* get_loc_footprint_map *)
-    destruct (path_of_place p) eqn: POP.
-    eapply get_loc_footprint_map_app. eauto.
-    simpl. auto.
-    (* wt_footprint *)
-    simpl. auto.
+    + inv WT2.
+      (* fp must not be fp_emp that is why we need mmatch *)
+      inv WTFP; inv BM; simpl in *; try congruence.
+      exists b0, 0, fp0. repeat apply conj.    
+      (* get_loc_footprint_map *)
+      destruct (path_of_place p) eqn: POP.
+      eapply get_loc_footprint_map_app. eauto.
+      simpl. auto.
+      (* wt_footprint *)
+      simpl. auto.
+    (** TODO: reference type  *)
+    + admit.
   (* Pdowncast: impossible *)
   - exfalso. eapply WF.
     simpl. destruct (path_of_place p) eqn: POP. simpl. eapply in_app.
     right. econstructor. eauto.
-Qed.
+Admitted.
 
 (** IMPRTANT TODO: use this lemma to prove eval_place_sound. Think
 about the field type in wt_footprint is correct or not? *)

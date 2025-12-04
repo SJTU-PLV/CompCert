@@ -476,7 +476,7 @@ Inductive match_cont (j: meminj) : cont -> Clight.cont -> mem -> mem -> list blo
         match co.(co_sv) with
         | Struct =>
             exists ts2,            
-              drop_glue_for_members ce dropm deref_param membs = ts2 /\
+              drop_glue_for_members dropm deref_param membs = ts2 /\
               kts = (Clight.Kseq ts2 tk)
         | TaggedUnion =>
             exists uts,
@@ -583,7 +583,7 @@ Inductive match_states: state -> Clight.state -> Prop :=
     forall (CO: ce ! id = Some co)
     (STRUCT: co.(co_sv) = Struct)
     (MSTMT1: match_dropmemb_stmt id deref_param Struct s ts1)
-    (MSTMT2: drop_glue_for_members ce dropm deref_param membs = ts2)
+    (MSTMT2: drop_glue_for_members dropm deref_param membs = ts2)
     (MCONT: match_cont j k tk m tm bs ls)
     (MINJ: Mem.inject j m tm)
     (INCR: injp_acc w (injpw j m tm MINJ))
@@ -1523,12 +1523,12 @@ Proof.
 Qed.
 
 Lemma match_dropmemb_stmt_struct_member: forall id arg fid fty,
-    match_dropmemb_stmt id arg Struct (type_to_drop_member_state ge fid fty) (drop_glue_for_member ce dropm arg (Member_plain fid fty)).
+    match_dropmemb_stmt id arg Struct (type_to_drop_member_state ge fid fty) (drop_glue_for_member dropm arg (Member_plain fid fty)).
 Proof.
   intros.
   unfold type_to_drop_member_state. simpl.
   unfold ce. simpl.
-  destruct (own_type (prog_comp_env prog) fty); try econstructor.
+  destruct (drop_type fty); try econstructor.
   unfold drop_glue_for_type.
   destruct (drop_glue_children_types fty) eqn: CHILDTYS.
   econstructor.
@@ -1552,12 +1552,12 @@ Lemma match_dropmemb_stmt_enum_member:
   forall id fid uid ufid arg fty,
     enum_consistent id fid uid ufid ->
     match_dropmemb_stmt id arg TaggedUnion (type_to_drop_member_state ge fid fty)
-      (drop_glue_for_member ce dropm (Efield arg ufid (Tunion uid noattr)) (Member_plain fid fty)).
+      (drop_glue_for_member dropm (Efield arg ufid (Tunion uid noattr)) (Member_plain fid fty)).
 Proof.
   intros.
   unfold type_to_drop_member_state. simpl.
   unfold ce. simpl.
-  destruct (own_type (prog_comp_env prog) fty); try econstructor.
+  destruct (drop_type fty); try econstructor.
   unfold drop_glue_for_type.
   destruct (drop_glue_children_types fty) eqn: CHILDTYS.
   econstructor.
@@ -2210,7 +2210,7 @@ Proof.
     exploit select_switch_sem_match; eauto.
     instantiate (1 := (Efield  (Ederef (Evar param_id (Tpointer (Ctypes.Tstruct id noattr) noattr)) (Ctypes.Tstruct id noattr)) union_fid (Tunion union_id noattr))).
     instantiate (1 := (generate_dropm prog)).
-    instantiate (1 := (prog_comp_env prog)).
+    (* instantiate (1 := (prog_comp_env prog)). *)
     intros (unused_ts & SEL). 
         
     eexists. split.
@@ -2378,7 +2378,7 @@ Proof.
     exploit select_switch_sem_match; eauto.
     instantiate (1 := (Efield (Ederef (Evar param_id (Tpointer (Ctypes.Tstruct id noattr) noattr)) (Ctypes.Tstruct id noattr)) union_fid (Tunion union_id noattr))).
     instantiate (1 := (generate_dropm prog)).
-    instantiate (1 := (prog_comp_env prog)).
+    (* instantiate (1 := (prog_comp_env prog)). *)
     intros (unused_ts & SEL). 
         
     eexists. split.
@@ -2534,7 +2534,7 @@ Proof.
     simpl. unfold co_ty. eauto.
     eauto. auto.
     (* evaluation get *)
-    instantiate (1 := MINJ). instantiate (1 := (Clight.Kseq (drop_glue_for_members ce dropm deref_param membs) tk)).
+    instantiate (1 := MINJ). instantiate (1 := (Clight.Kseq (drop_glue_for_members dropm deref_param membs) tk)).
     instantiate (1 := tf).
     intros (j' & tm' & MINJ' & STEP & INJP).
     eexists. split. eauto.
@@ -3508,7 +3508,7 @@ Proof.
     exploit select_switch_sem_match; eauto.
     instantiate (1 := (Efield  (Ederef (Evar param_id pty) (Ctypes.Tstruct id noattr)) union_fid (Tunion union_id noattr))).
     instantiate (1 := (generate_dropm prog)).
-    instantiate (1 := (prog_comp_env prog)).
+    (* instantiate (1 := (prog_comp_env prog)). *)
     intros (unused_ts & SEL). 
         
     eexists. split.

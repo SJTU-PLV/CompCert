@@ -26,7 +26,7 @@ Definition match_glob (ctx: composite_env) (gd: globdef Rustlight.fundef type) (
   | Gvar v1, Gvar v2 =>
       match_globvar eq v1 v2
   | Gfun fd1, Gfun fd2 =>
-      transl_fundef ctx fd1 = fd2
+      transl_fundef fd1 = fd2
   | _, _ => False
   end.
 
@@ -48,7 +48,7 @@ Lemma match_globdefs: forall (l: list (ident * globdef fundef type)) ce,
       (fun (g1 : ident * globdef fundef type) (g2 : ident * globdef RustIR.fundef type) =>
          fst g1 = fst g2 /\ match_glob ce (snd g1) (snd g2))
       l
-      (map (transform_program_globdef (transl_fundef ce)) l).
+      (map (transform_program_globdef (transl_fundef)) l).
 Proof.
   induction l; intros; simpl.
   - constructor.
@@ -58,9 +58,9 @@ Proof.
     + auto.
 Qed.
    
-Lemma match_erase_program: forall ce (l: list (ident * globdef fundef type)),
+Lemma match_erase_program: forall (l: list (ident * globdef fundef type)),
     map (fun '(id, g) => (id, erase_globdef g))
-      (map (transform_program_globdef (transl_fundef ce)) l) =
+      (map (transform_program_globdef (transl_fundef)) l) =
       map (fun '(id, g) => (id, erase_globdef g)) l.
 Proof.
   induction l; intros; simpl.
@@ -141,7 +141,7 @@ Theorem find_funct_match:
   Genv.find_funct (Genv.globalenv se p) v = Some f ->
   Val.inject j v tv ->
   exists tf,
-  Genv.find_funct (Genv.globalenv tse tp) tv = Some tf /\ transl_fundef ce f = tf.
+  Genv.find_funct (Genv.globalenv tse tp) tv = Some tf /\ transl_fundef f = tf.
 Proof.
   intros. exploit Genv.find_funct_inv; eauto. intros [b EQ]. subst v. inv H0.
   rewrite Genv.find_funct_find_funct_ptr in H. unfold Genv.find_funct_ptr in H.
@@ -179,7 +179,7 @@ Proof.
 Qed.
 
 Theorem is_internal_match :
-  (forall f tf, transl_fundef ce f = tf ->
+  (forall f tf, transl_fundef f = tf ->
    fundef_is_internal tf = fundef_is_internal f) ->
   forall v tv,
     Val.inject j v tv ->
@@ -221,7 +221,7 @@ Corollary find_funct_match_id:
   forall v f,
   Genv.find_funct ge v = Some f ->
   exists tf,
-  Genv.find_funct tge v = Some tf /\ transl_fundef ge f = tf.
+  Genv.find_funct tge v = Some tf /\ transl_fundef f = tf.
 Proof.
   intros. eapply find_funct_match; eauto using Genv.match_stbls_id.
     apply val_inject_id. auto.
@@ -231,7 +231,7 @@ Corollary find_funct_match_id_inv:
   forall v tf,
   Genv.find_funct tge v = Some tf ->
   exists f,
-  Genv.find_funct ge v = Some f /\ transl_fundef ge f = tf.
+  Genv.find_funct ge v = Some f /\ transl_fundef f = tf.
 Proof.  
   intros. destruct (Genv.find_funct ge v) eqn: FIND.
   - simpl in FIND. exploit find_funct_match; eauto using Genv.match_stbls_id.    
@@ -249,7 +249,7 @@ Qed.
 
 
 Theorem is_internal_match_id :
-  (forall f tf, transl_fundef ge f = tf ->
+  (forall f tf, transl_fundef f = tf ->
    fundef_is_internal tf = fundef_is_internal f) ->
   forall v ,    
     Genv.is_internal tge v = Genv.is_internal ge v.
@@ -271,7 +271,7 @@ Qed.
 
 Lemma type_of_fundef_preserved:
   forall fd tfd,
-  transl_fundef ge fd = tfd -> RustIR.type_of_fundef tfd = type_of_fundef fd.
+  transl_fundef fd = tfd -> RustIR.type_of_fundef tfd = type_of_fundef fd.
 Proof.
   intros. destruct fd; simpl in H; subst.
   simpl; unfold type_of_function; simpl. auto.
@@ -279,7 +279,7 @@ Proof.
 Qed.
 
 Lemma function_not_drop_glue_preserved: forall fd tfd,
-    transl_fundef ge fd = tfd ->
+    transl_fundef fd = tfd ->
     function_not_drop_glue fd ->
     RustIR.function_not_drop_glue tfd.
 Proof.
@@ -290,7 +290,7 @@ Proof.
 Qed.
 
 Lemma function_not_drop_glue_preserved_inv: forall fd tfd,
-    transl_fundef ge fd = tfd ->
+    transl_fundef fd = tfd ->
     RustIR.function_not_drop_glue tfd ->
     function_not_drop_glue fd.
 Proof.
@@ -327,7 +327,7 @@ Lemma type_to_drop_member_state_eq: forall id ty,
     RustIR.type_to_drop_member_state tge id ty = type_to_drop_member_state ge id ty.
 Proof.
   intros. unfold RustIR.type_to_drop_member_state, type_to_drop_member_state.
-  erewrite comp_env_preserved; eauto. auto.
+  (* erewrite comp_env_preserved; eauto. auto. *)
   erewrite dropm_preserved; eauto.
 Qed.
 
@@ -374,13 +374,13 @@ Qed.
   
 Inductive match_drop_insert_kind: drop_insert_kind -> RustIR.statement -> Prop :=
 | match_drop_reassign: forall p,
-    match_drop_insert_kind (drop_reassign p) (gen_drop ge p)
+    match_drop_insert_kind (drop_reassign p) (gen_drop p)
 | match_drop_escape_before: forall l,
-    match_drop_insert_kind (drop_escape_before l) (gen_drops_for_escape_vars ge l)
+    match_drop_insert_kind (drop_escape_before l) (gen_drops_for_escape_vars l)
 | match_drop_escape_after: forall id l,
-    match_drop_insert_kind (drop_escape_after id l) (RustIR.Ssequence (Sstoragedead id) (gen_drops_for_escape_vars ge l))
+    match_drop_insert_kind (drop_escape_after id l) (RustIR.Ssequence (Sstoragedead id) (gen_drops_for_escape_vars l))
 | match_drop_return: forall l,
-    match_drop_insert_kind (drop_return l) (gen_drops_for_vars ge l)
+    match_drop_insert_kind (drop_return l) (gen_drops_for_vars l)
 | match_drop_end:
   match_drop_insert_kind drop_end RustIR.Sskip
 .
@@ -425,12 +425,12 @@ Inductive match_drop_insert_kind_dropcont (params: list (ident * type)): drop_in
 | match_drop_insert_kind_dropcont_return1: forall s2 p drop l
     (* The parameters are not ready to be dropped *)
     (MRET: match_dropcont (Dreturn p) s2)
-    (PARAMS: drop = gen_drops_for_vars ge params),
+    (PARAMS: drop = gen_drops_for_vars params),
     match_drop_insert_kind_dropcont params (drop_escape_before l) (Dreturn p) (RustIR.Ssequence drop s2)
 | match_drop_insert_kind_dropcont_return2: forall s2 p drop l id
     (* The parameters are not ready to be dropped *)
     (MRET: match_dropcont (Dreturn p) s2)
-    (PARAMS: drop = gen_drops_for_vars ge params),
+    (PARAMS: drop = gen_drops_for_vars params),
     match_drop_insert_kind_dropcont params (drop_escape_after id l) (Dreturn p) (RustIR.Ssequence drop s2)                                    
 | match_drop_insert_kind_dropcont_return3: forall s2 p l
     (* The parameters are not ready to be dropped *)
@@ -441,7 +441,7 @@ Inductive match_drop_insert_kind_dropcont (params: list (ident * type)): drop_in
 Inductive match_cont (params: list (ident * type)) : cont -> RustIRown.cont -> Prop :=
 | match_Klet: forall k tk drop id ty
     (MCONT: match_cont params k tk)
-    (DROP: drop = gen_drops_for_escape_vars ge [(id, ty)]),
+    (DROP: drop = gen_drops_for_escape_vars [(id, ty)]),
     (* when executing Klet, Rustlight would enter Dropinsert state
     where drop_escape contains the out-of-scope variable which is
     related to (drop;storagedead id) *)
@@ -469,20 +469,20 @@ statement does not contain storagedead *)
 | match_Kstop:
     match_cont params Kstop RustIRown.Kstop
 | match_Kseq: forall k s tk ts
-    (TRSTMT: transl_stmt ge params s (cont_vars k) = ts)
+    (TRSTMT: transl_stmt params s (cont_vars k) = ts)
     (MCONT: match_cont params k tk),
     match_cont params (Kseq s k) (RustIRown.Kseq ts tk)
 | match_Kloop: forall k tk s ts
     (MCONT: match_cont params k tk)
-    (TRSTMT: transl_stmt ge params s (cont_vars (Kloop s k)) = ts),
+    (TRSTMT: transl_stmt params s (cont_vars (Kloop s k)) = ts),
     match_cont params (Kloop s k) (RustIRown.Kloop ts tk)
 | match_Kcall: forall k tk p f tf le own
-    (TRFUN: transl_function ge f = tf)
+    (TRFUN: transl_function f = tf)
     (MCONT: match_cont f.(fn_params) k tk),
     match_cont params (Kcall p f le own k) (RustIRown.Kcall p tf le own tk)
 | match_Kdropplace: forall k tk f tf st drops le own l dk
     (MCONT: match_cont_Kdropinsert f.(fn_params) (Kdropinsert l dk k) tk)
-    (TRFUN: transl_function ge f = tf),
+    (TRFUN: transl_function f = tf),
     match_cont params (Kdropplace f st drops le own (Kdropinsert l dk k)) (RustIRown.Kdropplace tf st drops le own tk)
 | match_Kdropcall: forall k tk id v st membs
     (MCONT: match_cont params k tk),
@@ -509,15 +509,15 @@ with match_cont_Kdropinsert (params: list (ident * type)) : cont -> RustIRown.co
 
 Inductive match_states: Rustlightown.state -> RustIRown.state -> Prop := 
 | match_regular_state: forall f s k e own m tf ts tk vars
-    (TRFUN: transl_function ge f = tf)
-    (TRSTMT: transl_stmt ge f.(fn_params) s vars = ts)
+    (TRFUN: transl_function f = tf)
+    (TRSTMT: transl_stmt f.(fn_params) s vars = ts)
     (* The in-scope variables collected in transl_stmt are the same as
     those collected in the continuation *)
     (CONTVARS: cont_vars k = vars)
     (MCONT: match_cont f.(fn_params) k tk),
     match_states (State f s k e own m) (RustIRown.State tf ts tk e own m)
 | match_dropinsert: forall f tf st dk k tk le own m ts1 ts2
-    (TRFUN: transl_function ge f = tf)
+    (TRFUN: transl_function f = tf)
     (STMT1: match_drop_insert_kind st ts1)
     (* (STMT2: match_dropcont dk ts2) *)
     (MST: match_drop_insert_kind_dropcont f.(fn_params) st dk ts2)
@@ -526,13 +526,13 @@ Inductive match_states: Rustlightown.state -> RustIRown.state -> Prop :=
     match_states (Dropinsert f st dk k le own m) (RustIRown.State tf ts1 (RustIRown.Kseq ts2 tk) le own m)
 (* move dropcont related statement to front *)
 | match_dropinsert_end: forall f tf dk k tk le own m ts2 
-    (TRFUN: transl_function ge f = tf)
+    (TRFUN: transl_function f = tf)
     (STMT2: match_dropcont dk ts2)
     (MCONT: match_cont f.(fn_params) k tk)    
     (WF: (forall p, dk <> Dreturn p) /\ dk <> Dendlet),
     match_states (Dropinsert f drop_end dk k le own m) (RustIRown.State tf ts2 tk le own m)
 | match_dropplace: forall f tf k tk st drops le m own dk l
-    (TRFUN: transl_function ge f = tf)
+    (TRFUN: transl_function f = tf)
     (MCONT: match_cont_Kdropinsert f.(fn_params) (Kdropinsert l dk k) tk),
     (* all dropplace comes from dropinsert *)
     match_states (Dropplace f st drops (Kdropinsert l dk k) le own m) (RustIRown.Dropplace tf st drops tk le own m)
@@ -550,42 +550,42 @@ Inductive match_states: Rustlightown.state -> RustIRown.state -> Prop :=
 .
 
 Lemma gen_drops_for_escape_vars_nil:
-    gen_drops_for_escape_vars ge nil = RustIR.Sskip.
+    gen_drops_for_escape_vars nil = RustIR.Sskip.
 Proof.
   auto.
 Qed.
 
 Lemma gen_drops_for_vars_nil:
-    gen_drops_for_vars ge nil = RustIR.Sskip.
+    gen_drops_for_vars nil = RustIR.Sskip.
 Proof.
   auto.
 Qed.
 
   
-Lemma gen_drops_for_escape_vars_cons1: forall id ty l ge,
-    own_type ge ty = true ->
-    gen_drops_for_escape_vars ge ((id, ty) :: l) =
-      RustIR.Ssequence (Sdrop (Plocal id ty)) (RustIR.Ssequence (Sstoragedead id) (gen_drops_for_escape_vars ge l)).
+Lemma gen_drops_for_escape_vars_cons1: forall id ty l,
+    drop_type ty = true ->
+    gen_drops_for_escape_vars ((id, ty) :: l) =
+      RustIR.Ssequence (Sdrop (Plocal id ty)) (RustIR.Ssequence (Sstoragedead id) (gen_drops_for_escape_vars l)).
 Proof.
   unfold gen_drops_for_escape_vars.
   intros. simpl in *. rewrite H. auto.
 Qed.
 
 
-Lemma gen_drops_for_escape_vars_cons2: forall id ty l ge,
-    own_type ge ty = false ->
-    gen_drops_for_escape_vars ge ((id, ty) :: l) =
-      RustIR.Ssequence RustIR.Sskip (RustIR.Ssequence (Sstoragedead id) (gen_drops_for_escape_vars ge l)).
+Lemma gen_drops_for_escape_vars_cons2: forall id ty l,
+    drop_type ty = false ->
+    gen_drops_for_escape_vars ((id, ty) :: l) =
+      RustIR.Ssequence RustIR.Sskip (RustIR.Ssequence (Sstoragedead id) (gen_drops_for_escape_vars l)).
 Proof.
   unfold gen_drops_for_escape_vars.
   intros. simpl in *. rewrite H.
  auto.
 Qed.
 
-Lemma gen_drops_for_vars_cons1: forall id ty l ge,
-    own_type ge ty = true ->
-    gen_drops_for_vars ge ((id, ty) :: l) =
-      RustIR.Ssequence (Sdrop (Plocal id ty)) (gen_drops_for_vars ge l).
+Lemma gen_drops_for_vars_cons1: forall id ty l,
+    drop_type ty = true ->
+    gen_drops_for_vars ((id, ty) :: l) =
+      RustIR.Ssequence (Sdrop (Plocal id ty)) (gen_drops_for_vars l).
 Proof.
   unfold gen_drops_for_vars.
   intros. simpl in *.
@@ -595,10 +595,10 @@ Proof.
 Qed.
 
 
-Lemma gen_drops_for_vars_cons2: forall id ty l ge,
-    own_type ge ty = false ->
-    gen_drops_for_vars ge ((id, ty) :: l) =
-      RustIR.Ssequence RustIR.Sskip (gen_drops_for_vars ge l).
+Lemma gen_drops_for_vars_cons2: forall id ty l,
+    drop_type ty = false ->
+    gen_drops_for_vars ((id, ty) :: l) =
+      RustIR.Ssequence RustIR.Sskip (gen_drops_for_vars l).
 Proof.
   unfold gen_drops_for_vars.
   intros. simpl in *.
@@ -654,11 +654,11 @@ Qed.
 (* collect_func returns the same result in source and target *)
 
 Lemma collect_stmt_drops_empty1: forall l w ce,
-    RustIR.collect_stmt ce (gen_drops_for_escape_vars ce l) w = w.
+    RustIR.collect_stmt ce (gen_drops_for_escape_vars l) w = w.
 Proof.
   induction l; intros; simpl; auto.
   - destruct a.
-    destruct (own_type ce t) eqn: T.
+    destruct (drop_type t) eqn: T.
     + rewrite gen_drops_for_escape_vars_cons1; auto. simpl.
       auto. 
     + rewrite gen_drops_for_escape_vars_cons2; auto. simpl.
@@ -667,11 +667,11 @@ Qed.
 
 
 Lemma collect_stmt_drops_empty2: forall l w ce,
-    RustIR.collect_stmt ce (gen_drops_for_vars ce l) w = w.
+    RustIR.collect_stmt ce (gen_drops_for_vars l) w = w.
 Proof.
   induction l; intros; auto.
   - destruct a.
-    destruct (own_type ce t) eqn: T.
+    destruct (drop_type  t) eqn: T.
     + rewrite gen_drops_for_vars_cons1; auto. simpl.
       auto. 
     + rewrite gen_drops_for_vars_cons2; auto. simpl.
@@ -679,16 +679,16 @@ Proof.
 Qed.
 
 Lemma collect_stmt_drops_empty3: forall p w ce,
-    RustIR.collect_stmt ce (gen_drop ce p) w = w.
+    RustIR.collect_stmt ce (gen_drop p) w = w.
 Proof.
   intros. unfold gen_drop.
-  destruct own_type; auto.
+  destruct drop_type; auto.
 Qed.
 
       
 Lemma collect_stmt_eq: forall s w params vars ce,
     collect_stmt ce s w =
-      RustIR.collect_stmt ce (transl_stmt ce params s vars) w.
+      RustIR.collect_stmt ce (transl_stmt params s vars) w.
 Proof.
   induction s; intros; simpl; auto; try (rewrite collect_stmt_drops_empty3; auto).
   - rewrite collect_stmt_drops_empty1. auto.
@@ -702,7 +702,7 @@ Qed.
 
     
 Lemma collect_func_eq: forall f tf ce,
-    transl_function ce f = tf ->
+    transl_function f = tf ->
     collect_func ce f = RustIR.collect_func ce tf.
 Proof.
   unfold transl_function, collect_func, RustIR.collect_func.
@@ -714,7 +714,7 @@ Qed.
 
 
 Lemma init_own_env_eq: forall f tf ce,
-    transl_function ce f = tf ->
+    transl_function f = tf ->
     init_own_env ce f = RustIRown.init_own_env ce tf.
 Proof.
   unfold transl_function. intros. subst.
@@ -742,7 +742,7 @@ Qed.
 
 Lemma function_entry_eq: forall f vl m1 e m2,
     function_entry ge f vl m1 e m2 ->
-    RustIR.function_entry tge (transl_function tge f) vl m1 e m2.
+    RustIR.function_entry tge (transl_function f) vl m1 e m2.
 Proof.
   intros. inv H. econstructor; solve_eval.
 Qed.
@@ -1197,7 +1197,7 @@ Proof.
     solve_eval.
     unfold transl_function. simpl.
     replace (prog_comp_env prog) with (genv_cenv ge); auto.
-    erewrite <- comp_env_preserved.
+    (* erewrite <- comp_env_preserved. *)
     destruct k; simpl in *; try contradiction; auto.        
   (* step_external_function *)
   - exploit find_funct_match_id; eauto.
@@ -1343,9 +1343,9 @@ Lemma match_drop_insert_kind_inv: forall st s,
 Proof.
   intros st s M.
   inv M; auto.
-  - unfold gen_drop. destruct own_type; simpl; auto.
+  - unfold gen_drop. destruct drop_type; simpl; auto.
   - unfold gen_drops_for_escape_vars. destruct l; simpl; auto.
-    destruct p. destruct own_type; simpl; auto.
+    destruct p. destruct drop_type; simpl; auto.
   - unfold gen_drops_for_vars. destruct l; simpl; auto.
 Qed.    
 
@@ -1355,7 +1355,7 @@ Ltac solve_eval1 :=
 
 
 Lemma function_entry_eq_inv: forall f vl m1 e m2,
-    RustIR.function_entry tge (transl_function tge f) vl m1 e m2 ->
+    RustIR.function_entry tge (transl_function f) vl m1 e m2 ->
     function_entry ge f vl m1 e m2.
 Proof.
   intros. inv H. econstructor; solve_eval1.
@@ -1509,8 +1509,8 @@ Proof.
            (* show that L1 can take one more step *)
            2: { eapply star_step; eauto. eapply star_refl. eauto. }
            unfold gen_drop in H1.    
-           destruct own_type eqn: OWNTY in H1; simpl in H1; inv H1.
-           ++ (* own_type is true, to show source can take
+           destruct drop_type eqn: OWNTY in H1; simpl in H1; inv H1.
+           ++ (* drop_type is true, to show source can take
               step_dropinsert_to_dropplace_reassign, we need to show
               split_drop_place return OK *)
               exploit SAFE. eapply star_refl.
@@ -1527,7 +1527,7 @@ Proof.
            2: { eapply star_step; eauto. eapply star_refl. eauto. }
            unfold gen_drops_for_escape_vars in H1. destruct l; simpl in H1. inv H1.
            destruct p; simpl in H1.
-           destruct own_type eqn: OWNTY in H1; simpl in H1; inv H1.
+           destruct drop_type eqn: OWNTY in H1; simpl in H1; inv H1.
            (* similar to the above case *)
            ++ exploit SAFE. eapply star_refl.
               (* final and at_external is impossible *)
@@ -1544,7 +1544,7 @@ Proof.
            2: { eapply star_step; eauto. eapply star_refl. eauto. }
            unfold gen_drops_for_vars in H1. destruct l; simpl in H1. inv H1.
            destruct p; simpl in H1.
-           destruct own_type eqn: OWNTY in H1; simpl in H1; inv H1.
+           destruct drop_type eqn: OWNTY in H1; simpl in H1; inv H1.
            ++ exploit SAFE. eapply star_refl.
               (* final and at_external is impossible *)
               intros [(r2 & CON)|[(q2 & CON)|(t2 & s2' & STEP2)]]; try inv CON.
@@ -1563,16 +1563,16 @@ Proof.
         -- do 2 eexists. econstructor.
       * inv STMT1.
         -- unfold gen_drop in H1.
-           destruct own_type eqn: OWNTY in H1; inv H1.
+           destruct drop_type eqn: OWNTY in H1; inv H1.
         -- unfold gen_drops_for_escape_vars in H1. destruct l; simpl in H1.
-           2: { destruct p; destruct own_type; inv H1. }
+           2: { destruct p; destruct drop_type; inv H1. }
            inv MST.
            ++ inv MDCONT; try (do 2 eexists; econstructor; econstructor; intros; split; congruence; fail).
            ++ do 2 eexists. econstructor. eapply step_dropinsert_endlet.
            ++ inv MRET.
               do 2 eexists. econstructor. eapply step_dropinsert_return_before.
         -- unfold gen_drops_for_vars in H1. destruct l; simpl in H1.
-           2: { destruct p; destruct own_type; inv H1. }
+           2: { destruct p; destruct drop_type; inv H1. }
            inv MST.
            ++ congruence. 
            ++ inv MRET.

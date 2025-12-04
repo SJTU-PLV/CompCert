@@ -162,7 +162,7 @@ Fixpoint transl_value_expr (e: Rustsyntax.expr) : mon (list statement * expr) :=
                 let temp := Plocal temp_id ty in
                 do (args_stmts, args_exprs) <- transl_exprlist args;
                 do fields_assign_stmts <- fields_assign temp fids args_exprs co.(co_members);
-                let ret_expr := if own_type ce ty then Emoveplace temp ty else Eplace temp ty in
+                let ret_expr := if move_type ty then Emoveplace temp ty else Eplace temp ty in
                 ret (args_stmts ++ fields_assign_stmts, ret_expr)
             | _ =>
                 error [CTX id; MSG ": there is no composite for it (triggered in transl_value_expr) "]
@@ -181,7 +181,7 @@ Fixpoint transl_value_expr (e: Rustsyntax.expr) : mon (list statement * expr) :=
                 do (stmt, rhs) <- transl_value_expr e;
                 do temp_id <- gensym ty;
                 let temp := Plocal temp_id ty in
-                let ret_expr := if own_type ce ty then Emoveplace temp ty else Eplace temp ty in
+                let ret_expr := if move_type ty then Emoveplace temp ty else Eplace temp ty in
                 ret (stmt ++ [Sassign_variant temp id fid rhs], ret_expr)
             | _ =>
                 error [CTX id; MSG ": there is no composite for it in transl_value_expr"]
@@ -194,7 +194,7 @@ Fixpoint transl_value_expr (e: Rustsyntax.expr) : mon (list statement * expr) :=
       (* use id as value *)
       let p := Plocal id ty in
       (* check if ty is a copy type *)
-      if own_type ce ty then
+      if move_type ty then
         ret (nil, Emoveplace p ty)
       else
         ret (nil, Eplace p ty)
@@ -202,7 +202,7 @@ Fixpoint transl_value_expr (e: Rustsyntax.expr) : mon (list statement * expr) :=
       (* consider *call_allocate_box() *)
       do (sl, p) <- transl_place_expr e;
       let p' := Pderef p ty in
-      if own_type ce ty then
+      if move_type ty then
         ret (sl, Emoveplace p' ty)
       else
         ret (sl, Eplace p' ty)
@@ -220,7 +220,7 @@ Fixpoint transl_value_expr (e: Rustsyntax.expr) : mon (list statement * expr) :=
   | Efield e fid ty =>
       do (sl, p) <- transl_place_expr e;
       let p' := Pfield p fid ty in
-      if own_type ce ty then
+      if move_type ty then
         ret (sl, Emoveplace p' ty)
       else
         ret (sl, Eplace p' ty)
@@ -259,7 +259,7 @@ Fixpoint transl_value_expr (e: Rustsyntax.expr) : mon (list statement * expr) :=
       do temp_id <- gensym ty;
       let temp := Plocal temp_id ty in
       let call_stmt := Scall temp ef' el' in
-      if own_type ce ty then
+      if move_type ty then
         (* if this call is used for effects, the returned expr is useless *)
         ret (sl1 ++ sl2 ++ (call_stmt :: nil), Emoveplace temp ty)
       else

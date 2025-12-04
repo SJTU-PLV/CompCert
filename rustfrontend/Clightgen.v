@@ -217,7 +217,7 @@ Definition drop_glue_for_member (m: PTree.t ident) (p: Clight.expr) (memb: membe
   match memb with
   | Member_plain fid ty =>
       (* Use own_type here because type_to_drop_member_state uses own_type *)      
-      if own_type ce ty then
+      if drop_type ty then
         let cty := (to_ctype ty) in
         let arg := Efield p fid cty in
         drop_glue_for_type m arg ty
@@ -561,7 +561,7 @@ is in the caller side. We need to use the reference to build the call
 statement *)
 Definition expand_drop (temp: ident) (ty: type) : option Clight.statement :=
   (* Use scalar type to simulate step_drop_scalar *)
-  if scalar_type ty then
+  if negb (drop_type ty) then
   None
   else
   match ty with

@@ -252,7 +252,7 @@ Definition access_mode (ty: type) : mode :=
 end.
 
 (* Used to indicate which places need to be dropped *)
-Definition scalar_type (ty: type) : bool :=
+Definition drop_type (ty: type) : bool :=
   match ty with
   | Tunit
   | Tint _ _
@@ -260,8 +260,8 @@ Definition scalar_type (ty: type) : bool :=
   | Tfloat _
   | Tfunction _ _ _ _ _
   | Tarray _ _
-  | Treference _ _ _ => true
-  | _ => false
+  | Treference _ _ _ => false
+  | _ => true
   end.
 
 
@@ -522,8 +522,15 @@ function to identify [Move] type *)
 (* Definition own_type (ce: composite_env) : type -> bool := *)
 (*   Fixm (@PTree_Properties.cardinal composite) own_type' ce. *)
 
-Definition own_type (ce: composite_env) ty : bool :=
-  negb (scalar_type ty).
+(* It is equal to the NonCopy in Rust *)
+Definition move_type (ty: type) : bool :=
+  match ty with
+  | Tbox _
+  | Tstruct _ _
+  | Tvariant _ _
+  | Treference _ Mutable _ => true
+  | _ => false
+  end.
 
 (** Fuel version own_type  *)
 (* (* If run out of fuel, return none *) *)

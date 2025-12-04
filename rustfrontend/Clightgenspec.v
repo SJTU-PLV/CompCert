@@ -963,7 +963,7 @@ Lemma generate_drops_inv: forall ce tce dropm id co f,
     (* list_disjoint [param_id] (malloc_id :: free_id :: (map snd (PTree.elements dropm))) /\ *)
     match co.(co_sv) with
     | Struct =>
-        let stmt_list := drop_glue_for_members ce dropm deref_param co.(co_members) in
+        let stmt_list := drop_glue_for_members dropm deref_param co.(co_members) in
         f = {| Clight.fn_return := Tvoid;
               Clight.fn_callconv := cc_default;
               Clight.fn_params := [(param_id, param_ty)];
@@ -975,7 +975,7 @@ Lemma generate_drops_inv: forall ce tce dropm id co f,
         let get_tag := Efield deref_param tag_fid Ctypes.type_int32s in
         let get_union := Efield deref_param union_fid (Tunion union_id noattr) in
         let drop_switch_branches :=
-          (make_labelled_drop_stmts ce dropm get_union 0 co.(co_members)) in
+          (make_labelled_drop_stmts dropm get_union 0 co.(co_members)) in
         let stmt := Sswitch get_tag drop_switch_branches in
         f = {| Clight.fn_return := Tvoid;
               Clight.fn_callconv := cc_default;
@@ -1038,9 +1038,9 @@ Proof.
 Qed.
 
 
-Lemma select_switch_sem_match_aux: forall ce dropm param membs tag memb idx,
+Lemma select_switch_sem_match_aux: forall dropm param membs tag memb idx,
     list_nth_z membs (tag - idx) = Some memb ->
-    exists s, seq_of_labeled_statement (select_switch tag (make_labelled_drop_stmts ce dropm param idx membs)) = (Clight.Ssequence (Clight.Ssequence (drop_glue_for_member ce dropm param memb) Clight.Sbreak) s).
+    exists s, seq_of_labeled_statement (select_switch tag (make_labelled_drop_stmts  dropm param idx membs)) = (Clight.Ssequence (Clight.Ssequence (drop_glue_for_member dropm param memb) Clight.Sbreak) s).
 Proof.
   induction membs.
   simpl. congruence.
@@ -1055,13 +1055,13 @@ Proof.
   eauto. 
   intros (s & A).
   unfold select_switch in A.
-  destruct (select_switch_case tag (make_labelled_drop_stmts ce dropm param (idx + 1) membs)) eqn: SEL.
+  destruct (select_switch_case tag (make_labelled_drop_stmts dropm param (idx + 1) membs)) eqn: SEL.
   eauto. eauto.
 Qed.
  
-Lemma select_switch_sem_match: forall ce dropm param membs tag memb,
+Lemma select_switch_sem_match: forall dropm param membs tag memb,
     list_nth_z membs tag = Some memb ->
-    exists s, seq_of_labeled_statement (select_switch tag (make_labelled_drop_stmts ce dropm param 0 membs)) = (Clight.Ssequence (Clight.Ssequence (drop_glue_for_member ce dropm param memb) Clight.Sbreak) s).
+    exists s, seq_of_labeled_statement (select_switch tag (make_labelled_drop_stmts dropm param 0 membs)) = (Clight.Ssequence (Clight.Ssequence (drop_glue_for_member dropm param memb) Clight.Sbreak) s).
 Proof.
   intros. 
   eapply select_switch_sem_match_aux. rewrite Z.sub_0_r.

@@ -972,6 +972,15 @@ Proof.
   rewrite H2 in H8. inv H8. auto.
 Qed.
 
+(* Used to indicate which places need to be dropped *)
+Definition scalar_type (ty: type) : bool :=
+  match ty with
+  | Tunit
+  | Tint _ _
+  | Tlong _
+  | Tfloat _ => true
+  | _ => false
+  end.
     
 (** Memory error in evaluation of expression  *)
 
@@ -1699,7 +1708,7 @@ Fixpoint drop_glue_children_types (ty: type) : list type :=
 
 (* It corresponds to drop_glue_for_member in Clightgen *)
 Definition type_to_drop_member_state (fid: ident) (fty: type) : option drop_member_state :=
-  if own_type ge fty then
+  if drop_type fty then
     let tys := drop_glue_children_types fty in
     match tys with
     | nil => None
@@ -2007,7 +2016,7 @@ Inductive step_dropplace : state -> trace -> state -> Prop :=
       (Dropplace f None ps k le own m)
 | step_dropplace_init2: forall f p ps k le own m st (full: bool)
     (OWN: is_init own p = true)
-    (NOTSCALAR: scalar_type (typeof_place p) = false)
+    (DROPTY: drop_type (typeof_place p) = true)
     (DPLACE: st = (if full then gen_drop_place_state p else drop_fully_owned_box [p])),
     step_dropplace (Dropplace f None ((p, full) :: ps) k le own m) E0
       (Dropplace f (Some st) ps k le (move_place own p) m)
@@ -2016,7 +2025,7 @@ in the semantics, we skip this drop placs and in the compilation, we
 generate Sskip for them *)
 | step_dropplace_scalar: forall f p ps k le own m full
     (OWN: is_init own p = true)
-    (SCALAR: scalar_type (typeof_place p) = true),
+    (NOTDROPTY: drop_type (typeof_place p) = false),
     step_dropplace (Dropplace f None ((p, full) :: ps) k le own m) E0
       (Dropplace f None ps k le (move_place own p) m)    
 | step_dropplace_box: forall le m m' k ty b' ofs' f b ofs p own ps l
@@ -2125,36 +2134,36 @@ Inductive step_dropinsert : state -> trace -> state -> Prop :=
 (* simulate step_to_dropplace in RustIRown *)
 | step_dropinsert_to_dropplace_escape: forall f id ty le own m drops k universe dk l
     (UNI: PathsMap.get id own.(own_universe) = universe)
-    (OWNTY: own_type ge ty = true)
+    (OWNTY: drop_type ty = true)
     (SPLIT: split_drop_place ge universe (Plocal id ty) ty = OK drops),
     (* get the owned place to drop *)
     step_dropinsert (Dropinsert f (drop_escape_before ((id, ty) :: l)) dk k le own m) E0
       (Dropplace f None drops (Kdropinsert (drop_escape_after id l) dk k) le own m)
 | step_dropinsert_to_dropplace_reassign: forall f p le own m drops k universe dk
     (UNI: PathsMap.get (local_of_place p) own.(own_universe) = universe)
-    (OWNTY: own_type ge (typeof_place p) = true)
+    (OWNTY: drop_type (typeof_place p) = true)
     (SPLIT: split_drop_place ge universe p (typeof_place p) = OK drops),
     (* get the owned place to drop *)
     step_dropinsert (Dropinsert f (drop_reassign p) dk k le own m) E0
       (Dropplace f None drops (Kdropinsert drop_end dk k) le own m)
 | step_dropinsert_skip_escape: forall f id ty le own m k dk l
-    (OWNTY: own_type ge ty = false),
+    (OWNTY: drop_type ty = false),
     step_dropinsert (Dropinsert f (drop_escape_before ((id, ty) :: l)) dk k le own m) E0
       (Dropinsert f (drop_escape_after id l) dk k le own m)
 | step_dropinsert_skip_reassign: forall f p le own m k dk
-    (OWNTY: own_type ge (typeof_place p) = false),
+    (OWNTY: drop_type (typeof_place p) = false),
     step_dropinsert (Dropinsert f (drop_reassign p) dk k le own m) E0
       (Dropinsert f drop_end dk k le own m)
 (* drop the parameters *)
 | step_dropinsert_to_dropplace_return: forall f id ty le own m drops k universe dk l
     (UNI: PathsMap.get id own.(own_universe) = universe)
-    (OWNTY: own_type ge ty = true)
+    (OWNTY: drop_type ty = true)
     (SPLIT: split_drop_place ge universe (Plocal id ty) ty = OK drops),
     (* get the owned place to drop *)
     step_dropinsert (Dropinsert f (drop_return ((id, ty) :: l)) dk k le own m) E0
       (Dropplace f None drops (Kdropinsert (drop_return l) dk k) le own m)
 | step_dropinsert_skip_return: forall f id ty le own m k dk l
-    (OWNTY: own_type ge ty = false),
+    (OWNTY: drop_type ty = false),
     step_dropinsert (Dropinsert f (drop_return ((id, ty) :: l)) dk k le own m) E0
       (Dropinsert f (drop_return l) dk k le own m)
 (* simulate the storagedead *)

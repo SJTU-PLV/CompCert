@@ -197,6 +197,13 @@ Definition is_box (ty: type) :=
   | _ => false
   end.  
 
+Definition is_reference (ty: type) :=
+  match ty with
+  | Treference _ _ _ => true
+  | _ => false
+  end.
+
+
 Definition is_mutable_ref (ty: type) :=
   match ty with
   | Treference _ Mutable _ => true
@@ -210,7 +217,7 @@ Definition is_immutable_ref (ty: type) :=
   end.
 
 Definition is_copyable (ty: type) : bool :=
-  scalar_type ty || is_mutable_ref ty.
+  negb (move_type ty).
 
 (* A place is movable if it is not constructed via reference *)
 Fixpoint is_movable (p: place) : bool :=
@@ -274,7 +281,8 @@ Inductive wt_pexpr: pexpr -> Prop :=
 | wt_Econst_long: forall n si,
     wt_pexpr (Econst_long n (Tlong si))
 | wt_Eplace: forall p
-    (WTP1: wt_place p),
+    (WTP1: wt_place p)
+    (COPY: is_copyable (typeof_place p) = true),
     wt_pexpr (Eplace p (typeof_place p))
 | wt_Ecktag: forall p fid orgs id
     (WTP1: typeof_place p = Tvariant orgs id)
@@ -297,10 +305,10 @@ Inductive wt_pexpr: pexpr -> Prop :=
 Inductive wt_expr: expr -> Prop :=
 | wt_move_place: forall p
     (WT1: wt_place p)
-    (SCALAR: scalar_type (typeof_place p) = false),
+    (MOVE: is_movable p = true),
     wt_expr (Emoveplace p (typeof_place p))
 | wt_pure_expr: forall pe
-    (SCALAR: scalar_type (typeof_pexpr pe) = true)
+    (SCALAR: scalar_type (typeof_pexpr pe) || is_reference (typeof_pexpr pe) = true)
     (WT1: wt_pexpr pe),
     wt_expr pe
 .
@@ -312,7 +320,8 @@ Inductive wt_stmt: statement -> Prop :=
 | wt_Sskip: wt_stmt Sskip
 | wt_Sassign: forall p e
     (WT1: wt_place p)
-    (WT2: wt_expr e),
+    (WT2: wt_expr e)
+    (MUT: is_mutable_place p = true),
     (* Require the type of p equal to the type of e? *)
     wt_stmt (Sassign p e)
 | wt_Sassign_variant: forall p id fid e co
@@ -320,7 +329,8 @@ Inductive wt_stmt: statement -> Prop :=
     (WT2: wt_expr e)
     (WT3: ce ! id = Some co)
     (* used to prove assign_loc_variant_sound *)
-    (WT4: co.(co_sv) = TaggedUnion),
+    (WT4: co.(co_sv) = TaggedUnion)
+    (MUT: is_mutable_place p = true),
     wt_stmt (Sassign_variant p id fid e)
 | wt_Sbox: forall p e ty
     (WT1: wt_place p)
@@ -328,20 +338,23 @@ Inductive wt_stmt: statement -> Prop :=
     (WT3: typeof_place p = Tbox ty)
     (* used to prove wt_fooprint *)
     (SZEQ: sizeof ce ty = sizeof ce (typeof e))
-    (SZCK: 0 < sizeof ce (typeof e) <= Ptrofs.max_unsigned),
+    (SZCK: 0 < sizeof ce (typeof e) <= Ptrofs.max_unsigned)
+    (MUT: is_mutable_place p = true),
     wt_stmt (Sbox p e)
 | wt_Sstoragelive: forall id,
     wt_stmt (Sstoragelive id)
 | wt_Sstoragedead: forall id,
     wt_stmt (Sstoragedead id)
 | wt_Sdrop: forall p
-    (WT1: wt_place p),
+    (WT1: wt_place p)
+    (MOVE: is_movable p = true),
     wt_stmt (Sdrop p)
 | wt_Scall: forall p al id ty orgs rels tyl rty cc
     (WT1: wt_place p)
     (WT2: wt_exprlist al)
     (WT3: ty = Tfunction orgs rels tyl rty cc)
-    (WT4: typeof_place p = rty),
+    (WT4: typeof_place p = rty)
+    (MUT: is_mutable_place p = true),
     (* We only support this kind of function call *)
     wt_stmt (Scall p (Eglobal id ty) al)
 | wt_Sifthenelse: forall e s1 s2
@@ -805,11 +818,14 @@ Definition type_check_expr (e: expr) : res unit :=
       else 
         Error (msg "Emoveplace move out a non-movable place")
   | Epure pe =>
-      (* Maybe too restricted *)
-      if scalar_type (typeof_pexpr pe) then
+      (* The type check here must ensure that the evaluation of pure
+      expr must produce value with empty footprint (e.g., reference,
+      scalar type) *)
+      let ety := (typeof_pexpr pe) in
+      if scalar_type ety || is_reference ety then
         type_check_pexpr pe
       else
-        Error (msg "Not scalar type in pure expression")
+        Error (msg "Neither scalar type or reference type in pure expression")
   end.
 
 Fixpoint type_check_exprlist (l: list expr) : res unit :=
@@ -861,19 +877,25 @@ Fixpoint type_check_stmt (stmt: statement) : res unit :=
   | Sstoragelive _ | Sstoragedead _ => OK tt
   | Sdrop p =>
       do _ <- type_check_place p;
-      OK tt
+      (* For now we do not allow drop(p) where [p: &mut Box<T>]? *)
+      if is_movable p then
+        OK tt
+      else Error (msg "Type check error: dropping a non-movable place")
   | Scall p a al =>
       do _ <- type_check_place p;
       do _ <- type_check_exprlist al;
-      match a with
-      | Epure (Eglobal id (Tfunction _ _ _ rty _)) =>
-          if type_eq (typeof_place p) rty then
-            OK tt
-          else
-            Error (msg "return type is not equal to the type of place which receives the return value")
-      | _ =>
-          Error (msg "callee is not a global variable")
-      end
+      if is_mutable_place p then
+        match a with
+        | Epure (Eglobal id (Tfunction _ _ _ rty _)) =>
+            if type_eq (typeof_place p) rty then
+              OK tt
+            else
+              Error (msg "return type is not equal to the type of place which receives the return value")
+        | _ =>
+            Error (msg "callee is not a global variable")
+        end
+      else 
+        Error (msg "Type check error: mutabting a non-mutable place in Scall")
   | Sifthenelse e s1 s2 =>
       do _ <- type_check_expr e;
       do _ <- type_check_stmt s1;
@@ -891,7 +913,7 @@ Fixpoint type_check_stmt (stmt: statement) : res unit :=
       type_check_stmt s
   | Sbreak | Scontinue => OK tt
   end.
-    
+
 End TENV.
 
 End COMP_ENV.
@@ -936,11 +958,17 @@ Lemma type_check_pexpr_sound: forall ce te pe,
 Proof.
   induction pe; intros; simpl in *; try (econstructor; eauto; fail); try (destruct t; try congruence; try (destruct f0; try congruence); econstructor; fail).
   - monadInv H.
+    destruct (is_copyable (typeof_place p)) eqn: COPY; try congruence. 
     destruct type_eq in EQ0; try congruence. subst.
     econstructor.
     destruct x.
-    eapply type_check_place_sound; eauto.
+    eapply type_check_place_sound; eauto. auto.    
   - destruct (typeof_place p) eqn: TYP; try congruence.
+    econstructor; eauto.
+    eapply type_check_place_sound; eauto.
+  - monadInv H.
+    destruct type_eq in EQ0; try congruence. subst.
+    destruct x.
     econstructor; eauto.
     eapply type_check_place_sound; eauto.
   - monadInv H.
@@ -958,15 +986,18 @@ Lemma type_check_expr_sound: forall ce te e,
     wt_expr te ce e.
 Proof.
   destruct e; intros.
-  - inv H. monadInv H1.
-    destruct scalar_type eqn: TYP in EQ0; try congruence.
+  - inv H. monadInv H1.    
+    destruct is_movable eqn: TYP in EQ0; try congruence.
     destruct type_eq in EQ0; try congruence. subst.
     destruct x.
     econstructor; eauto.
     eapply type_check_place_sound; eauto.
   - inv H.
-    destruct scalar_type eqn: TYP in H1; try congruence.
-    econstructor; auto.
+    destruct scalar_type eqn: TYP in H1; simpl in H1; try congruence.
+    econstructor; auto. rewrite TYP. auto.
+    eapply type_check_pexpr_sound; eauto.
+    destruct is_reference eqn: RTY in H1; simpl in H1; try congruence.
+    econstructor; auto. rewrite TYP, RTY. auto.    
     eapply type_check_pexpr_sound; eauto.
 Qed.
 
@@ -987,17 +1018,23 @@ Lemma type_check_stmt_sound: forall ce te s,
     wt_stmt te ce s.
 Proof.
   induction s; simpl in *; intros CK; try (econstructor; eauto; fail).
-  - monadInv CK. destruct x. destruct x0.
-    econstructor.
+  - monadInv CK. 
+    destruct is_mutable_place eqn: MUT in EQ2; try congruence.
+    destruct x. destruct x0.
+    econstructor; auto.
     eapply type_check_place_sound; eauto.
     eapply type_check_expr_sound; eauto.
-  - monadInv CK. destruct x. destruct x0.
+  - monadInv CK. 
+    destruct is_mutable_place eqn: MUT in EQ2; try congruence.
+    destruct x. destruct x0.
     destruct (ce!i) eqn: CO; try congruence.
     destruct (co_sv c) eqn: SV; try congruence.
     econstructor; eauto.
     eapply type_check_place_sound; eauto.
     eapply type_check_expr_sound; eauto.
-  - monadInv CK. destruct x. destruct x0.
+  - monadInv CK. 
+    destruct is_mutable_place eqn: MUT in EQ2; try congruence.
+    destruct x. destruct x0.
     destruct (typeof_place p) eqn: PTY; try congruence.
     destruct andb eqn: CK in EQ2; try congruence.
     rewrite !andb_true_iff in CK.
@@ -1008,11 +1045,14 @@ Proof.
     econstructor; eauto.
     eapply type_check_place_sound; eauto.
     eapply type_check_expr_sound; eauto.
-  - monadInv CK. destruct x.
+  - monadInv CK. 
+    destruct is_movable eqn: MOVE in EQ0; try congruence.
+    destruct x.
     econstructor; eauto.
     eapply type_check_place_sound; eauto.
   - destruct (type_check_place ce te p) eqn: A1; simpl in CK; try congruence.
     destruct (type_check_exprlist ce te l) eqn: A2; simpl in CK; try congruence.
+    destruct is_mutable_place eqn: MUT in CK; try congruence.
     destruct e; try congruence.
     destruct p0; try congruence.
     destruct t; try congruence.

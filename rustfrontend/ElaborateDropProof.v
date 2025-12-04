@@ -308,14 +308,14 @@ Inductive match_split_drop_places flagm : own_env -> list (place * bool) -> stat
 | match_sdp_cons_flag: forall p flag own l ts full
     (FLAG: get_dropflag_temp flagm p = Some flag)
     (SPLIT: match_split_drop_places flagm (if is_init own p then move_place own p else own) l ts)
-    (NOTSCALAR: scalar_type (typeof_place p) = false),
+    (NOTSCALAR: drop_type (typeof_place p) = true),
     (* how to ensure that p is owned in own_env *)    
     match_split_drop_places flagm own ((p,full)::l) (Ssequence (generate_drop p full (Some flag)) ts)
 | match_sdp_cons_must_init: forall p own l ts full
     (FLAG: get_dropflag_temp flagm p = None)
     (SPLIT: match_split_drop_places flagm (move_place own p) l ts)
     (OWN: is_init own p = true)
-    (NOTSCALAR: scalar_type (typeof_place p) = false),
+    (NOTSCALAR: drop_type (typeof_place p) = true),
     (* how to ensure that p is owned in own_env *)    
     match_split_drop_places flagm own ((p,full)::l) (Ssequence (generate_drop p full None) ts)
 | match_sdp_cons_must_uninit: forall p own l ts full
@@ -327,7 +327,7 @@ Inductive match_split_drop_places flagm : own_env -> list (place * bool) -> stat
 | match_sdp_cons_scalar: forall p own l ts full
     (SPLIT: match_split_drop_places flagm (move_place own p) l ts)
     (OWN: is_init own p = true)
-    (NOTSCALAR: scalar_type (typeof_place p) = true),
+    (SCALAR: drop_type (typeof_place p) = false),
     match_split_drop_places flagm own ((p,full)::l) (Ssequence Sskip ts)
 .
 
@@ -347,7 +347,7 @@ Record sound_flagm ce (body: statement) (cfg: rustcfg) (flagm: FM) (init uninit:
       (* there is no dropflags for this place *)
       get_dropflag_temp flagm p1 = None ->
       get_IM_state init!!pc uninit!!pc (Some (mayinit, mayuninit)) ->
-      scalar_type (typeof_place p1) = false ->
+      drop_type (typeof_place p1) = true ->
       (* So p1 is either must owned *)
       (must_init mayinit mayuninit universe p1 = true \/
          (* or must unowned *)
@@ -359,7 +359,7 @@ Record sound_flagm ce (body: statement) (cfg: rustcfg) (flagm: FM) (init uninit:
     not affect match_envs_flagm. *)
     sound_flagm_some: forall p id,
       get_dropflag_temp flagm p = Some id ->
-      scalar_type (typeof_place p) = false;
+      drop_type (typeof_place p) = true;
   }.
  
 Lemma generate_place_map_in_map_not_in_list: forall l p id m,
@@ -468,7 +468,7 @@ Lemma in_drop_flags_for_splits: forall drops p init uninit universe,
     In p drops ->
     must_init init uninit universe p = false ->
     may_init init uninit universe p = true ->
-    scalar_type (typeof_place p) = false ->
+    drop_type (typeof_place p) = true ->
     exists id, In (p, id) (generate_drop_flags_for_splits init uninit universe drops).
 Proof.
   induction drops.
@@ -479,7 +479,7 @@ Proof.
   - exploit IHdrops; eauto.
     intros (id & IN).
     exists id. simpl.
-    destruct (scalar_type (typeof_place a)); auto.
+    destruct (drop_type (typeof_place a)); auto.
     destruct (must_init init uninit universe a); auto.
     destruct (may_init init uninit universe a).
     eapply in_cons; auto. auto.
@@ -488,16 +488,15 @@ Qed.
 (* If the drop flag of a place is genenrated, the place must not have scalar type *)
 Lemma in_generated_drop_flags_not_scalar: forall drops p id init uninit universe,
     In (p, id) (generate_drop_flags_for_splits init uninit universe drops) ->
-    scalar_type (typeof_place p) = false.
+    drop_type (typeof_place p) = true.
 Proof.
   induction drops; simpl; intros. contradiction.
   destruct (place_eq p a); subst.
-  - destruct (scalar_type (typeof_place a)) eqn: A. eapply IHdrops in H. congruence.
-  auto.
-  - destruct (scalar_type (typeof_place a)) eqn: A. eauto.
+  - destruct (drop_type (typeof_place a)) eqn: A. auto. eapply IHdrops in H. congruence.
+  - destruct (drop_type (typeof_place a)) eqn: A. simpl in *.
     destruct (must_init init uninit universe a) eqn: B. eauto.
-    destruct (may_init init uninit universe a) eqn: C. inv H. inv H0. congruence.
-    eauto. eauto.
+    destruct (may_init init uninit universe a) eqn: C. 
+    inv H. inv H0. eauto. eauto. eauto. simpl in H. eauto. 
 Qed.
 
     
@@ -1579,14 +1578,14 @@ Inductive wf_split_drop_places flagm (init uninit universe: PathsMap.t) : own_en
 | wf_sdp_flag: forall own b id l p
     (* If this drop place has a drop flag, it must not be scalar type *)
     (FLAG: get_dropflag_temp flagm p = Some id)
-    (NOTSCALAR: scalar_type (typeof_place p) = false)
+    (NOTSCALAR: drop_type (typeof_place p) = true)
     (WF: wf_split_drop_places flagm init uninit universe (if is_init own p then (move_place own p) else own) l),
     wf_split_drop_places flagm init uninit universe own ((p,b)::l)
 | wf_sdp_must: forall own b l p
     (FLAG: get_dropflag_temp flagm p = None)
     (OWN: must_init init uninit universe p = is_init own p)
     (WF: wf_split_drop_places flagm init uninit universe (if is_init own p then (move_place own p) else own) l)
-    (NOTSCALAR: scalar_type (typeof_place p) = false),
+    (NOTSCALAR: drop_type (typeof_place p) = true),
     wf_split_drop_places flagm init uninit universe own ((p,b)::l)
 | wf_sdp_scalar: forall own b l p
     (FLAG: get_dropflag_temp flagm p = None)
@@ -1595,7 +1594,7 @@ Inductive wf_split_drop_places flagm (init uninit universe: PathsMap.t) : own_en
     regardless of the analysis result *)
     (* (OWN: must_init init uninit universe p = is_init own p) *)
     (WF: wf_split_drop_places flagm init uninit universe (if is_init own p then (move_place own p) else own) l)
-    (NOTSCALAR: scalar_type (typeof_place p) = true),
+    (NOTSCALAR: drop_type (typeof_place p) = false),
     wf_split_drop_places flagm init uninit universe own ((p,b)::l)
 .
 
@@ -1618,12 +1617,12 @@ Lemma ordered_split_drop_places_wf:
     (FLAG: forall p full,
         In (p, full) drops ->
         get_dropflag_temp flagm p = None ->
-        scalar_type (typeof_place p) = false ->
+        drop_type (typeof_place p) = true ->
         must_init init uninit universe p = true
         \/ may_init init uninit universe p = false)
     (SCALAR: forall p id,
         get_dropflag_temp flagm p = Some id ->
-        scalar_type (typeof_place p) = false),
+        drop_type (typeof_place p) = true),
     wf_split_drop_places flagm init uninit universe own drops.
 Proof.
   induction drops; simpl; intros.
@@ -1657,8 +1656,7 @@ Proof.
   (* p has drop flag or not *)
   destruct (get_dropflag_temp flagm p) eqn: PFLAG.
   - econstructor; eauto.
-  - destruct (scalar_type (typeof_place p)) eqn: SCA.
-    + eapply wf_sdp_scalar; eauto.
+  - destruct (drop_type (typeof_place p)) eqn: SCA.
     + exploit FLAG. left; eauto.
       auto. auto. intros MOWN.
       eapply wf_sdp_must. eauto. 2: auto.
@@ -1668,6 +1666,7 @@ Proof.
         symmetry. eapply NOTOWN.
         auto. auto.
       * auto.
+    + eapply wf_sdp_scalar; eauto.      
 Qed.
 
 
@@ -1682,11 +1681,7 @@ Proof.
   econstructor.
   simpl. destruct a.
   (* if p has scalar type *)
-  destruct (scalar_type (typeof_place p)) eqn: SCA.
-  - inv WFDROPS; try congruence.
-    destruct (is_init own p) eqn: INIT.
-    + eapply match_sdp_cons_scalar; eauto.
-    + eapply match_sdp_cons_must_uninit; eauto.
+  destruct (drop_type (typeof_place p)) eqn: SCA.
   - destruct (get_dropflag_temp flagm p) eqn: FLAG.
     + econstructor. auto.
       eapply IHdrops.
@@ -1700,6 +1695,10 @@ Proof.
       (* must_owned = false *)
       * rewrite <- OWN in WF.
         econstructor; auto.
+  - inv WFDROPS; try congruence.
+    destruct (is_init own p) eqn: INIT.
+    + eapply match_sdp_cons_scalar; eauto.
+    + eapply match_sdp_cons_must_uninit; eauto.
 Qed.
 
   
@@ -2077,7 +2076,7 @@ Lemma type_to_drop_member_state_eq: forall id ty,
     type_to_drop_member_state ge id ty = type_to_drop_member_state tge id ty.
 Proof.
   intros. unfold type_to_drop_member_state.
-  erewrite comp_env_preserved; eauto. auto.
+  (* erewrite comp_env_preserved; eauto. auto. *)
   erewrite dropm_preserved; eauto.
 Qed.
 

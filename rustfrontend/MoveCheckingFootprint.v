@@ -12,7 +12,7 @@ Require Import Rusttypes Rustlight Rustlightown.
 Require Import RustOp RustIR RustIRcfg Rusttyping.
 Require Import Errors.
 Require Import InitDomain InitAnalysis.
-Require Import RustIRown MoveChecking.
+Require Import RustIRown MoveChecking BorrowCheck.
 Require Import Wfsimpl.
 
 Import ListNotations.

@@ -24,11 +24,6 @@ Fixpoint makeseq (l: list statement) : statement :=
   | s :: l' => Ssequence s (makeseq l')
   end.
 
-
-Section COMPOSITE_ENV.
-
-Variable ce: composite_env.
-
 (* Insert storagedead before drop for local variables *)
 (* Definition gen_drops (local: bool) (l: list (ident * type)) : statement := *)
 (*   let drops := fold_right *)
@@ -49,7 +44,7 @@ generate storagedead for those variables which are about to out of
 scope. *)
 Definition gen_drops_for_escape_vars (vars: list (ident * type)) : statement :=
   makeseq (concat (map (fun '(id, ty) =>
-                          if own_type ce ty then
+                          if drop_type ty then
                             (* adhoc: to ensure that the storagedead
                             is connected to the the next statement to
                             make match_drop_insert_kind works *)
@@ -59,13 +54,13 @@ Definition gen_drops_for_escape_vars (vars: list (ident * type)) : statement :=
 
 Definition gen_drop (p: place) : statement :=
   (* Sskip is used to prevent stuttering *)
-  makeseq (if own_type ce (typeof_place p) then [Sdrop p] else [RustIR.Sskip]).
+  makeseq (if drop_type (typeof_place p) then [Sdrop p] else [RustIR.Sskip]).
 
 (* Generate sequence of drop statements for the list of variables with
 own_type *)
 Definition gen_drops_for_vars (params: list (ident * type)) : statement :=
   makeseq (map (fun '(id, ty) =>
-                  if own_type ce ty then
+                  if drop_type ty then
                     (Sdrop (Plocal id ty))
                   else RustIR.Sskip) params).
 
@@ -175,10 +170,9 @@ Definition transl_fundef (fd: Rustlight.fundef) : fundef :=
   | External orgs org_rels ef targs tres cconv => (External orgs org_rels ef targs tres cconv)
   end.
 
-End COMPOSITE_ENV.
 
 Definition transl_program (p: Rustlight.program) : program :=
-  let p1 := transform_program (transl_fundef p.(prog_comp_env)) p in
+  let p1 := transform_program transl_fundef p in
    {| prog_defs := AST.prog_defs p1;
     prog_public := AST.prog_public p1;
     prog_main := AST.prog_main p1;

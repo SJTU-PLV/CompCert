@@ -1165,8 +1165,8 @@ Definition list_list_cons {A: Type} (e: A) (l: list (list A)) :=
   | l' :: l => (e::l') :: l
   end.
 
-Definition vars_to_drops ce (vars: list (ident * type)) : list place :=
-  map (fun elt => Plocal (fst elt) (snd elt)) (filter (fun elt => own_type ce (snd elt)) vars).
+Definition vars_to_drops (vars: list (ident * type)) : list place :=
+  map (fun elt => Plocal (fst elt) (snd elt)) (filter (fun elt => drop_type (snd elt)) vars).
 
 (** ** Notations of Rustlight program *)
 

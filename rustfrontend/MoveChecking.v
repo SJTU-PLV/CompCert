@@ -162,16 +162,16 @@ Fixpoint move_check_pexpr (pe : pexpr) : bool :=
 
 Definition move_check_expr' (e : expr) : bool :=
   match e with
-  | Emoveplace p _ =>      
+  | Emoveplace p _ =>
       (* The type check phase must ensure that p = owner_place p as we
       cannot move from p if p has type [&mut Box<..>] *)
       if place_eq p (valid_owner p) then
-        (* p is not downcast ... *)                
-        dominators_must_init init uninit universe p && must_movable ce init uninit universe p 
+        (* p is not downcast ... *)
+        dominators_must_init init uninit universe p && must_movable ce init uninit universe p
       else
         (* p is downcast, we just check its valid_owner is init *)
         dominators_must_init init uninit universe p &&
-        must_init init uninit universe (valid_owner p) && is_full universe (valid_owner p)    
+        must_init init uninit universe (valid_owner p) && is_full universe (valid_owner p)
   | Epure pe => move_check_pexpr pe
   end.
 
