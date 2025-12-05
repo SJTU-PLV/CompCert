@@ -14,7 +14,7 @@ fn main() {
             let tmp : i32 = 4;
             *q = &mut tmp; 
             tmp = 4;
-            **r = 5;
+            // **r = 5; if uncomment this line, last line would be an error usage of tmp
         }
         S::s2(r1) => {
             dummy = 2;

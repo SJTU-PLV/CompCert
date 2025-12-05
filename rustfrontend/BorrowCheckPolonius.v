@@ -417,7 +417,7 @@ Definition check_storagedead (f: function) (oe1: LOrgEnv.t) (id: ident) : res un
 (** TODO: we need to consider p is initialized or not *)
 Definition check_drop (oe1: LOrgEnv.t) (p: place) : res unit :=
   if illegal_access oe1 p Adeep Awrite then
-    Error [MSG "access a place which is borrowed: "; CTX (local_of_place p); MSG "in (check_drop)"]
+    Error [MSG "access a place which is borrowed: "; CTX (local_of_place p); MSG " in (check_drop)"]
   else OK tt.
 
 (** All the relations between the generic origins after the function

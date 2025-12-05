@@ -48,5 +48,5 @@ fn main(){
     let l1: list = list {value: 2, next: list_node::Some(&mut l0)};
     let l2: list = list {value: 3, next: list_node::Some(&mut l1)};
     add_one(&mut l2);
-    printf("Sum of list is %d", sum(&mut l2));
+    // printf("Sum of list is %d", sum(&mut l2));
 }

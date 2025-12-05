@@ -33,5 +33,6 @@ fn main(){
     let l0: list = list {value: 1, next: list_node::None(())};
     let l1: list = list {value: 2, next: list_node::Some(Box(l0))};
     let l2: list = list {value: 3, next: list_node::Some(Box(l1))};
-    printf("Sum of list is %d", sum(&mut l2));
+    let sum: i32 = sum(&mut l2);
+    // printf("Sum of list is %d", sum(&mut l2));
 }

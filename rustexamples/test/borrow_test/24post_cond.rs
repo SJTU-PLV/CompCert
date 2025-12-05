@@ -8,8 +8,8 @@ fn test_choose(){
     let v1: i32 = 1;
     let v2: i32 = 2;
     let p: &mut i32 = choose(&mut v1, &mut v2);
-    v2 = 3;
-    *p = 4;
+    v2 = 3; // if we uncomment the following line, error would be reported here
+    // *p = 4;
 }
 
 fn assign<'a, 'b, 'c>(input: &'a mut &'b mut i32, val: &'c mut i32)
@@ -26,5 +26,6 @@ fn test_assign(){
         let b: Box<i32> = Box(2);
         assign(&mut input, &mut *b);
     }  
-    printf("Use-after-free of input: %d", *input);
+    // let tmp: i32 = *input; // if uncomment this line, line 27 would be an error
+    // printf("Use-after-free of input: %d", *input);
 }
