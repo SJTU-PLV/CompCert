@@ -135,55 +135,81 @@ Fixpoint place_owns_loc (p: place) : bool :=
   | Pdowncast p' _ _ => place_owns_loc p'
   end.
 
+(* Compute the deepest place of [p] that does not contain reference,
+i.e., it represent a memory location that is no accessed via
+reference. The return value (is_owner, p) satisfies: if is_owner is
+true, than p is the same as the argument place (it is also the deepest
+owner), otherwise p is the deepest owner of the argument *)
+Fixpoint owner_place' (p: place) : bool * place :=
+  match p with
+  | Plocal _ _ => (true, p)
+  | Pderef p1 ty =>
+      let (is_owner, p2) := owner_place' p1 in
+      if is_owner then 
+        match typeof_place p1 with
+        | Tbox _ => (true, p)
+        (* p is not owner place, i.e., it is accessed via reference *)
+        | _ => (false, p2)
+        end
+      else (false, p2)
+  | Pfield p1 fid fty
+  | Pdowncast p1 fid fty =>
+      let (is_owner, p2) := owner_place' p1 in
+      if is_owner then (true, p)
+      else (false, p2)
+  end.
+        
+Definition owner_place (p: place) := snd (owner_place' p).
+
 (** The core function of adding a place [p] to the whole set [l] *)
 (* add [p] to the paths [l]: If [p] is [Pderef p' ty], then
 recursively add p' and its parents to paths [l]; If [p] is [Pfield p'
 fid ty], then add [p']'s siblings and [p']'s parent to paths [l]*)
 Fixpoint collect (p: place) (l: Paths.t) : Paths.t :=
-  if place_owns_loc p then
-    (** FIXME: WHY? If there are some children of [p] in [l], do
+  (* if place_owns_loc p then. We do not need this anymore but we
+  should ensure that p = owner_place p *)
+  (** FIXME: WHY? If there are some children of [p] in [l], do
       nothing. Because [p] may have been split into sub-fields and we
       have collected p (see Pderef and Pfield cases). *)
-    if Paths.is_empty (Paths.filter (fun elt => is_prefix p elt) l) then
-      match p with
-      | Plocal _ _ =>
-          Paths.add p l
-      | Pfield p' _ _ =>
-          (* difficult case: assume p = [**(a.f).g], p' = [**(a.f)], l = ∅ *)
-          let l' := collect p' l in (* l' = {**(a.f), *(a.f), a.f, a.h} *)
-          (** Adhoc: if p' is not in l, which means that p' may be a
+  if Paths.is_empty (Paths.filter (fun elt => is_prefix p elt) l) then
+    match p with
+    | Plocal _ _ =>
+        Paths.add p l
+    | Pfield p' _ _ =>
+        (* difficult case: assume p = [**(a.f).g], p' = [**(a.f)], l = ∅ *)
+        let l' := collect p' l in (* l' = {**(a.f), *(a.f), a.f, a.h} *)
+        (** Adhoc: if p' is not in l, which means that p' may be a
           Pdowncast, we do not collect its subfields *)
-          if Paths.mem p' l' then
-            let siblings := siblings p in (* sib = {**(a.f).k, **(a.f).l} *)
-            (* l'\{p'} ∪ siblings ∪ {p} *)
-            (* ret = {*(a.f), a.f, a.h, **(a.f).k, **(a.f).l, **(a.f).f} *)
-            (* we can see that each element occupies a memory location *)
-            Paths.union (Paths.remove p' l') (Paths.add p siblings)
-          else
-            l            
-      | Pderef p' ty =>
-          (* If type of [p] is [Tbox^n<T>] then add its n children to [l] *)
-          (* let children := own_path_box p ty in *)
-          (* let l' := Paths.union l children in *)
-          let l' := collect p' l in
-          (** Adhoc: if p' is not in l, which means that p' may be a
+        if Paths.mem p' l' then
+          let siblings := siblings p in (* sib = {**(a.f).k, **(a.f).l} *)
+          (* l'\{p'} ∪ siblings ∪ {p} *)
+          (* ret = {*(a.f), a.f, a.h, **(a.f).k, **(a.f).l, **(a.f).f} *)
+          (* we can see that each element occupies a memory location *)
+          Paths.union (Paths.remove p' l') (Paths.add p siblings)
+        else
+          l            
+    | Pderef p' ty =>
+        (* If type of [p] is [Tbox^n<T>] then add its n children to [l] *)
+        (* let children := own_path_box p ty in *)
+        (* let l' := Paths.union l children in *)
+        let l' := collect p' l in
+        (** Adhoc: if p' is not in l, which means that p' may be a
           Pdowncast (note that p' must have Tbox type), we do not
           collect its children *)
-          if Paths.mem p' l' then
-            Paths.add p l'
-          else
-            l
-      (** FIXME: we treat enum as a whole location  *)
-      | Pdowncast p' _ _ => collect p' l
-      end
-    else l
+        if Paths.mem p' l' then
+          Paths.add p l'
+        else
+          l
+    (** FIXME: we treat enum as a whole location  *)
+    | Pdowncast p' _ _ => collect p' l
+    end
   else l.
 
     
 Definition collect_place (p: place) (m: PathsMap.t) : PathsMap.t :=
   let id := local_of_place p in
   let l := PathsMap.get id m in
-  PathsMap.set id (collect p l) m.
+  PathsMap.set id (collect (owner_place p) l) m.
 
 Definition collect_option_place (p: option place) (m: PathsMap.t) : PathsMap.t :=
   match p with
@@ -198,10 +224,7 @@ Fixpoint collect_pexpr (pe: pexpr) (m: PathsMap.t) : PathsMap.t :=
   | Eplace p _
   | Ecktag p _
   | Eref _ _ p _ =>
-      (* we only check p which represents/owns a memory location *)
-      if place_owns_loc p then
-        collect_place p m
-      else m
+      collect_place p m
   | Eunop _ pe _ =>
       collect_pexpr pe m
   | Ebinop _ pe1 pe2 _ =>

@@ -661,12 +661,16 @@ Proof.
     (** Inversion of WTFP *)
     rewrite WT2 in WTFP. inv WTFP; simpl in *; try congruence.
     rewrite WT3 in CO. inv CO.
-    exploit WT0; eauto. intros (ffp & fofs & INFPL & FOFS& WTFP1).
+    exploit WT0; eauto. 
+    (** TODO: update field_type in wt_path  *)
+    admit.
+    intros (ffp & fofs & INFPL & FOFS& WTFP1).
     exists b, (ofs+fofs), ffp. repeat apply conj; auto.
     (* get_loc_footprint_map *)
     simpl. destruct (path_of_place p) eqn: POP.
     eapply get_loc_footprint_map_app. eauto.
-    simpl.  rewrite INFPL. auto.        
+    simpl.  rewrite INFPL. auto.
+    eauto.
   (* Pderef *)
   - inv WT.
     unfold dominators_is_init in POWN. simpl in POWN.
@@ -782,7 +786,8 @@ Proof.
     + destruct (co_members co) eqn: MEMBS; try congruence.
       simpl in MOVE. destruct m.
       eapply andb_true_iff in MOVE as (M1 & M2).
-      replace t with (typeof_place (Pfield p id t)) in M1 by auto.
+      set (t' := (replace_origin_in_type t (combine (co_generic_origins co) l))) in *.
+      replace t' with (typeof_place (Pfield p id t')) in M1 by auto.
       exploit IH; eauto.
       eapply PTree_removeR; eauto.
       intros (p2 & IN & SHA).
@@ -944,14 +949,17 @@ Proof.
       exploit WT2; eauto. intros (fty & A & B & C).
       eapply IH. instantiate (1 := (PTree.remove id1 ce1)).
       eapply PTree_removeR. eauto. eauto.
-      assert (INMEM: In (Pfield (Pderef p (Tstruct l id1)) fid fty, fty) (map (fun '(Member_plain fid fty) => (Pfield (Pderef p (Tstruct l id1)) fid fty, fty)) (co_members co))).
+      instantiate (1 := Pfield (Pderef p (Tstruct l id1)) fid (replace_origin_in_type fty (combine (co_generic_origins co) l))).
+      set (fty' := (replace_origin_in_type fty (combine (co_generic_origins co) l))) in *.
+      assert (INMEM: In (Pfield (Pderef p (Tstruct l id1)) fid fty', fty') (map (fun '(Member_plain fid fty) => (Pfield (Pderef p (Tstruct l id1)) fid
+                  (replace_origin_in_type fty (combine (co_generic_origins co) l)),
+               replace_origin_in_type fty (combine (co_generic_origins co) l))) (co_members co))).
       { exploit field_type_implies_field_tag. eapply A.
         intros (tag & FTAG & NTH). eapply list_nth_z_in in NTH.
         eapply in_map_iff. exists (Member_plain fid fty).
         rewrite  P in CO. inv CO.
         split; eauto. }
-      generalize (POWN (Pfield (Pderef p (Tstruct l id1)) fid fty, fty) INMEM).
-      instantiate (1 := Pfield (Pderef p (Tstruct l id1)) fid fty).
+      generalize (POWN (Pfield (Pderef p (Tstruct l id1)) fid fty', fty') INMEM).
       eauto.
       auto.
       (* get_loc_footprint_map *)
@@ -959,8 +967,8 @@ Proof.
       eapply get_loc_footprint_map_app; eauto.
       eapply get_loc_footprint_map_app; eauto.
       simpl. eauto. simpl. rewrite H. auto.
-      (* wt_footprint *)
-      simpl. auto.
+      (** use place_field_type in wt_footprint *)
+      simpl. admit.
       (* ce_extend *)
       eapply ce_extends_remove. auto.
     (* Tvariant *)
@@ -1001,22 +1009,26 @@ Proof.
     exploit WT2; eauto. intros (fty & A & B & C).
     eapply IH. instantiate (1 := (PTree.remove id1 ce1)).
     eapply PTree_removeR. eauto. eauto.
-    assert (INMEM: In (Pfield p fid fty, fty) (map (fun '(Member_plain fid fty) => (Pfield p fid fty, fty)) (co_members co))).
+    instantiate (1 := Pfield p fid (replace_origin_in_type fty (combine (co_generic_origins co) l))).
+    set (fty' := (replace_origin_in_type fty (combine (co_generic_origins co) l))) in *.
+    assert (INMEM: In (Pfield p fid fty', fty') (map (fun '(Member_plain fid fty) => (Pfield p fid
+                                                                                                              (replace_origin_in_type fty (combine (co_generic_origins co) l)),
+                                                                                                             replace_origin_in_type fty (combine (co_generic_origins co) l))) (co_members co))).
     { exploit field_type_implies_field_tag. eapply A.
       intros (tag & FTAG & NTH). eapply list_nth_z_in in NTH.
       eapply in_map_iff. exists (Member_plain fid fty).
       generalize P as P1. intros. eapply EXTEND in P1.
       rewrite P1 in CO. inv CO.
       split; eauto. }    
-    generalize (POWN (Pfield p fid fty, fty) INMEM).
-    instantiate (1 := (Pfield p fid fty)). eauto.    
+    generalize (POWN (Pfield p fid fty', fty') INMEM).
+    eauto.    
     auto.
     (* place_footprint *)
     simpl. destruct (path_of_place p) eqn: POP.
     eapply get_loc_footprint_map_app; eauto.
     simpl. rewrite H. auto.
-    (* wt_footprint *)
-    simpl. auto.
+    (** use place_field_type in wt_footprint *)
+    simpl. admit.
     (* ce_extend *)
     eapply ce_extends_remove; eauto.
   (* Tvariant *)

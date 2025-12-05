@@ -1955,13 +1955,16 @@ Proof.
   - destruct (path_of_place p) eqn: POP. inv H0.
     inv H. econstructor; eauto.
     rewrite <- WT2. eauto.
+    (** TODO: update field_type in wt_path  *)
+    admit.
   - destruct (path_of_place p) eqn: POP. inv H0.
     inv H. econstructor; eauto.
   - destruct (path_of_place p) eqn: POP. inv H0.
     inv H. rewrite WT2. econstructor; eauto.
-    rewrite <- WT2. eauto.
-Qed.    
-
+    rewrite <- WT2. eauto.    
+    (** TODO: update field_type in wt_path  *)
+    admit.
+Admitted.
 
 (** IMPORTANT TODO *)
 Lemma get_wt_footprint_wt: forall phl ty1 ty2 ce (WTPH: wt_path ce ty1 phl ty2) fp1 fp2,

@@ -15,16 +15,17 @@ let temp_name (id: AST.ident) =
     Printf.sprintf "$%d" (P.to_int id)
 
 let rec print_place out (p: place) =
-  (* match p with
-  | Plocal(id, ty) ->
-    fprintf out "%s with %s" (extern_atom id) (name_rust_type ty)
-  | Pderef(p', ty) ->
-    fprintf out "*%a with %s" print_place p' (name_rust_type ty)
-  | Pfield(p', fid, ty) ->
-    fprintf out "%a.%s with %s" print_place p' (extern_atom fid)  (name_rust_type ty)
-  | Pdowncast(p',fid, _) ->
-      fprintf out "(%a as %s)" print_place p' (extern_atom fid) *)
+  (* Also print the type of this place *)
   match p with
+  | Plocal(id, ty) ->
+    fprintf out "%s with %s " (extern_atom id) (name_rust_type ty)
+  | Pderef(p', ty) ->
+    fprintf out "*%a with %s " print_place p' (name_rust_type ty)
+  | Pfield(p', fid, ty) ->
+    fprintf out "%a.%s with %s " print_place p' (extern_atom fid)  (name_rust_type ty)
+  | Pdowncast(p',fid, ty) ->
+      fprintf out "(%a as %s) with %s " print_place p' (extern_atom fid) (name_rust_type ty)
+  (* match p with
   | Plocal(id, ty) ->
     fprintf out "%s" (extern_atom id)
   | Pderef(p', ty) ->
@@ -32,7 +33,7 @@ let rec print_place out (p: place) =
   | Pfield(p', fid, ty) ->
     fprintf out "%a.%s" print_place p' (extern_atom fid)
   | Pdowncast(p',fid, _) ->
-      fprintf out "(%a as %s)" print_place p' (extern_atom fid)
+      fprintf out "(%a as %s)" print_place p' (extern_atom fid) *)
 
 (* Precedences and associativity (copy from PrintClight.ml) *)
 

@@ -50,7 +50,7 @@ Section REC.
           else
             must_movable' init uninit universe (Pderef p ty1) ty1
         else false
-    | Tstruct _ id =>
+    | Tstruct orgs id =>
         match get_composite ce id with
         | co_some i co P _ =>
             if must_init init uninit universe p then
@@ -64,9 +64,15 @@ Section REC.
               match co_members co with
               | nil => false
               | _ =>
-                  (* the whole struct is not in the universe, so we must
-              check its sub-fields *)
-                  let fields_types := map (fun '(Member_plain fid fty) => (Pfield p fid fty, fty)) co.(co_members) in
+                  (* The whole struct is not in the universe, so we
+              must check its sub-fields. One point is that we should
+              also replace the generic regions in fty with the
+              function-internal regions. TODO: find some way to make
+              it more easy to reason about. *)
+                  let fields_types := map (fun '(Member_plain fid fty) => 
+                                             let rels := combine co.(co_generic_origins) orgs in
+                                             let fty1 := replace_origin_in_type fty rels in
+                                             (Pfield p fid fty1, fty1)) co.(co_members) in
                   (** All sub-fields must be movable *)
                   forallb (fun '(fp, ft) => rec (PTree.remove i ce) (PTree_removeR _ _ _ P) init uninit universe fp ft) fields_types
               end
@@ -102,32 +108,6 @@ End REC.
 Definition must_movable_fix ce := Fix (@well_founded_removeR composite) must_movable' ce.
 
 Definition must_movable ce init uninit universe p := must_movable_fix ce init uninit universe p (typeof_place p).
-
-(* Compute the deepest place of [p] that does not contain reference,
-i.e., it represent a memory location that is no accessed via
-reference. The return value (is_owner, p) satisfies: if is_owner is
-true, than p is the same as the argument place (it is also the deepest
-owner), otherwise p is the deepest owner of the argument *)
-Fixpoint owner_place' (p: place) : bool * place :=
-  match p with
-  | Plocal _ _ => (true, p)
-  | Pderef p1 ty =>
-      let (is_owner, p2) := owner_place' p1 in
-      if is_owner then 
-        match typeof_place p1 with
-        | Tbox _ => (true, p)
-        (* p is not owner place, i.e., it is accessed via reference *)
-        | _ => (false, p2)
-        end
-      else (false, p2)
-  | Pfield p1 fid fty
-  | Pdowncast p1 fid fty =>
-      let (is_owner, p2) := owner_place' p1 in
-      if is_owner then (true, p)
-      else (false, p2)
-  end.
-        
-Definition owner_place (p: place) := snd (owner_place' p).
 
 Section INIT.
 

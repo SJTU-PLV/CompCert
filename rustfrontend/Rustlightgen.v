@@ -551,21 +551,21 @@ with transl_arm_statements (sl: arm_statements) (p: place) (co: composite) : mon
       do arm' <- transl_stmt arm;
       match ids with
       | Some (fid, temp_id) =>
-          (* Replace temp_id with (p as fid) in [arm] *)
+          (* Generate a variable declaration [let temp_id = Pdowncast
+          p fid in arm] *)
           match List.find (fun elt => ident_eq (name_member elt) fid) co.(co_members) with
           | Some m =>
+              (* let temp_id : ty in
+                 temp_id := move (Pdowncast p fid);
+                 arm' *)
               let ty := type_member m in
               (* replace generic origins in ty with dummy origins *)
               let dummy_org := dummy_origin Datatypes.tt in
               let ty := replace_type_with_dummy_origin dummy_org ty in
               let cond := Ecktag p fid in
               let p' := Pdowncast p fid ty in
-              (* move p' or copy p'. TODO: support [&mut] p' *)
-              let then_stmt := replace_binder_in_stmt temp_id p' arm' in
-              (* (** FIXME: We do not want to (p as fid) *) *)
-              (* let destruct_place := if moved then Emoveplace p' ty else (Epure (Eplace p' ty)) in *)
-              (* let assign_temp := Sassign (Plocal temp_id ty) destruct_place in *)
-              (* let then_stmt := Slet temp_id ty (Ssequence assign_temp arm') in *)
+              let temp_local := Plocal temp_id ty in
+              let then_stmt := Slet temp_id ty (Ssequence (Sassign temp_local (Emoveplace p' ty)) arm') in
               match sl' with
               | ASnil =>
                   (* Some optimization: the last branch, no need to check the tag*)

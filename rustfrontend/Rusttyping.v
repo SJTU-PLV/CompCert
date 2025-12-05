@@ -237,6 +237,15 @@ Fixpoint is_mutable_place (p: place) : bool :=
       is_mutable_place p1
   end.
 
+(* The original field_type only produces the type with generic regions
+of this struct/enum, but we need it to produce types with internal
+regions of the current function. *)
+(** TODO: use it to replace some code in ReplaceOrigins.v *)
+Definition place_field_type (co: composite) (fid: ident) (orgs: list origin) : res type :=
+   do fty <- field_type fid co.(co_members);
+   let rels := combine (co.(co_generic_origins)) orgs in
+   OK (replace_origin_in_type fty rels).
+
 
 Definition typenv := PTree.t type.
 
@@ -259,14 +268,14 @@ Inductive wt_place : place -> Prop :=
     (WT1: wt_place p)
     (WT2: typeof_place p = Tstruct orgs id)
     (WT3: ce ! id = Some co)
-    (WT4: field_type fid co.(co_members) = OK ty)
+    (WT4: place_field_type co fid orgs = OK ty)
     (WT5: co.(co_sv) = Struct),
     wt_place (Pfield p fid ty)
 | wt_downcast: forall p ty fid co orgs id
     (WT1: wt_place p)
     (WT2: typeof_place p = Tvariant orgs id)
     (WT3: ce ! id = Some co)
-    (WT4: field_type fid co.(co_members) = OK ty)
+    (WT4: place_field_type co fid orgs = OK ty)
     (WT5: co.(co_sv) = TaggedUnion),
     wt_place (Pdowncast p fid ty).
 
@@ -333,14 +342,15 @@ Inductive wt_stmt: statement -> Prop :=
     (TEQ: type_eq_except_origins (typeof e) (typeof_place p) = true),
     (* Require the type of p equal to the type of e? *)
     wt_stmt (Sassign p e)
-| wt_Sassign_variant: forall p id fid e co fty
+| wt_Sassign_variant: forall p id fid e co fty orgs
     (WT1: wt_place p)
     (WT2: wt_expr e)
     (WT3: ce ! id = Some co)
     (* used to prove assign_loc_variant_sound *)
     (WT4: co.(co_sv) = TaggedUnion)
     (MUT: is_mutable_place p = true)
-    (FTY: field_type fid (co_members co) = OK fty)
+    (PTY: typeof_place p = Tvariant orgs id)
+    (FTY: place_field_type co fid orgs = OK fty)
     (TEQ: type_eq_except_origins (typeof e) fty = true),
     wt_stmt (Sassign_variant p id fid e)
 | wt_Sbox: forall p e ty
@@ -721,11 +731,11 @@ Variable te: typenv.
             | Some co =>
                 match co_sv co with
                 | Struct =>
-                    do fty1 <- field_type fid (co_members co);
+                    do fty1 <- place_field_type co fid orgs;
                     if type_eq fty fty1 then
                   OK tt
                     else
-                      Error (msg "wrong field type")
+                      Error [CTX (local_of_place p); MSG " wrong field type"]
                 | _ => Error (msg "not struct in field type")
                 end
             | _ => Error (msg "no composite")
@@ -740,11 +750,11 @@ Variable te: typenv.
             | Some co =>
                 match co_sv co with
                 | TaggedUnion =>
-                    do fty1 <- field_type fid (co_members co);
+                    do fty1 <- place_field_type co fid orgs;
                     if type_eq fty fty1 then
                   OK tt
                     else
-                      Error (msg "wrong field type")
+                      Error [CTX (local_of_place p); MSG " wrong downcast type"]
                 | _ => Error (msg "not variant in downcast type")
                 end
             | _ => Error (msg "no composite")
@@ -865,19 +875,26 @@ Fixpoint type_check_stmt (stmt: statement) : res unit :=
       do _ <- type_check_expr e;
       do _ <- type_check_place p;
       if is_mutable_place p then
-        match ce!id with
-        | Some co =>
-            match co_sv co with
-            | TaggedUnion => 
-                do fty <- field_type fid (co_members co);
-                if type_eq_except_origins (typeof e) fty then
-                  OK tt
-                else
-                  Error (msg "assign_variant: LHS and RHS type differs")
-            | _ => Error (msg "assign_variant: the type of place is not variant")
-            end
-        | _ => Error (msg "assign_variant type error")
-        end
+        (* p must have variant type *)
+        match typeof_place p with
+        | Tvariant orgs id1 =>
+            if ident_eq id1 id then              
+              match ce!id with
+              | Some co =>
+                  match co_sv co with
+                  | TaggedUnion => 
+                      do fty <- place_field_type co fid orgs;
+                      if type_eq_except_origins (typeof e) fty then
+                        OK tt
+                      else
+                        Error (msg "assign_variant: LHS and RHS type differs")
+                  | _ => Error (msg "assign_variant: the composite is not variant")
+                  end
+              | _ => Error (msg "assign_variant type error")
+              end
+            else Error [CTX (local_of_place p);  MSG " assign_variant: variants id are not equal"]
+        | _ => Error [CTX (local_of_place p);  MSG " assign_variant: the type of place is not variant"]
+        end              
       else Error (msg "Sassign_variant: modify a not mutable place")
   | Sbox p e =>
       do _ <- type_check_expr e;
@@ -1048,6 +1065,8 @@ Proof.
     eapply type_check_expr_sound; eauto.
   - monadInv CK. 
     destruct is_mutable_place eqn: MUT in EQ2; try congruence.
+    destruct (typeof_place p) eqn: PTY in EQ2; try congruence.
+    destruct (ident_eq i1 i) eqn: IDEQ in EQ2; try congruence; subst.
     destruct x. destruct x0.
     destruct (ce!i) eqn: CO; try congruence.
     destruct (co_sv c) eqn: SV; try congruence.

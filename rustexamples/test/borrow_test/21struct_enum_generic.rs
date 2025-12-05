@@ -15,11 +15,14 @@ fn main(){
     let b: B = B::f(&v1);
     match b {
         B::f(r) => {
-            printf("%d\n", *r);
+            let tmp1: i32 = *r;
         }
         B::g(r1, r2) => {
-            printf("%d and %d\n", *r1, *r2);
+            let tmp2: i32 = *r1;
+            let tmp3: i32 = *r2;
+            // printf("%d and %d\n", *r1, *r2);
         }
     };
-    printf("%d\n", *(a.x));
+    let tmp4: i32 = *(a.x);
+    // printf("%d\n", *(a.x));
 }
