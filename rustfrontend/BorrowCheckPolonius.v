@@ -41,122 +41,6 @@ Definition aggregate_origin_states (e: LOrgEnv.t) (orgs: list origin) : LOrgSt.t
 Definition map_loan_set (f: loan -> loan) (ls: LoanSet.t) : LoanSet.t :=
   LoanSet.fold (fun ln acc => LoanSet.add (f ln) acc) ls LoanSet.empty.
 
-(** TODO: move this function to Rusttypes and use it to replace some
-code in ReplaceOrigins.v *)
-Definition place_field_type (ty: type) (fid: ident) : type :=
-  match ty with
-  | Tstruct orgs id
-  | Tvariant orgs id =>
-      match ce ! id with
-      | Some co =>
-          match field_type fid co.(co_members) with
-          | OK fty =>
-              let rels := combine (co.(co_generic_origins)) orgs in
-              replace_origin_in_type fty rels
-          (* Impossible: we have done type check *)
-          | _ => Tunit
-          end
-      | _ =>
-          (* Impossible: we have done type check *)
-          Tunit
-      end
-  (* Impossible: we have done type check *)
-  | _ => Tunit
-  end.
-
-(* We need to query the ce to get the right type for this place when
-applied with ph. We need to do this because we want to maintain that
-all the places in the loans set are well-typed if we want to prove the
-invariance property *)
-Definition apply_path_to_place (ph: path) (p: place) : place :=
-  match ph with
-  | ph_deref => Pderef p (deref_type (typeof_place p))
-  | ph_field fid => Pfield p fid (place_field_type (typeof_place p) fid)
-  | ph_downcast _ fid => Pdowncast p fid (place_field_type (typeof_place p) fid)
-  end.
-
-Definition apply_path_to_loan (ph: path) (ln: loan) :=
-  match ln with
-  | Lintern mut p => Lintern mut (apply_path_to_place ph p)
-  | Lextern org => Lextern org
-  end.
-      
-Definition apply_path_to_origin_state (ph: path) (st: LOrgSt.t) : LOrgSt.t :=
-  match st with
-  | Live ls =>
-      Live (map_loan_set (apply_path_to_loan ph) ls)
-  | Dead => Dead
-  end.
-
-
-Fixpoint raw_type_eq (ty1 ty2: type) : bool :=
-  match ty1, ty2 with
-  | Treference _ _ ty1, Treference _ _ ty2 =>
-      raw_type_eq ty1 ty2
-  | Tbox ty1, Tbox ty2 =>
-      raw_type_eq ty1 ty2
-  | Tstruct _ id1, Tstruct _ id2
-  | Tvariant _ id1, Tvariant _ id2 =>
-      ident_eq id1 id2
-  | _, _ => type_eq ty1 ty2
-  end.
-
-(** Is it OK to use type_eq_except_origins? Because there may be an
-region 'a that points to &i32 and &mut i32, should we consider they
-may be aliased? *)
-Definition filter_type_loan_set (ty: type) (ls: LoanSet.t) : LoanSet.t :=
-  LoanSet.filter (fun ln => match ln with
-                         | Lintern mut p => raw_type_eq (typeof_place p) ty
-                         | Lextern org => true
-                         end) ls.
-
-Definition filter_type_origin_state (ty: type) (st: LOrgSt.t) : LOrgSt.t :=
-  match st with
-  | Live ls => Live (filter_type_loan_set ty ls)
-  | Dead => Dead
-  end.
-
-(** Unused for now as we do not compute the loan that actually
-represents the location of p *)
-(* [pty] is the type of the loans that we expect *)
-Fixpoint loans_of_place (e: LOrgEnv.t) (mut: mutkind) (p: place) : LOrgSt.t :=
-  (* We should make sure that the loans we return must have the same type as typeof(p) *)
-  match p with
-  | Plocal id ty =>
-      (Live (LoanSet.singleton (Lintern mut p)))
-  | Pderef p1 ty => 
-      match (typeof_place p1) with
-      | Treference org Mutable _ => 
-          let ls1 := loans_of_place e mut p1 in
-          (* apply deref operation in ls1 *)
-          (** Once we want to make our proof simple if we can make the
-          loan in the region exactly represents the location the place
-          may point to. But I find that when considering the
-          abstraction and flow performed by function call, it is not
-          possible to maintain this property. *)
-          (* let ls2 := apply_path_to_origin_state ph_deref ls1 in *)
-          (* ensure the type in e!org is correct *)
-          let org_ls := filter_type_origin_state ty (LOrgEnv.get org e) in
-          let ls3 := (LOrgSt.lub org_ls ls1) in
-          LOrgSt.lub ls3 (Live (LoanSet.singleton (Lintern mut p)))
-      | Treference org Immutable _ => 
-          (** FIXME: for immutable reference, we do not need to
-          compute the loans aliased with p1? *)
-          let ls1 := LOrgEnv.get org e in
-          LOrgSt.lub ls1 (Live (LoanSet.singleton (Lintern mut p)))
-      (* Impossible *)
-      | _ => (Live (LoanSet.singleton (Lintern mut p)))
-      end
-  | Pfield p1 fid fty =>
-      let ls1 := loans_of_place e mut p1 in
-      (* let ls2 := apply_path_to_origin_state (ph_field fid) ls1 in *)
-      LOrgSt.lub ls1 (Live (LoanSet.singleton (Lintern mut p)))
-  | Pdowncast p1 fid fty =>
-      let ls1 := loans_of_place e mut p1 in
-      (* let ls2 := apply_path_to_origin_state (ph_downcast (typeof_place p1) fid) ls1 in *)
-      LOrgSt.lub ls1 (Live (LoanSet.singleton (Lintern mut p)))
-  end.
-
 (* Transition of pure expression *)
 
 Fixpoint transfer_pure_expr (e: LOrgEnv.t) (pe: pexpr) : LOrgEnv.t :=
@@ -391,8 +275,6 @@ Fixpoint bind_type_origins (ty1 ty2: type) (fk: flow_kind) : list (origin * orig
       (* TODO: support covariant *)
       let len := length orgs1 in
       (combine (combine orgs1 orgs2) (repeat ByRef len))
-      (* else *)
-      (*   Error (error_msg pc ++ [MSG "mismatch between the length of origins in type"; CTX id1; MSG "(bind_type_origins)"]) *)
   | _, _ => []
   end.
 
@@ -405,13 +287,6 @@ Fixpoint bind_type_origins_list (tyl: list (type * type)) :=
 
 Definition flow_loans_origin_to_origin (se te: LOrgEnv.t) (src tgt: origin) : LOrgEnv.t :=
   LOrgEnv.set tgt (LOrgSt.lub (LOrgEnv.get src se) (LOrgEnv.get tgt te)) te.
-  (* match LOrgEnv.get src se, LOrgEnv.get tgt te with *)
-  (* | Live ls1, Live ls2 => *)
-  (*     let te' := LOrgEnv.set tgt (Live (LoanSet.union ls1 ls2)) te in *)
-  (*     OK te' *)
-  (* | _, _ => *)
-  (*     Error (error_msg pc ++ [CTX src; CTX tgt; MSG "flow_loans_origin_to_origin"]) *)
-  (* end. *)
 
 
 Fixpoint flow_loans_bind (se: LOrgEnv.t) (te: LOrgEnv.t) (rels: list origin_rel) (l: list (origin * origin * flow_kind)) : LOrgEnv.t * list origin_rel :=
@@ -449,14 +324,6 @@ Definition after_call (fe: LOrgEnv.t) (rels: list origin_rel) : LOrgEnv.t :=
 
 Definition flow_loans_origin_to_origin_with_alias (fe e: LOrgEnv.t) (forg org: origin) : LOrgEnv.t :=
   LOrgEnv.set org (LOrgSt.lub (LOrgEnv.get forg fe) (LOrgEnv.get org e)) e.
-
-  (* match LOrgEnv.get src se, LOrgEnv.get tgt te with *)
-  (* | Live ls1, Live ls2 => *)
-  (*     let te' := set_loans_with_alias tgt (LoanSet.union ls1 ls2) te ag in *)
-  (*     OK te' *)
-  (* | _, _ => *)
-  (*     Error (error_msg pc ++ [CTX src; CTX tgt; MSG "flow_loans_origin_to_origin_with_alias"]) *)
-  (* end. *)
 
 (* Flow back the loans based on the invariant relation established by
 the bind_params_origins *)
@@ -497,30 +364,6 @@ Definition transfer_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: 
           flow_loans oe4 rty tgt_rety ByVal
           (** The following code is the old-version implementation of
           function call *)
-          (* Move it to rusttyping. if forallb (fun '(ty1, ty2) => type_eq_except_origins ty1 ty2) (combine arg_tyl sig_tyl) && type_eq_except_origins tgt_rety rty then *)
-          (* construct empty origin environments for function origins *)
-          (* let foe1 := LOrgEnv.bot in *)
-          (* let (foe2, rels) := bind_param_origins oe2 foe1 args_tyl sig_tyl in *)
-          (* (* use the origin relation to simulate the flow of loans *)
-          (*    in the caller. foe2 is the initial env in the callee, *)
-          (*    foe3 is the final env *) *)
-          (* let foe3 := after_call foe2 org_rels in *)
-          (* (* update the invariant relation established by the *)
-          (* evaluation of function parameters *) *)
-          (* let oe3 := flow_alias_after_call rels foe3 oe2 in *)
-          (* (* shallow write to p *) *)
-          (* (* do oe4 <- shallow_write_place pc f oe3 p; *) *)
-          (* (* after check_shallow_write_place *) *)
-          (* let oe4 := kill_loans oe3 p in *)
-          (* (flow_return_after_call foe3 oe4 rty tgt_rety) *)
-          (* (* kill relevant loans *) *)
-          (*   let live3 := kill_loans live2 p in *)
-          (*   (* flow loans to the return type and update alias *) *)
-          (*   do oe4 <- flow_alias_after_call pc ag2 rels foe3 oe3; *)
-          (*   do oe5 <- flow_return_after_call pc ag2 foe3 oe4 rty tgt_rety; *)
-          (*   OK (live3, oe5, ag2) *)
-          (* else *)
-          (*   Error (error_msg pc ++ [MSG "type checking fails in check_function_call"]) *)
       end
   | _ => oe1
 (* Error (error_msg pc ++ [MSG "it is not a function type in check_function_call"])       *)
@@ -547,22 +390,6 @@ Definition check_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: lis
           let oe4 := after_call oe3 org_rels in
           (* check the assignment of assigning the return value to p *)
           check_shallow_write_place oe4 p
-          (** The following code is the old-version implementation of
-          function call *)
-          (* Move it to rusttyping. if forallb (fun '(ty1, ty2) => type_eq_except_origins ty1 ty2) (combine arg_tyl sig_tyl) && type_eq_except_origins tgt_rety rty then *)
-          (* construct empty origin environments for function origins *)
-          (* let foe1 := LOrgEnv.bot in *)
-          (* let (foe2, rels) := bind_param_origins oe2 foe1 args_tyl sig_tyl in *)
-          (* (* use the origin relation to simulate the flow of loans *)
-          (*    in the caller. foe2 is the initial env in the callee, *)
-          (*    foe3 is the final env *) *)
-          (* let foe3 := after_call foe2 org_rels in *)
-          (* (* update the invariant relation established by the *)
-          (* evaluation of function parameters *) *)
-          (* let oe3 := flow_alias_after_call rels foe3 oe2 in *)
-          (* (* shallow write to p *) *)
-          (* (* do oe4 <- shallow_write_place pc f oe3 p; *) *)
-          (* check_shallow_write_place oe3 p *)
       end
   | _ => OK tt
   end.
