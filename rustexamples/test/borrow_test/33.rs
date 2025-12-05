@@ -14,5 +14,5 @@ fn main(){
     *p1 = 2; // note that if we comment line 12, there is no error reported, because the relations betweem ('p1, 'q2) and ('p2, 'q2) are not merged
     v1 = 13; // Using v1 should not invalidate p2 as it is impossible that p2 points to v1
              // 'q1 -> {p1, p2}, ['p1, 'p2, 'q2] -> Invalid
-    *p2 = 3;
+    // *p2 = 3; // If we uncomment this line, error should be reported at line 15 (the last line)
 }

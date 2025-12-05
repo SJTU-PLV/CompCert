@@ -1,37 +1,20 @@
 //rustc +nightly 36.rs -Z polonius=next
 
-
-
 fn main(){
-    let mut v1 = 1;
-    let mut v2 = 2;
-    let mut p1 = &v1;
-    let mut p2 = &v2;
-    let mut q: && i32;
+    let v1: i32 = 1;
+    let v2: i32 = 2;
+    let p1: &i32 = &v1;
+    let p2: &i32 = &v2;
+    let q : & & i32;
     if true {
         q = &p1;
     } else {
         q = &p2;
     }
-    println!("{}", **q); // make sure q is live
-    v1 = 2; // It would be error if we use mutable references
-    println!("{}", *p2);
+    // println!("{}", **q); // make sure q is live
+    let tmp: i32 = **q;
+    v1 = 2; // Use *p2 (i.e., v2) at the next line should not interfere with the use of v1
+    tmp = *p2;
+    // println!("{}", *p2);
 
 }
-
-// fn main(){
-//     let mut v1 = 1;
-//     let mut v2 = 2;
-//     let mut p1 = &mut v1;
-//     let mut p2 = &mut v2;
-//     let mut q: &mut &mut i32;
-//     if true {
-//         q = &mut p1;
-//     } else {
-//         q = &mut p2;
-//     }
-//     println!("{}", **q); // make sure q is live
-//     v1 = 2; // It would be error if we use mutable references
-//     println!("{}", *p2);
-
-// }

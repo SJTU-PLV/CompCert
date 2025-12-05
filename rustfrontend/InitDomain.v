@@ -398,18 +398,18 @@ End IM.
 
 (** Comment for [split_drop_places]: When executing a Sdrop(p)
 statement, we cannot directly evaluate the address of p and
-recursively free its data, because p may be partial owned. So we need
-to split p into list of places that are owned. It is not trivial
-because we have to ensure the order (specifically, topological order)
-of this list of places so that we can free a place by assuming that
-all its children are freed. Moreover, some of the generated split
-places may have scalar type (which has no effect in the semantics, see
-step_dropplace_scalar in RustIRown and Rustlightown) because we need
-to generate all the places in the universe which are children of the
-[p]. It is necessary to ensure the soundness of the init-analysis
-because we need to establish the relation between dynamic ownership
-update in step_dropplace and static ownership update in init-analysis
-respectively. *)
+recursively free its data, because p may partially owns its data. So
+we need to split p into list of places that fully own their data. It
+is not trivial because we have to ensure the order (specifically,
+topological order) of this list of places so that we can free a place
+by assuming that all its children are freed. Moreover, some of the
+generated split places may have scalar type (which has no effect in
+the semantics, see step_dropplace_scalar in RustIRown and
+Rustlightown) because we need to generate all the places in the
+universe which are children of the [p]. It is necessary to ensure the
+soundness of the init-analysis because we need to establish the
+relation between dynamic ownership update in step_dropplace and static
+ownership update in init-analysis respectively. *)
 
 Section SPLIT.
 Variable universe: Paths.t.
@@ -426,6 +426,8 @@ flag is necessary *)
 Fixpoint split_drop_place' (p: place) (ty: type) : res (list (place * bool)) :=
   match ty with
   | Tstruct orgs1 id =>
+      (** TODO: if we allow collecting overlapped places, we should
+      use is_full here. *)
       (* p in universe indicates that p is fully owned/moved (no p's
       children mentioned in this function) *)
       if Paths.mem p universe then
