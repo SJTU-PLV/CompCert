@@ -7,6 +7,10 @@ FAIL_EXPECTED := 01.rs 03.rs 11.rs 12.rs 13.rs 15.rs 16.rs 17.rs 18.rs 22dangle.
 CCOMP=../../../ccomp
 CCOMP_FLAGS=-S
 
+GREEN=\033[32m
+RED=\033[31m
+RESET=\033[0m
+
 # default target
 all: test
 
@@ -19,15 +23,15 @@ test: $(SRCS)
 		out=$$($(CCOMP) $(CCOMP_FLAGS) $$f 2>/dev/null; echo $$?); \
 		if echo "$(FAIL_EXPECTED)" | grep -q "$$f"; then \
 			if [ $$out -ne 0 ]; then \
-				printf "PASS (expected failure): %s\n" "$$f"; \
+				printf "$(GREEN)PASS$(RESET) (expected failure): %s\n" "$$f"; \
 			else \
-				printf "FAIL (unexpected success): %s\n" "$$f"; \
+				printf "$(RED)FAIL$(RESET) (unexpected success): %s\n" "$$f"; \
 			fi; \
 		else \
 			if [ $$out -eq 0 ]; then \
-				printf "PASS (success): %s\n" "$$f"; \
+				printf "$(GREEN)PASS$(RESET) (success): %s\n" "$$f"; \
 			else \
-				printf "FAIL (compile error): %s\n" "$$f"; \
+				printf "$(RED)FAIL$(RESET) (compile error): %s\n" "$$f"; \
 			fi; \
 		fi; \
 	done

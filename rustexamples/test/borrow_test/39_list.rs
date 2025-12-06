@@ -81,6 +81,6 @@ fn main(){
     // step1: ['a] -> {l2}, ['b, 'l2] -> {l0, l1, v1, v2}, ['c] -> {v3}, ['d] -> {v4}
     // step2: ['a] -> {l2}, ['b, 'l2] -> {l0, l1, v1, v2, v3, v4}, ['c] -> {v3}, ['d] -> {v4}
     // step3 (apply liveness): ['l2] -> {l0, l1, v1, v2, v3, v4}
-    // Cannot access any loans in ['l2]
+    // v3 = 4; // Cannot access any loans in ['l2]
     read_list_head(&l2);
 }
