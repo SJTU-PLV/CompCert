@@ -37,21 +37,26 @@ Section COMP_ENV.
 
 Variable ce : composite_env.
 
-Definition field_of_place (p: place) (rels: list origin_rel) (mem: member) :=
+Definition field_of_place (sv: struct_or_variant) (p: place) (rels: list origin_rel) (mem: member) :=
   match mem with
   | Member_plain fid fty =>
       (** When we construct a field place, we need to
           subsitute the generic origins of this field with the
           origins in place [p] *)
-      (Pfield p fid (replace_origin_in_type fty rels))
+      let fty1 := (replace_origin_in_type fty rels) in
+      match sv with
+      | Struct => Pfield p fid fty1
+      | TaggedUnion => Pdowncast p fid fty1
+      end
   end.
 
 (* get { p.1, p.2 ...}. We need to track the initialized information
 of all the locations no matter they are own_type or not *)
-Definition places_of_members (p: place) (mems: members) (rels: list origin_rel) :=
+Definition places_of_members sv (p: place) (mems: members) (rels: list origin_rel) :=
   fold_left (fun acc elt =>               
                    (* if own_type ce ty then *)
-                     Paths.add (field_of_place p rels elt) acc) mems Paths.empty.
+                     Paths.add (field_of_place sv p rels elt) acc) mems Paths.empty.
+
 
 (* siblings of p *)
 Definition siblings (p: place) : Paths.t :=
@@ -62,7 +67,7 @@ Definition siblings (p: place) : Paths.t :=
       | Tstruct orgs1 id =>
           match ce!id with
           | Some co =>
-              let siblings := places_of_members p' co.(co_members) (combine (co_generic_origins co) orgs1) in
+              let siblings := places_of_members (co_sv co) p' co.(co_members) (combine (co_generic_origins co) orgs1) in
               let siblings' := Paths.diff siblings (Paths.singleton p) in
               siblings'
           | _ => Paths.empty
@@ -184,10 +189,14 @@ Fixpoint collect (p: place) (l: Paths.t) : Paths.t :=
           let siblings := siblings p in (* sib = {**(a.f).k, **(a.f).l} *)
           (* l'\{p'} ∪ siblings ∪ {p} *)
           (* ret = {*(a.f), a.f, a.h, **(a.f).k, **(a.f).l, **(a.f).f} *)
-          (* we can see that each element occupies a memory location *)
+          (* we can see that each element occupies a memory
+          location. We should remove p' because when [a.f] and [a.g]
+          are init, we cannot automatically set [a] is init. *)
           Paths.union (Paths.remove p' l') (Paths.add p siblings)
         else
-          l            
+          l 
+    (* Mostly the same as Pfield case, but we do not remove p'
+    because  *)
     | Pderef p' ty =>
         (* If type of [p] is [Tbox^n<T>] then add its n children to [l] *)
         (* let children := own_path_box p ty in *)
@@ -411,6 +420,14 @@ soundness of the init-analysis because we need to establish the
 relation between dynamic ownership update in step_dropplace and static
 ownership update in init-analysis respectively. *)
 
+Definition is_full_internal (universe: Paths.t) (p: place) : bool :=
+  Paths.for_all (fun p1 => negb (is_prefix_strict p p1)) universe.
+  
+Definition is_full (universe: PathsMap.t) (p: place) : bool :=
+    let w := PathsMap.get (local_of_place p) universe in
+    is_full_internal w p.
+
+
 Section SPLIT.
 Variable universe: Paths.t.
   
@@ -419,24 +436,26 @@ Variable ce: composite_env.
 Variable rec: forall (ce': composite_env), (PTree_Properties.cardinal ce' < PTree_Properties.cardinal ce)%nat -> place -> type -> res (list (place * bool)).
 
 (* Return the list of split places associated with a flag that
-indicates whether this place is fully owned or not (if it is init) *)
+indicates whether this place is fully owned or not (if it is init),
+i.e., it should be dropped with a drop_in_place function. *)
 (** Some property: the output places must be in universe so that we
 can check whether this place is initialized or not. So the fully owned
 flag is necessary *)
 Fixpoint split_drop_place' (p: place) (ty: type) : res (list (place * bool)) :=
   match ty with
   | Tstruct orgs1 id =>
-      (** TODO: if we allow collecting overlapped places, we should
+      (** If we allow collecting overlapped places, we should
       use is_full here. *)
       (* p in universe indicates that p is fully owned/moved (no p's
       children mentioned in this function) *)
+      (* if is_full_internal universe p then *)
       if Paths.mem p universe then
         (** The return true relies on the properties of collect function *)
         OK [(p, true)]
       else
         match get_composite ce id with
         | co_some i co P _ =>
-            let children := map (field_of_place p (combine (co_generic_origins co) orgs1)) co.(co_members) in
+            let children := map (field_of_place (co_sv co) p (combine (co_generic_origins co) orgs1)) co.(co_members) in
             let foldf subfld acc :=
               do drops <- acc;
               do drops' <- rec (PTree.remove i ce) (PTree_Properties.cardinal_remove P) subfld (typeof_place subfld);
@@ -461,6 +480,15 @@ Fixpoint split_drop_place' (p: place) (ty: type) : res (list (place * bool)) :=
           OK [(p, true)]
       else
         Error ([MSG "place is "; CTX (local_of_place p); MSG ": Box does not exist in the universe set: split_drop_place"])
+  (** TODO: use the following code but we need to rewrite some proof  *)
+  (*   if is_full_internal universe p then *)
+  (*     (* p is fully owned if it is initialized *) *)
+  (*     OK [(p, true)] *)
+  (*   else *)
+  (*     do drops <- split_drop_place' (Pderef p ty) ty; *)
+  (*     OK (drops ++ [(p, false)]) *)
+  (* else *)
+  (*   Error ([MSG "place is "; CTX (local_of_place p); MSG ": Box does not exist in the universe set: split_drop_place"]) *)
   (* p has scalar type. In the semantics, we should skip its drop
   statement and in the compilation, Sdrop p would be translated to
   Sskip in ElaborateDrop. Note that scalar place must be fully
@@ -503,13 +531,6 @@ Proof.
     + right. intro. eapply n. inv H. auto.
 Defined.
       
-Definition is_full_internal (universe: Paths.t) (p: place) : bool :=
-  Paths.for_all (fun p1 => negb (is_prefix_strict p p1)) universe.
-  
-Definition is_full (universe: PathsMap.t) (p: place) : bool :=
-    let w := PathsMap.get (local_of_place p) universe in
-    is_full_internal w p.
-
 
 Lemma is_full_internal_eq_universe: forall u1 u2 p,
     Paths.Equal u1 u2 ->
@@ -552,7 +573,7 @@ Record split_drop_place_spec (universe: Paths.t) (r: place) (drops: list (place 
     split_complete: forall p, Paths.In p universe -> is_prefix r p = true -> In p (map fst drops);
     split_norepet: list_norepet (map fst drops);
     split_ordered: split_places_ordered (map fst drops);
-    (** Adhoc: current implementation does not guarantee this
+    (** Adhoc: current implementation may not guarantee this
     property. This property is an invariant of the universe *)
     split_correct_full: forall p full,
       In (p,full) drops ->
@@ -766,7 +787,7 @@ Proof.
       (fun (y : PTree.t composite)
          (_ : (PTree_Properties.cardinal y < PTree_Properties.cardinal x)%nat) =>
        Fixm (PTree_Properties.cardinal (V:=composite)) (split_drop_place' u1) y)
-      (Pderef p ty) ty) eqn: C.    
+      (Pderef p ty) ty) eqn: C.
     rewrite <- IHty1. auto.
     rewrite <- IHty1. auto.
   -  assert (A: Paths.mem p u1 = Paths.mem p u2).
@@ -775,7 +796,7 @@ Proof.
      destruct (get_composite x i); auto.
      (* induction on the list of fields *)
      generalize (OK (@nil (place * bool))).
-     generalize ((map (field_of_place p (combine (co_generic_origins co) l)) (co_members co))).
+     generalize ((map (field_of_place (co_sv co) p (combine (co_generic_origins co) l)) (co_members co))).
      induction l0.
      + auto.
      + intros. simpl. erewrite IHl0.
