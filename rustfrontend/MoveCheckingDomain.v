@@ -764,8 +764,8 @@ Qed.
 
 
 (* used to prove the premise of [mmatch_move_place_sound] *)
-Lemma must_movable_exists_shallow_prefix: forall ce init uninit universe p
-    (MOVE: must_movable ce init uninit universe p = true),
+Lemma must_movable_exists_shallow_prefix: forall ce init uninit universe p shallow
+    (MOVE: must_movable ce init uninit universe p shallow = true),
     Paths.Exists (fun p1 : Paths.elt => is_shallow_prefix (valid_owner p) p1 = true) (PathsMap.get (local_of_place p) universe).
 Proof.
   intros ce. pattern ce. apply well_founded_ind with (R:= removeR).
@@ -816,7 +816,7 @@ splitting! *)
 
 Lemma movable_place_sem_wt: forall ce ce1 fp fpm m e own p b ofs init uninit universe
     (MM: mmatch fpm ce m e own)
-    (POWN: must_movable ce1 init uninit universe p = true)
+    (POWN: must_movable ce1 init uninit universe p false = true)
     (SOUND: sound_own own init uninit universe)
     (PFP: get_loc_footprint_map e (path_of_place p) fpm = Some (b, ofs, fp))
     (WTFP: wt_footprint ce (typeof_place p) fp)

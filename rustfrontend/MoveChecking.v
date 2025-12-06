@@ -37,9 +37,12 @@ Qed.
 Section REC.
 
   Variable ce: composite_env.
-  Variable rec: forall (ce': composite_env), (removeR ce' ce) -> PathsMap.t -> PathsMap.t -> PathsMap.t -> place -> type -> bool.
+  Variable rec: forall (ce': composite_env), (removeR ce' ce) -> PathsMap.t -> PathsMap.t -> PathsMap.t -> place -> type -> bool -> bool.
 
-  Fixpoint must_movable' (init uninit universe: PathsMap.t) (p: place) (ty: type) : bool :=
+  (* The flag [shallow] is used to indicate that we only need to check
+  the shallow children of the current place and do not need to check
+  its deference *)
+  Fixpoint must_movable' (init uninit universe: PathsMap.t) (p: place) (ty: type) (shallow: bool) : bool :=
     match ty with
     | Tbox ty1 =>
         if must_init init uninit universe p then
@@ -48,7 +51,10 @@ Section REC.
           if is_full universe p then
             true
           else
-            must_movable' init uninit universe (Pderef p ty1) ty1
+            if shallow then 
+              true
+            else
+              must_movable' init uninit universe (Pderef p ty1) ty1 shallow
         else false
     | Tstruct orgs id =>
         match get_composite ce id with
@@ -74,7 +80,7 @@ Section REC.
                                              let fty1 := replace_origin_in_type fty rels in
                                              (Pfield p fid fty1, fty1)) co.(co_members) in
                   (** All sub-fields must be movable *)
-                  forallb (fun '(fp, ft) => rec (PTree.remove i ce) (PTree_removeR _ _ _ P) init uninit universe fp ft) fields_types
+                  forallb (fun '(fp, ft) => rec (PTree.remove i ce) (PTree_removeR _ _ _ P) init uninit universe fp ft shallow) fields_types
               end
         | co_none =>
             (* type error *) false
@@ -105,9 +111,9 @@ End REC.
 
 (*     PTree.elements_remove *)
 
-Definition must_movable_fix ce := Fix (@well_founded_removeR composite) must_movable' ce.
+Definition must_movable_fix ce shallow := Fix (@well_founded_removeR composite) must_movable' ce shallow.
 
-Definition must_movable ce init uninit universe p := must_movable_fix ce init uninit universe p (typeof_place p).
+Definition must_movable ce init uninit universe p shallow := must_movable_fix ce init uninit universe p (typeof_place p) shallow.
 
 Section INIT.
 
@@ -133,7 +139,10 @@ Fixpoint move_check_pexpr (pe : pexpr) : bool :=
   | Ecktag p _
   | Eref _ _ p _ => 
       let op := owner_place p in
-      dominators_must_init init uninit universe op && must_init init uninit universe (valid_owner op)
+      (* We cannot just use must_init to check as (valid_owner op) may
+      not be in the init set, we should check all its shallow children
+      are in the init set *)
+      dominators_must_init init uninit universe op && must_movable ce init uninit universe (valid_owner op) true
   | Eunop _ pe0 _ => move_check_pexpr pe0
   | Ebinop _ pe1 pe2 _ => move_check_pexpr pe1 && move_check_pexpr pe2
   (** Eglobal are unsupported *)        
@@ -145,14 +154,17 @@ Definition move_check_expr' (e : expr) : bool :=
   match e with
   | Emoveplace p _ =>
       (* The type check phase must ensure that p = owner_place p as we
-      cannot move from p if p has type [&mut Box<..>] *)
-      if place_eq p (valid_owner p) then
-        (* p is not downcast ... *)
-        dominators_must_init init uninit universe p && must_movable ce init uninit universe p
-      else
-        (* p is downcast, we just check its valid_owner is init *)
-        dominators_must_init init uninit universe p &&
-        must_init init uninit universe (valid_owner p) && is_full universe (valid_owner p)
+         cannot move from p if p has type [&mut Box<..>]. To support
+         moving case like (p as a).f, we should support containing
+         downcast in universe and remove valid_owner here *)
+      dominators_must_init init uninit universe p && must_movable ce init uninit universe (valid_owner p) false
+      (* if place_eq p (valid_owner p) then *)
+      (*   (* p is not downcast ... *) *)
+      (*   dominators_must_init init uninit universe p && must_movable ce init uninit universe p false *)
+      (* else *)
+      (*   (* p is downcast, we just check its valid_owner is init *) *)
+      (*   dominators_must_init init uninit universe p && *)
+      (*   must_init init uninit universe (valid_owner p) && is_full universe (valid_owner p) *)
   | Epure pe => move_check_pexpr pe
   end.
 
@@ -226,7 +238,7 @@ Definition move_check_stmt ce (an : IM.t * IM.t * PathsMap.t) (stmt : statement)
   | _, _ => OK stmt
   end.
 
-Definition check_cond_expr (an : IM.t * IM.t * PathsMap.t) (e: expr) : Errors.res unit :=
+Definition check_cond_expr ce (an : IM.t * IM.t * PathsMap.t) (e: expr) : Errors.res unit :=
   let '(mayInit, mayUninit, universe) := an in
   match mayInit, mayUninit with
   | IM.State mayinit, IM.State mayuninit =>
@@ -234,7 +246,7 @@ Definition check_cond_expr (an : IM.t * IM.t * PathsMap.t) (e: expr) : Errors.re
       | Emoveplace _ _ =>
           Error (msg "cannot move place in conditional expression")
       | Epure pe =>
-          if move_check_pexpr mayinit mayuninit universe pe then
+          if move_check_pexpr ce mayinit mayuninit universe pe then
             OK tt
           else
             Error (msg "move_check_pexpr error in conditional expression")
@@ -333,7 +345,7 @@ Definition var_types (l: list (ident * type)) :=
   map snd l.
 
 Definition collect_move_check_result ce f cfg analysis_res :=
-  do _ <- transl_on_cfg get_init_info analysis_res (move_check_stmt ce) check_cond_expr f.(fn_body) cfg;
+  do _ <- transl_on_cfg get_init_info analysis_res (move_check_stmt ce) (check_cond_expr ce) f.(fn_body) cfg;
   OK tt.
 
 
@@ -374,7 +386,7 @@ Definition move_check_function (ce: composite_env) (f: function) : Errors.res un
   (* type checking *)
   do _ <- type_check_stmt ce te (fn_body f);
   (** 3. Run move checking ! *)
-  do _ <- transl_on_cfg get_init_info analysis_res (move_check_stmt ce) check_cond_expr f.(fn_body) cfg;
+  do _ <- transl_on_cfg get_init_info analysis_res (move_check_stmt ce) (check_cond_expr ce) f.(fn_body) cfg;
   OK tt.
 
 Definition move_check_fundef (ce : composite_env) (id : ident) (fd : fundef) : Errors.res fundef :=
