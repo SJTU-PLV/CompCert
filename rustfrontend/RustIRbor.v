@@ -646,28 +646,31 @@ skip return, see Rustlightown.v *)
 
 Record rust_stkbor_query :=
   rsbor_q {
-    rsq_vf: val;
-    rsq_sg: rust_signature;
-    rsq_args: list val;
-    rsq_mem: mem;
+    rsq_q :> rust_query;
+    (* rsq_vf: val; *)
+    (* rsq_sg: rust_signature; *)
+    (* rsq_args: list val; *)
+    (* rsq_mem: mem; *)
     rsq_stk: bor_stacks;
   }.
 
 Record rust_stkbor_reply :=
   rsbor_r {
-    rsr_retval: val;
-    rsr_mem: mem;
+    rsr_r :> rust_reply;
+    (* rsr_retval: val; *)
+    (* rsr_mem: mem; *)
     rsr_stk: bor_stacks;
   }.
 
-Canonical Structure li_rs_bor :=
+Definition li_rs_bor : language_interface :=
   {|
     query := rust_stkbor_query;
     reply := rust_stkbor_reply;
     entry := rsq_vf;
   |}.
 
-Inductive initial_state: rust_stkbor_query -> state -> Prop :=
+
+Inductive initial_state: (query li_rs_bor) -> state -> Prop :=
 | initial_state_intro: forall vf f targs tres tcc vargs m orgs org_rels sb,
     Genv.find_funct ge vf = Some (Internal f) ->
     type_of_function f = Tfunction orgs org_rels targs tres tcc ->
@@ -676,24 +679,24 @@ Inductive initial_state: rust_stkbor_query -> state -> Prop :=
     (* how to use it? *)
     val_casted_list vargs targs ->
     (* Mem.sup_include (Genv.genv_sup ge) (Mem.support m) -> *)
-    initial_state (rsbor_q vf (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs m sb)
+    initial_state (rsbor_q (rsq vf (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs m) sb)
       (Callstate vf vargs Kstop sb m).
     
-Inductive at_external: state -> rust_stkbor_query -> Prop:=
+Inductive at_external: state -> (query li_rs_bor) -> Prop:=
 | at_external_intro: forall vf name args k m targs tres cconv orgs org_rels sb,
     Genv.find_funct ge vf = Some (External orgs org_rels (EF_external name (signature_of_type targs tres cconv)) targs tres cconv) ->
-    at_external (Callstate vf args k sb m) (rsbor_q vf (mksignature orgs org_rels (type_list_of_typelist targs) tres cconv ge) args m sb).
+    at_external (Callstate vf args k sb m) (rsbor_q (rsq vf (mksignature orgs org_rels (type_list_of_typelist targs) tres cconv ge) args m) sb).
 
-Inductive after_external: state -> rust_stkbor_reply -> state -> Prop:=
+Inductive after_external: state -> (reply li_rs_bor) -> state -> Prop:=
 | after_external_intro: forall vf args k m m' v sb sb',
     after_external
       (Callstate vf args k sb m)
-      (rsbor_r v m' sb')
+      (rsbor_r (rsr v m') sb')
       (Returnstate v k sb' m').
 
-Inductive final_state: state -> rust_stkbor_reply -> Prop:=
+Inductive final_state: state -> (reply li_rs_bor) -> Prop:=
 | final_state_intro: forall v m sb,
-    final_state (Returnstate v Kstop sb m) (rsbor_r v m sb).
+    final_state (Returnstate v Kstop sb m) (rsbor_r (rsr v m) sb).
 
 End SMALLSTEP.
 

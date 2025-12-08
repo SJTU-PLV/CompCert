@@ -551,9 +551,14 @@ with transl_arm_statements (sl: arm_statements) (p: place) (co: composite) : mon
       do arm' <- transl_stmt arm;
       match ids with
       | Some (fid, temp_id) =>
-          (* Replace temp_id with (p as fid) in [arm]. Note that we
-          have generated the declaration of arm receiver at previous
-          passes *)
+          (* Replace temp_id with (p as fid) in [arm]. Note that the
+          code in [arm] uses [temp_id] as a variable to denote (p as
+          fid). For example, when the branch is [A::a(ref mut r1)], the
+          generated arm should contain [r1 = &mut temp_id] which
+          should be translated to [r1 = &mut (p as a)]. One problem is
+          that we do not support case like [r1 = &mut (p as a).0] as
+          we do not allow field access following downcast to make sure
+          the move checking work. *)
           match List.find (fun elt => ident_eq (name_member elt) fid) co.(co_members) with
           | Some m =>
               let ty := type_member m in

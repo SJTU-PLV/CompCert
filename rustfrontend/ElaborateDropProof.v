@@ -1180,7 +1180,7 @@ Qed.
 
 Inductive match_cont (j: meminj) : AN -> FM -> statement -> rustcfg -> cont -> RustIRsem.cont -> node -> option node -> option node -> node -> mem -> mem -> sup -> sup -> Prop :=
 | match_Kseq: forall an flagm body cfg s ts k tk pc next cont brk nret m tm bound tbound
-    (MSTMT: match_stmt an flagm body cfg s ts pc next cont brk nret)
+    (MSTMT: match_stmt an flagm body cfg s ts (mk_cfg_info pc next cont brk nret))
     (MCONT: match_cont j an flagm body cfg k tk next cont brk nret m tm bound tbound),
     match_cont j an flagm body cfg (Kseq s k) (RustIRsem.Kseq ts tk) pc cont brk nret m tm bound tbound
 | match_Kstop: forall an flagm body cfg nret m tm bound tbound
@@ -1188,7 +1188,7 @@ Inductive match_cont (j: meminj) : AN -> FM -> statement -> rustcfg -> cont -> R
     match_cont j an flagm body cfg Kstop RustIRsem.Kstop nret None None nret m tm bound tbound
 | match_Kloop: forall an flagm body cfg s ts k tk body_start loop_jump_node exit_loop nret contn brk m tm bound tbound
     (START: cfg ! loop_jump_node = Some (Inop body_start))
-    (MSTMT: match_stmt an flagm body cfg s ts body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret)
+    (MSTMT: match_stmt an flagm body cfg s ts (mk_cfg_info body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret))
     (MCONT: match_cont j an flagm body cfg k tk exit_loop contn brk nret m tm bound tbound),
     match_cont j an flagm body cfg (Kloop s k) (RustIRsem.Kloop ts tk) loop_jump_node (Some loop_jump_node) (Some exit_loop) nret m tm bound tbound
 | match_Kcall: forall an flagm body cfg k tk nret f tf le tle own p m tm bound tbound
@@ -1511,7 +1511,7 @@ Inductive match_states : state -> RustIRsem.state -> Prop :=
 | match_regular_state:
   forall f s k e own m tf ts tk te tm j flagm maybeInit maybeUninit universe cfg nret cont brk next pc Hm lo tlo hi thi entry mayinit mayuninit
     (AN: analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
-    (MSTMT: match_stmt (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg s ts pc next cont brk nret)
+    (MSTMT: match_stmt (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg s ts (mk_cfg_info pc next cont brk nret))
     (MCONT: match_cont j (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg k tk next cont brk nret m tm lo tlo)
     (RETY: f.(fn_return) = tf.(fn_return))
     (MINJ: injp_acc w (injpw j m tm Hm))

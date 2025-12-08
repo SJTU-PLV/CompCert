@@ -1152,14 +1152,14 @@ Qed.
 
 Inductive tr_cont : statement -> rustcfg -> cont -> node -> option node -> option node -> node -> Prop :=
 | tr_Kseq: forall body cfg s pc next cont brk nret k
-    (STMT: tr_stmt body cfg s pc next cont brk nret)
+    (STMT: tr_stmt body cfg s (mk_cfg_info pc next cont brk nret))
     (CONT: tr_cont body cfg k next cont brk nret),
     tr_cont body cfg (Kseq s k) pc cont brk nret
 | tr_Kstop: forall body cfg nret
     (RET: cfg ! nret = Some Iend),
     tr_cont body cfg Kstop nret None None nret
 | tr_Kloop: forall body cfg s body_start loop_jump_node exit_loop nret cont brk k
-    (STMT: tr_stmt body cfg s body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret)
+    (STMT: tr_stmt body cfg s (mk_cfg_info body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret))
     (SEL: cfg ! loop_jump_node = Some (Inop body_start))
     (CONT: tr_cont body cfg k exit_loop cont brk nret),
     tr_cont body cfg (Kloop s k) loop_jump_node (Some loop_jump_node) (Some exit_loop) nret
@@ -1432,7 +1432,7 @@ Inductive sound_state: state -> Prop :=
     (IM: get_IM_state initMap!!pc uninitMap!!pc (Some (mayinit, mayuninit)))
     (* invariant of generate_cfg *)
     (TRFUN: tr_fun f nret entry cfg)
-    (TRSTMT: tr_stmt f.(fn_body) cfg s pc next cont brk nret)
+    (TRSTMT: tr_stmt f.(fn_body) cfg s (mk_cfg_info pc next cont brk nret))
     (* k may be contain some statement not located in [next], e.g.,
     statements after continue and break *)
     (TRCONT: tr_cont f.(fn_body) cfg k next cont brk nret)
@@ -1620,7 +1620,7 @@ Lemma sound_state_succ: forall f initMap uninitMap mayinit1 mayinit2 mayuninit1 
     (SEL1: cfg ! pc1 = Some instr1)
     (PC: In pc2 (successors_instr instr1))
     (TRFUN: tr_fun f nret entry cfg)
-    (TRSTMT: tr_stmt f.(fn_body) cfg s pc2 next cont brk nret)
+    (TRSTMT: tr_stmt f.(fn_body) cfg s (mk_cfg_info pc2 next cont brk nret))
     (TRCONT: tr_cont f.(fn_body) cfg k next cont brk nret)
     (CONT: sound_cont k)
     (TFINIT: transfer universe true f cfg pc1 initMap!!pc1 = (IM.State mayinit2))
