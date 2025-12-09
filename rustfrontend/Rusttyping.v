@@ -182,6 +182,7 @@ Definition valid_type (ty: type) : bool :=
   | _ => true
   end.
 
+
 Definition not_composite (ty: type) : bool :=
   match ty with
   | Tstruct _ _
@@ -236,16 +237,6 @@ Fixpoint is_mutable_place (p: place) : bool :=
   | Pdowncast p1 _ _ =>
       is_mutable_place p1
   end.
-
-(* The original field_type only produces the type with generic regions
-of this struct/enum, but we need it to produce types with internal
-regions of the current function. *)
-(** TODO: use it to replace some code in ReplaceOrigins.v *)
-Definition place_field_type (co: composite) (fid: ident) (orgs: list origin) : res type :=
-   do fty <- field_type fid co.(co_members);
-   let rels := combine (co.(co_generic_origins)) orgs in
-   OK (replace_origin_in_type fty rels).
-
 
 Definition typenv := PTree.t type.
 

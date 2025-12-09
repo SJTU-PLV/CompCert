@@ -23,45 +23,6 @@ Import ListNotations.
 
 Section SEMANTICS.
           
-(** Continuation *)
-  
-Inductive cont : Type :=
-| Kstop: cont
-| Kseq: statement -> cont -> cont
-| Kloop: statement -> cont -> cont
-| Kcall: place -> function -> env -> own_env -> cont -> cont
-(* used to record Dropplace state *)
-| Kdropplace: function -> option drop_place_state -> list (place * bool) -> env -> own_env -> cont -> cont
-| Kdropcall: ident -> val -> option drop_member_state -> members -> cont -> cont
-.
-
-
-(** Pop continuation until a call or stop *)
-
-(* Return from dropstate and dropplace is UB *)
-Fixpoint call_cont (k: cont) : option cont :=
-  match k with
-  | Kseq _ k => call_cont k
-  | Kloop _ k => call_cont k
-  | Kdropplace _ _ _ _ _ _ => None
-  | Kdropcall _ _ _ _ _  => None                             
-  | _ => Some k
-  end.
-
-Definition is_call_cont (k: cont) : Prop :=
-  match k with
-  | Kstop => True
-  | Kcall _ _ _ _ _ => True
-  | _ => False
-  end.
-
-Lemma call_cont_correct: forall k k',
-    call_cont k = Some k' ->
-    is_call_cont k'.
-Proof.
-  induction k; intros k' CC; simpl in *; auto; try (inv CC; econstructor; eauto).
-Qed.
-
 (** States *)
 
 Inductive state: Type :=

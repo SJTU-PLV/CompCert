@@ -232,6 +232,11 @@ with replace_origin_in_typelist (tyl: typelist) (rels: list (origin * origin)) :
        end
 .
 
+Lemma replace_origin_in_type_eq: forall ty1 ty2 rels,
+    replace_origin_in_type ty1 rels = ty2 ->
+    type_eq_except_origins ty1 ty2 = true.
+Admitted.
+
 
 (* Definition attr_of_type (ty: type) := *)
 (*   match ty with *)
@@ -2674,5 +2679,131 @@ split.
       destruct Hw' as [? ?], H as (vi & ? & ?), H0 as (mi & ? & ?).
       exists (rsr vi mi).
       split; eexists; constructor; eauto; constructor; eauto.
+Qed.
+
+
+(** Properties used in the proof of borrow checking *)
+
+Lemma maxv:
+  Ptrofs.max_unsigned = 18446744073709551615.
+Proof.
+  unfold Ptrofs.max_unsigned. unfold Ptrofs.modulus. unfold Ptrofs.wordsize.
+  unfold two_power_nat. unfold Wordsize_Ptrofs.wordsize.
+  replace Archi.ptr64 with true by reflexivity. reflexivity.
+Qed.
+
+Lemma  co_alignof_pos: forall co,
+    co_alignof co > 0.
+Proof.
+  intros.
+  generalize (co_alignof_two_p co). intros (n & ALPOW).
+  rewrite ALPOW. rewrite two_power_nat_equiv.
+  generalize (Nat2Z.is_nonneg n). intros A.
+  exploit Z.pow_pos_nonneg. instantiate (1:= 2). lia.
+  eauto. lia.
+Qed.
+
+(* The original field_type only produces the type with generic regions
+of this struct/enum, but we need it to produce types with internal
+regions of the current function. *)
+(** TODO: use it to replace some code in ReplaceOrigins.v *)
+Definition place_field_type (co: composite) (fid: ident) (orgs: list origin) : res type :=
+   do fty <- field_type fid co.(co_members);
+   let rels := combine (co.(co_generic_origins)) orgs in
+   OK (replace_origin_in_type fty rels).
+
+Lemma place_field_type_res: forall co fid orgs fty,
+    place_field_type co fid orgs = OK fty ->
+    exists fty', field_type fid (co_members co) = OK fty' /\ type_eq_except_origins fty fty' = true.
+Admitted.
+
+Lemma place_field_type_inv: forall co fid orgs fty,
+    place_field_type co fid orgs = OK fty ->
+    exists fty', 
+      field_type fid (co_members co) = OK fty' 
+      /\ fty = replace_origin_in_type fty' (combine (co_generic_origins co) orgs).
+Admitted.
+
+
+Lemma field_offset_in_max_range ce: forall ofs fofs co fty fid,
+    field_offset ce fid (co_members co) = OK fofs ->
+    field_type fid (co_members co) = OK fty ->
+    Ptrofs.unsigned ofs + co_sizeof co <= Ptrofs.max_unsigned ->
+    composite_consistent ce co ->
+    co_sv co = Struct ->
+    0 <= fofs <= Ptrofs.max_unsigned
+    /\ 0 <= Ptrofs.unsigned ofs + fofs <= Ptrofs.max_unsigned
+    /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.max_unsigned.
+Proof.
+  intros until fid; intros FOFS FTY R1 COMP STRUCT.
+  generalize (Ptrofs.unsigned_range ofs). intros RAN1.
+  generalize (sizeof_pos ce fty). intros SZGT.
+  generalize (field_offset_in_range ce (co_members co) _ _ _ FOFS FTY).
+  intros (DELR1 & DELR2). 
+  (* not easy range proof *)
+  assert (RAN2: Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.max_unsigned).
+  {
+    erewrite co_consistent_sizeof in *; eauto.
+    rewrite STRUCT in *. simpl in *.
+    generalize (align_le (sizeof_struct ce (co_members co)) (co_alignof co) (co_alignof_pos co)).
+    intros. lia. }
+  lia.
+Qed.
+
+Lemma field_offset_in_max_range1 ce: forall ofs fofs co fty fid orgs,
+    field_offset ce fid (co_members co) = OK fofs ->
+    place_field_type co fid orgs = OK fty ->
+    Ptrofs.unsigned ofs + co_sizeof co <= Ptrofs.max_unsigned ->
+    composite_consistent ce co ->
+    co_sv co = Struct ->
+    0 <= fofs <= Ptrofs.max_unsigned
+    /\ 0 <= Ptrofs.unsigned ofs + fofs <= Ptrofs.max_unsigned
+    /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.max_unsigned.
+Proof.
+  intros. exploit place_field_type_res. eauto.
+  intros (fty' & FTY' & TEQ).
+  erewrite type_eq_sizeof_eq; eauto.
+  eapply field_offset_in_max_range; eauto.
+Qed.
+
+Lemma variant_field_offset_in_max_range ce: forall ofs fofs co fty fid,
+    variant_field_offset ce fid (co_members co) = OK fofs ->
+    field_type fid (co_members co) = OK fty ->
+    Ptrofs.unsigned ofs + co_sizeof co <= Ptrofs.max_unsigned ->
+    composite_consistent ce co ->
+    co_sv co = TaggedUnion ->
+    0 <= fofs <= Ptrofs.max_unsigned
+    /\ 0 <= Ptrofs.unsigned ofs + fofs <= Ptrofs.max_unsigned
+    /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.max_unsigned.
+Proof.  
+  intros until fid; intros FOFS FTY R1 COMP ENUM.
+  generalize (Ptrofs.unsigned_range ofs). intros RAN1.
+  generalize (sizeof_pos ce fty). intros SZGT.
+  generalize (variant_field_offset_in_range ce (co_members co) _ _ _ FOFS FTY).
+  intros (DELR1 & DELR2). 
+  (* not easy range proof *)
+  assert (RAN2: Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.max_unsigned).
+  {
+    erewrite co_consistent_sizeof in *; eauto.
+    rewrite ENUM in *. simpl in *.
+    generalize (align_le (sizeof_variant ce (co_members co)) (co_alignof co) (co_alignof_pos co)).
+    intros. lia. }
+  lia.
+Qed.
+
+Lemma variant_field_offset_in_max_range1 ce: forall ofs fofs co fty fid orgs,
+    variant_field_offset ce fid (co_members co) = OK fofs ->
+    place_field_type co fid orgs = OK fty ->
+    Ptrofs.unsigned ofs + co_sizeof co <= Ptrofs.max_unsigned ->
+    composite_consistent ce co ->
+    co_sv co = TaggedUnion ->
+    0 <= fofs <= Ptrofs.max_unsigned
+    /\ 0 <= Ptrofs.unsigned ofs + fofs <= Ptrofs.max_unsigned
+    /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.max_unsigned.
+Proof.  
+  intros. exploit place_field_type_res. eauto.
+  intros (fty' & FTY' & TEQ).
+  erewrite type_eq_sizeof_eq; eauto.
+  eapply variant_field_offset_in_max_range; eauto.
 Qed.
 

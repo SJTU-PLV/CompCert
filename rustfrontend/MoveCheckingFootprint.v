@@ -1726,7 +1726,7 @@ Inductive wt_footprint : type -> footprint -> Prop :=
     the sub-field's footprint. WT2 is used in proving the properties
     of sub-field's footprint *)
     (WT1: forall fid fty,
-        field_type fid co.(co_members) = OK fty ->
+        place_field_type co fid orgs = OK fty ->
         (* For simplicity, use find_field instead of In predicate *)
         exists ffp fofs,
           find_fields fid fpl = Some (fid, fofs, ffp)
@@ -1736,7 +1736,7 @@ Inductive wt_footprint : type -> footprint -> Prop :=
     (WT2: forall fid fofs ffp,
         find_fields fid fpl = Some (fid, fofs, ffp) ->
         exists fty,
-          field_type fid co.(co_members) = OK fty
+          place_field_type co fid orgs = OK fty
           /\ field_offset ce fid co.(co_members) = OK fofs
           /\ wt_footprint fty ffp)
     (* make sure that the flattened footprint list has the same order
@@ -1752,7 +1752,7 @@ Inductive wt_footprint : type -> footprint -> Prop :=
     (ENUM: co_sv co = TaggedUnion)
     (TAG: list_nth_z co.(co_members) tagz = Some (Member_plain fid fty))
     (* avoid some norepet properties *)
-    (FTY: field_type fid co.(co_members) = OK fty)
+    (FTY: place_field_type co fid orgs = OK fty)
     (FOFS: variant_field_offset ce fid co.(co_members) = OK fofs)
     (WT: wt_footprint fty fp),
     wt_footprint (Tvariant orgs id) (fp_enum id orgs tagz fid fofs fp)
@@ -1780,13 +1780,13 @@ Inductive wt_path ce (ty: type) : list path -> type -> Prop :=
 | wt_path_field: forall phl orgs id co ty1 fid
     (WP1: wt_path ce ty phl (Tstruct orgs id))
     (WP2: ce ! id = Some co)
-    (WP3: field_type fid (co_members co) = OK ty1)
+    (WP3: place_field_type co fid orgs = OK ty1)
     (WP4: co_sv co = Struct),
     wt_path ce ty (phl++[ph_field fid]) ty1
 | wt_path_downcast: forall phl orgs id co ty1 fid
     (WP1: wt_path ce ty phl (Tvariant orgs id))
     (WP2: ce ! id = Some co)
-    (WP3: field_type fid (co_members co) = OK ty1)
+    (WP3: place_field_type co fid orgs = OK ty1)
     (WP4: co_sv co = TaggedUnion),
     wt_path ce ty (phl++[ph_downcast (Tvariant orgs id) fid]) ty1
 .
@@ -1816,7 +1816,7 @@ Lemma wt_path_field_inv: forall ce ty1 ty2 phl fid,
     exists id orgs co,
       wt_path ce ty1 phl (Tstruct orgs id)
       /\ ce ! id = Some co
-      /\ field_type fid (co_members co) = OK ty2
+      /\ place_field_type co fid orgs = OK ty2
       /\ co_sv co = Struct.
 Proof.
   intros. inv H.
@@ -1833,7 +1833,7 @@ Lemma wt_path_downcast_inv: forall ce ty1 ty2 phl fid ty,
       ty = Tvariant orgs id                    
       /\ wt_path ce ty1 phl (Tvariant orgs id)
       /\ ce ! id = Some co
-      /\ field_type fid (co_members co) = OK ty2
+      /\ place_field_type co fid orgs = OK ty2
       /\ co_sv co = TaggedUnion.
 Proof.
   intros. inv H.
@@ -1955,16 +1955,12 @@ Proof.
   - destruct (path_of_place p) eqn: POP. inv H0.
     inv H. econstructor; eauto.
     rewrite <- WT2. eauto.
-    (** TODO: update field_type in wt_path  *)
-    admit.
   - destruct (path_of_place p) eqn: POP. inv H0.
     inv H. econstructor; eauto.
   - destruct (path_of_place p) eqn: POP. inv H0.
     inv H. rewrite WT2. econstructor; eauto.
     rewrite <- WT2. eauto.    
-    (** TODO: update field_type in wt_path  *)
-    admit.
-Admitted.
+Qed.
 
 (** IMPORTANT TODO *)
 Lemma get_wt_footprint_wt: forall phl ty1 ty2 ce (WTPH: wt_path ce ty1 phl ty2) fp1 fp2,
@@ -2152,6 +2148,19 @@ Proof.
   intros M3. lia.
 Qed.
 
+Lemma place_field_offset_in_range_complete: forall ce co id ofs ty orgs,
+    co_sv co = Struct ->
+    composite_consistent ce co ->
+    field_offset ce id (co_members co) = OK ofs ->
+    place_field_type co id orgs = OK ty ->
+    0 <= ofs /\ ofs + sizeof ce ty <= co_sizeof co.
+Proof.
+  intros.
+  exploit place_field_type_res; eauto. intros (fty' & FTY' & TEQ).
+  exploit field_offset_in_range_complete; eauto. 
+  erewrite (type_eq_sizeof_eq ty); eauto. 
+Qed.
+
 Lemma variant_field_offset_in_range_complete: forall ce co id ofs ty,
     co_sv co = TaggedUnion ->
     composite_consistent ce co ->
@@ -2174,6 +2183,46 @@ Proof.
   intros M3. lia.
 Qed.
 
+(* reprove some properties for place_field_type using those properties
+already proved for field_type *)
+
+Lemma place_variant_field_offset_in_range_complete: forall ce co id ofs ty orgs,
+    co_sv co = TaggedUnion ->
+    composite_consistent ce co ->
+    variant_field_offset ce id (co_members co) = OK ofs ->
+    place_field_type co id orgs = OK ty ->
+    4 <= ofs /\ ofs + sizeof ce ty <= co_sizeof co.
+Proof.
+  intros.
+  exploit place_field_type_res; eauto. intros (fty' & FTY' & TEQ).
+  exploit variant_field_offset_in_range_complete; eauto. 
+  erewrite (type_eq_sizeof_eq ty); eauto. 
+Qed.
+
+Lemma place_field_offset_no_overlap_simplified:
+  forall env id1 ofs1 ty1 id2 ofs2 ty2 co orgs,
+  field_offset env id1 co.(co_members) = OK ofs1 -> place_field_type co id1 orgs = OK ty1 ->
+  field_offset env id2 co.(co_members) = OK ofs2 -> place_field_type co id2 orgs = OK ty2 ->
+  id1 <> id2 ->
+  ofs1 + sizeof env ty1 <= ofs2
+  \/ ofs2 + sizeof env ty2 <= ofs1.
+Proof.
+  intros.
+  exploit place_field_type_res. eapply H0. intros (fty1' & FTY1'' & TEQ1).
+  exploit place_field_type_res. eapply H2. intros (fty2' & FTY2'' & TEQ2).
+  erewrite (type_eq_sizeof_eq ty1 fty1'); eauto.
+  erewrite (type_eq_sizeof_eq ty2 fty2'); eauto.
+  eapply field_offset_no_overlap_simplified; eauto.
+Qed.
+
+Lemma place_field_type_implies_field_offset: forall co id ty ce orgs,
+    place_field_type co id orgs = OK ty ->
+    exists fofs, field_offset ce id (co_members co) = OK fofs.
+Proof.
+  intros.
+  exploit place_field_type_res. eauto. intros (ty' & TY' & TEQ).
+  eapply field_type_implies_field_offset; eauto.
+Qed.  
 
 (* Two memory location (b1, ofs1) and (b2, ofs2) which have type ty1
 and ty2 are non-overlap *)
@@ -2239,7 +2288,8 @@ Proof.
       * destruct B1. subst.
         left. split; auto.
         simpl in H0. rewrite CO in H0.
-        exploit field_offset_in_range_complete; eauto. lia.
+        exploit place_field_offset_in_range_complete; eauto. 
+        lia.
       * destruct B2. right. split; auto.
     + destr_fp_enum fp3 ty0.
       inv A2.
@@ -2255,7 +2305,8 @@ Proof.
       * destruct B1. subst.
         left. split; auto.
         simpl in H0. rewrite CO in H0.
-        exploit variant_field_offset_in_range_complete; eauto. lia.
+        exploit place_variant_field_offset_in_range_complete; eauto. 
+        lia.
       * destruct B2. right. split; auto.
 Qed.
 
@@ -2409,7 +2460,7 @@ Proof.
         rewrite FTY2' in FTY2. inv FTY2.
         (* end of getting ty1' and ty2' *)
         (* field offset no overlap to get loc_disjoint *)
-        exploit field_offset_no_overlap_simplified.
+        exploit place_field_offset_no_overlap_simplified.
         eapply FOFS1. eauto. eapply FOFS2. eauto.
         congruence.
         intros FOFS_DIS.
@@ -2498,6 +2549,16 @@ End COMP_ENV.
 Definition type_to_empty_footprint ce (ty: type) :=
   Fix (@well_founded_removeR composite) (type_to_empty_footprint' ce) ce ty.
 
+Lemma type_to_empty_footprint_eq_aux: forall ce1 ce2 ty1 ty2,
+    type_eq_except_origins ty1 ty2 = true ->
+    Fix well_founded_removeR (type_to_empty_footprint' ce2) ce1 ty1 = Fix well_founded_removeR (type_to_empty_footprint' ce2) ce1 ty2.
+Admitted.
+
+Lemma type_to_empty_footprint_eq: forall ce ty1 ty2,
+    type_eq_except_origins ty1 ty2 = true ->
+    type_to_empty_footprint ce ty1 = type_to_empty_footprint ce ty2.
+Admitted.
+
 
 (** well-founded relation of composite env *)
 
@@ -2532,7 +2593,7 @@ Qed.
 
 Lemma find_fields_to_footprint_inv: forall ms fid fofs f ce ffp
     (FIND: find_fields fid (field_types_to_footprint ce ms f) = Some (fid, fofs, ffp)),
-    exists fty, 
+    exists fty,
       field_type fid ms = OK fty.
 Proof.
   intro ms. unfold field_types_to_footprint, field_offset.
@@ -2560,6 +2621,13 @@ Proof.
   eauto.
 Qed.
 
+
+(* type_eq_except_origins property for check_cyclic_struct *)
+Lemma check_cyclic_struct_eq: forall ce ty1 ty2,
+    type_eq_except_origins ty1 ty2 = true ->
+    check_cyclic_struct ce ty1 = check_cyclic_struct ce ty2.
+Admitted.
+
   
 Lemma type_to_empty_footprint_wt_aux: forall ce2 ce1 ty
     (CHECK: check_cyclic_struct ce1 ty = true)
@@ -2576,17 +2644,21 @@ Proof.
   destruct struct_or_variant_eq in C2; simpl in C2; try congruence.
   eapply wt_fp_struct; eauto.
   - intros fid fty FTY.
-    exploit field_type_implies_field_offset; eauto.
+    exploit place_field_type_implies_field_offset; eauto.
     instantiate (1 := ce2).    
     intros (fofs & FOFS).
-    exists (Fix well_founded_removeR (type_to_empty_footprint' ce2) (PTree.remove id1 ce1) fty), fofs.    
+    exists (Fix well_founded_removeR (type_to_empty_footprint' ce2) (PTree.remove id1 ce1) fty), fofs. 
     repeat apply conj; auto.
-    + eapply find_fields_to_footprint; eauto.
+    + exploit place_field_type_res; eauto. intros (fty' & FTY' & TEQ).
+      erewrite (type_to_empty_footprint_eq_aux (PTree.remove id1 ce1) ce2 fty fty' TEQ).      
+      eapply find_fields_to_footprint; eauto.
     + eapply IH.
       eapply PTree_removeR; eauto.
       erewrite forallb_forall in C1.
+      exploit place_field_type_res. eauto. intros (fty' & FTY' & TEQ).
+      erewrite check_cyclic_struct_eq. 2: eauto.
       exploit field_type_member. eauto. intros IN.
-      generalize (C1 (Member_plain fid fty) IN). auto.
+      generalize (C1 (Member_plain fid fty') IN). auto.
       eapply ce_extends_remove. auto.
   - intros fid fofs ffp FIND.
     exploit find_fields_to_footprint_inv; eauto.
@@ -2597,13 +2669,20 @@ Proof.
     exploit find_fields_to_footprint; eauto.
     intros FIND1. erewrite FIND1 in FIND.
     inv FIND.
-    exists fty. repeat apply conj; auto.
+    unfold place_field_type. rewrite FTY. simpl.
+    set (fty' := (replace_origin_in_type fty (combine (co_generic_origins co) l))).
+    exists fty'. repeat apply conj; auto.
+    assert (TEQ: type_eq_except_origins fty fty' = true). 
+    { eapply replace_origin_in_type_eq. unfold fty'. reflexivity. }
+    replace ((Fix well_founded_removeR (type_to_empty_footprint' ce2) (PTree.remove id1 ce1) fty)) with (Fix well_founded_removeR (type_to_empty_footprint' ce2) (PTree.remove id1 ce1) fty'). 
     eapply IH.
     eapply PTree_removeR; eauto.
     erewrite forallb_forall in C1.
+    erewrite <- check_cyclic_struct_eq. 2: eauto.
     exploit field_type_member. eauto. intros IN.
-    generalize (C1 (Member_plain fid fty) IN). auto.
+    generalize (C1 (Member_plain fid fty) IN). auto.    
     eapply ce_extends_remove. auto.
+    symmetry. eapply type_to_empty_footprint_eq_aux. auto.
   - unfold name_footprints, field_types_to_footprint, name_members.
     rewrite map_map.
     eapply map_ext_in. intros.

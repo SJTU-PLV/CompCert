@@ -13,7 +13,7 @@ Require Import Ctypes Rusttypes.
 Require Import Cop RustOp.
 Require Import LanguageInterface.
 Require Import Clight Rustlight Rustlightown.
-Require Import InitDomain RustIR.
+Require Import InitDomain RustIR RustIRown.
 Require Import Permutation.
 
 Import ListNotations.
@@ -652,6 +652,15 @@ Record cfg_info := mk_cfg_info {
   cfg_brk: option node;
   cfg_end: node }.
 
+(* In the proof, we should track the span of the continuation. For
+now, the tracking proof is specific to different proof. *)
+Record cfg_kinfo := mk_cfg_kinfo {
+  cfgk_pc: node;                (* We do not need to specify next as
+  the end of the continuation is the end of the current function *)
+  cfgk_cont: option node;
+  cfgk_brk: option node;
+  cfgk_end: node }.
+
 
 (* Translation relation of the generate_cfg: [tr_stmt body cfg stmt pc
   out cont break endn] holds if the graph [cfg], starting at node
@@ -724,7 +733,6 @@ Inductive tr_fun (f: function) (nret: node) : node -> rustcfg -> Prop :=
     (STMT: tr_stmt f.(fn_body) cfg f.(fn_body) (mk_cfg_info entry nret None None nret))
     (RET: cfg ! nret = Some Iend),
     tr_fun f nret entry cfg.
-
 
 (** Comment it because we changed the definition of select_stmt and
 update_stmt, and tr_fun is unused in the proof of the compilation *)
@@ -882,6 +890,27 @@ statement -> cfg_info -> Prop :=
     (TR: transl_stmt (get_an ae pc) (Sreturn e) = OK ts),
     match_stmt body cfg (Sreturn e) ts (mk_cfg_info pc succ cont brk endn)
 .
+
+(** TODO: tr_cont is used to specify the location of the
+continuation. We do not know what are the target statement so we just
+assume that it exists. When we do actual proof, e.g., the drop
+elaboration proof, we can use tr_cont to specify the location of cont
+and then write a pass-specific match_cont to relate the source and
+target cont where the target statement in tr_cont can be proved to be
+equal to the target stmt in the target cont (because transl_stmt is a
+function). But for now, we think it is not that useful to simplify the
+proof, so we just write it into the inavriant of the proof of a
+pass. *)
+
+Inductive tr_cont : statement -> rustcfg -> cont -> cfg_kinfo -> Prop :=
+| tr_Kstop: forall body cfg nret
+    (RET: cfg ! nret = Some Iend),
+    tr_cont body cfg Kstop (mk_cfg_kinfo nret None None nret)
+| sound_Kseq: forall body cfg s ts k pc next cont brk nret
+    (MSTMT: match_stmt body cfg s ts (mk_cfg_info pc next cont brk nret))
+    (TRCONT: tr_cont body cfg k (mk_cfg_kinfo next cont brk nret)),
+    tr_cont body cfg (Kseq s k) (mk_cfg_kinfo pc cont brk nret).
+
 
 (** * Proof of the translation on the CFG meets the specification (match_stmt) *)
 

@@ -1178,34 +1178,34 @@ Proof.
 Qed.
 
 
-Inductive match_cont (j: meminj) : AN -> FM -> statement -> rustcfg -> cont -> RustIRsem.cont -> node -> option node -> option node -> node -> mem -> mem -> sup -> sup -> Prop :=
+Inductive match_cont (j: meminj) : AN -> FM -> statement -> rustcfg -> cont -> RustIRsem.cont -> cfg_kinfo -> mem -> mem -> sup -> sup -> Prop :=
 | match_Kseq: forall an flagm body cfg s ts k tk pc next cont brk nret m tm bound tbound
     (MSTMT: match_stmt an flagm body cfg s ts (mk_cfg_info pc next cont brk nret))
-    (MCONT: match_cont j an flagm body cfg k tk next cont brk nret m tm bound tbound),
-    match_cont j an flagm body cfg (Kseq s k) (RustIRsem.Kseq ts tk) pc cont brk nret m tm bound tbound
+    (MCONT: match_cont j an flagm body cfg k tk (mk_cfg_kinfo next cont brk nret) m tm bound tbound),
+    match_cont j an flagm body cfg (Kseq s k) (RustIRsem.Kseq ts tk) (mk_cfg_kinfo pc cont brk nret) m tm bound tbound
 | match_Kstop: forall an flagm body cfg nret m tm bound tbound
     (RET: cfg ! nret = Some Iend),
-    match_cont j an flagm body cfg Kstop RustIRsem.Kstop nret None None nret m tm bound tbound
+    match_cont j an flagm body cfg Kstop RustIRsem.Kstop (mk_cfg_kinfo nret None None nret) m tm bound tbound
 | match_Kloop: forall an flagm body cfg s ts k tk body_start loop_jump_node exit_loop nret contn brk m tm bound tbound
     (START: cfg ! loop_jump_node = Some (Inop body_start))
     (MSTMT: match_stmt an flagm body cfg s ts (mk_cfg_info body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret))
-    (MCONT: match_cont j an flagm body cfg k tk exit_loop contn brk nret m tm bound tbound),
-    match_cont j an flagm body cfg (Kloop s k) (RustIRsem.Kloop ts tk) loop_jump_node (Some loop_jump_node) (Some exit_loop) nret m tm bound tbound
+    (MCONT: match_cont j an flagm body cfg k tk (mk_cfg_kinfo exit_loop contn brk nret) m tm bound tbound),
+    match_cont j an flagm body cfg (Kloop s k) (RustIRsem.Kloop ts tk) (mk_cfg_kinfo loop_jump_node (Some loop_jump_node) (Some exit_loop) nret) m tm bound tbound
 | match_Kcall: forall an flagm body cfg k tk nret f tf le tle own p m tm bound tbound
     (MSTK: match_stacks j (Kcall p f le own k) (RustIRsem.Kcall (Some p) tf tle tk) m tm bound tbound)
     (RET: cfg ! nret = Some Iend),
     (* in the end of a function. an and body are not important, those
     in match_stacks are important *)
-    match_cont j an flagm body cfg (Kcall p f le own k) (RustIRsem.Kcall (Some p) tf tle tk) nret None None nret m tm bound tbound
+    match_cont j an flagm body cfg (Kcall p f le own k) (RustIRsem.Kcall (Some p) tf tle tk) (mk_cfg_kinfo nret None None nret) m tm bound tbound
 | match_Kdropcall: forall an flagm body cfg k tk pc cont brk nret st membs b tb ofs tofs id m tm bound tbound
     (INJ: Val.inject j (Vptr b ofs) (Vptr tb tofs))
-    (MCONT: match_cont j an flagm body cfg k tk pc cont brk nret m tm bound tbound),
-    match_cont j an flagm body cfg (Kdropcall id (Vptr b ofs) st membs k) (RustIRsem.Kdropcall id (Vptr tb tofs) st membs tk) pc cont brk nret m tm bound tbound
+    (MCONT: match_cont j an flagm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m tm bound tbound),
+    match_cont j an flagm body cfg (Kdropcall id (Vptr b ofs) st membs k) (RustIRsem.Kdropcall id (Vptr tb tofs) st membs tk) (mk_cfg_kinfo pc cont brk nret) m tm bound tbound
 | match_Kdropplace: forall f tf st l k tk e te own1 own2 flagm cfg nret cont brk pc ts1 ts2 m tm lo tlo hi thi maybeInit maybeUninit universe entry mayinit mayuninit
     (** Do we need match_stacks here?  *)
     (AN: analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (RETY: f.(fn_return) = tf.(fn_return))
-    (MSTK: match_cont j (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg k tk pc cont brk nret m tm lo tlo)
+    (MSTK: match_cont j (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg k tk (mk_cfg_kinfo pc cont brk nret) m tm lo tlo)
     (MENV: match_envs_flagm j own1 e m lo hi te flagm tm tlo thi)
     (SFLAGM: sound_flagm ce f.(fn_body) cfg flagm maybeInit maybeUninit universe)
     (MDPS: match_drop_place_state st ts1)
@@ -1216,7 +1216,7 @@ Inductive match_cont (j: meminj) : AN -> FM -> statement -> rustcfg -> cont -> R
     (MOVESPLIT: move_split_places own1 l = own2),
     (* source program: from dropplace to droopstate, target: from
     state to dropstate. So Kdropplace matches Kcall *)
-    match_cont j (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg (Kdropplace f st l e own1 k) (RustIRsem.Kcall None tf te (RustIRsem.Kseq ts1 (RustIRsem.Kseq ts2 tk))) pc cont brk nret m tm hi thi
+    match_cont j (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg (Kdropplace f st l e own1 k) (RustIRsem.Kcall None tf te (RustIRsem.Kseq ts1 (RustIRsem.Kseq ts2 tk))) (mk_cfg_kinfo pc cont brk nret) m tm hi thi
 
 with match_stacks (j: meminj) : cont -> RustIRsem.cont -> mem -> mem -> sup -> sup -> Prop :=
 | match_stacks_stop: forall m tm bound tbound,
@@ -1225,7 +1225,7 @@ with match_stacks (j: meminj) : cont -> RustIRsem.cont -> mem -> mem -> sup -> s
     (AN: analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))   
     (RETY: f.(fn_return) = tf.(fn_return))
     (* callee use stacks hi and thi, so caller f uses lo and tlo*)
-    (MCONT: match_cont j (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg k tk pc contn brk nret m tm lo tlo)
+    (MCONT: match_cont j (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg k tk (mk_cfg_kinfo pc contn brk nret) m tm lo tlo)
     (MENV: match_envs_flagm j own1 le m lo hi tle flagm tm tlo thi)
     (SFLAGM: sound_flagm ce f.(fn_body) cfg flagm maybeInit maybeUninit universe)
     (* own2 is built after the function call *)
@@ -1239,11 +1239,11 @@ with match_stacks (j: meminj) : cont -> RustIRsem.cont -> mem -> mem -> sup -> s
 (** Properties of match_cont  *)
 
 Lemma match_cont_injp_acc: forall k tk j1 j2 an fm body cfg pc cont brk nret m1 m2 tm1 tm2 lo tlo Hm1 Hm2
-    (MCONT: match_cont j1 an fm body cfg k tk pc cont brk nret m1 tm1 lo tlo)
+    (MCONT: match_cont j1 an fm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m1 tm1 lo tlo)
     (INJP: injp_acc (injpw j1 m1 tm1 Hm1) (injpw j2 m2 tm2 Hm2))
     (INCL1: Mem.sup_include lo (Mem.support m1))
     (INCL2: Mem.sup_include tlo (Mem.support tm1)),
-    match_cont j2 an fm body cfg k tk pc cont brk nret m2 tm2 lo tlo.
+    match_cont j2 an fm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m2 tm2 lo tlo.
 Proof.
   induction k; intros; inv MCONT.
   - constructor. auto.
@@ -1277,10 +1277,10 @@ Qed.
 
 
 Lemma match_cont_incr_bounds: forall k tk j1 an fm body cfg pc cont brk nret m1 tm1 lo tlo lo' tlo'
-    (MCONT: match_cont j1 an fm body cfg k tk pc cont brk nret m1 tm1 lo tlo)
+    (MCONT: match_cont j1 an fm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m1 tm1 lo tlo)
     (INCL1: Mem.sup_include lo lo')
     (INCL2: Mem.sup_include tlo tlo'),
-    match_cont j1 an fm body cfg k tk pc cont brk nret m1 tm1 lo' tlo'.
+    match_cont j1 an fm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m1 tm1 lo' tlo'.
 Proof.
   induction 1; try econstructor; eauto.
   inv MSTK. econstructor;eauto.
@@ -1324,9 +1324,9 @@ Qed.
 drop flags. Only support m1 unchanged: because we cannot ensure that
 the out_of_reach block becomes mapped in m1 *)
 Lemma match_cont_bound_unchanged: forall k tk j an fm body cfg pc cont brk nret m1 tm1 tm2 lo tlo
-   (MCONT:match_cont j an fm body cfg k tk pc cont brk nret m1 tm1 lo tlo)   
+   (MCONT:match_cont j an fm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m1 tm1 lo tlo)   
    (UNC: Mem.unchanged_on (fun b _ => Mem.sup_In b tlo) tm1 tm2),
-    match_cont j an fm body cfg k tk pc cont brk nret m1 tm2 lo tlo.
+    match_cont j an fm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m1 tm2 lo tlo.
 Proof.
   induction k; intros; inv MCONT.
   - constructor. auto.
@@ -1398,7 +1398,7 @@ match_cont after free_list. We do not allow memory expansion because
 it would cause some out_of_reach block to be reachable by allocating
 some blocks in source memory *)
 Lemma match_cont_bound_unchanged_gen: forall k tk j an fm body cfg pc cont brk nret m1 m2 tm1 tm2 lo tlo
-   (MCONT:match_cont j an fm body cfg k tk pc cont brk nret m1 tm1 lo tlo)
+   (MCONT:match_cont j an fm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m1 tm1 lo tlo)
    (MINJ: Mem.inject j m1 tm1)
    (UNC1: Mem.unchanged_on (fun b _ => Mem.sup_In b lo) m1 m2)
    (UNC2: Mem.unchanged_on (fun b _ => Mem.sup_In b tlo) tm1 tm2)
@@ -1410,7 +1410,7 @@ Lemma match_cont_bound_unchanged_gen: forall k tk j an fm body cfg pc cont brk n
    (* make sure m1 cannot expand *)
    (SUP1: Mem.support m1 = Mem.support m2),
    (* (SUP2: Mem.support tm1 = Mem.support tm2), *)
-    match_cont j an fm body cfg k tk pc cont brk nret m2 tm2 lo tlo.
+    match_cont j an fm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m2 tm2 lo tlo.
 Proof.
   induction k; intros; inv MCONT.
   - constructor. auto.
@@ -1512,7 +1512,7 @@ Inductive match_states : state -> RustIRsem.state -> Prop :=
   forall f s k e own m tf ts tk te tm j flagm maybeInit maybeUninit universe cfg nret cont brk next pc Hm lo tlo hi thi entry mayinit mayuninit
     (AN: analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (MSTMT: match_stmt (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg s ts (mk_cfg_info pc next cont brk nret))
-    (MCONT: match_cont j (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg k tk next cont brk nret m tm lo tlo)
+    (MCONT: match_cont j (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg k tk (mk_cfg_kinfo next cont brk nret) m tm lo tlo)
     (RETY: f.(fn_return) = tf.(fn_return))
     (MINJ: injp_acc w (injpw j m tm Hm))
     (* well-formedness of the flag map *)
@@ -1529,7 +1529,7 @@ Inductive match_states : state -> RustIRsem.state -> Prop :=
 | match_dropplace: forall f tf st l k tk e te own1 own2 m tm j flagm  maybeInit maybeUninit universe cfg nret cont brk next ts1 ts2 Hm lo tlo hi thi entry mayinit mayuninit
     (AN: analyze ce f cfg entry= OK (maybeInit, maybeUninit, universe))
     (RETY: f.(fn_return) = tf.(fn_return))
-    (MCONT: match_cont j (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg k tk next cont brk nret m tm lo tlo)
+    (MCONT: match_cont j (maybeInit, maybeUninit, universe) flagm f.(fn_body) cfg k tk (mk_cfg_kinfo next cont brk nret) m tm lo tlo)
     (MDPS: match_drop_place_state st ts1)
     (MSPLIT: match_split_drop_places flagm own1 l ts2)
     (* update one flag does not affect other flags *)
@@ -1547,7 +1547,7 @@ Inductive match_states : state -> RustIRsem.state -> Prop :=
     (TBOUND: Mem.sup_include thi (Mem.support tm)),
     match_states (Dropplace f st l k e own1 m) (RustIRsem.State tf ts1 (RustIRsem.Kseq ts2 tk) te tm)
 | match_dropstate: forall k tk m tm j flagm maybeInit maybeUninit universe body cfg nret cont brk next b ofs tb tofs st membs id lo tlo Hm
-    (MCONT: match_cont j (maybeInit, maybeUninit, universe) flagm body cfg k tk next cont brk nret m tm lo tlo)
+    (MCONT: match_cont j (maybeInit, maybeUninit, universe) flagm body cfg k tk (mk_cfg_kinfo next cont brk nret) m tm lo tlo)
     (MINJ: injp_acc w (injpw j m tm Hm))
     (VINJ: Val.inject j (Vptr b ofs) (Vptr tb tofs))
     (* no new stacks block in dropstate *)
@@ -2994,13 +2994,13 @@ Qed.
 (* free_list preserves match_cont *)
 Lemma match_cont_free_env: forall k tk j1 own le tle m1 m2 lo hi flagm tm1 tm2 tlo thi an fm body cfg pc cont brk nret
     (MENV: match_envs_flagm j1 own le m1 lo hi tle flagm tm1 tlo thi)
-    (MCONT: match_cont j1 an fm body cfg k tk pc cont brk nret m1 tm1 lo tlo)
+    (MCONT: match_cont j1 an fm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m1 tm1 lo tlo)
     (INCL1: Mem.sup_include hi (Mem.support m1))
     (* (INCL2: Mem.sup_include thi (Mem.support tm1)) *)
     (MINJ: Mem.inject j1 m1 tm1)
     (FREE1: Mem.free_list m1 (blocks_of_env ge le) = Some m2)
     (FREE2: Mem.free_list tm1 (blocks_of_env tge tle) = Some tm2),
-    match_cont j1 an fm body cfg k tk pc cont brk nret m2 tm2 lo tlo
+    match_cont j1 an fm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m2 tm2 lo tlo
 .
 Proof.
   intros.
@@ -3029,7 +3029,7 @@ Qed.
 
 (* used in return step *)
 Lemma match_cont_call_cont: forall k ck tk j1 an fm body cfg pc cont brk nret m1 tm1 lo tlo
-    (MCONT: match_cont j1 an fm body cfg k tk pc cont brk nret m1 tm1 lo tlo)
+    (MCONT: match_cont j1 an fm body cfg k tk (mk_cfg_kinfo pc cont brk nret) m1 tm1 lo tlo)
     (CCONT: call_cont k = Some ck),
   exists tck,
     RustIRsem.call_cont tk = Some tck /\
