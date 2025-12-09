@@ -2224,6 +2224,86 @@ Proof.
   eapply field_type_implies_field_offset; eauto.
 Qed.  
 
+Lemma field_offset_in_range_eq: forall ofs fofs orgs id fid fty co,
+    ce ! id = Some co ->
+    co_sv co = Struct ->
+    field_offset ce fid (co_members co) = OK fofs ->
+    field_type fid (co_members co) = OK fty ->
+    Ptrofs.unsigned ofs + sizeof ce (Tstruct orgs id) <= Ptrofs.max_unsigned ->
+    Ptrofs.unsigned (Ptrofs.add ofs (Ptrofs.repr fofs)) = Ptrofs.unsigned ofs + fofs
+    /\ Ptrofs.unsigned ofs <= Ptrofs.unsigned ofs + fofs
+    /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.unsigned ofs + sizeof ce (Tstruct orgs id).
+Proof.
+  intros. 
+  exploit field_offset_in_range_complete; eauto.
+  intros (R1 & R2).
+  generalize (Ptrofs.unsigned_range ofs). intros F4.
+  generalize (COMP_RANGE id co H). intros R3.
+  generalize (sizeof_pos ce fty). intros R4.
+  simpl in *. rewrite H in *.
+  repeat apply conj.
+  eapply field_offset_in_range_eq_gen; eauto.
+  lia. lia. lia.
+Qed.
+
+Lemma field_offset_in_range_eq1: forall ofs fofs orgs id fid fty co,
+    ce ! id = Some co ->
+    co_sv co = Struct ->
+    field_offset ce fid (co_members co) = OK fofs ->
+    place_field_type co fid orgs = OK fty ->
+    Ptrofs.unsigned ofs + sizeof ce (Tstruct orgs id) <= Ptrofs.max_unsigned ->
+    Ptrofs.unsigned (Ptrofs.add ofs (Ptrofs.repr fofs)) = Ptrofs.unsigned ofs + fofs
+    /\ Ptrofs.unsigned ofs <= Ptrofs.unsigned ofs + fofs
+    /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.unsigned ofs + sizeof ce (Tstruct orgs id).
+Proof.
+  intros.
+  exploit place_field_type_res. eauto. intros (ty' & TY' & TEQ).
+  erewrite (type_eq_sizeof_eq fty ty'); eauto.
+  eapply field_offset_in_range_eq; eauto.
+Qed.
+
+
+Lemma variant_field_offset_in_range_eq: forall ofs fofs orgs id fid fty co,
+    ce ! id = Some co ->
+    co_sv co = TaggedUnion ->
+    variant_field_offset ce fid (co_members co) = OK fofs ->
+    field_type fid (co_members co) = OK fty ->
+    Ptrofs.unsigned ofs + sizeof ce (Tvariant orgs id) <= Ptrofs.max_unsigned ->
+    Ptrofs.unsigned (Ptrofs.add ofs (Ptrofs.repr fofs)) = Ptrofs.unsigned ofs + fofs
+    /\ Ptrofs.unsigned ofs <= Ptrofs.unsigned ofs + fofs
+    /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.unsigned ofs + sizeof ce (Tvariant orgs id)
+    /\ 4 <= fofs.
+Proof.
+  intros. 
+  exploit variant_field_offset_in_range_complete; eauto.
+  intros (R1 & R2).
+  generalize (Ptrofs.unsigned_range ofs). intros F4.
+  generalize (COMP_RANGE id co H). intros R3.
+  generalize (sizeof_pos ce fty). intros R4.
+  simpl in *. rewrite H in *.
+  repeat apply conj.
+  eapply field_offset_in_range_eq_gen; eauto.
+  lia. lia. lia. lia.
+Qed.
+
+Lemma variant_field_offset_in_range_eq1: forall ofs fofs orgs id fid fty co,
+    ce ! id = Some co ->
+    co_sv co = TaggedUnion ->
+    variant_field_offset ce fid (co_members co) = OK fofs ->
+    place_field_type co fid orgs = OK fty ->
+    Ptrofs.unsigned ofs + sizeof ce (Tvariant orgs id) <= Ptrofs.max_unsigned ->
+    Ptrofs.unsigned (Ptrofs.add ofs (Ptrofs.repr fofs)) = Ptrofs.unsigned ofs + fofs
+    /\ Ptrofs.unsigned ofs <= Ptrofs.unsigned ofs + fofs
+    /\ Ptrofs.unsigned ofs + fofs + sizeof ce fty <= Ptrofs.unsigned ofs + sizeof ce (Tvariant orgs id)
+    /\ 4 <= fofs.
+Proof.
+  intros.
+  exploit place_field_type_res. eauto. intros (ty' & TY' & TEQ).
+  erewrite (type_eq_sizeof_eq fty ty'); eauto.
+  eapply variant_field_offset_in_range_eq; eauto.
+Qed.
+
+
 (* Two memory location (b1, ofs1) and (b2, ofs2) which have type ty1
 and ty2 are non-overlap *)
 Definition loc_disjoint (b1 b2: block) (ty1 ty2: type) (ofs1 ofs2: Z) : Prop :=

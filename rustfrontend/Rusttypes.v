@@ -2807,3 +2807,18 @@ Proof.
   eapply variant_field_offset_in_max_range; eauto.
 Qed.
 
+Lemma field_offset_in_range_eq_gen: forall ofs fofs sz,
+    0 <= fofs <= sz ->
+    Ptrofs.unsigned ofs + sz <= Ptrofs.max_unsigned ->
+    Ptrofs.unsigned (Ptrofs.add ofs (Ptrofs.repr fofs)) = Ptrofs.unsigned ofs + fofs.
+Proof.
+  intros.
+  generalize (Ptrofs.unsigned_range ofs). intros R.
+  erewrite Ptrofs.add_unsigned.
+  rewrite Ptrofs.unsigned_repr. 1-2: rewrite Ptrofs.unsigned_repr; auto.  
+  lia.
+  lia. lia.
+Qed.
+
+
+  
