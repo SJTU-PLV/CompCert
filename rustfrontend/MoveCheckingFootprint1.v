@@ -20,6 +20,8 @@ Import ListNotations.
 
 Definition spure := Separation.pure.
 
+Definition STrue := spure True.
+
 (** Try to define the sem_wt_loc/val as a coherence relation between
 footprint and the memory. We try to define it using massert which
 explicitly encode separation. *)
@@ -41,19 +43,28 @@ Inductive footprint : Type :=
 
 Local Open Scope sep_scope.
 
+
+(** Unused for now *)
 Fixpoint mconj_list (l: list massert) : massert :=
   match l with
-  | nil => spure True
+  | nil => STrue
   | a :: l' =>
       a ** (mconj_list l')
   end.
+
+Inductive Forall_sep {A : Type} (P : A -> massert -> Prop) : list A -> massert -> Prop :=
+    Forall_sep_nil : Forall_sep P nil STrue
+  | Forall_sep_cons : forall (x : A) (l : list A) mass1 mass2,
+      P x mass1 -> 
+      Forall_sep P l mass2 -> 
+      Forall_sep P (x :: l) (mass1 ** mass2).
 
 (* We cannot write Forall (fun ... => sem_wt_loc ... in sem_wt_struct)
 which would report error that sem_wt_loc does not occur positively, so
 we define it here to make sem_wt_loc occurs positively in
 sem_wt_struct case *)
 Inductive fields_sep (b: block) (ofs: Z) (P: footprint -> block -> Z -> massert -> Prop) : list (ident * Z * footprint) -> massert -> Prop :=
-| fields_sep_nil: fields_sep b ofs P nil (spure True)
+| fields_sep_nil: fields_sep b ofs P nil STrue
 | fields_sep_cons: forall fid fofs ffp l mass1 mass2
     (IND: fields_sep b ofs P l mass2)
     (FWT: P ffp b (ofs + fofs) mass1),
@@ -127,3 +138,132 @@ with sem_wt_val : footprint -> val -> massert -> Prop :=
     (AL: (alignof_comp id | Ptrofs.unsigned ofs))
     (PERM: mass2 = range b (Ptrofs.unsigned ofs) (Ptrofs.unsigned ofs + sizeof_comp id)),
     sem_wt_val (fp_enum id orgs tagz fid fofs fp) (Vptr b ofs) (mconj mass1 mass2).
+
+
+
+Section FP_IND.
+
+Variable (P: footprint -> Prop)
+  (HPemp: P fp_emp)
+  (HPscalar: forall ty v, P (fp_scalar ty v))
+  (HPbox: forall (b : block) sz (fp : footprint), P fp -> P (fp_box b sz fp))
+  (HPstruct: forall id fpl, (forall fid ofs fp, In (fid, ofs, fp) fpl -> P fp) -> P (fp_struct id fpl))
+  (HPenum: forall id orgs (tag : Z) fid ofs (fp : footprint), P fp -> P (fp_enum id orgs tag fid ofs fp))
+  (HPref: forall ty ref_owner, P (fp_ref ty ref_owner)).
+
+Fixpoint strong_footprint_ind t: P t.
+Proof.
+  destruct t.
+  - apply HPemp.
+  - apply HPscalar.
+  - eapply HPbox. specialize (strong_footprint_ind t); now subst.
+  - eapply HPstruct. induction fpl.
+    + intros. inv H.
+    + intros. destruct a as ((fid1 & ofs1) & fp1).  simpl in H. destruct H.
+      * specialize (strong_footprint_ind fp1). inv H. apply strong_footprint_ind.
+        (* now subst. *)
+      * apply (IHfpl fid ofs fp H). 
+  - apply HPenum. apply strong_footprint_ind.
+  - apply HPref. 
+Qed.
+    
+End FP_IND.
+
+(* Footprint used in interface (for now, it is just defined by
+support) *)
+Definition flat_footprint : Type := list block.
+
+(* Function used to flatten a footprint  *)
+Fixpoint footprint_flat (fp: footprint) : flat_footprint :=
+  match fp with
+  | fp_emp => nil
+  | fp_scalar _ _ => nil
+  | fp_ref _ _ => nil
+  | fp_box b _ fp' =>
+      b :: footprint_flat fp'
+  | fp_struct _ fpl =>
+      flat_map (fun '(_, _, fp) => footprint_flat fp) fpl
+  | fp_enum _ _ _ _ _ fp =>
+      footprint_flat fp
+  end.
+
+Definition footprint_disjoint (fp1 fp2: footprint) :=
+  list_disjoint (footprint_flat fp1) (footprint_flat fp2).
+
+Inductive footprint_disjoint_list : list footprint -> Prop :=
+| fp_disjoint_nil: footprint_disjoint_list nil
+| fp_disjoint_cons: forall fp fpl,
+      list_disjoint (footprint_flat fp) (flat_map footprint_flat fpl) ->
+      footprint_disjoint_list fpl ->
+      footprint_disjoint_list (fp::fpl)
+.
+
+(* Definition of footprint map where each element represents the
+footprint of a local variable or the footprint of the memory location
+passed by reference from the caller (TODO: this part may be put at
+another local environment) *)
+
+Definition fp_map := PTree.t footprint.
+
+(* A footprint in a function frame *)
+
+Definition flat_fp_map (fpm: fp_map) : flat_footprint :=
+  flat_map (fun elt => footprint_flat (snd elt)) (PTree.elements fpm).
+
+(* Definiton of footprint for stack frames *)
+
+(** Footprint map which records the footprint starting from stack
+blocks (denoted by variable names). It represents the ownership chain
+from a stack block. *)
+
+(* The footprint in a module *)
+
+Inductive fp_frame : Type :=
+| fpf_emp
+(* we need to record the footprint of the stack *)
+| fpf_func (e: env) (fpm: fp_map) (fpf: fp_frame)
+(* use this to record the structure of footprint in dropplace state, rfp is the footprint of the place being dropped *)
+(** We may not need fpf_dropplace. We can prove some invariant for the
+places in drop_place_state, e.g., their footprint in fpm is not
+shallowly fp_emp and etc. *)
+(* | fpf_dropplace (e: env) (fpm: fp_map) (rfp: footprint) (fpf: fp_frame) *)
+(* record the footprint in a drop glue: fpl are the footprint of the
+members to be dropped (the first element of fpl is the current dropped
+footprint); (b, ofs) is the address of this composite. *)
+| fpf_drop (b: block) (ofs: Z) (fpl: list (ident * Z * footprint)) (fpf: fp_frame)
+.
+
+Inductive coherent_var (fpm: fp_map) (elt: (ident * (block * type))) : massert -> Prop :=
+| coherent_var_intro: forall id b ty mass fp
+    (ELTEQ: elt = (id, (b, ty)))
+    (VARFP: fpm ! id = Some fp)
+    (MASS: sem_wt_loc fp b 0 mass),
+    coherent_var fpm elt mass.
+
+(* The separation predicate for (local env, footprint map) *)
+Inductive coherent_fpm (e: env) (fpm: fp_map) : massert -> Prop :=
+| coherent_fpm_intro: forall mass
+    (ALLSEP: Forall_sep (coherent_var fpm) (PTree.elements e) mass),
+    coherent_fpm e fpm mass.
+
+
+(* coherent relation between the tree-shaped footprint structure and
+the concrete memory *)
+Inductive coherent_fpf : fp_frame -> massert -> Prop :=
+| coherent_fpf_emp: coherent_fpf fpf_emp (STrue)
+| coherent_fpf_func: forall e fpm fpf mass1 mass2
+    (COH1: coherent_fpm e fpm mass1)
+    (COH2: coherent_fpf fpf mass2),
+    coherent_fpf (fpf_func e fpm fpf) (mass1 ** mass2)
+| coherent_fpf_drop: forall fpf fpl b ofs mass1 mass2
+    (COH1: fields_sep b ofs sem_wt_loc fpl mass1)
+    (COH2: coherent_fpf fpf mass2),
+    coherent_fpf (fpf_drop b ofs fpl fpf) (mass1 ** mass2).
+
+Inductive coherent (m: mem) (fpf: fp_frame) : Prop :=
+| coherent_intro: forall mass
+    (COH: coherent_fpf fpf mass)
+    (MPRED: m |= mass),
+    coherent m fpf.
+
+(** Next step:   *)
