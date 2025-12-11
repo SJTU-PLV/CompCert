@@ -692,6 +692,38 @@ Section COMP_ENV.
 
 Variable ce: composite_env.
 
+
+Definition type_field (ce: composite_env) (ty: type) (fid: ident) : res type :=
+  match ty with
+  | Tstruct orgs id =>
+      match ce ! id with
+      | Some co =>
+          match co_sv co with
+          | Struct =>
+              place_field_type co fid orgs
+          | _ => Error (msg "not struct in field type")
+          end
+      | None => Error (msg "no composite")
+      end
+  | _ => Error (msg "wrong struct type")                  
+  end.
+
+Definition type_downcast (ce: composite_env) (ty: type) (fid: ident) : res type :=
+  match ty with
+  | Tvariant orgs id =>
+      match ce ! id with
+      | Some co =>
+          match co_sv co with
+          | TaggedUnion =>
+              place_field_type co fid orgs
+          | _ => Error (msg "not variant in downcast type")
+          end
+      | None => Error (msg "no composite")
+      end
+  | _ => Error (msg "wrong enum type")                  
+  end.
+
+
 Section TENV.
 Variable te: typenv.
   
@@ -716,42 +748,18 @@ Variable te: typenv.
           Error (msg "deref has wrong type")
     | Pfield p fid fty =>
         do _ <- type_check_place p;
-        match typeof_place p with
-        | Tstruct orgs id =>
-            match ce ! id with
-            | Some co =>
-                match co_sv co with
-                | Struct =>
-                    do fty1 <- place_field_type co fid orgs;
-                    if type_eq fty fty1 then
-                  OK tt
-                    else
-                      Error [CTX (local_of_place p); MSG " wrong field type"]
-                | _ => Error (msg "not struct in field type")
-                end
-            | _ => Error (msg "no composite")
-            end
-        | _ =>  Error (msg "wrong struct type")
-        end
+        do fty1 <- type_field ce (typeof_place p) fid;
+        if type_eq fty fty1 then
+          OK tt
+        else
+          Error [CTX (local_of_place p); MSG " wrong field type"]
     | Pdowncast p fid fty =>
         do _ <- type_check_place p;
-        match typeof_place p with
-        | Tvariant orgs id =>
-            match ce ! id with
-            | Some co =>
-                match co_sv co with
-                | TaggedUnion =>
-                    do fty1 <- place_field_type co fid orgs;
-                    if type_eq fty fty1 then
-                  OK tt
-                    else
-                      Error [CTX (local_of_place p); MSG " wrong downcast type"]
-                | _ => Error (msg "not variant in downcast type")
-                end
-            | _ => Error (msg "no composite")
-            end
-        | _ =>  Error (msg "wrong enum type")
-        end
+        do fty1 <- type_downcast ce (typeof_place p) fid;
+        if type_eq fty fty1 then
+          OK tt
+        else
+          Error [CTX (local_of_place p); MSG " wrong downcast type"]
     end.
 
 Fixpoint type_check_pexpr (pe: pexpr) : res unit :=
@@ -949,6 +957,39 @@ End COMP_ENV.
 
 (** Soundness of type checking  *)
 
+Lemma type_field_inv ce: forall p fid fty,
+    type_field ce (typeof_place p) fid = OK fty ->
+    exists id orgs co, 
+      typeof_place p = Tstruct orgs id
+      /\ ce ! id = Some co
+      /\ co_sv co = Struct
+      /\ place_field_type co fid orgs = OK fty.
+Proof.
+  unfold type_field.
+  intros. 
+  destruct (typeof_place p) eqn: PTY; try congruence.
+  destruct (ce!i) eqn: CO; try congruence.
+  destruct (co_sv c) eqn: SV; try congruence.
+  repeat eexists; eauto.
+Qed.
+
+Lemma type_downcast_inv ce: forall p fid fty,
+    type_downcast ce (typeof_place p) fid = OK fty ->
+    exists id orgs co, 
+      typeof_place p = Tvariant orgs id
+      /\ ce ! id = Some co
+      /\ co_sv co = TaggedUnion
+      /\ place_field_type co fid orgs = OK fty.
+Proof.
+  unfold type_downcast.
+  intros. 
+  destruct (typeof_place p) eqn: PTY; try congruence.
+  destruct (ce!i) eqn: CO; try congruence.
+  destruct (co_sv c) eqn: SV; try congruence.
+  repeat eexists; eauto.
+Qed
+.
+
 Lemma type_check_place_sound: forall ce te p,
     type_check_place ce te p = OK tt ->
     wt_place te ce p.
@@ -960,10 +1001,7 @@ Proof.
     destruct type_eq in A3; simpl in A3; try congruence. subst.
     econstructor; eauto.
   - monadInv H.
-    destruct (typeof_place p) eqn: PTY; try congruence.
-    destruct (ce!i0) eqn: CO; try congruence.
-    destruct (co_sv c) eqn: SV; try congruence.
-    monadInv EQ0.
+    edestruct type_field_inv as (id & orgs & co & A1 & A2 & A3 & A4); eauto.
     destruct type_eq; try congruence. subst.
     destruct x.
     econstructor; eauto. 
@@ -972,13 +1010,10 @@ Proof.
     destruct x.
     econstructor; eauto.
   - monadInv H.
-    destruct (typeof_place p) eqn: PTY; try congruence.
-    destruct (ce!i0) eqn: CO; try congruence.
-    destruct (co_sv c) eqn: SV; try congruence.
-    monadInv EQ0.
+    edestruct type_downcast_inv as (id & orgs & co & A1 & A2 & A3 & A4); eauto.
     destruct type_eq; try congruence. subst.
     destruct x.
-    econstructor; eauto.
+    econstructor; eauto. 
 Qed.
 
 Lemma type_check_pexpr_sound: forall ce te pe,
