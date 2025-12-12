@@ -428,15 +428,6 @@ Hypothesis wf_senv: wf_senv se.
 Remark hmap_ce: genv_cenv ge = PTree.empty composite.
   reflexivity. Qed.
 
-Lemma massert_eqv_pure_l: forall P,
-    massert_eqv P (pure True ** P).
-Proof.
-  intros. split.
-  red; split; [intros; eapply sep_pure; auto|simpl; intros; destruct H; try contradiction; auto].
-  red. split. intros. eapply sep_pure in H. destruct H; auto.
-  intros. simpl. auto.
-Qed.
-
 Lemma hmap_pred_rec_split: forall k n,
     (k < n)%nat ->
     forall fpl b pos,
