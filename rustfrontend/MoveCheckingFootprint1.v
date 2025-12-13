@@ -11,6 +11,7 @@ Require Import LanguageInterface CKLR Invariant.
 Require Import Rusttypes Rustlight Rustlightown.
 Require Import RustOp RustIR RustIRcfg Rusttyping.
 Require Import Errors.
+Require Import Listmisc.
 Require Import InitDomain InitAnalysis.
 Require Import RustIRown MoveChecking BorrowCheck.
 Require Import Wfsimpl.
@@ -173,6 +174,22 @@ Proof.
       eapply IHfpl. auto.
 Qed.
 
+Lemma fields_sep_app : forall l1 l2 P mass b ofs,
+    fields_sep b ofs P (l1 ++ l2) mass <-> 
+      (exists mass1 mass2, fields_sep b ofs P l1 mass1 /\ fields_sep b ofs P l2 mass2 /\ mass = mass1 ** mass2).
+Proof.
+  intros. split; intros.
+  - eapply fields_sep_equiv in H.
+    eapply Forall_sep_app in H as (mass1 & mass2 & A1 & A2 & A3). subst.
+    exists mass1, mass2.
+    repeat apply conj; eauto; eapply fields_sep_equiv; eauto.
+  - destruct H as (mass1 & mass2 & A1 & A2 & A3); subst.
+    eapply fields_sep_equiv.
+    eapply Forall_sep_app.
+    exists mass1, mass2.
+    repeat apply conj; eauto; eapply fields_sep_equiv; eauto.
+Qed.
+    
 Section FP_IND.
 
 Variable (P: footprint -> Prop)
@@ -232,21 +249,18 @@ Inductive footprint_disjoint_list : list footprint -> Prop :=
 
 (* Definition of footprint map where each element represents the
 footprint of a local variable or the footprint of the memory location
-passed by reference from the caller (TODO: this part may be put at
-another local environment) *)
+passed by reference from the caller. We also put the locaiton and type
+of the local variables in fp_map for simplicity *)
 
-Definition fp_map := PTree.t footprint.
+Definition fp_map := PTree.t (block * Z * type * footprint).
 
 (* A footprint in a function frame *)
 
-Definition flat_fp_map (fpm: fp_map) : flat_footprint :=
-  flat_map (fun elt => footprint_flat (snd elt)) (PTree.elements fpm).
-
 (* Definiton of footprint for stack frames *)
 
-Definition fenv := PTree.t (block * Z * type).
+(* Definition fenv := PTree.t (block * Z * type). *)
 
-Coercion fenv_to_tenv (fe: fenv) : typenv := PTree.map1 snd fe.
+(* Coercion fenv_to_tenv (fe: fenv) : typenv := PTree.map1 snd fe. *)
 
 (** Footprint map which records the footprint starting from stack
 blocks (denoted by variable names). It represents the ownership chain
@@ -259,7 +273,7 @@ Inductive fp_frame : Type :=
 (* we need to record the footprint of the stack. Can we just use one
 local environment to record the location of local variables and
 locations passed by reference from the caller? *)
-| fpf_func (e: fenv) (fpm: fp_map) (fpf: fp_frame)
+| fpf_func (fpm: fp_map) (fpf: fp_frame)
 (* use this to record the structure of footprint in dropplace state, rfp is the footprint of the place being dropped *)
 (** We may not need fpf_dropplace. We can prove some invariant for the
 places in drop_place_state, e.g., their footprint in fpm is not
@@ -271,30 +285,28 @@ footprint); (b, ofs) is the address of this composite. *)
 | fpf_drop (b: block) (ofs: Z) (fpl: list (ffpty)) (fpf: fp_frame)
 .
 
-Inductive coherent_var (fpm: fp_map) (elt: (ident * (block * Z * type))) : massert -> Prop :=
+Inductive coherent_var (elt: (ident * (block * Z * type * footprint))) : massert -> Prop :=
 | coherent_var_intro: forall id b ofs ty mass fp
-    (ELTEQ: elt = (id, (b, ofs, ty)))
+    (ELTEQ: elt = (id, (b, ofs, ty, fp)))
     (* What if fpm contains more variables than local env? *)
-    (VARFP: fpm ! id = Some fp)
     (MASS: sem_wt_loc fp b ofs mass),
-    (* local variables are freeable (defined by range) *)
-    coherent_var fpm elt (mconj mass (range b ofs (sizeof ce ty))).
+    coherent_var elt mass.
 
 (* The separation predicate for (local env, footprint map) *)
-Inductive coherent_fpm (e: fenv) (fpm: fp_map) : massert -> Prop :=
+Inductive coherent_fpm (fpm: fp_map) : massert -> Prop :=
 | coherent_fpm_intro: forall mass
-    (ALLSEP: Forall_sep (coherent_var fpm) (PTree.elements e) mass),
-    coherent_fpm e fpm mass.
+    (ALLSEP: Forall_sep coherent_var (PTree.elements fpm) mass),
+    coherent_fpm fpm mass.
 
 
 (* coherent relation between the tree-shaped footprint structure and
 the concrete memory *)
 Inductive coherent_fpf : fp_frame -> massert -> Prop :=
 | coherent_fpf_emp: coherent_fpf fpf_emp (STrue)
-| coherent_fpf_func: forall e fpm fpf mass1 mass2
-    (COH1: coherent_fpm e fpm mass1)
+| coherent_fpf_func: forall  fpm fpf mass1 mass2
+    (COH1: coherent_fpm fpm mass1)
     (COH2: coherent_fpf fpf mass2),
-    coherent_fpf (fpf_func e fpm fpf) (mass1 ** mass2)
+    coherent_fpf (fpf_func fpm fpf) (mass1 ** mass2)
 | coherent_fpf_drop: forall fpf fpl b ofs mass1 mass2
     (COH1: fields_sep b ofs sem_wt_loc fpl mass1)
     (COH2: coherent_fpf fpf mass2),
@@ -322,34 +334,6 @@ to get the footprint from arbitary path which uses a function
 paths. This distinguishment may not be needed for set functions as we
 can ensure that we only set owner paths?  *)
 
-(** TODO: it would be better to use list_find and its properties from stdpp. *)
-Definition find_field {A: Type} (id: ident) (l: list (ident * A)) : option (ident * A) :=
-  find (fun '(id', _) => if ident_eq id id' then true else false) l. 
-
-
-Lemma find_field_some {A: Type}: forall fid fid1 fpl (a: A),
-    find_field fid fpl = Some (fid1, a) ->
-    fid = fid1 /\ In (fid, a) fpl.
-Proof.
-  intros. unfold find_field in H.
-  exploit find_some. eauto. intros (A1 & B).
-  destruct ident_eq in B; try congruence.
-  subst. auto.
-Qed.
-
-Definition field_idents {A: Type} (l: list (ident * A)) : list ident :=
-  map (fun '(fid, _) => fid) l.
-
-(* only set the first occurence of fid *)
-Fixpoint set_field {A: Type} (id: ident) (f: A -> A) (l: list (ident * A)) : list (ident * A) :=
-  match l with
-  | nil => nil
-  | (id', a') :: l' =>
-      if ident_eq id id' then
-        (id, f a') :: l'
-      else
-        (id', a') :: (set_field id f l')
-  end.
 
 Definition set_field_fp (fid: ident) (vfp: footprint) (fpl: list (ffpty)) : list ffpty :=
   set_field fid (fun '(fofs, ffp) => (fofs, vfp)) fpl.
@@ -368,7 +352,7 @@ Fixpoint set_footprint (phl: list path) (v: footprint) (fp: footprint) : option 
           end
       | ph_field fid, fp_struct id fpl =>
           match find_field fid fpl with
-          | Some (fid1, (fofs, ffp)) =>
+          | Some (fofs, ffp) =>
               match set_footprint l v ffp with
               | Some ffp1 =>
                   Some (fp_struct id (set_field_fp fid ffp1 fpl)) 
@@ -393,10 +377,10 @@ Fixpoint set_footprint (phl: list path) (v: footprint) (fp: footprint) : option 
 Definition set_footprint_map (ps: paths) (v: footprint) (fpm: fp_map) : option fp_map :=
   let (id, phl) := ps in
   match fpm!id with
-  | Some fp1 =>
+  | Some (a, fp1) =>
       match set_footprint phl v fp1 with
       | Some fp2 =>
-          Some (PTree.set id fp2 fpm)
+          Some (PTree.set id (a, fp2) fpm)
       | None =>
           None
       end
@@ -413,7 +397,7 @@ Fixpoint get_owner_loc_footprint (phl: list path) (fp: footprint) (b: block) (of
           get_owner_loc_footprint l fp1 b 0
       | ph_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
-          | Some (_, (fofs, fp1)) =>
+          | Some (fofs, fp1) =>
               get_owner_loc_footprint l fp1 b (ofs + fofs)
           | None => None
           end
@@ -435,7 +419,7 @@ Fixpoint get_owner_footprint (phl: list path) (fp: footprint) : option footprint
           get_owner_footprint l fp1
       | ph_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
-          | Some (_, (fofs, fp1)) =>
+          | Some (fofs, fp1) =>
               get_owner_footprint l fp1
           | None => None
           end
@@ -451,18 +435,18 @@ Fixpoint get_owner_footprint (phl: list path) (fp: footprint) : option footprint
 Definition get_owner_footprint_map (ps: paths) (fpm: fp_map) : option footprint :=
   let (id, phl) := ps in
   match fpm!id with
-  | Some fp =>
+  | Some (a, fp) =>
       get_owner_footprint phl fp
   | _ => None
   end.
 
 
-Definition get_owner_loc_footprint_map (e: fenv) (ps: paths) (fpm: fp_map) : option (block * Z * footprint) :=
+Definition get_owner_loc_footprint_map (ps: paths) (fpm: fp_map) : option (block * Z * footprint) :=
   let (id, phl) := ps in
-  match e!id, fpm!id with
-  | Some (b, ofs, ty), Some fp =>
+  match fpm!id with
+  | Some (b, ofs, ty, fp) =>
       get_owner_loc_footprint phl fp b ofs
-  | _, _ => None
+  | _ => None
   end.
 
 Fixpoint clear_footprint_rec ce (fp: footprint) : footprint :=
@@ -476,8 +460,8 @@ Fixpoint clear_footprint_rec ce (fp: footprint) : footprint :=
       fp_struct id (map (fun '(fid, (fofs, ffp)) => (fid, (fofs, clear_footprint_rec ce ffp))) fpl)
   end.
 
-Definition clear_footprint_map ce (e: fenv) (ps: paths) (fpm: fp_map) : option fp_map :=
-  match get_owner_loc_footprint_map e ps fpm with
+Definition clear_footprint_map ce (ps: paths) (fpm: fp_map) : option fp_map :=
+  match get_owner_loc_footprint_map ps fpm with
   | Some (_, _, fp1) =>
       set_footprint_map ps (clear_footprint_rec ce fp1) fpm
   | None => None
@@ -486,7 +470,7 @@ Definition clear_footprint_map ce (e: fenv) (ps: paths) (fpm: fp_map) : option f
 (* Get location and footprint through paths which may contains
 dereference of reference *)
 
-Fixpoint get_loc_footprint (fe: fenv) (fpm: fp_map) (phl: list path) (fp: footprint) (b: block) (ofs: Z) : option (block * Z * footprint) :=
+Fixpoint get_loc_footprint (fpm: fp_map) (phl: list path) (fp: footprint) (b: block) (ofs: Z) : option (block * Z * footprint) :=
   match phl with
   | nil => Some (b, ofs, fp)
   | ph :: l =>
@@ -495,41 +479,38 @@ Fixpoint get_loc_footprint (fe: fenv) (fpm: fp_map) (phl: list path) (fp: footpr
           get_owner_loc_footprint l fp1 b 0
       | ph_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
-          | Some (_, (fofs, fp1)) =>
-              get_loc_footprint fe fpm l fp1 b (ofs + fofs)
+          | Some (fofs, fp1) =>
+              get_loc_footprint fpm l fp1 b (ofs + fofs)
           | None => None
           end
       | ph_downcast _ fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
           if ident_eq fid1 fid2  then
-            get_loc_footprint fe fpm l fp1 b (ofs + fofs)
+            get_loc_footprint fpm l fp1 b (ofs + fofs)
           else None
       | ph_deref, fp_ref b1 ofs1 phs1 =>
-          match get_owner_loc_footprint_map fe phs1 fpm with
+          match get_owner_loc_footprint_map phs1 fpm with
           | Some (b2, ofs2, fp2) =>
               (* If this reference is valid, (b1, ofs1) should be
               equal to (b2, ofs2) *)
-              get_loc_footprint fe fpm l fp2 b2 ofs2
+              get_loc_footprint fpm l fp2 b2 ofs2
           | None => None
           end
       | _, _  => None
       end
   end.
 
-Definition get_loc_footprint_map (fe: fenv) (ps: paths) (fpm: fp_map) : option (block * Z * footprint) :=
+Definition get_loc_footprint_map (ps: paths) (fpm: fp_map) : option (block * Z * footprint) :=
   let (id, phl) := ps in
-  match fe!id, fpm!id with
-  | Some (b, ofs, ty), Some fp =>
-      get_loc_footprint fe fpm phl fp b ofs
-  | _, _ => None
+  match fpm!id with
+  | Some (b, ofs, ty, fp) =>
+      get_loc_footprint fpm phl fp b ofs
+  | _ => None
   end.
 
 (* Useful tactic to destruct get_loc_footprint *)
-(* Ltac destr_fp_enum fp ty := *)
-(*   destruct fp; try congruence; *)
-(*   destruct ty; try congruence; *)
-(*   destruct ident_eq; try congruence; *)
-(*   destruct list_eq_dec; try congruence; *)
-(*   destruct ident_eq; try congruence; subst. *)
+Ltac destr_fp_enum fp H :=
+  destruct fp; try congruence;
+  destruct ident_eq in H; try congruence; subst.
 
 (* Ltac destr_fp_enum_simpl fp := *)
 (*   destruct fp; try congruence; *)
@@ -545,7 +526,7 @@ Ltac destr_fp_field fp H :=
   destruct fp; try congruence;
   destruct find_field as [p|] eqn: FIND; try congruence;
   repeat destruct p; simpl in H;
-  exploit find_field_some; eauto; intros (A1 & A2); subst.
+  exploit find_field_some; eauto; intros A2; subst.
 
 
 (** ** Typing of the footprint: used to make sure the footprint is well-formed *)
@@ -577,6 +558,11 @@ Definition wt_paths (te: typenv) (phs: paths) : res type :=
       Error (msg "no local type")
   end.
 
+Inductive fp_match_field ce (co: composite) (P: type -> footprint -> Prop): ffpty -> member -> Prop :=
+| fp_match_field_intro: forall fid fofs ffp fty
+    (FOFS: field_offset ce fid (co_members co) = OK fofs)
+    (WTFP: P fty ffp),
+    fp_match_field ce co P (fid, (fofs, ffp)) (Member_plain fid fty).
 
 (* Definition of wt_footprint (well-typed footprint). Intuitively, it
 says that the footprint is an abstract form of the syntactic type. *)
@@ -597,26 +583,7 @@ Inductive wt_footprint : type -> footprint -> Prop :=
 | wt_fp_struct: forall orgs id fpl co
     (CO: ce ! id = Some co)
     (STRUCT: co_sv co = Struct)
-    (** TODO: combine WT1 andp WT2 elegantly. WT1 is used in getting
-    the sub-field's footprint. WT2 is used in proving the properties
-    of sub-field's footprint *)
-    (WT1: forall fid fty,
-        place_field_type co fid orgs = OK fty ->
-        (* For simplicity, use find_field instead of In predicate *)
-        exists ffp fofs,
-          find_field fid fpl = Some (fid, (fofs, ffp))
-          /\ field_offset ce fid co.(co_members) = OK fofs
-          (* bound condition *)
-          /\ wt_footprint fty ffp)
-    (WT2: forall fid fofs ffp,
-        find_field fid fpl = Some (fid, (fofs, ffp)) ->
-        exists fty,
-          place_field_type co fid orgs = OK fty
-          /\ field_offset ce fid co.(co_members) = OK fofs
-          /\ wt_footprint fty ffp)
-    (* make sure that the flattened footprint list has the same order
-    as that of the members. If we can ensure that name_members are
-    norepeated, then so are the field_idents. *)
+    (MATCH: Forall2 (fp_match_field ce co wt_footprint) fpl (co_members co))
     (FLAT: field_idents fpl = name_members (co_members co)),
     wt_footprint (Tstruct orgs id) (fp_struct id fpl)
 | wt_fp_enum: forall orgs id tagz fid fty fofs fp co
@@ -654,6 +621,38 @@ Lemma fields_sep_split: forall b ofs fofs fid ffp l mass P,
   (* use Forall_sep properties to prove fields_sep properties *)
 Admitted.
 
+(* set a found field would update the massert predicate *)
+Lemma Forall_sep_find_set_field {A: Type}: forall mp (l: list (ident * A)) P id a f,
+    find_field id l = Some a ->
+    Forall_sep P l mp ->
+    exists mp1 mp2 mpi l1 l2,
+      Forall_sep P l1 mp1
+      /\ Forall_sep P l2 mp2
+      /\ P (id, a) mpi
+      /\ l = l1 ++ (id, a) :: l2
+      /\ mp = mp1 ** mpi ** mp2
+      (* Properties of setting a new footprint into id *)
+      /\ (forall mpi', 
+            P (id, (f a)) mpi' ->
+            Forall_sep P (set_field id f l) (mp1 ** mpi' ** mp2)).
+Proof.
+  Admitted.
+
+Lemma fields_sep_find_set: forall l id P mp ffp b ofs fofs,
+    find_field id l = Some (fofs, ffp) ->
+    fields_sep b ofs P l mp ->
+    exists mp1 mp2 mpi l1 l2,
+      fields_sep b ofs P l1 mp1
+      /\ fields_sep b ofs P l2 mp2
+      /\ P ffp b (ofs + fofs) mpi
+      /\ l = l1 ++ (id, (fofs, ffp)) :: l2
+      /\ mp = mp1 ** mpi ** mp2
+      (* Properties of setting a new footprint into id *)
+      /\ (forall ffp' mpi', 
+            P ffp' b (ofs + fofs) mpi' ->
+            fields_sep b ofs P (set_field_fp id ffp' l) (mp1 ** mpi' ** mp2)).
+Proof.
+Admitted.
 
 (** Initialize a footprint with fp_emp based on the type of this footprint *)
 
@@ -827,6 +826,43 @@ Lemma store_range_rule: forall chunk m b ofs v (spec: val -> Prop) P,
 Proof.
 Admitted.
 
+Lemma store_range_unchanged: forall m1 m2 b lo hi chunk b1 ofs1 v,
+    m1 |= range b lo hi ->
+    Mem.store chunk m1 b1 ofs1 v = Some m2 ->
+    m2 |= range b lo hi.
+Proof.
+  intros.
+  simpl. repeat apply conj; try eapply H.
+  intros.
+  eapply Mem.perm_store_1; eauto. eapply H; eauto.
+Qed.
+
+(* The opposite direction is not correct as we cannot prove Q and R
+are disjoint *)
+Lemma mconj_absorb1: forall P Q R,
+    massert_imp ((mconj P Q) ** R) (mconj (P ** R) Q).
+Proof. 
+  intros. 
+  red. split.
+  - intros. simpl in *. 
+    destruct H as ((A1 & A2) & A3 & A4).
+    red in A4. 
+    repeat apply conj; eauto.
+    + red. intros. eapply A4. simpl. left. eauto.
+      auto.
+  - intros. simpl in *. destruct H as [[A1 | A2] | A3]; auto.
+Qed.
+
+Lemma mconj_absorb2: forall P Q R,
+    massert_imp ((mconj P Q) ** R) (mconj P (Q ** R)).
+Proof. 
+  intros. 
+  etransitivity. eapply sepconj_morph_1.
+  eapply mconj_comm. reflexivity.
+  erewrite mconj_absorb1. eapply mconj_comm.
+Qed.
+
+(********* End of properties of the separation predicate ********************  *)
 
 Definition sizeof_footprint ce (fp: footprint) : Z :=
   match fp with
@@ -977,7 +1013,7 @@ Qed.
   property is also useful in moving from a sem_wt_val. But in this
   case, we cannot know what value is stored in the sem_wt_loc *)
 
- 
+
 Lemma store_coherent_var: forall phl m ce mass1 mass2 v vfp fp1 pfp chunk b1 ofs1 b2 ofs2 MP
     (WTLOC: sem_wt_loc ce fp1 b1 ofs1 mass1)
     (WTVAL: sem_wt_val ce vfp v mass2)
@@ -1014,48 +1050,110 @@ Proof.
       * admit.
     + destr_fp_field fp1 GFP.
       inv WTLOC.
-      exploit fields_sep_split; eauto. intros (mass1 & mass3 & mass4 & B1 & B2). subst.
-      (* A big problem is that how to ensure storing value to a
-      sub-field do not change the range massert of the whole struct?
-      We should also split the range massert into subfiles !!
-      Something like (mconj mass1 range1) ** (mconj mass2 range2) **
-      (mconj mass3 range3). This require us to prove a stronger
-      fields_sep_split! *)
+      (* split fields_sep *)
+      exploit fields_sep_find_set; eauto.
+      intros (mp1 & mp2 & mpi & l1 & l2 & A1 & A2 & A3 & A4 & A5 & A6). subst.
+      eapply mconj_proj1 in MPRED as MPRED1.
+      (* change only mpi *)
+      assert (MPRED1': m|= mpi ** mass2 ** mp1 ** mp2 ** MP) by admit.      
+      exploit IHphl; eauto.
+      intros (m1 & fp2 & mpi' & C1 & C2 & C3 & C4).
+      (* adhoc: we know that storing a location does not change its
+      permission. *)
+      assert (MPRED2: m |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED.
+      eapply store_range_unchanged in MPRED2 as MPRED2'; eauto.      
+      rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.      
+      exploit frame_mconj. eapply MPRED. 
+      rewrite <- !sep_assoc in C4.
+      eapply C4. eauto. intros MPRED3.
+      rewrite sep_assoc, (sep_swap mpi' mp1 _) in MPRED3.
+      exists m1, (fp_struct id (set_field_fp fid fp2 (l1 ++ (fid, (z, f)) :: l2))), (mconj (mp1 ** mpi' ** mp2) (range b1 ofs1 (ofs1 + sizeof_comp ce id))). 
+      split; try split; eauto.
+      simpl. rewrite FIND. rewrite C2. reflexivity.
+      split.
+      econstructor; eauto.
+      eauto.
+    + destr_fp_enum fp1 GFP.
+      inv WTLOC.
+      eapply mconj_proj1 in MPRED as MPRED1.
+      set (mass1 := hasvalue Mint32 b1 ofs1 (Vint (Int.repr tag))) in *.
+      (* change only mpi *)
+      assert (MPRED1': m|= mass3 ** mass2 ** mass1 ** MP) by admit.
+      exploit IHphl; eauto.
+      intros (m1 & fp2 & mass2' & C1 & C2 & C3 & C4).
+      assert (MPRED2: m |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED.
+      eapply store_range_unchanged in MPRED2 as MPRED2'; eauto.      
+      rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.      
+      exploit frame_mconj. eapply MPRED. 
+      rewrite <- !sep_assoc in C4.
+      eapply C4. eauto. intros MPRED3.
+      rewrite (sep_comm mass2' mass1) in MPRED3.
+      exists m1, (fp_enum id tag fid0 ofs fp2), (mconj (mass1 ** mass2') (range b1 ofs1 (ofs1 + sizeof_comp ce id))). 
+      split; try split; eauto.
+      simpl. rewrite dec_eq_true. rewrite C2. reflexivity.
+      split.
+      econstructor; eauto.
+      eauto.
+Admitted.
 
-
-(* We prove a strong version, i.e., the store operation can always success *)
-Lemma store_coherent_fpm: forall phl m ce fe fpm mass1 mass2 v vfp pfp ty chunk b ofs id MP
-    (COH: coherent_fpm ce fe fpm mass1)
-    (WTVAL: sem_wt_val ce vfp v mass2)
-    (MPRED: m |= mass1 ** mass2 ** MP)
-    (* id may denote an external owner? We reduce all store for
-    reference into store for their referred owner *)
-    (GFP: get_owner_loc_footprint_map fe (id, phl) fpm = Some (b, ofs, pfp))
-    (* TODO: maybe we need wf_env to ensure that all footprint in fpm
-    is wt_footprint *)
-    (* (WT: wt_paths ce fe (id, phl) = OK ty) *)
-    (* (CK: access_mode ty = Ctypes.By_value chunk), *)
-    (** We may just require that the (size, align) of pfp is equal to
-    the (size, align) of the chunk. Maybe all the store rules can be
-    reduced to storebytes? *)
-    
-    exists m1 fpm1 mass3,
-Mem.store_storebytes Mem.storebytes_store
-      Mem.store chunk m b ofs v = Some m1
-      /\ set_footprint_map (id, phl) vfp fpm = Some fpm1
-      /\ coherent_fpm ce fe fpm1 mass3
-      /\ m1 |= mass3 ** MP.
+Lemma coherent_fpm_split ce: forall id fpm mp fp b ofs ty
+      (B: fpm ! id = Some (b, ofs, ty, fp))
+      (COH: coherent_fpm ce fpm mp),
+      exists l1 l2 mp1 mp2 mpi, 
+        Forall_sep (coherent_var ce) l1 mp1
+        /\ Forall_sep (coherent_var ce) l2 mp2
+        /\ coherent_var ce (id, (b, ofs, ty, fp)) mpi
+        /\ PTree.elements fpm = l1 ++ (id, (b, ofs, ty, fp)) :: l2
+        /\ mp = mp1 ** mpi ** mp2.
 Proof.
-  intros. simpl in GFP, WT. simpl.
-  destruct (fe ! id) as [((b1 & ofs1) & ty1)|] eqn: A; try congruence.
-  setoid_rewrite PTree.gmap1 in WT. rewrite A in WT. simpl in WT.
-  destruct (fpm ! id) as [fp|] eqn: B; try congruence.
-  (* We should split the footprint for the id from mass1 *)
-  exploit PTree.elements_remove. eapply A. intros (l1 & l2 & C1 & C2). 
+  intros.
+  exploit PTree.elements_remove. eapply B. intros (l1 & l2 & C1 & C2). 
   inv COH. rewrite C1 in ALLSEP. 
   erewrite Forall_sep_app in ALLSEP. 
   destruct ALLSEP as (mass11 & mass12 & D1 & D2 & D3). subst.
   inv D2. inv H1. inv ELTEQ.
-  rewrite B in VARFP. inv VARFP.  
+  repeat eexists; eauto.
+Qed.
+
+
+(* We prove a strong version, i.e., the store operation can always succeed *)
+Lemma store_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs id MP
+    (COH: coherent_fpm ce fpm mass1)
+    (WTVAL: sem_wt_val ce vfp v mass2)
+    (MPRED: m |= mass1 ** mass2 ** MP)
+    (* id may denote an external owner? We reduce all store for
+    reference into store for their referred owner *)
+    (GFP: get_owner_loc_footprint_map (id, phl) fpm = Some (b, ofs, pfp))
+    (* The following properties should be derived from wt_footprint *)
+    (AL: (align_chunk chunk | ofs))
+    (MAT1: fp_match_chunk pfp chunk)
+    (MAT2: fp_match_chunk vfp chunk),    
+    exists m1 fpm1 mass3,
+      Mem.store chunk m b ofs v = Some m1
+      /\ set_footprint_map (id, phl) vfp fpm = Some fpm1
+      /\ coherent_fpm ce fpm1 mass3
+      /\ m1 |= mass3 ** MP.
+Proof.
+  intros. simpl in GFP. simpl.
+  destruct (fpm ! id) as [(((b1 & ofs1) & ty1) & fp)|] eqn: B; try congruence.
+  (* We should split the footprint for the id from mass1 *)
+  exploit coherent_fpm_split; eauto.
+  intros (l1 & l2 & mp1 & mp2 & mpi & A1 & A2 & A3 & A4 & A5). subst.
   (* apply store_coherent_var *)
-  
+  inv A3. inv ELTEQ.
+  assert (MPRED1: m |= mpi ** mass2 ** (mp1 ** mp2 ** MP)) by admit.
+  exploit store_coherent_var; eauto. 
+  intros (m1 & fp2 & mp3 & B1 & B2 & B3 & B4).
+  rewrite B2. 
+  do 3 eexists. do 3 (try eapply conj); eauto.
+  - instantiate (1 := mp1 ** mp3 ** mp2).
+    econstructor. 
+    assert (TODO: PTree.elements (PTree.set id0 (b0, ofs0, ty, fp2) fpm) = l1 ++ (id0, (b0, ofs0, ty, fp2)) :: l2) by admit.
+    rewrite TODO.
+    eapply Forall_sep_app. exists mp1, (mp3 ** mp2). 
+    split; eauto. split. econstructor; eauto.
+    econstructor; eauto. reflexivity.
+  - rewrite sep_swap12 in B4. 
+    rewrite <- !sep_assoc, (sep_assoc mp1) in B4.
+    eauto.
+Admitted.

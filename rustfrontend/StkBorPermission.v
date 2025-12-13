@@ -4,6 +4,7 @@ Require Import Values.
 Require Import Memory.
 Require Import AST.
 Require Import FSetWeakList DecidableType.
+Require Import Listmisc.
 
 Import ListNotations.
 
@@ -117,11 +118,6 @@ Inductive access_from :=
 | from_ref (t: tag)
 | from_raw.
 
-Fixpoint list_find {A} (f : A -> bool) (l: list A) : option (nat * A) :=  
-  match l with
-  | nil => None
-  | x :: l => if f x then Some (O,x) else option_map (fun '(idx, elt) => (S idx, elt)) (list_find f l)
-  end.
 
 (* Return the index of the granting item. If the tag is None, it means
 that we are accessing a raw pointer variable *)
