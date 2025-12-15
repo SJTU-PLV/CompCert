@@ -57,6 +57,9 @@ Inductive footprint : Type :=
 
 Definition ffpty : Type := ident * (Z * footprint).
 
+Lemma ffpty_dec: forall (f1 f2: ffpty), {f1 = f2} + {f1 <> f2}.
+Admitted.
+
 (* Functions to check whether the footprint is initialized *)
 
 (* All one-level children in this footprint (including itself) are not
@@ -113,6 +116,41 @@ Proof.
 Qed.
     
 End FP_IND.
+
+
+(* Unused: Recursion on footprint (we do not know how to define
+recursion on the field footprint) *)
+Section FP_RECT.
+
+Variable (P: footprint -> Type)
+  (HPemp: forall sz al, P (fp_emp sz al))
+  (HPscalar: forall chunk v, P (fp_scalar chunk v))
+  (HPbox: forall (b : block) sz (fp : footprint), P fp -> P (fp_box b sz fp))
+  (HPstruct: forall id fpl, (forall fid ofs fp e, (in_dec ffpty_dec (fid, (ofs, fp)) fpl) = left e -> P fp) -> P (fp_struct id fpl))
+  (HPenum: forall id (tag : Z) fid ofs (fp : footprint), P fp -> P (fp_enum id tag fid ofs fp))
+  (HPref: forall b ofs ref_owner, P (fp_ref b ofs ref_owner)).
+
+Fixpoint strong_footprint_rect t: P t.
+Proof.
+  destruct t.
+  - apply HPemp.
+  - apply HPscalar.
+  - eapply HPbox. specialize (strong_footprint_rect t); now subst.
+  - eapply HPstruct. induction fpl.
+    + intros. inv H.
+    + intros. destruct a as (fid1 & ofs1 & fp1). 
+      simpl in H. 
+      destruct ffpty_dec.
+      * specialize (strong_footprint_rect fp1). clear H. inv e0. apply strong_footprint_rect.
+      * destruct in_dec eqn: IN. 
+        apply (IHfpl fid ofs fp _ IN). 
+        congruence.
+  - apply HPenum. apply strong_footprint_rect.
+  - apply HPref. 
+Defined.
+    
+End FP_RECT.
+
 
 (* Footprint used in interface (for now, it is just defined by
 support) *)
@@ -432,11 +470,11 @@ Local Open Scope sep_scope.
 
 
 (** Unused for now *)
-Fixpoint mconj_list (l: list massert) : massert :=
+Fixpoint sepconj_list (l: list massert) : massert :=
   match l with
   | nil => STrue
   | a :: l' =>
-      a ** (mconj_list l')
+      a ** (sepconj_list l')
   end.
 
 Inductive Forall_sep {A : Type} (P : A -> massert -> Prop) : list A -> massert -> Prop :=
@@ -1245,8 +1283,10 @@ Lemma storebytes_sem_wt_loc ce: forall sfp tb tofs sb sofs mass2 MP m1 m2 bytes
     (* (WTLOC : sem_wt_loc ce tfp tb tofs mass1) *)
     (WTVAL : sem_wt_loc ce sfp sb sofs mass2)
     (* We prove a more general version without WTLOC, meaning that we
-    do not care what footprint was in the target location. We just need
-    to know that the target location is storable and aligned. *)
+    do not care what footprint was in the target location (which would
+    be overwritten after storing the bytes, so it is also safe to drop
+    its footprint). We just need to know that the target location is
+    storable and aligned. *)
     (MPRED : m1 |= (range tb tofs (tofs + sizeof_footprint ce sfp)) ** mass2 ** MP)
     (AL: (alignof_footprint ce sfp | tofs))
     (LOAD: Mem.loadbytes m1 sb sofs (sizeof_footprint ce sfp) = Some bytes)
@@ -1394,13 +1434,16 @@ Lemma storebytes_coherent_fpm: forall phl m1 ce fpm mass1 mass2 sfp tfp sb sofs 
     (COH: coherent_fpm ce fpm mass1)
     (* note that sfp is separated from fpm, meaning that it has been
     moved from *)
-    (* It is not correct! because mass2 also contains the location of
+    (** It is not correct! because mass2 also contains the location of
     (sb, sofs). We should define a new-version of sem_wt_loc to only
     express the value spec of this location. *)
     (WTLOC: sem_wt_loc ce sfp sb sofs mass2)
+    (* (SHALLOWLOC: sem_wt_loc ce (clear_footprint_rec ce sfp) sb sofs mp1) *)
+    (* (MPIMP: massert_imp mass1 mp1) *)
     (MPRED: m1 |= mass1 ** mass2 ** MP)
     (* id may denote an external owner? We reduce all store for
     reference into store for their referred owner *)
+    (* properties of get_owner_loc_footprint?  *)
     (GFP: get_owner_loc_footprint_map (id, phl) fpm = Some (tb, tofs, tfp))
     (* The following properties should be derived from wt_footprint *)
     (ALEQ: alignof_footprint ce sfp = alignof_footprint ce tfp)
@@ -1436,3 +1479,4 @@ Proof.
     rewrite <- !sep_assoc, (sep_assoc mp1) in B5.
     auto.
 Admitted.
+
