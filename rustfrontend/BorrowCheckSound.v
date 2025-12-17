@@ -13,18 +13,19 @@ Require Import RustOp RustIR RustIRcfg Rusttyping.
 Require Import Errors.
 Require Import InitDomain InitAnalysis.
 Require Import RustIRown MoveChecking.
-Require Import MoveCheckingFootprint MoveCheckingDomain.
+Require Import MoveCheckingFootprint1 MoveCheckingDomain.
 Require Import StkBorPermission RustIRbor.
 Require Import RegionLiveness BorrowCheckDomain.
 Require Import BorrowCheckPolonius BorrowCheck.
 Require Import Wfsimpl.
+Require Import Separation.
 (* use free_list related lemmas *)
 Require SimplLocalsproof.
 
 Import ListNotations.
 Local Open Scope error_monad_scope.
 Local Open Scope inv_scope.
-
+Local Open Scope sep_scope.
 
 Section BORROW_CHECK.
 
@@ -85,6 +86,9 @@ Proof.
   generalize (COMP_RANGE i c A). rewrite maxv. auto.
 Qed.
 
+(*** Old version code  *)
+
+(*
 
 (* The locations evaluated by get_loc_footprint_map and eval_place are
 the same. To support reference, we should provide that regions in p
@@ -536,6 +540,9 @@ Inductive deref_loc_rec_footprint (m: mem) (b: block) (ofs: Z) (fty: type) (fp: 
     (RANGE: 0 < sz <= Ptrofs.max_unsigned),
     deref_loc_rec_footprint m b ofs fty fp ((Tbox ty) :: tys) b2 0 ty fp2.
 
+*)
+
+(********* End of Old version code  *)
 
 (** TODO  *)
 Inductive drop_member_footprint (m: mem) (co: composite) (b: block) (ofs: Z) (fp: footprint) : option drop_member_state -> Prop :=.
@@ -563,18 +570,18 @@ Inductive sound_cont : INIT_AN -> LOANS_AN -> statement -> rustcfg -> cont -> cf
     sound_cont init_an loans_an body cfg (Kloop s k) (mk_cfg_kinfo loop_jump_node (Some loop_jump_node) (Some exit_loop) nret) m fpf
 | sound_Kcall: forall init_an loans_an body cfg k nret f e own p m fpf
     (MSTK: sound_stacks (Kcall p f e own k) m fpf)
-    (RET: cfg ! nret = Some Iend)
-    (WFOWN: wf_own_env e ce own),
+    (RET: cfg ! nret = Some Iend),
+    (* (WFOWN: wf_own_env e ce own), *)
     sound_cont init_an loans_an body cfg (Kcall p f e own k) (mk_cfg_kinfo nret None None nret) m fpf
-| sound_Kdropplace: forall f st ps nret cfg pc cont brk k own1 own2 e m maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit rfp  live loans_env
+| sound_Kdropplace: forall f st ps nret cfg pc cont brk k own1 own2 e m maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit rfp  live loans_env MP
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))   
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, loans_env))
     (MCONT: sound_cont (maybeInit, maybeUninit, universe) (live, loans_env) f.(fn_body) cfg k (mk_cfg_kinfo pc cont brk nret) m fpf)
-    (MM: mmatch fpm ce m e own1)
-    (WFNEV: wf_env fpm ce m e)
+    (MCKINV: move_check_inv own2 fpm)
+    (COHERENT: coherent_fpf ce (fpf_func fpm fpf) MP)
+    (MPRED: m |= MP)
     (** VERY DIFFICULT: Invariant of drop_place_state *)
     (SDP: sound_drop_place_state e m fpm own1 rfp st)
-    (SEP: list_norepet (flat_fp_frame (fpf_dropplace e fpm rfp fpf)))
     (MOVESPLIT: move_split_places own1 ps = own2)
     (* ordered property of the split places used to prove sound_state after the dropplace *)
     (ORDERED: move_ordered_split_places_spec own1 (map fst ps))
@@ -582,68 +589,72 @@ Inductive sound_cont : INIT_AN -> LOANS_AN -> statement -> rustcfg -> cont -> cf
     (WTPS: Forall (fun p => wt_place e ge p) (map fst ps))
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
     (OWN: sound_own own2 mayinit mayuninit universe)
-    (WFOWN: wf_own_env e ce own1)
+    (* (WFOWN: wf_own_env e ce own1) *)
     (FULL: (forall p full, In (p, full) ps -> is_full (own_universe own1) p = full))
     (* (WTRFP: wt_footprint ce rfpty rfp) *),
-    sound_cont (maybeInit, maybeUninit, universe) (live, loans_env) f.(fn_body) cfg (Kdropplace f st ps e own1 k) (mk_cfg_kinfo pc cont brk nret) m (fpf_dropplace e fpm rfp fpf)
+    sound_cont (maybeInit, maybeUninit, universe) (live, loans_env) f.(fn_body) cfg (Kdropplace f st ps e own1 k) (mk_cfg_kinfo pc cont brk nret) m (fpf_func fpm fpf)
 | sound_Kdropcall: forall init_an loans_an body cfg k pc cont brk nret fpf st co fp ofs b membs fpl id m
     (CO: ce ! id = Some co)
     (DROPMEMB: drop_member_footprint m co b (Ptrofs.unsigned ofs) fp st)
-    (MEMBFP: list_forall2 (member_footprint m co b (Ptrofs.unsigned ofs)) fpl membs)
+    (* (MEMBFP: list_forall2 (member_footprint m co b (Ptrofs.unsigned ofs)) fpl membs) *)
     (RANGE: Ptrofs.unsigned ofs + co_sizeof co <= Ptrofs.max_unsigned)
     (** Do we need some separation properties? *)
-    (SOUND: sound_cont init_an loans_an body cfg k (mk_cfg_kinfo pc cont brk nret) m fpf)
-    (INFRM: In b (flat_fp_frame fpf))
-    (CONTDIS: ~ In b (footprint_flat fp ++ flat_map footprint_flat fpl)),
-    sound_cont init_an loans_an body cfg (Kdropcall id (Vptr b ofs) st membs k) (mk_cfg_kinfo pc cont brk nret) m (fpf_drop fp fpl fpf)
+    (SOUND: sound_cont init_an loans_an body cfg k (mk_cfg_kinfo pc cont brk nret) m fpf),
+    (* (INFRM: In b (flat_fp_frame fpf)) *)
+    (* (CONTDIS: ~ In b (footprint_flat fp ++ flat_map footprint_flat fpl)), *)
+    sound_cont init_an loans_an body cfg (Kdropcall id (Vptr b ofs) st membs k) (mk_cfg_kinfo pc cont brk nret) m (fpf_drop b (Ptrofs.unsigned ofs) fpl fpf)
 
 with sound_stacks : cont -> mem -> fp_frame -> Prop :=
 | sound_stacks_stop: forall m,
     sound_stacks Kstop m fpf_emp
-| sound_stacks_call: forall f nret cfg pc contn brk k own1 own2 p e m maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit live loans_env
+| sound_stacks_call: forall f nret cfg pc contn brk k own1 own2 p e m maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit live loans_env MP
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))   
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, loans_env))
     (MCONT: sound_cont (maybeInit, maybeUninit, universe) (live, loans_env) f.(fn_body) cfg k (mk_cfg_kinfo pc contn brk nret) m fpf)
-    (MM: mmatch fpm ce m e own1)
-    (WFENV: wf_env fpm ce m e)
+    (MCKINV: move_check_inv own2 fpm)
+    (COHERENT: coherent_fpf ce (fpf_func fpm fpf) MP)
+    (MPRED: m |= MP)
+    (* (WFENV: wf_env fpm ce m e) *)
     (* we need to maintain this invariant for p's evaluation when
     function return *)
     (DOM: dominators_is_init own1 p = true)
     (* own2 is built after the function call *)
     (AFTER: own2 = init_place own1 p)
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
-    (OWN: sound_own own2 mayinit mayuninit universe)
-    (WFOWN: wf_own_env e ce own1),
-    sound_stacks (Kcall p f e own1 k) m (fpf_func e fpm fpf).
+    (OWN: sound_own own2 mayinit mayuninit universe),
+    (* (WFOWN: wf_own_env e ce own1), *)
+    sound_stacks (Kcall p f e own1 k) m (fpf_func fpm fpf).
     
 
 (** TODO: invariant for the borrow checking  *)
 Inductive sound_state: state -> Prop :=
-| sound_regular_state: forall f cfg entry maybeInit maybeUninit universe s ts pc next cont brk nret k e own m fpm fpf flat_fp sg mayinit mayuninit Hm live loans_env bor_stk
-    (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))   
+| sound_regular_state: forall f cfg entry maybeInit maybeUninit universe s ts pc next cont brk nret k e own m fpm fpf mayinit mayuninit live loans_env bor_stk MP
+    (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, loans_env))
     (MCK_STMT: move_check_stmt (maybeInit, maybeUninit, universe) f.(fn_body) cfg s ts (mk_cfg_info pc next cont brk nret))
     (CONT: sound_cont (maybeInit, maybeUninit, universe) (live, loans_env) f.(fn_body) cfg k (mk_cfg_kinfo next cont brk nret) m fpf)
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
     (OWN: sound_own own mayinit mayuninit universe)
-    (MM: mmatch fpm ce m e own)
-    (FLAT: flat_fp = flat_fp_frame (fpf_func e fpm fpf))
-    (* footprint is separated *)
-    (NOREP: list_norepet flat_fp)
-    (ACC: rsw_acc w (rsw sg flat_fp m Hm))
+    (MCKINV: move_check_inv own fpm)
+    (COHERENT: coherent_fpf ce (fpf_func fpm fpf) MP)
+    (MPRED: m |= MP),
+    (* (ACC: rsw_acc w (rsw sg flat_fp m Hm)) *)
     (* we need to maintain the well-formed invariant of own_env *)
-    (WFENV: wf_env fpm ce m e)
+    (* (WFENV: wf_env fpm ce m e) *)
     (* invariant of the own_env *)
-    (WFOWN: wf_own_env e ce own),
+    (* (WFOWN: wf_own_env e ce own), *)
     sound_state (State f s k e own bor_stk m)
-| sound_dropplace: forall f cfg entry maybeInit maybeUninit universe next cont brk nret st drops k e own1 own2 m fpm fpf flat_fp sg mayinit mayuninit rfp Hm live loans_env bor_stk
+| sound_dropplace: forall f cfg entry maybeInit maybeUninit universe next cont brk nret st drops k e own1 own2 m fpm fpf mayinit mayuninit rfp live loans_env bor_stk MP
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))   
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, loans_env))
     (CONT: sound_cont (maybeInit, maybeUninit, universe) (live, loans_env) f.(fn_body) cfg k (mk_cfg_kinfo next cont brk nret) m fpf)
-    (MM: mmatch fpm ce m e own1)
-    (FLAT: flat_fp = flat_fp_frame (fpf_dropplace e fpm rfp fpf))
-    (NOREP: list_norepet flat_fp)
-    (ACC: rsw_acc w (rsw sg flat_fp m Hm))
+    (IM: get_IM_state maybeInit!!next maybeUninit!!next (Some (mayinit, mayuninit)))
+    (OWN: sound_own own2 mayinit mayuninit universe)
+    (** Is it correct? *)
+    (MCKINV: move_check_inv own2 fpm)
+    (COHERENT: coherent_fpf ce (fpf_func fpm fpf) MP)
+    (MPRED: m |= MP)
+    (* (ACC: rsw_acc w (rsw sg flat_fp m Hm)) *)
     (* every place in the drop_fully_owned state is owned: this may be
     wrong because it does not consider own is changing *)
     (SDP: sound_drop_place_state e m fpm own1 rfp st)
@@ -654,59 +665,53 @@ Inductive sound_state: state -> Prop :=
     (* fullspec is used to maintain the invariant between is_full and the full flags *)
     (FULLSPEC: forall p full,  In (p, full) drops -> is_full (own_universe own1) p = full)
     (* all places in drops are wt_place *)
-    (WTPS: Forall (fun p => wt_place e ge p) (map fst drops))
-    (WF: wf_env fpm ce m e)
-    (* We just want to make rfp well structured (e.g., field names are
+    (WTPS: Forall (fun p => wt_place e ge p) (map fst drops)),
+    (* (WF: wf_env fpm ce m e) *)
+    (* we just want to make rfp well structured (e.g., field names are
     norepet and the size of blocks are in range) *)
     (* (WTRFP: wt_footprint ce rfpty rfp)  *)
-    (IM: get_IM_state maybeInit!!next maybeUninit!!next (Some (mayinit, mayuninit)))
-    (* Why sound_own own2 here not own1? because the analysis result is about the next node *)
-    (OWN: sound_own own2 mayinit mayuninit universe)
-    (WFOWN: wf_own_env e ce own1),
+    (* (* Why sound_own own2 here not own1? because the analysis result is about the next node *) *)
+    (* (OWN: sound_own own2 mayinit mayuninit universe) *)
+    (* (WFOWN: wf_own_env e ce own1), *)
     (* no need to maintain borrow check domain in dropplace? But how
     to record the pc and next statement? *)
     sound_state (Dropplace f st drops k e own1 bor_stk m)
-| sound_dropstate: forall init_an loans_an body cfg next cont brk nret id co fp fpl b ofs st m membs k fpf flat_fp sg Hm bor_stk
+| sound_dropstate: forall init_an loans_an body cfg next cont brk nret id co fp fpl b ofs st m membs k fpf bor_stk MP
     (CO: ce ! id = Some co)
     (* The key is how to prove semantics well typed can derive the
     following two properties *)
     (DROPMEMB: drop_member_footprint m co b (Ptrofs.unsigned ofs) fp st)
     (* all the remaining members are semantically well typed *)
-    (MEMBFP: list_forall2 (member_footprint m co b (Ptrofs.unsigned ofs)) fpl membs)
+    (* (MEMBFP: list_forall2 (member_footprint m co b (Ptrofs.unsigned ofs)) fpl membs) *)
     (CONT: sound_cont init_an loans_an body cfg k (mk_cfg_kinfo next cont brk nret) m fpf)
-    (FLAT: flat_fp = flat_fp_frame (fpf_drop fp fpl fpf))
-    (NOREP: list_norepet flat_fp)
+    (COHERENT: coherent_fpf ce (fpf_drop b (Ptrofs.unsigned ofs) fpl fpf) MP)
+    (MPRED: m |= MP)
     (* The location of the composite to be dropped is not in the
     current footprint ! Note that it may resides in fpf! *)
-    (DIS: ~ In b (footprint_flat fp ++ flat_map footprint_flat fpl))
+    (* (DIS: ~ In b (footprint_flat fp ++ flat_map footprint_flat fpl)) *)
     (* b is in fpf to make sure that changing the memory outside
     flat_fp does not change b *)
-    (INFRM: In b (flat_fp_frame fpf))
-    (ACC: rsw_acc w (rsw sg flat_fp m Hm))
+    (* (INFRM: In b (flat_fp_frame fpf)) *)
+    (* (ACC: rsw_acc w (rsw sg flat_fp m Hm)) *)
     (RANGE: Ptrofs.unsigned ofs + co_sizeof co <= Ptrofs.max_unsigned),
     sound_state (Dropstate id (Vptr b ofs) st membs k bor_stk m)
-| sound_callstate: forall vf fd orgs org_rels tyargs tyres cconv m fpl args fpf k flat_fp sg Hm bor_stk
+| sound_callstate: forall vf fd orgs org_rels tyargs tyres cconv m fpl args fpf k bor_stk
     (FUNC: Genv.find_funct ge vf = Some fd)
     (FUNTY: type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv)
     (* arguments are semantics well typed *)
     (WTVAL: list_forall2 (sem_wt_val ce m) fpl args)
     (* Used in assign_loc_sound in function entry proof *)
     (ANORM: val_casted_list args tyargs)
-    (WTFP: list_forall2 (wt_footprint ce) (type_list_of_typelist tyargs) fpl)
-    (STK: sound_stacks k m fpf)
-    (FLAT: flat_fp = flat_fp_frame fpf ++ flat_map footprint_flat fpl)
+    (* (WTFP: list_forall2 (wt_footprint ce) (type_list_of_typelist tyargs) fpl) *)
+    (STK: sound_stacks k m fpf),
     (* also disjointness of fpl and fpf *)
-    (NOREP: list_norepet flat_fp)
-    (ACC: rsw_acc w (rsw sg flat_fp m Hm)),
     sound_state (Callstate vf args k bor_stk m)
 | sound_returnstate: forall sg fpf flat_fp m k retty rfp v Hm bor_stk
     (* For now, all function must have return type *)
     (RETY: typeof_cont_call (rs_sig_res sg) k = retty)
     (WTVAL: sem_wt_val ce m rfp v)
     (CAST: val_casted v retty)
-    (WTFP: wt_footprint ce retty rfp)
-    (FLAT: flat_fp = footprint_flat rfp ++ flat_fp_frame fpf)
-    (SEP: list_norepet flat_fp)
+    (* (WTFP: wt_footprint ce retty rfp) *)
     (STK: sound_stacks k m fpf)
     (ACC: rsw_acc w (rsw sg flat_fp m Hm)),
     sound_state (Returnstate v k bor_stk m)

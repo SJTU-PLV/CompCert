@@ -1367,7 +1367,7 @@ Proof.
               rewrite !sep_assoc. reflexivity. 
     + destr_fp_field fp1 GFP.
       simpl. rewrite FIND.
-
+      (** Difficult !!  *)
 Admitted.
 
 
@@ -2226,4 +2226,6 @@ Proof.
     admit.
   - rewrite !sep_assoc. auto.
 Admitted.
+
+(** TODO: assign_loc rule  *)
 
