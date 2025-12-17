@@ -45,37 +45,87 @@ explicitly encode separation. *)
 (* A tree structured footprint (maybe similar to some separation logic
 algebra) *)
 Inductive footprint : Type :=
-| fp_emp (sz: Z) (al: Z)      (* empty footprint. We need to record its size and align *)
+| fp_emp  (* empty footprint. *)
+| fp_uninit (sz al: Z)  (*  Uninitialized footprint. We need to record its size and align *)
 | fp_scalar (chunk: memory_chunk) (v: val)       (* scalar type. *)
 | fp_box (b: block) (sz: Z) (fp: footprint) (* A heap block storing values that occupy footprint fp *)
 (* (field ident, field type, field offset,field footprint) *)
-| fp_struct (id: ident) (fpl: list (ident * (Z * footprint)))
+| fp_struct (id: ident) (fpl: list (ident * ((Z * Z) * footprint)))
 (* orgs are not used for now but it is used to relate to the type *)
-| fp_enum (id: ident) (* (orgs: list origin) *) (tag: Z) (fid: ident) (ofs: Z) (fp: footprint)
+| fp_enum (id: ident) (* (orgs: list origin) *) (tagz: Z) (fid: ident) (fofs: Z) (ffp: footprint)
 | fp_ref (b: block) (ofs: Z) (phs: paths) (* reference to an owner at [phs] with type [ty] *)
 .
 
-Definition ffpty : Type := ident * (Z * footprint).
+(* pattern (fid, ((base, fofs), ffp): base is the end of the last
+field's offset (it is 0 if this field is the first field). The
+interval [base, fofs) is used to align this field but we need to
+specify its permission, for which we record it in the footprint. *)
+Definition ffpty : Type := ident * ((Z * Z) * footprint).
 
-(* Functions to check whether the footprint is initialized *)
+(* Functions to check whether the footprint owns its value or is initialized *)
 
 (* All one-level children in this footprint (including itself) are not
-fp_emp *)
+fp_emp. There are subtle difference between shallow/deep_owned and
+shallow/deep_init, the former is used to show whether this footprint
+represents a valid location (we do not care what value inside this
+location). For exmaple, when we moved a box variable, its footprint
+would become (fp_box xxx fp_emp) but it's stored value still matchs
+this footprint but it does not owns the pointed to location. The move
+checking check shallow/deep_init properties, which shold imply this
+xxx_owned properties. In the above example, the move checker assert
+that this box variable is not initialized (see fp_box xx fp_emp case
+in shallow_init). shallow_owned can imply the location has enough
+permission, which is the only usage for now. It is also used in
+storing value to some path of a footprint, where we require that this
+footprint is deep_owned to make the store operation progress. *)
+Fixpoint shallow_owned (fp: footprint) : bool :=
+  match fp with
+  | fp_emp => false
+  | fp_struct _ fpl =>
+      forallb (fun '(_, (_, ffp)) => shallow_owned ffp) fpl
+  | fp_enum _ _ _ _ ffp =>
+      shallow_owned ffp
+  (* | fp_box _ _ _ => false *)
+  | _ => true
+  end.
+
+(* All level footprint are not fp_emp *)
+Fixpoint deep_owned (fp: footprint) : bool :=
+  match fp with
+  | fp_emp => false
+  | fp_struct _ fpl =>
+      forallb (fun '(_, (_, ffp)) => deep_owned ffp) fpl
+  | fp_enum _ _ _ _ ffp =>
+      deep_owned ffp
+  | fp_box _ _ fp1 =>
+      deep_owned fp1
+  | _ => true
+  end.
+
+
+(* Different from shallow/deep_owned, shallow/deep_init is the
+properties checked by move checking, which should imply
+shallow/deep_owned (i.e., the checked property is stronger) *)
 Fixpoint shallow_init (fp: footprint) : bool :=
   match fp with
-  | fp_emp _ _ => false
+  | fp_emp
+  (* Here is the difference *)
+  | fp_uninit _ _ => false
   | fp_struct _ fpl =>
       forallb (fun '(_, (_, ffp)) => shallow_init ffp) fpl
   | fp_enum _ _ _ _ ffp =>
       shallow_init ffp
-  | fp_box _ _ (fp_emp _ _) => false
+  (* We cannot simply say that fp1 is not fp_emp *)
+  | fp_box _ _ fp1 => (shallow_owned fp1)
   | _ => true
   end.
 
 (* All level footprint are not fp_emp *)
 Fixpoint deep_init (fp: footprint) : bool :=
   match fp with
-  | fp_emp _ _ => false
+  | fp_emp
+  (* Here is the difference *)
+  | fp_uninit _ _ => false
   | fp_struct _ fpl =>
       forallb (fun '(_, (_, ffp)) => deep_init ffp) fpl
   | fp_enum _ _ _ _ ffp =>
@@ -85,21 +135,46 @@ Fixpoint deep_init (fp: footprint) : bool :=
   | _ => true
   end.
 
-    
+Definition not_fp_emp (fp: footprint) : bool :=
+  match fp with
+  | fp_emp => false
+  | _ => true
+  end.
+
+Lemma not_fp_emp_inv: forall fp,
+    not_fp_emp fp = false ->
+    fp = fp_emp.
+Proof.
+  intros. destruct fp; simpl in *; try congruence; auto.
+Qed.
+
+Lemma shallow_owned_not_emp: forall fp,
+    shallow_owned fp = true ->
+    not_fp_emp fp = true.
+Admitted.
+
+
+Lemma shallow_init_not_emp: forall fp,
+    shallow_init fp = true ->
+    not_fp_emp fp = true.
+Admitted.
+
 Section FP_IND.
 
 Variable (P: footprint -> Prop)
-  (HPemp: forall sz al, P (fp_emp sz al))
+  (HPemp: P fp_emp)
+  (HPuninit: forall sz al, P (fp_uninit sz al))
   (HPscalar: forall chunk v, P (fp_scalar chunk v))
   (HPbox: forall (b : block) sz (fp : footprint), P fp -> P (fp_box b sz fp))
-  (HPstruct: forall id fpl, (forall fid ofs fp, In (fid, (ofs, fp)) fpl -> P fp) -> P (fp_struct id fpl))
-  (HPenum: forall id (tag : Z) fid ofs (fp : footprint), P fp -> P (fp_enum id tag fid ofs fp))
+  (HPstruct: forall id fpl, (forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl -> P ffp) -> P (fp_struct id fpl))
+  (HPenum: forall id (tag : Z) fid fofs (ffp : footprint), P ffp -> P (fp_enum id tag fid fofs ffp))
   (HPref: forall b ofs ref_owner, P (fp_ref b ofs ref_owner)).
 
 Fixpoint strong_footprint_ind t: P t.
 Proof.
   destruct t.
   - apply HPemp.
+  - apply HPuninit.
   - apply HPscalar.
   - eapply HPbox. specialize (strong_footprint_ind t); now subst.
   - eapply HPstruct. induction fpl.
@@ -107,7 +182,7 @@ Proof.
     + intros. destruct a as (fid1 & ofs1 & fp1).  simpl in H. destruct H.
       * specialize (strong_footprint_ind fp1). inv H. apply strong_footprint_ind.
         (* now subst. *)
-      * apply (IHfpl fid ofs fp H). 
+      * apply (IHfpl fid base fofs ffp H). 
   - apply HPenum. apply strong_footprint_ind.
   - apply HPref. 
 Qed.
@@ -157,7 +232,8 @@ footprint); (b, ofs) is the address of this composite. *)
 
 Definition sizeof_footprint ce (fp: footprint) : Z :=
   match fp with
-  | fp_emp sz _ => sz
+  | fp_emp => 0
+  | fp_uninit sz _ => sz
   | fp_scalar chunk _ => size_chunk chunk
   | fp_box _ _ _ => size_chunk Mptr
   | fp_enum id _ _ _ _ => sizeof_comp ce id
@@ -167,7 +243,8 @@ Definition sizeof_footprint ce (fp: footprint) : Z :=
 
 Definition alignof_footprint ce (fp: footprint) : Z :=
   match fp with
-  | fp_emp _ al => al
+  | fp_emp => 0
+  | fp_uninit _ al => al
   | fp_scalar chunk _ => align_chunk chunk
   | fp_box _ _ _ => align_chunk Mptr
   | fp_enum id _ _ _ _ => alignof_comp ce id
@@ -249,13 +326,15 @@ Fixpoint get_owner_loc_footprint (phl: list path) (fp: footprint) (b: block) (of
   | ph :: l =>
       match ph, fp with
       | ph_deref, fp_box b _ fp1 =>
-          if shallow_init fp1 then
+          if not_fp_emp fp1 then
             (* We can only deference box pointer that is not moved from *)
             get_owner_loc_footprint l fp1 b 0
-          else None
+          else
+            (* The location pointed by this pointer may not be valid *)
+            None
       | ph_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
-          | Some (fofs, fp1) =>
+          | Some ((base, fofs), fp1) =>
               get_owner_loc_footprint l fp1 b (ofs + fofs)
           | None => None
           end
@@ -311,30 +390,31 @@ Definition get_owner_loc_footprint_map (ps: paths) (fpm: fp_map) : option (block
 footprint. Like RustBelt, for some type [own τ], after moving from a
 value of this type produce, the original location of this type becomes
 [own ⊥]. *)
-Fixpoint clear_footprint_rec ce (fp: footprint) : footprint :=
+Fixpoint clear_footprint_rec (fp: footprint) : footprint :=
   match fp with
   | fp_scalar _ _
   (* What about moving a reference? *)
   | fp_ref _ _ _ 
-  | fp_emp _ _ => fp
-  | fp_box b sz fp1 => fp_box b sz (fp_emp (sizeof_footprint ce fp1) (alignof_footprint ce fp1))
-  | fp_enum id tagz fid fofs ffp => fp_enum id tagz fid fofs (clear_footprint_rec ce ffp)
+  | fp_uninit _ _ 
+  | fp_emp => fp
+  | fp_box b sz fp1 => fp_box b sz fp_emp
+  | fp_enum id tagz fid fofs ffp => fp_enum id tagz fid fofs (clear_footprint_rec ffp)
   | fp_struct id fpl =>
-      fp_struct id (map (fun '(fid, (fofs, ffp)) => (fid, (fofs, clear_footprint_rec ce ffp))) fpl)
+      fp_struct id (map (fun '(fid, (fofs, ffp)) => (fid, (fofs, clear_footprint_rec ffp))) fpl)
   end.
 
-Definition clear_owner_footprint ce fp (phl: list path) : option footprint :=
+Definition clear_owner_footprint fp (phl: list path) : option footprint :=
   match get_owner_footprint phl fp with
   | Some fp1 =>
-      set_footprint phl (clear_footprint_rec ce fp1) fp 
+      set_footprint phl (clear_footprint_rec fp1) fp 
   | None => None
   end.
 
-Definition clear_footprint_map ce (ps: paths) (fpm: fp_map) : option fp_map :=
+Definition clear_footprint_map (ps: paths) (fpm: fp_map) : option fp_map :=
   let (id, phl) := ps in
   match fpm!id with
   | Some (b, ofs, ty, fp) =>
-      match (clear_owner_footprint ce fp phl) with
+      match (clear_owner_footprint fp phl) with
       | Some fp1 =>
           Some (PTree.set id (b, ofs, ty, fp1) fpm)
       | None => None
@@ -354,7 +434,7 @@ Fixpoint get_loc_footprint (fpm: fp_map) (phl: list path) (fp: footprint) (b: bl
           get_owner_loc_footprint l fp1 b 0
       | ph_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
-          | Some (fofs, fp1) =>
+          | Some ((base, fofs), fp1) =>
               get_loc_footprint fpm l fp1 b (ofs + fofs)
           | None => None
           end
@@ -385,7 +465,7 @@ Definition get_loc_footprint_map (ps: paths) (fpm: fp_map) : option (block * Z *
 
 Ltac destr_fp_box fp H :=
   destruct fp; try congruence;
-  destruct shallow_init eqn: ?SHALLOW in H; try congruence.
+  destruct not_fp_emp eqn: ?NOTEMP in H; try congruence.
 
 
 (* Useful tactic to destruct get_loc_footprint *)
@@ -438,18 +518,25 @@ which would report error that sem_wt_loc does not occur positively, so
 we define it here to make sem_wt_loc occurs positively in
 sem_wt_struct case *)
 Inductive fields_loc_sep (b: block) (ofs: Z) (P: footprint -> block -> Z -> massert -> Prop) : list ffpty -> massert -> Prop :=
-| fields_loc_sep_nil: fields_loc_sep b ofs P nil STrue
-| fields_loc_sep_cons: forall fid fofs ffp l mass1 mass2
+| fields_loc_sep_nil: forall mp
+    (EQV: massert_eqv mp STrue),
+    fields_loc_sep b ofs P nil mp
+| fields_loc_sep_cons: forall fid base fofs ffp l mass1 mass2 padmp mp
     (IND: fields_loc_sep b ofs P l mass2)
-    (FWT: P ffp b (ofs + fofs) mass1),
-    fields_loc_sep b ofs P ((fid, (fofs, ffp)) :: l) (mass1 ** mass2).
+    (FWT: P ffp b (ofs + fofs) mass1)
+    (ALPERM: padmp = range b (ofs + base) (ofs + fofs))
+    (EQV: massert_eqv mp (padmp ** mass1 ** mass2)),
+    fields_loc_sep b ofs P ((fid, ((base, fofs), ffp)) :: l) mp.
 
 Inductive fields_fp_sep (P: footprint -> massert -> Prop) : list ffpty -> massert -> Prop :=
-| fields_val_sep_nil: fields_fp_sep P nil STrue
-| fields_val_sep_cons: forall fid fofs ffp l mass1 mass2
+| fields_val_sep_nil: forall mp
+    (EQV: massert_eqv mp STrue),
+    fields_fp_sep P nil mp
+| fields_val_sep_cons: forall fid base fofs ffp l mass1 mass2 mp
     (IND: fields_fp_sep P l mass2)
-    (FWT: P ffp mass1),
-    fields_fp_sep P ((fid, (fofs, ffp)) :: l) (mass1 ** mass2).
+    (FWT: P ffp mass1)
+    (EQV: massert_eqv mp (mass1 ** mass2)),
+    fields_fp_sep P ((fid, ((base, fofs), ffp)) :: l) mp.
 
 
 Section COMP_ENV.
@@ -459,15 +546,24 @@ Variable ce: composite_env.
 (** * Definitions of semantics typedness *)
 
 Definition box_pred fp b sz mp :=
-  if shallow_init fp then (mconj ((contains_neg Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr sz)))) ** mp) (range b 0 sz)) else STrue.
+  (* Remember that if we can move the permission of some field of
+  (b,0), e.g., via passing by reference, then shallow_owned is false
+  but we should still own the remaining location! *) 
+  if not_fp_emp fp then (contains_neg Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr sz)))) ** mp else STrue.
 
 Inductive sem_wt_loc : footprint -> block -> Z -> massert -> Prop :=
-| sem_wt_emp: forall b ofs sz al mp
+| sem_wt_emp: forall b ofs mp
+(* We need fp_emp here as if we set some field of a struct to fp_emp
+(e.g., by passing the location to callee via reference), we need to
+say this location is still sem_wt_loc *)
+    (EQV: massert_eqv mp STrue),
+    sem_wt_loc fp_emp b ofs mp
+| sem_wt_uninit: forall b ofs sz al mp
     (* This location is not initialized, but it should be aligned *)
 (*     properly and have enough permission *)
     (AL: (al | ofs))
-    (EQV: massert_eqv mp (* (range b ofs (ofs + sz)) *) STrue),
-    sem_wt_loc (fp_emp sz al) b ofs mp
+    (EQV: massert_eqv mp (range b ofs (ofs + sz))),
+    sem_wt_loc (fp_uninit sz al) b ofs mp
 | sem_wt_scalar: forall b ofs chunk v mp
     (* (MODE: Rusttypes.access_mode ty = Ctypes.By_value chunk), *)
     (* hasvalue already contain the align requirement *)
@@ -492,20 +588,25 @@ Inductive sem_wt_loc : footprint -> block -> Z -> massert -> Prop :=
     fields w.r.t. the range is very difficult. *)
     (EQV: massert_eqv mp (* (mconj mass (range b ofs (ofs + sizeof_comp ce id)))) *) mass),
     sem_wt_loc (fp_struct id fpl) b ofs mp
-| sem_wt_enum: forall fp b ofs tagz fid fofs id mass1 mass2 mp
+| sem_wt_enum: forall fp b ofs tagz fid fofs id mass1 mass2 mp padmp
     (* Interpret the field by the tag and prove that it is well-typed *)
     (TAG: mass1 = hasvalue Mint32 b ofs (Vint (Int.repr tagz)))
     (FWT: sem_wt_loc fp b (ofs + fofs) mass2)
     (AL: (alignof_comp ce id | ofs))
-    (EQV: massert_eqv mp (mass1 ** mass2)),
+    (* permission for the padding location *)
+    (ALPERM: padmp = range b (ofs + size_chunk Mint32) (ofs + fofs))
+    (EQV: massert_eqv mp (mass1 ** padmp ** mass2)),
     sem_wt_loc (fp_enum id tagz fid fofs fp) b ofs mp
 .
 
 (* The interpretation of footprint *)
 Inductive sem_wt_fp : footprint -> massert -> Prop :=
-| sem_fp_emp: forall mp sz al
+| sem_fp_emp: forall mp
     (EQV: massert_eqv mp (spure True)),
-    sem_wt_fp (fp_emp sz al) mp
+    sem_wt_fp fp_emp mp
+| sem_fp_uninit: forall sz al mp
+    (EQV: massert_eqv mp (spure True)),
+    sem_wt_fp (fp_uninit sz al) mp
 | sem_fp_scalar: forall chunk v mp
     (* We should ensure that the value in the footprint is loaded from memory *)
     (EQV: massert_eqv mp (spure True)),
@@ -554,47 +655,47 @@ Inductive sem_wt_val : footprint -> val -> massert -> Prop :=
 | wt_val_struct: forall b ofs id fpl mp
     (MP: sem_wt_fp (fp_struct id fpl) mp)
     (WTLOC: forall mp1, 
-        sem_wt_loc (clear_footprint_rec ce (fp_struct id fpl)) b (Ptrofs.unsigned ofs) mp1 ->
+        sem_wt_loc (clear_footprint_rec (fp_struct id fpl)) b (Ptrofs.unsigned ofs) mp1 ->
         sem_wt_loc (fp_struct id fpl) b (Ptrofs.unsigned ofs) (mp1 ** mp)),
     sem_wt_val (fp_struct id fpl) (Vptr b ofs) mp
 | wt_val_enum: forall b ofs fp tagz fid fofs id mp
     (MP: sem_wt_fp (fp_enum id tagz fid fofs fp) mp)
     (WTLOC: forall mp1, 
-        sem_wt_loc (clear_footprint_rec ce (fp_enum id tagz fid fofs fp)) b (Ptrofs.unsigned ofs) mp1 ->
+        sem_wt_loc (clear_footprint_rec (fp_enum id tagz fid fofs fp)) b (Ptrofs.unsigned ofs) mp1 ->
         sem_wt_loc (fp_enum id tagz fid fofs fp) b (Ptrofs.unsigned ofs) (mp1 ** mp)),
     sem_wt_val (fp_enum id tagz fid fofs fp) (Vptr b ofs) mp.
 
 
-Lemma fields_loc_sep_equiv: forall fpl b ofs P mass,
-    fields_loc_sep b ofs P fpl mass <->
-      Forall_sep (fun '(fid, (fofs, ffp)) => P ffp b (ofs + fofs)) fpl mass.
-Proof.
-  induction fpl; intros.
-  - split; intros.
-    + inv H. econstructor.
-    + inv H. econstructor.
-  - split; intros.
-    + inv H. econstructor; eauto. 
-      eapply IHfpl. auto.
-    + inv H. destruct a. destruct p. econstructor; eauto. 
-      eapply IHfpl. auto.
-Qed.
+(* Lemma fields_loc_sep_equiv: forall fpl b ofs P mass, *)
+(*     fields_loc_sep b ofs P fpl mass <-> *)
+(*       Forall_sep (fun '(fid, ((base, fofs), ffp)) => P ffp b (ofs + fofs)) fpl mass. *)
+(* Proof. *)
+(*   induction fpl; intros. *)
+(*   - split; intros. *)
+(*     + inv H. econstructor. *)
+(*     + inv H. econstructor. *)
+(*   - split; intros. *)
+(*     + inv H. econstructor; eauto.  *)
+(*       eapply IHfpl. auto. *)
+(*     + inv H. destruct a. destruct p. econstructor; eauto.  *)
+(*       eapply IHfpl. auto. *)
+(* Qed. *)
 
-Lemma fields_loc_sep_app : forall l1 l2 P mass b ofs,
-    fields_loc_sep b ofs P (l1 ++ l2) mass <-> 
-      (exists mass1 mass2, fields_loc_sep b ofs P l1 mass1 /\ fields_loc_sep b ofs P l2 mass2 /\ mass = mass1 ** mass2).
-Proof.
-  intros. split; intros.
-  - eapply fields_loc_sep_equiv in H.
-    eapply Forall_sep_app in H as (mass1 & mass2 & A1 & A2 & A3). subst.
-    exists mass1, mass2.
-    repeat apply conj; eauto; eapply fields_loc_sep_equiv; eauto.
-  - destruct H as (mass1 & mass2 & A1 & A2 & A3); subst.
-    eapply fields_loc_sep_equiv.
-    eapply Forall_sep_app.
-    exists mass1, mass2.
-    repeat apply conj; eauto; eapply fields_loc_sep_equiv; eauto.
-Qed.
+(* Lemma fields_loc_sep_app : forall l1 l2 P mass b ofs, *)
+(*     fields_loc_sep b ofs P (l1 ++ l2) mass <->  *)
+(*       (exists mass1 mass2, fields_loc_sep b ofs P l1 mass1 /\ fields_loc_sep b ofs P l2 mass2 /\ mass = mass1 ** mass2). *)
+(* Proof. *)
+(*   intros. split; intros. *)
+(*   - eapply fields_loc_sep_equiv in H. *)
+(*     eapply Forall_sep_app in H as (mass1 & mass2 & A1 & A2 & A3). subst. *)
+(*     exists mass1, mass2. *)
+(*     repeat apply conj; eauto; eapply fields_loc_sep_equiv; eauto. *)
+(*   - destruct H as (mass1 & mass2 & A1 & A2 & A3); subst. *)
+(*     eapply fields_loc_sep_equiv. *)
+(*     eapply Forall_sep_app. *)
+(*     exists mass1, mass2. *)
+(*     repeat apply conj; eauto; eapply fields_loc_sep_equiv; eauto. *)
+(* Qed. *)
 
 
 Inductive coherent_var (elt: (ident * (block * Z * type * footprint))) : massert -> Prop :=
@@ -603,7 +704,7 @@ Inductive coherent_var (elt: (ident * (block * Z * type * footprint))) : massert
     (* What if fpm contains more variables than local env? *)
     (MASS: sem_wt_loc fp b ofs mass),
     (* How to express the ownership of external locations passed by reference? *)
-    coherent_var elt (mconj mass (range b ofs (ofs + (sizeof ce ty)))).
+    coherent_var elt mass.
 
 (* The separation predicate for (local env, footprint map) *)
 Inductive coherent_fpm (fpm: fp_map) : massert -> Prop :=
@@ -643,6 +744,18 @@ Proof.
   - destruct fp; inv WTLOC; econstructor; try rewrite EQV in *; eauto.
 Qed.
 
+Global Instance fields_loc_sep_eqv ce b ofs fpl : Proper (massert_eqv ==> iff) (fields_loc_sep b ofs (sem_wt_loc ce) fpl).
+Proof.
+  induction fpl; intros mp1 mp2 EQV; split; intros WTLOC.
+  - inv WTLOC. econstructor. rewrite EQV in EQV0. auto.
+  - inv WTLOC. econstructor. rewrite EQV. auto.
+  - inv WTLOC. econstructor; eauto.
+    rewrite EQV in EQV0. auto.
+  - inv WTLOC. econstructor; eauto.
+    rewrite EQV. auto.
+Qed.
+
+
 Global Instance sem_wt_fp_eqv ce fp : Proper (massert_eqv ==> iff) (sem_wt_fp ce fp).
 Proof.
   intros mp1 mp2 EQV. 
@@ -672,17 +785,17 @@ Proof.
   firstorder.
 Qed.
 
-Lemma fields_loc_sep_in: forall fpl fid fofs ffp mp P b ofs
-        (SEP: fields_loc_sep b ofs P fpl mp)
-        (IN: In (fid, (fofs, ffp)) fpl),
-        exists mpi mp', P ffp b (ofs + fofs) mpi
-                   /\ massert_eqv mp (mpi ** mp').
-Admitted.
+(* Lemma fields_loc_sep_in: forall fpl fid fofs ffp mp P b ofs *)
+(*         (SEP: fields_loc_sep b ofs P fpl mp) *)
+(*         (IN: In (fid, (fofs, ffp)) fpl), *)
+(*         exists mpi mp', P ffp b (ofs + fofs) mpi *)
+(*                    /\ massert_eqv mp (mpi ** mp'). *)
+(* Admitted. *)
 
 (* The predicates evaluated from sem_wt_loc/fp/val are equivalent *)
 
 Lemma fields_loc_sep_unique : forall fpl b ofs mp1 mp2 (P: footprint -> block -> Z -> massert -> Prop)
-    (EQVP: forall fid fofs ffp, In (fid, (fofs, ffp)) fpl ->
+    (EQVP: forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl ->
                            forall mp1 mp2 b ofs, 
                              P ffp b ofs mp1 ->
                              P ffp b ofs mp2 ->
@@ -692,9 +805,11 @@ Lemma fields_loc_sep_unique : forall fpl b ofs mp1 mp2 (P: footprint -> block ->
     massert_eqv mp1 mp2.
 Proof.
   induction fpl; intros.
-  - inv F1. inv F2. reflexivity.
-  - inv F1. inv F2.
-    eapply sepconj_morph_2. eapply EQVP. simpl. left. reflexivity.
+  - inv F1. inv F2. rewrite EQV, EQV0. reflexivity.
+  - inv F1. inv F2. rewrite EQV, EQV0.
+    eapply sepconj_morph_2. reflexivity. 
+    eapply sepconj_morph_2.
+    eapply EQVP. simpl. left. reflexivity.
     eauto. eauto.
     eapply IHfpl; eauto.
     intros. eapply EQVP. simpl. right. eauto.
@@ -709,15 +824,16 @@ Proof.
   induction fp using strong_footprint_ind; intros; inv WTLOC1; inv WTLOC2; try (rewrite EQV; rewrite EQV0; reflexivity).
   - rewrite EQV, EQV0. rewrite FREE, FREE0. 
     exploit IHfp. eauto. eapply WTLOC. intros. unfold box_pred.
-    destruct shallow_init. rewrite H. reflexivity. reflexivity.
+    destruct not_fp_emp. rewrite H. reflexivity. reflexivity.
   - rewrite EQV, EQV0.
     eapply fields_loc_sep_unique; eauto.
   - rewrite EQV, EQV0. eapply sepconj_morph_2. reflexivity.
+    eapply sepconj_morph_2. reflexivity.
     eapply IHfp; eauto.
 Qed.
 
 Lemma fields_fp_sep_unique : forall fpl mp1 mp2 (P: footprint -> massert -> Prop)
-    (EQVP: forall fid fofs ffp, In (fid, (fofs, ffp)) fpl ->
+    (EQVP: forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl ->
                            forall mp1 mp2, 
                              P ffp mp1 ->
                              P ffp mp2 ->
@@ -727,8 +843,8 @@ Lemma fields_fp_sep_unique : forall fpl mp1 mp2 (P: footprint -> massert -> Prop
     massert_eqv mp1 mp2.
 Proof.
   induction fpl; intros.
-  - inv F1. inv F2. reflexivity.
-  - inv F1. inv F2.
+  - inv F1. inv F2. rewrite EQV, EQV0. reflexivity.
+  - inv F1. inv F2. rewrite EQV, EQV0.
     eapply sepconj_morph_2. eapply EQVP. simpl. left. reflexivity.
     eauto. eauto.
     eapply IHfpl; eauto.
@@ -745,7 +861,7 @@ Proof.
   induction fp using strong_footprint_ind; intros; inv WTLOC1; inv WTLOC2; try (rewrite EQV; rewrite EQV0; reflexivity).
   - rewrite EQV, EQV0. 
     exploit sem_wt_loc_unique. eapply WTLOC. eauto. intros.
-    unfold box_pred. destruct shallow_init. rewrite H. reflexivity.
+    unfold box_pred. destruct not_fp_emp. rewrite H. reflexivity.
     reflexivity.
   - rewrite EQV, EQV0. 
     eapply fields_fp_sep_unique; eauto.
@@ -790,16 +906,38 @@ Definition wt_paths (te: typenv) (phs: paths) : res type :=
       Error (msg "no local type")
   end.
 
+(** Move it to Rusttypes.v  *)
+
+(* We define a new field_offset which returns the starting offset of a
+field that does not consider the alignment. *)
+
+Fixpoint field_noalign_offset_rec (env: composite_env) (id: ident) (ms: members) (pos: Z)
+                          {struct ms} : res (Z * Z) :=
+  match ms with
+  | nil => Error (MSG "Unknown field " :: CTX id :: nil)
+  | m :: ms =>
+      if ident_eq id (name_member m)
+      then do fofs <- layout_field env pos m;
+           OK (pos, fofs)
+      else field_noalign_offset_rec env id ms (next_field env pos m)
+  end.
+
+Definition field_noalign_offset (env: composite_env) (id: ident) (ms: members) : res (Z * Z) :=
+  field_noalign_offset_rec env id ms 0.
+
+
 Inductive fp_match_field ce (co: composite) (P: type -> footprint -> Prop): ffpty -> member -> Prop :=
-| fp_match_field_intro: forall fid fofs ffp fty
-    (FOFS: field_offset ce fid (co_members co) = OK fofs)
+| fp_match_field_intro: forall fid base fofs ffp fty
+    (FOFS: field_noalign_offset ce fid (co_members co) = OK (base, fofs))
     (WTFP: P fty ffp),
-    fp_match_field ce co P (fid, (fofs, ffp)) (Member_plain fid fty).
+    fp_match_field ce co P (fid, ((base, fofs), ffp)) (Member_plain fid fty).
 
 (* Definition of wt_footprint (well-typed footprint). Intuitively, it
 says that the footprint is an abstract form of the syntactic type. *)
 Inductive wt_footprint : type -> footprint -> Prop :=
-| wt_fp_emp: forall ty
+| wt_fp_emp: forall ty,
+    wt_footprint ty fp_emp
+| wt_fp_uninit: forall ty
     (* It means that the location with this type is not initialized or
         this location is scalar type. We require that [ty] is not
         structure because we do not want to dynamically unpack the
@@ -807,7 +945,7 @@ Inductive wt_footprint : type -> footprint -> Prop :=
         some field of this struct. But to ensure this properties, we
         need to carefully set fp_emp to place with structure type. *)
     (WF: forall orgs id, ty <> Tstruct orgs id),
-    wt_footprint ty (fp_emp (sizeof ce ty) (alignof ce ty))
+    wt_footprint ty (fp_uninit (sizeof ce ty) (alignof ce ty))
 | wt_fp_scalar: forall ty v chunk
     (WF: scalar_type ty = true)
     (MODE: access_mode ty = Ctypes.By_value chunk),
@@ -844,9 +982,9 @@ End COMP_ENV.
 
 (* Properties of fields_sep *)
 
-Lemma fields_loc_sep_split: forall b ofs fofs fid ffp l mass P,
+Lemma fields_loc_sep_split: forall b ofs base fofs fid ffp l mass P,
     fields_loc_sep b ofs P l mass ->
-    In (fid, (fofs, ffp)) l ->
+    In (fid, ((base, fofs), ffp)) l ->
     exists mass1 mass2 mass3, 
       P ffp b (ofs + fofs) mass2 
       /\ mass = mass1 ** mass2 ** mass3.
@@ -870,74 +1008,76 @@ Lemma Forall_sep_find_set_field {A: Type}: forall mp (l: list (ident * A)) P id 
 Proof.
   Admitted.
 
-Lemma fields_loc_sep_find_set: forall l id P mp ffp b ofs fofs,
-    find_field id l = Some (fofs, ffp) ->
+Lemma fields_loc_sep_find_set: forall l fid P mp ffp b ofs base fofs,
+    find_field fid l = Some ((base,fofs), ffp) ->
     fields_loc_sep b ofs P l mp ->
     exists mp1 mp2 mpi l1 l2,
       fields_loc_sep b ofs P l1 mp1
       /\ fields_loc_sep b ofs P l2 mp2
       /\ P ffp b (ofs + fofs) mpi
-      /\ l = l1 ++ (id, (fofs, ffp)) :: l2
-      /\ mp = mp1 ** mpi ** mp2
+      /\ l = l1 ++ (fid, ((base, fofs), ffp)) :: l2
+      /\ massert_eqv mp (mp1 ** ((range b (ofs + base) (ofs + fofs)) ** mpi) ** mp2)
       (* Properties of setting a new footprint into id *)
       /\ (forall ffp' mpi', 
             P ffp' b (ofs + fofs) mpi' ->
-            fields_loc_sep b ofs P (set_field_fp id ffp' l) (mp1 ** mpi' ** mp2)).
+            exists mp',
+              fields_loc_sep b ofs P (set_field_fp fid ffp' l) mp'
+              /\ massert_eqv mp' (mp1 ** ((range b (ofs + base) (ofs + fofs)) ** mpi') ** mp2)).
 Proof.
 Admitted.
 
 (** Initialize a footprint with fp_emp based on the type of this footprint *)
 
-Definition members_to_fields_fp_emp ce (ms: members) (f: type -> footprint): list ffpty :=
+Definition members_to_fields_fp_uninit ce (ms: members) (f: type -> footprint): list ffpty :=
   map (fun '(Member_plain fid fty) =>
-         match field_offset ce fid ms with
-         | OK fofs =>
-             (fid, (fofs, f fty))
+         match field_noalign_offset ce fid ms with
+         | OK (base, fofs) =>
+             (fid, ((base, fofs), f fty))
          | Error _ => (* we can prove that it is impossible *)
-             (fid, (0, (fp_emp 0 0)))
+             (fid, ((0, 0), (fp_uninit 0 0)))
          end) ms.
 
-Fixpoint type_to_empty_footprint_rec (ce: composite_env) (rank: nat) (ty: type) : footprint :=
+Fixpoint type_to_uninit_footprint_rec (ce: composite_env) (rank: nat) (ty: type) : footprint :=
   match rank with
-  | O => fp_emp (sizeof ce ty) (alignof ce ty)
-  | S r =>      
+  | O => fp_uninit (sizeof ce ty) (alignof ce ty)
+  | S r =>
       match ty with
       | Tstruct _ id =>
           match ce ! id with
           | Some co =>
-              let fields := members_to_fields_fp_emp ce (co_members co) (type_to_empty_footprint_rec ce r) in
+              let fields := members_to_fields_fp_uninit ce (co_members co) (type_to_uninit_footprint_rec ce r) in
               fp_struct id fields
           (* impossible *)
-          | None => fp_emp 0 0
+          | None => fp_uninit 0 0
           end
-      | _ => fp_emp (sizeof ce ty) (alignof ce ty)
+      | _ => fp_uninit (sizeof ce ty) (alignof ce ty)
       end
   end.
 
-Definition type_to_empty_footprint (ce: composite_env) (ty: type) : footprint :=
-  type_to_empty_footprint_rec ce (rank_type ce ty) ty.
+Definition type_to_uninit_footprint (ce: composite_env) (ty: type) : footprint :=
+  type_to_uninit_footprint_rec ce (rank_type ce ty) ty.
 
-Lemma type_to_empty_footprint_rec_eq: forall ce ty1 ty2,
+Lemma type_to_uninit_footprint_rec_eq: forall ce ty1 ty2,
     type_eq_except_origins ty1 ty2 = true ->
-    type_to_empty_footprint_rec ce (rank_type ce ty1) ty1 = type_to_empty_footprint_rec ce (rank_type ce ty2) ty2.
+    type_to_uninit_footprint_rec ce (rank_type ce ty1) ty1 = type_to_uninit_footprint_rec ce (rank_type ce ty2) ty2.
 Admitted.
 
-Lemma type_to_empty_footprint_eq: forall ce ty1 ty2,
+Lemma type_to_init_footprint_eq: forall ce ty1 ty2,
     type_eq_except_origins ty1 ty2 = true ->
-    type_to_empty_footprint ce ty1 = type_to_empty_footprint ce ty2.
+    type_to_uninit_footprint ce ty1 = type_to_uninit_footprint ce ty2.
 Proof.
-  intros. eapply type_to_empty_footprint_rec_eq. auto.
+  intros. unfold type_to_uninit_footprint. 
+  eapply type_to_uninit_footprint_rec_eq; eauto.
 Qed.
 
 (** We need that ce is consistent so that if ty is struct then ce
 contains this struct *)
-Lemma type_to_empty_footprint_wt: forall ce ty,
+Lemma type_to_uninit_footprint_wt: forall ce ty,
     complete_type ce ty = true ->
-    wt_footprint ce ty (type_to_empty_footprint ce ty).
+    wt_footprint ce ty (type_to_uninit_footprint ce ty).
 Admitted.
 
 (** Properties of footprint that ensured by move checking *)
-
 
 (* use it to replace mmatch of the original proofs *)
 Definition move_check_inv (own: own_env) (fpm: fp_map) : Prop :=
@@ -1119,6 +1259,143 @@ Qed.
 
 (********* End of properties of the separation predicate ********************  *)
 
+(* Properties of get/set footprint map w.r.t. sem_wt_loc *)
+
+(* Split and merge sub-footprint from/to the footprint map and derive
+the correspoinding separation predicates *)
+
+Lemma set_footprint_not_emp_inv: forall phl fp1 fp2,
+    set_footprint phl fp_emp fp1 = Some fp2 ->
+    not_fp_emp fp2 = true ->
+    not_fp_emp fp1 = true.
+Admitted.
+
+Lemma set_footprint_not_emp: forall phl fp1 fp2 fp3,
+    set_footprint phl fp1 fp2 = Some fp3 ->
+    not_fp_emp fp1 = true ->
+    not_fp_emp fp2 = true ->
+    not_fp_emp fp3 = true.
+Admitted.
+
+
+
+(* A generalization of sem_wt_loc_split *)
+Lemma get_owner_loc_footprint_sem_wt_split ce: forall phl b1 ofs1 b2 ofs2 fp1 fp2 mp
+      (* Most of the time (b2,ofs2) is the location to be stored *)
+      (GFP: get_owner_loc_footprint phl fp1 b1 ofs1 = Some (b2, ofs2, fp2))
+      (* setting fp_emp to this location is equivalent to splitting
+      out this location predicate *)      
+      (WTLOC: sem_wt_loc ce fp1 b1 ofs1 mp),
+    exists mp1 mp1' mp2 fp1', 
+      set_footprint phl fp_emp fp1 = Some fp1'
+      /\ sem_wt_loc ce fp1' b1 ofs1 mp1
+      (* separate mp2 from mp *)
+      /\ sem_wt_loc ce fp2 b2 ofs2 mp2
+      (* mp1' is used to record the lost permission of (-Mptr, 0) of a
+      heap block which cannot be expressed in mp1 and mp2 *)
+      /\ massert_eqv mp (mp1 ** mp1' ** mp2)
+      (* setting a new footprint into this location *)
+      /\ (forall fp3 mp3, 
+            (* We cannot set fp_emp as it would eliminate some predicate *)
+            not_fp_emp fp3 = true ->
+            sem_wt_loc ce fp3 b2 ofs2 mp3 ->
+            exists mp' fp1'', 
+              set_footprint phl fp3 fp1 = Some fp1''
+              /\ sem_wt_loc ce fp1'' b1 ofs1 mp'
+              /\ massert_eqv mp' (mp1 ** mp1' ** mp3)).
+Proof.
+  induction phl; intros.
+  - inv GFP.
+    exists STrue, STrue, mp, fp_emp.
+    do 4 (try apply conj).
+    reflexivity.
+    econstructor. reflexivity.
+    auto.
+    rewrite <- !massert_eqv_pure_l. reflexivity.
+    intros. exists mp3, fp3.
+    do 3 (try apply conj).
+    reflexivity.
+    auto.
+    rewrite <- !massert_eqv_pure_l. reflexivity.
+    rewrite <- !massert_eqv_pure_l. reflexivity.
+  - simpl in GFP.
+    destruct a.
+    + destr_fp_box fp1 GFP.
+      inv WTLOC.
+      exploit IHphl; eauto. intros (mp1 & mp1' & mp2 & fp1' & A1 & A2 & A3 & A4 & A5).
+      destruct (not_fp_emp fp1') eqn: NOTEMP1.
+      * exists (hasvalue Mptr b1 ofs1 (Vptr b Ptrofs.zero) ** box_pred fp1' b sz mp1). 
+        exists mp1'.
+        exists mp2, (fp_box b sz fp1').
+        do 4 (try apply conj).
+        ++ simpl. rewrite A1. reflexivity.
+        ++ econstructor; eauto. 
+        ++ auto.
+        ++ rewrite EQV, FREE. unfold box_pred.
+           erewrite set_footprint_not_emp_inv; eauto. rewrite NOTEMP1.
+           rewrite A4. 
+           rewrite !sep_assoc. reflexivity. 
+        ++ intros.
+           exploit A5; eauto. intros (mp' & fp1'' & B1 & B2 & B3).
+           exists (hasvalue Mptr b1 ofs1 (Vptr b Ptrofs.zero) ** box_pred fp1'' b sz mp'), (fp_box b sz fp1'').
+           do 2 (try apply conj).
+           ** simpl. rewrite B1. reflexivity.
+           ** econstructor; eauto. 
+           ** unfold box_pred. rewrite NOTEMP1. 
+              erewrite set_footprint_not_emp; eauto. rewrite B3.
+              rewrite !sep_assoc. reflexivity. 
+      (* if fp1' is fp_emp, we need to put more predicate on mp1' *)
+      * inv A1. inv GFP.
+        exists (hasvalue Mptr b1 ofs1 (Vptr b Ptrofs.zero)). 
+        exists (contains_neg Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr sz))) **
+             mp1 ** mp1').
+        exists mp2, (fp_box b sz fp1').
+        do 4 (try apply conj).
+        ++ simpl. rewrite H0. reflexivity.
+        ++ econstructor; eauto. unfold box_pred. rewrite NOTEMP1. 
+           eapply massert_eqv_pure_r.
+        ++ auto.
+        ++ rewrite EQV, FREE. unfold box_pred.
+           rewrite NOTEMP. rewrite A4. rewrite !sep_assoc. reflexivity.
+        ++ intros.
+           exploit A5; eauto. intros (mp' & fp1'' & B1 & B2 & B3).
+           exists (hasvalue Mptr b1 ofs1 (Vptr b Ptrofs.zero) ** box_pred fp1'' b sz mp'), (fp_box b sz fp1'').
+           do 2 (try apply conj).
+           ** simpl. rewrite B1. reflexivity.
+           ** econstructor; eauto. 
+           ** unfold box_pred. erewrite set_footprint_not_emp; eauto. rewrite B3.
+              rewrite !sep_assoc. reflexivity. 
+    + destr_fp_field fp1 GFP.
+      simpl. rewrite FIND.
+
+Admitted.
+
+
+(* Lemma get_owner_loc_footprint_sem_wt_split ce: forall phl b1 ofs1 b2 ofs2 fp1 fp1' fp2 mp *)
+(*       (* Most of the time (b2,ofs2) is the location to be stored *) *)
+(*       (GFP: get_owner_loc_footprint_map phl fp1 b1 ofs1 = Some (b2, ofs2, fp2)) *)
+(*       (CLR: set_footprint phl fp_emp fp1 = Some fp1') *)
+(*       (WTLOC: sem_wt_loc ce fp1 b1 ofs1 mp), *)
+(*     exists mp1 mp2,  *)
+(*       sem_wt_loc ce fp1' b1 ofs1 mp1 *)
+(*       /\ sem_wt_fp ce fp2 mp2 *)
+(*       /\ massert_eqv mp (mp1 ** mp2). *)
+(* Proof. *)
+(* Admitted. *)
+
+
+(* Lemma get_owner_loc_footprint_map_sem_wt_split ce: forall phl id b ofs fp mp fpm1 fpm2 *)
+(*       (GFP: get_owner_loc_footprint_map (id, phl) fpm1 = Some (b, ofs, fp)) *)
+(*       (CLR: clear_footprint_map ce (id, phl) fpm1 = Some fpm2) *)
+(*       (COH: coherent_fpm ce fpm1 mp), *)
+(*     exists mp1 mp2, coherent_fpm ce fpm2 mp2 *)
+(*                /\ sem_wt_fp ce fp mp1 *)
+(*                /\ massert_eqv mp (mp2 ** mp1). *)
+(* Proof. *)
+(* Admitted. *)
+
+
+(************* End of properties of get/set_footprint_map ******************  *)
 
 Lemma wt_footprint_size_eq ce : forall ty fp,
     wt_footprint ce ty fp ->
@@ -1133,12 +1410,13 @@ Admitted.
 
 Definition fp_match_chunk fp chunk : Prop :=
   match fp with
-  | fp_emp sz al =>
+  | fp_uninit sz al =>
       sz = size_chunk chunk /\ al = align_chunk chunk
   | fp_scalar chunk1 _ =>
       chunk1 = chunk
   | fp_box _ _ _
   | fp_ref _ _ _ => chunk = Mptr
+  | fp_emp
   | fp_struct _ _
   | fp_enum _ _ _ _ _ => False
   end.
@@ -1161,29 +1439,143 @@ Proof.
   destruct H. auto.
 Qed.
 
+Inductive fp_field_in_range_aligned ce (sz al: Z) (f: footprint -> Prop) : ffpty -> Prop :=
+| fp_field_in_range_aligned_intro: forall fid base fofs ffp
+  (R1: 0 < fofs)
+  (R2: (fofs + sizeof_footprint ce ffp) < sz)
+  (R3: (alignof_footprint ce ffp | fofs))
+  (R4: f ffp)
+  (R5: (al | fofs)),
+    fp_field_in_range_aligned ce sz al f (fid, ((base, fofs), ffp)).
 
-(* Lemma sem_wt_loc_split_range ce: forall fp mass b ofs *)
-(*       (WTLOC: sem_wt_loc ce fp b ofs mass), *)
-(*   (* We cannot prove their equivalence as mass may contain the value *)
-(*   spec in this location which cannot be expressed by range. *) *)
-(*   exists mass', massert_imp mass (range b ofs (ofs + sizeof_footprint ce fp) ** mass'). *)
-(* Proof. *)
-(*   induction fp using strong_footprint_ind; intros; inv WTLOC. *)
-(*   - exists STrue. rewrite EQV. eapply massert_eqv_pure_r. *)
-(*   - exists STrue. rewrite EQV. etransitivity. eapply contains_range. *)
-(*     eapply massert_eqv_pure_r. *)
-(*   - eexists. rewrite EQV. setoid_rewrite contains_range. reflexivity.  *)
-(*   - exists STrue. rewrite EQV. etransitivity. eapply mconj_proj2_massert. *)
-(*     eapply massert_eqv_pure_r. *)
-(*   - exists STrue. rewrite EQV. etransitivity. eapply mconj_proj2_massert. *)
-(*     eapply massert_eqv_pure_r. *)
-(*   - exists STrue. rewrite EQV. etransitivity. eapply contains_range. *)
-(*     eapply massert_eqv_pure_r. *)
-(* Qed. *)
+(* This property should be implied by wt_footprint: the field offset must
+be in range and aligned *)
+
+Inductive fields_fp_well_formed ce : footprint -> Prop :=
+| fp_emp_wf: fields_fp_well_formed ce fp_emp
+| fp_uninit_wf sz al: fields_fp_well_formed ce (fp_uninit sz al)
+| fp_scalar_wf chunk v: fields_fp_well_formed ce (fp_scalar chunk v)
+| fp_box_wf b sz fp: fields_fp_well_formed ce (fp_box b sz fp)
+| fp_ref_wf b ofs phs: fields_fp_well_formed ce (fp_ref b ofs phs)
+| fp_struct_wf: forall id fpl
+     (* This property says that all fields are within the size of this
+     footprint *)
+    (FWF: Forall (fp_field_in_range_aligned ce (sizeof_comp ce id) (alignof_comp ce id) (fields_fp_well_formed ce)) fpl)
+    (* This property says that all the location of the size of this footprint can be capatured by one of the fields *)
+    (COMPLETE: forall ofs, 0 <= ofs < sizeof_comp ce id -> 
+                      exists fid base fofs ffp, 
+                        In (fid, ((base, fofs), ffp)) fpl
+                        /\ base <= ofs < fofs + sizeof_footprint ce ffp),
+  fields_fp_well_formed ce (fp_struct id fpl)
+| fp_enum_wf: forall id tagz fid fofs ffp
+    (FWF: fp_field_in_range_aligned ce (sizeof_comp ce id) (alignof_comp ce id) (fields_fp_well_formed ce) (fid, ((size_chunk Mint32, fofs), ffp)))
+    (COMPLETE: sizeof_comp ce id <= fofs + sizeof_footprint ce ffp),
+  fields_fp_well_formed ce (fp_enum id tagz fid fofs ffp).
+
+Lemma fp_match_chunk_well_formed ce: forall fp chunk,
+    fp_match_chunk fp chunk ->
+    fields_fp_well_formed ce fp.
+Proof.
+  destruct fp; intros; simpl in *; try contradiction; econstructor.
+Qed.
+
+Lemma fp_match_chunk_shallow_owned: forall fp chunk,
+    fp_match_chunk fp chunk ->
+    shallow_owned fp = true.
+Proof.
+  destruct fp; intros; simpl in *; try contradiction; try reflexivity.
+Qed.
+
+Lemma fp_match_chunk_not_emp: forall fp chunk,
+    fp_match_chunk fp chunk ->
+    not_fp_emp fp = true.
+Proof.
+  destruct fp; intros; simpl in *; try contradiction; try reflexivity.
+Qed.
+
+Lemma fields_loc_sep_range_perm ce: forall fpl b ofs mp1 mp2 mp id
+    (IH: forall (fid : ident) (base fofs : Z) (ffp : footprint),
+        In (fid, (base, fofs, ffp)) fpl ->
+        forall (mass : massert) (b : block) (ofs : Z),
+          shallow_owned ffp = true ->
+          fields_fp_well_formed ce ffp ->
+          sem_wt_loc ce ffp b ofs mass ->      
+            massert_imp mass (range b ofs (ofs + sizeof_footprint ce ffp)))
+     (FWT: Forall
+          (fp_field_in_range_aligned ce (sizeof_comp ce id) (alignof_comp ce id)
+             (fields_fp_well_formed ce)) fpl)
+     (COMPLETE: forall ofs1 : Z,
+             0 <= ofs1 < sizeof_comp ce id ->
+             (* It cannot be proved solely in induction case *)
+             (exists (fid : ident) (base fofs : Z) (ffp : footprint),
+               In (fid, (base, fofs, ffp)) fpl /\ base <= ofs1 < fofs + sizeof_footprint ce ffp)
+             (* Or we already know that mass implies the range of [ofs, ofs+1) *)
+             \/ massert_imp mp1 (range b (ofs + ofs1) (ofs + ofs1 + 1)))
+     (SHALLOW: forall fid base fofs ffp, In (fid, (base, fofs, ffp)) fpl ->
+                                    shallow_owned ffp = true)
+     (FSEP: fields_loc_sep b ofs (sem_wt_loc ce) fpl mp2)
+     (EQV: massert_eqv mp (mp1 ** mp2)),     
+       massert_imp mp (range b ofs (ofs + sizeof_comp ce id)).
+Proof.
+  induction fpl; intros.
+  - admit.
+  - inv FSEP. inv FWT.
+    exploit IH. simpl. left. reflexivity. 
+    eapply SHALLOW. simpl. left. reflexivity.
+    inv H1. auto.
+    eauto. intros (mass1' & IMP1).
+    rewrite <- sep_assoc in EQV0.
+    set (mp1' := range b (ofs + base) (ofs + fofs) ** mass1) in *.
+    assert (MP1RANG: massert_imp mp1' (range b (ofs + base) (ofs + fofs + sizeof_footprint ce ffp))) by admit.
+    (* We want to put mp1' to mp1 when using IHfpl *)
+    exploit (IHfpl b ofs (mp1 ** mp1') mass2 mp id). admit.
+    eauto. 
+    (** Most difficult part *)
+    { intros. exploit COMPLETE; eauto.
+      intros [(fid1 & base1 & fofs1 & ffp1 & A1 & A2) | IMP3].
+      - inv A1.
+        + inv H0. right. 
+          (* use MP1RANG and A2 *)
+          etransitivity. eapply massert_imp_proj2.
+          etransitivity. eapply MP1RANG.
+          admit.
+        + left. exists fid1, base1, fofs1, ffp1. split; auto.
+      - right.
+        etransitivity. eapply massert_imp_proj1. eauto. }
+    admit.
+    auto.
+    admit.
+    eauto.
+Admitted.
+
+(* We need to say that sem_wt_loc is readable/storable/freeable *)
+Lemma sem_wt_loc_range_perm ce: forall fp mass b ofs
+      (* This place is not moved out (or borrowed out to callee) *)
+      (SHALLOW: shallow_owned fp = true)
+      (FPWF: fields_fp_well_formed ce fp)
+      (WTLOC: sem_wt_loc ce fp b ofs mass),
+  (* We cannot prove their equivalence as mass may contain the value *)
+(*   spec in this location which cannot be expressed by range. *)
+    massert_imp mass (range b ofs (ofs + sizeof_footprint ce fp)).
+Proof.
+  induction fp using strong_footprint_ind; intros; inv WTLOC.
+  - inv SHALLOW.
+  - rewrite EQV. reflexivity.
+  - rewrite EQV. etransitivity. eapply contains_range.
+    reflexivity.
+  - rewrite EQV. setoid_rewrite contains_range. eapply massert_imp_proj1.
+  - inv FPWF. simpl in SHALLOW. erewrite forallb_forall in SHALLOW.
+    eapply fields_loc_sep_range_perm. eauto. auto. auto.
+    intros. eapply SHALLOW in H0. auto.
+    eapply fields_loc_sep_eqv; eauto.
+    eapply massert_eqv_pure_l.
+  - admit.
+  - admit.
+Admitted.
 
 Lemma sem_wt_loc_valid_access ce: forall fp b ofs mass m p chunk
     (WTLOC: sem_wt_loc ce fp b ofs mass)    
-    (MPRED: m |= mconj mass (range b ofs (ofs + (sizeof_footprint ce fp))))
+    (MPRED: m |= mass)
     (FPMAT: fp_match_chunk fp chunk),
     Mem.valid_access m chunk b ofs p.
 Proof.
@@ -1227,7 +1619,7 @@ Lemma store_sem_wt_loc ce: forall fp vfp b ofs mass1 mass2 v m1 MP chunk
     (WTLOC: sem_wt_loc ce fp b ofs mass1)
     (WTVAL: sem_wt_val ce vfp v mass2)
     (AL: (align_chunk chunk | ofs))
-    (MPRED: m1 |= (mconj mass1 (range b ofs (ofs + (sizeof_footprint ce fp)))) ** mass2 ** MP)
+    (MPRED: m1 |= mass1 ** mass2 ** MP)
     (MAT1: fp_match_chunk fp chunk)
     (MAT2: fp_match_chunk vfp chunk),
     exists m2 mass3, 
@@ -1236,20 +1628,23 @@ Lemma store_sem_wt_loc ce: forall fp vfp b ofs mass1 mass2 v m1 MP chunk
       /\ m2 |= mass3 ** MP.
 Proof.
   intros. eapply store_sem_wt_val; eauto.
-  (* (* prove a lemma that extract the range from sem_wt_loc *) *)
-  (* eapply sep_imp. eapply MPRED.  *)
-  erewrite fp_match_chunk_size in MPRED; eauto. 
-  eapply mconj_proj2. eauto.
+  (* prove a lemma that extract the range from sem_wt_loc *)
+  eapply sep_imp. eapply MPRED.
+  erewrite <- (fp_match_chunk_size ce fp); eauto. 
+  eapply sem_wt_loc_range_perm.
+  eapply fp_match_chunk_shallow_owned; eauto.
+  eapply fp_match_chunk_well_formed; eauto.
+  auto. reflexivity.
 Qed.  
 
 
 Lemma store_coherent_var: forall phl m ce mass1 mass2 v vfp fp1 pfp chunk b1 ofs1 b2 ofs2 MP
     (WTLOC: sem_wt_loc ce fp1 b1 ofs1 mass1)
     (WTVAL: sem_wt_val ce vfp v mass2)
-    (MPRED: m |= (mconj mass1 (range b1 ofs1 (ofs1 + sizeof_footprint ce fp1))) 
-              ** mass2 ** MP)
+    (MPRED: m |= mass1 ** mass2 ** MP)
     (* id may denote an external owner? *)
     (GFP: get_owner_loc_footprint phl fp1 b1 ofs1 = Some (b2, ofs2, pfp))
+    (* (SHALLOW: shallow_owned pfp = true) *)
     (* The following properties should be derived from wt_footprint *)
     (AL: (align_chunk chunk | ofs2))
     (MAT1: fp_match_chunk pfp chunk)
@@ -1260,73 +1655,87 @@ Lemma store_coherent_var: forall phl m ce mass1 mass2 v vfp fp1 pfp chunk b1 ofs
       /\ sem_wt_loc ce fp2 b1 ofs1 mass3
       /\ m1 |= mass3 ** MP.
 Proof.
-  induction phl; intros.
-  - inv GFP. 
-    exploit store_sem_wt_loc; eauto.
-    intros (m2 & mass3 & STORE & WTLOC1 & MPRED1).
-    exists m2, vfp, mass3. split; try split; auto. 
-  - simpl in GFP. destruct a; try congruence.
-    + destr_fp_box fp1 GFP.
-      inv WTLOC. rewrite EQV in *. rewrite FREE in *.
-      set (MP1 := hasvalue Mptr b1 ofs1 (Vptr b Ptrofs.zero)) in *.
-      unfold box_pred in MPRED. rewrite SHALLOW in MPRED.
-      set (MP2 := contains_neg Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr sz)))) in *.
-      (* prove it with commutative lemmas of sepconj *)
-      assert (MPRED1: m|= nextmp ** mass2 ** (MP ** MP1 ** MP2)) by admit.
-      exploit IHphl; eauto. intros (m1 & fp2 & mass3 & A1 & A2 & A3 & A4).
-      exists m1, (fp_box b sz fp2), (MP1 ** MP2 ** mass3).
-      do 3 (try apply conj); eauto.
-      * simpl. rewrite A2. reflexivity.
-      * econstructor; eauto. unfold box_pred. 
-      (** TODO: use WTVAL to show that vfp is not fp_emp and A2 to show that fp2 is shallow_init  *) admit.
-      * admit.
-    + destr_fp_field fp1 GFP.
-      inv WTLOC. rewrite EQV in *.
-      (* split fields_sep *)
-      exploit fields_loc_sep_find_set; eauto.
-      intros (mp1 & mp2 & mpi & l1 & l2 & A1 & A2 & A3 & A4 & A5 & A6). subst.
-      eapply mconj_proj1 in MPRED as MPRED1.
-      (* change only mpi *)
-      assert (MPRED1': m|= mpi ** mass2 ** mp1 ** mp2 ** MP) by admit.      
-      exploit IHphl; eauto.
-      intros (m1 & fp2 & mpi' & C1 & C2 & C3 & C4).
-      (* adhoc: we know that storing a location does not change its
-      permission. *)
-      assert (MPRED2: m |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED.
-      eapply store_range_unchanged in MPRED2 as MPRED2'; eauto.      
-      rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.      
-      exploit frame_mconj. eapply MPRED. 
-      rewrite <- !sep_assoc in C4.
-      eapply C4. eauto. intros MPRED3.
-      rewrite sep_assoc, (sep_swap mpi' mp1 _) in MPRED3.
-      exists m1, (fp_struct id (set_field_fp fid fp2 (l1 ++ (fid, (z, f)) :: l2))), (mconj (mp1 ** mpi' ** mp2) (range b1 ofs1 (ofs1 + sizeof_comp ce id))). 
-      split; try split; eauto.
-      simpl. rewrite FIND. rewrite C2. reflexivity.
-      split.
-      econstructor; eauto.
-      eauto.
-    + destr_fp_enum fp1 GFP.
-      inv WTLOC. rewrite EQV in *. clear EQV mass1.
-      eapply mconj_proj1 in MPRED as MPRED1.
-      set (mass1 := hasvalue Mint32 b1 ofs1 (Vint (Int.repr tag))) in *.
-      (* change only mpi *)
-      assert (MPRED1': m|= mass3 ** mass2 ** mass1 ** MP) by admit.
-      exploit IHphl; eauto.
-      intros (m1 & fp2 & mass2' & C1 & C2 & C3 & C4).
-      assert (MPRED2: m |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED.
-      eapply store_range_unchanged in MPRED2 as MPRED2'; eauto.      
-      rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.      
-      exploit frame_mconj. eapply MPRED. 
-      rewrite <- !sep_assoc in C4.
-      eapply C4. eauto. intros MPRED3.
-      rewrite (sep_comm mass2' mass1) in MPRED3.
-      exists m1, (fp_enum id tag fid0 ofs fp2), (mconj (mass1 ** mass2') (range b1 ofs1 (ofs1 + sizeof_comp ce id))). 
-      split; try split; eauto.
-      simpl. rewrite dec_eq_true. rewrite C2. reflexivity.
-      split.
-      econstructor; eauto.
-      eauto.
+  intros.
+  exploit get_owner_loc_footprint_sem_wt_split; eauto.
+  intros (mp1 & mp1' & mp2 & fp1' & A1 & A2 & A3 & A4 & A5).
+  rewrite A4 in MPRED.
+  assert (MPRED1: m|= mp2 ** mass2 ** (mp1 ** mp1' ** MP)) by admit.
+  exploit store_sem_wt_loc. eapply A3. all: eauto.
+  intros (m2 & mass3 & B1 & B2 & B3).
+  exploit A5.
+  eapply fp_match_chunk_not_emp; eauto.
+  eapply B2. intros (mp' & fp1'' &  C1 & C2 & C3).
+  exists m2, fp1'', mp'. do 3 (try apply conj); eauto.
+  rewrite C3. admit.
 Admitted.
+
+(*   induction phl; intros. *)
+(*   - inv GFP.  *)
+(*     exploit store_sem_wt_loc; eauto. *)
+(*     intros (m2 & mass3 & STORE & WTLOC1 & MPRED1). *)
+(*     exists m2, vfp, mass3. split; try split; auto.  *)
+(*   - simpl in GFP. destruct a; try congruence. *)
+(*     + destr_fp_box fp1 GFP. *)
+(*       inv WTLOC. rewrite EQV in *. rewrite FREE in *. *)
+(*       set (MP1 := hasvalue Mptr b1 ofs1 (Vptr b Ptrofs.zero)) in *. *)
+(*       unfold box_pred in MPRED. rewrite SHALLOW in MPRED. *)
+(*       set (MP2 := contains_neg Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr sz)))) in *. *)
+(*       (* prove it with commutative lemmas of sepconj *) *)
+(*       assert (MPRED1: m|= nextmp ** mass2 ** (MP ** MP1 ** MP2)) by admit. *)
+(*       exploit IHphl; eauto. intros (m1 & fp2 & mass3 & A1 & A2 & A3 & A4). *)
+(*       exists m1, (fp_box b sz fp2), (MP1 ** MP2 ** mass3). *)
+(*       do 3 (try apply conj); eauto. *)
+(*       * simpl. rewrite A2. reflexivity. *)
+(*       * econstructor; eauto. unfold box_pred.  *)
+(*       (** TODO: use WTVAL to show that vfp is not fp_emp and A2 to show that fp2 is shallow_init  *) admit. *)
+(*       * admit. *)
+(*     + destr_fp_field fp1 GFP. *)
+(*       inv WTLOC. rewrite EQV in *. *)
+(*       (* split fields_sep *) *)
+(*       exploit fields_loc_sep_find_set; eauto. *)
+(*       intros (mp1 & mp2 & mpi & l1 & l2 & A1 & A2 & A3 & A4 & A5 & A6). subst. *)
+(*       eapply mconj_proj1 in MPRED as MPRED1. *)
+(*       (* change only mpi *) *)
+(*       assert (MPRED1': m|= mpi ** mass2 ** mp1 ** mp2 ** MP) by admit.       *)
+(*       exploit IHphl; eauto. *)
+(*       intros (m1 & fp2 & mpi' & C1 & C2 & C3 & C4). *)
+(*       (* adhoc: we know that storing a location does not change its *)
+(*       permission. *) *)
+(*       assert (MPRED2: m |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED. *)
+(*       eapply store_range_unchanged in MPRED2 as MPRED2'; eauto.       *)
+(*       rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.       *)
+(*       exploit frame_mconj. eapply MPRED.  *)
+(*       rewrite <- !sep_assoc in C4. *)
+(*       eapply C4. eauto. intros MPRED3. *)
+(*       rewrite sep_assoc, (sep_swap mpi' mp1 _) in MPRED3. *)
+(*       exists m1, (fp_struct id (set_field_fp fid fp2 (l1 ++ (fid, (z, f)) :: l2))), (mconj (mp1 ** mpi' ** mp2) (range b1 ofs1 (ofs1 + sizeof_comp ce id))).  *)
+(*       split; try split; eauto. *)
+(*       simpl. rewrite FIND. rewrite C2. reflexivity. *)
+(*       split. *)
+(*       econstructor; eauto. *)
+(*       eauto. *)
+(*     + destr_fp_enum fp1 GFP. *)
+(*       inv WTLOC. rewrite EQV in *. clear EQV mass1. *)
+(*       eapply mconj_proj1 in MPRED as MPRED1. *)
+(*       set (mass1 := hasvalue Mint32 b1 ofs1 (Vint (Int.repr tag))) in *. *)
+(*       (* change only mpi *) *)
+(*       assert (MPRED1': m|= mass3 ** mass2 ** mass1 ** MP) by admit. *)
+(*       exploit IHphl; eauto. *)
+(*       intros (m1 & fp2 & mass2' & C1 & C2 & C3 & C4). *)
+(*       assert (MPRED2: m |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED. *)
+(*       eapply store_range_unchanged in MPRED2 as MPRED2'; eauto.       *)
+(*       rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.       *)
+(*       exploit frame_mconj. eapply MPRED.  *)
+(*       rewrite <- !sep_assoc in C4. *)
+(*       eapply C4. eauto. intros MPRED3. *)
+(*       rewrite (sep_comm mass2' mass1) in MPRED3. *)
+(*       exists m1, (fp_enum id tag fid0 ofs fp2), (mconj (mass1 ** mass2') (range b1 ofs1 (ofs1 + sizeof_comp ce id))).  *)
+(*       split; try split; eauto. *)
+(*       simpl. rewrite dec_eq_true. rewrite C2. reflexivity. *)
+(*       split. *)
+(*       econstructor; eauto. *)
+(*       eauto. *)
+(* Admitted. *)
 
 Lemma coherent_fpm_split ce: forall id fpm mp fp b ofs ty
       (B: fpm ! id = Some (b, ofs, ty, fp))
@@ -1392,41 +1801,19 @@ Admitted.
 
 (* storebytes rules *)
 
-Inductive fp_field_in_range_aligned ce (sz al: Z) (f: footprint -> Prop) : ffpty -> Prop :=
-| fp_field_in_range_aligned_intro: forall fid fofs ffp
-  (R1: 0 < fofs)
-  (R2: (fofs + sizeof_footprint ce ffp) < sz)
-  (R3: (alignof_footprint ce ffp | fofs))
-  (R4: f ffp)
-  (R5: (al | fofs)),
-    fp_field_in_range_aligned ce sz al f (fid, (fofs, ffp)).
-
-(* This property should be implied by wt_footprint: the field offset must
-be in range and aligned *)
-
-Inductive fields_fp_well_formed ce : footprint -> Prop :=
-| fp_emp_wf sz al: fields_fp_well_formed ce (fp_emp sz al)
-| fp_scalar_wf chunk v: fields_fp_well_formed ce (fp_scalar chunk v)
-| fp_box_wf b sz fp: fields_fp_well_formed ce (fp_box b sz fp)
-| fp_ref_wf b ofs phs: fields_fp_well_formed ce (fp_ref b ofs phs)
-| fp_struct_wf: forall id fpl
-    (FWF: Forall (fp_field_in_range_aligned ce (sizeof_comp ce id) (alignof_comp ce id) (fields_fp_well_formed ce)) fpl),
-  fields_fp_well_formed ce (fp_struct id fpl)
-| fp_enum_wf: forall id tagz fid fofs ffp
-    (FWF: fp_field_in_range_aligned ce (sizeof_comp ce id) (alignof_comp ce id) (fields_fp_well_formed ce) (fid, (fofs, ffp))),
-  fields_fp_well_formed ce (fp_enum id tagz fid fofs ffp).
-
 
 Lemma sem_wt_loc_merge ce: forall fp mp1 mp2 b ofs
     (WTFP: sem_wt_fp ce fp mp1)
-    (WTLOC: sem_wt_loc ce (clear_footprint_rec ce fp) b ofs mp2),
+    (WTLOC: sem_wt_loc ce (clear_footprint_rec fp) b ofs mp2),
     sem_wt_loc ce fp b ofs (mp2 ** mp1).
 Proof.
   induction fp using strong_footprint_ind; intros; simpl in *; inv WTFP; inv WTLOC.
   - econstructor. auto. rewrite EQV, EQV0. symmetry.
     eapply massert_eqv_pure_r.
-  - econstructor. rewrite EQV, EQV0. 
-    symmetry. eapply massert_eqv_pure_r.
+  - econstructor. auto. rewrite EQV, EQV0. symmetry.
+    eapply massert_eqv_pure_r.
+  - econstructor. rewrite EQV, EQV0. symmetry.
+    eapply massert_eqv_pure_r.
   - unfold box_pred in FREE. simpl in FREE. 
     econstructor; eauto.
     rewrite EQV, EQV0. rewrite FREE. eapply sepconj_morph_2.
@@ -1437,11 +1824,14 @@ Admitted.
 
 Lemma sem_wt_loc_split ce: forall fp mp b ofs
     (WTLOC: sem_wt_loc ce fp b ofs mp),
-    exists mp1 mp2, sem_wt_loc ce (clear_footprint_rec ce fp) b ofs mp1
+    exists mp1 mp2, sem_wt_loc ce (clear_footprint_rec fp) b ofs mp1
                /\ sem_wt_fp ce fp mp2
                /\ massert_eqv mp (mp1 ** mp2).
 Proof.
   induction fp using strong_footprint_ind; intros; simpl in *; inv WTLOC.
+  - exists STrue, STrue. split. econstructor. reflexivity.
+    split. econstructor. reflexivity. rewrite EQV.
+    eapply massert_eqv_pure_r.
   - exists (range b ofs (ofs + sz)), STrue.
     do 2 try apply conj. econstructor; auto.
     econstructor. reflexivity.
@@ -1452,43 +1842,15 @@ Proof.
     rewrite EQV. eapply massert_eqv_pure_r.
   - exists (hasvalue Mptr b0 ofs (Vptr b Ptrofs.zero)), mp0.
     do 2 try apply conj.
-    +  econstructor; auto.
-       econstructor. eapply Z.divide_0_r. reflexivity. 
-       unfold box_pred. simpl. 
-       eapply massert_eqv_pure_r.
-    + rewrite FREE. econstructor.
-      2: reflexivity. eauto.
+    + econstructor; auto. econstructor. reflexivity.
+      unfold box_pred. simpl. 
+      eapply massert_eqv_pure_r.
+    + econstructor. eauto. auto.
     + auto.
   (** TODO: write helper for fields_loc_sep  *)
   - admit.
   - admit.
   - admit.
-Admitted.
-
-(* Split and merge sub-footprint from/to the footprint map and derive
-the correspoinding separation predicates *)
-
-(* A generalization of sem_wt_loc_split *)
-Lemma get_owner_loc_footprint_sem_wt_split ce: forall phl b1 ofs1 b2 ofs2 fp1 fp1' fp2 mp
-      (GFP: get_owner_loc_footprint phl fp1 b1 ofs1 = Some (b2, ofs2, fp2))
-      (CLR: clear_owner_footprint ce fp1 phl = Some fp1')
-      (WTLOC: sem_wt_loc ce fp1 b1 ofs1 mp),
-    exists mp1 mp2 mp3, 
-      sem_wt_loc ce fp1' b1 ofs1 (mp1 ** mp2)
-      /\ sem_wt_loc ce (clear_footprint_rec ce fp2) b2 ofs2 mp2
-      /\ sem_wt_fp ce fp2 mp3
-      /\ massert_eqv mp (mp1 ** mp2 ** mp3).
-Proof.
-Admitted.
-
-Lemma get_owner_loc_footprint_map_sem_wt_split ce: forall phl id b ofs fp mp fpm1 fpm2
-      (GFP: get_owner_loc_footprint_map (id, phl) fpm1 = Some (b, ofs, fp))
-      (CLR: clear_footprint_map ce (id, phl) fpm1 = Some fpm2)
-      (COH: coherent_fpm ce fpm1 mp),
-    exists mp1 mp2, coherent_fpm ce fpm2 mp2
-               /\ sem_wt_fp ce fp mp1
-               /\ massert_eqv mp (mp2 ** mp1).
-Proof.
 Admitted.
 
 
@@ -1497,12 +1859,12 @@ Admitted.
 
 Lemma storebytes_fields_loc_sep ce: forall fpl tb tofs sb sofs mp1 mp2 mp3 MP m1 m2 bytes (P1: footprint -> massert -> Prop) (P2: (footprint -> block -> Z -> massert -> Prop)) sz al
      (* induciton priciple from storebytes_sem_wt_loc  *)
-    (IH: forall (fid : ident) (ofs : Z) (fp : footprint),
-        In (fid, (ofs, fp)) fpl ->
+    (IH: forall (fid : ident) base (ofs : Z) (fp : footprint),
+        In (fid, ((base, ofs), fp)) fpl ->
         forall (tb : block) (tofs : Z) (sb : block) (sofs : Z) (mp1 mp2 mp3 MP : massert)
           (m1 m2 : mem) (bytes : list memval),
           P1 fp mp2 ->
-          P2 (clear_footprint_rec ce fp) sb sofs mp3 ->
+          P2 (clear_footprint_rec fp) sb sofs mp3 ->
           massert_imp mp1 (range tb tofs (tofs + sizeof_footprint ce fp)) ->
           massert_imp (mp1 ** MP) mp3 ->
           m1 |= mp1 ** mp2 ** MP ->
@@ -1512,7 +1874,7 @@ Lemma storebytes_fields_loc_sep ce: forall fpl tb tofs sb sofs mp1 mp2 mp3 MP m1
           fields_fp_well_formed ce fp ->
           exists mass3 : massert, P2 fp tb tofs mass3 /\ m2 |= mass3 ** MP)
     (SEMWTFP: fields_fp_sep P1 fpl mp2)
-    (SHALLOW: fields_loc_sep sb sofs P2 ((map (fun '(fid, (fofs, ffp)) => (fid, (fofs, clear_footprint_rec ce ffp))) fpl)) mp3)
+    (SHALLOW: fields_loc_sep sb sofs P2 ((map (fun '(fid, (fofs, ffp)) => (fid, (fofs, clear_footprint_rec ffp))) fpl)) mp3)
     (RANGE: massert_imp mp1 (range tb tofs (tofs + sz)))
     (MPIMP: massert_imp (mp1 ** MP) mp3)
     (MPRED : m1 |= mp1 ** mp2 ** MP)
@@ -1533,7 +1895,7 @@ Lemma storebytes_sem_wt_loc ce: forall sfp tb tofs sb sofs mp1 mp2 mp3 MP m1 m2 
     value loaded from (sb, sofs) and stored into (tb, tofs) can make
     this location sem_wt_loc. *)
     (SEMWTFP: sem_wt_fp ce sfp mp2)
-    (SHALLOW: sem_wt_loc ce (clear_footprint_rec ce sfp) sb sofs mp3)
+    (SHALLOW: sem_wt_loc ce (clear_footprint_rec sfp) sb sofs mp3)
     (* (WTVALLOC : sem_wt_loc ce sfp sb sofs (mp2 ** mp3)) *)
     (* We prove a more general version without WTLOC of (tb, tofs),
     meaning that we do not care what footprint was in the target
@@ -1553,7 +1915,14 @@ Lemma storebytes_sem_wt_loc ce: forall sfp tb tofs sb sofs mp1 mp2 mp3 MP m1 m2 
       sem_wt_loc ce sfp tb tofs mass3 /\ m2 |= mass3 ** MP.
 Proof.
   induction sfp using strong_footprint_ind; intros.
-  - exists (range tb tofs (tofs + sizeof_footprint ce (fp_emp sz al))).
+  - erewrite Mem.loadbytes_empty in LOAD. 2: simpl; try lia.
+    inv LOAD.
+    exploit Mem.storebytes_empty; eauto. intros. subst.
+    exists STrue. split. econstructor. reflexivity.
+    eapply sepconj_morph_1. 3: eapply MPRED.
+    rewrite massert_eqv_pure_r. eapply massert_imp_proj2.
+    eapply massert_imp_proj2.
+  - exists (range tb tofs (tofs + sizeof_footprint ce (fp_uninit sz al))).
     split. econstructor. auto. reflexivity.
     rewrite RANGE in MPRED. eapply sep_drop2 in MPRED.
     eapply sep_preserved. eauto. intros. eapply storebytes_range_unchanged; eauto.
@@ -1634,12 +2003,11 @@ Proof.
     into fields. Then we can split the loadbytes and storebytes into
     sequence of loadbytes/storebytes *)
     exploit storebytes_fields_loc_sep; eauto.
-    admit.
+    rewrite <- EQV0. auto.
     inv WF. eauto.
     intros (mass3 & FLOCSEP & MPRED2).
-    exists (mconj mass3 (range tb tofs (tofs + sizeof_comp ce id))).
-    split. econstructor; eauto. 
-    admit.
+    exists mass3.
+    split. econstructor; eauto. auto.
   - admit.
   - admit.
 Admitted.
@@ -1647,7 +2015,7 @@ Admitted.
 
 Lemma storebytes_coherent_var: forall phl m1 ce mass1 mp2 mp3 sfp sb sofs fp1 tfp b1 ofs1 tb tofs MP
     (SEMWTFP : sem_wt_fp ce sfp mp2)
-    (SHALLOW: sem_wt_loc ce (clear_footprint_rec ce sfp) sb sofs mp3)
+    (SHALLOW: sem_wt_loc ce (clear_footprint_rec sfp) sb sofs mp3)
     (* The variable address *)
     (WTLOC: sem_wt_loc ce fp1 b1 ofs1 mass1)
     (MPIMP: massert_imp (mass1 ** MP) mp3)
@@ -1657,7 +2025,11 @@ Lemma storebytes_coherent_var: forall phl m1 ce mass1 mp2 mp3 sfp sb sofs fp1 tf
     (ALEQ: alignof_footprint ce sfp = alignof_footprint ce tfp)
     (SZEQ: sizeof_footprint ce sfp = sizeof_footprint ce tfp)
     (AL: (alignof_footprint ce sfp | tofs))
-    (WF: fields_fp_well_formed ce sfp),
+    (WF1: fields_fp_well_formed ce sfp)
+    (WF2: fields_fp_well_formed ce tfp)
+    (* As we need to load bytes from sfp so it must imply range_perm *)
+    (OWN1: shallow_owned sfp = true)
+    (OWN2: shallow_owned tfp = true),
     exists bytes m2 fp2 mass3,
       Mem.loadbytes m1 sb sofs (sizeof_footprint ce sfp) = Some bytes
       /\ Mem.storebytes m1 tb tofs bytes = Some m2
@@ -1665,89 +2037,130 @@ Lemma storebytes_coherent_var: forall phl m1 ce mass1 mp2 mp3 sfp sb sofs fp1 tf
       /\ sem_wt_loc ce fp2 b1 ofs1 mass3
       /\ m2 |= mass3 ** MP.
 Proof.
-  (** We may use get_owner_loc_footprint_sem_wt_split to prove this
-  lemma, instead of doing induction on phl like
-  store_coherent_var. But the difficult part is how to write a
-  set_footprint rule after storing the bytes and prove sem_wt_loc
-  again? *)
-  (* assert (CLR: exists fp1', clear_owner_footprint ce fp1 phl = Some fp1') by admit. *)
-  (* destruct CLR as (fp1' & CLR). *)
-  (* exploit get_owner_loc_footprint_sem_wt_split; eauto. *)
-  (* intros (mp1 & mp4 & mp5 & A1 & A2 & A3 & A4). *)
-  (* assert (LOAD: exists bytes, Mem.loadbytes m1 sb sofs (sizeof_footprint ce sfp) = Some bytes) by admit. *)
-  (* destruct LOAD as (bytes & LOAD). *)
-  (* assert (STORE: exists m2, Mem.storebytes m1 tb tofs bytes = Some m2) by admit. *)
-  (* destruct STORE as (m2 & STORE). *)
-  (* exploit (storebytes_sem_wt_loc ce sfp tb tofs sb sofs mp4 mp2 mp3 (mp1 ** mp5 **  MP)); eauto.  *)
-  (* admit.  admit. admit. intros (mass3 & B1 & B2). *)
-  (* (** TODO: set_ootprint *) *)  
-  induction phl; intros.
-  - inv GFP. 
-    (* use storebytes_sem_wt_loc *)
-    admit.
-  (* similar to store_coherent_var *)
-  - simpl in GFP. destruct a; try congruence.
-    + destr_fp_box fp1 GFP.
-      inv WTLOC. rewrite EQV in *. rewrite FREE in *.
-      set (MP1 := hasvalue Mptr b1 ofs1 (Vptr b Ptrofs.zero)) in *.
-      unfold box_pred in *. rewrite SHALLOW0 in *.
-      set (MP2 := contains_neg Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr sz)))) in *.
-      (* prove it with commutative lemmas of sepconj *)
-      assert (MPRED1: m1 |= nextmp ** mp2 ** (MP ** MP1 ** MP2)) by admit.      
-      exploit IHphl. eapply SEMWTFP.  all: eauto. admit.
-      intros (bytes & m2 & fp2 & mass3 & A1 & A2 & A3 & A4 & A5).
-      exists bytes, m2, (fp_box b sz fp2), (MP1 ** box_pred fp2 b sz mass3).
-      do 4 (try apply conj); eauto.
-      * simpl. rewrite A3. reflexivity.
-      * econstructor; eauto. 
-      * unfold box_pred. destruct (shallow_init fp2). admit. admit.               
-    + destr_fp_field fp1 GFP.
-      inv WTLOC. rewrite EQV in *.
-      (* split fields_sep *)
-      exploit fields_loc_sep_find_set; eauto.
-      intros (mp1 & mp4 & mpi & l1 & l2 & A1 & A2 & A3 & A4 & A5 & A6). subst.
-      eapply mconj_proj1 in MPRED as MPRED1.
-      (* change only mpi *)
-      assert (MPRED1': m1|= mpi ** mp4 ** mp1 ** mp2 ** MP) by admit.      
-      exploit IHphl. eapply SEMWTFP. eapply SHALLOW. 
-      massert_imp
-eapply 
-
-all: eauto.
-      intros (bytes & m2 & fp2 & mpi' & C1 & C2 & C3 & C4 & C5).
-      (* adhoc: we know that storing a location does not change its
-      permission. *)
-      assert (MPRED2: m1 |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED.
-      eapply storebytes_range_unchanged in MPRED2 as MPRED2'; eauto.      
-      rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.      
-      exploit frame_mconj. eapply MPRED. 
-      rewrite <- !sep_assoc in C5.
-      eapply C5. eauto. intros MPRED3.
-      rewrite sep_assoc, (sep_swap mpi' mp1 _) in MPRED3.
-      exists bytes, m2, (fp_struct id (set_field_fp fid fp2 (l1 ++ (fid, (z, f)) :: l2))), (mconj (mp1 ** mpi' ** mp2) (range b1 ofs1 (ofs1 + sizeof_comp ce id))). 
-      do 4 (try apply conj); eauto.
-      simpl. rewrite FIND. rewrite C3. reflexivity.
-      econstructor; eauto.
-    + destr_fp_enum fp1 GFP.
-      inv WTLOC.
-      eapply mconj_proj1 in MPRED as MPRED1.
-      set (mass1 := hasvalue Mint32 b1 ofs1 (Vint (Int.repr tag))) in *.
-      (* change only mpi *)
-      assert (MPRED1': m1|= mass3 ** mass2 ** mass1 ** MP) by admit.
-      exploit IHphl. eapply FWT. eapply WTVAL. all: eauto.
-      intros (bytes & m2 & fp2 & mass2' & C1 & C2 & C3 & C4 & C5).
-      assert (MPRED2: m1 |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED.
-      eapply storebytes_range_unchanged in MPRED2 as MPRED2'; eauto.      
-      rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.      
-      exploit frame_mconj. eapply MPRED. 
-      rewrite <- !sep_assoc in C5.
-      eapply C5. eauto. intros MPRED3.
-      rewrite (sep_comm mass2' mass1) in MPRED3.
-      exists bytes, m2, (fp_enum id tag fid0 ofs fp2), (mconj (mass1 ** mass2') (range b1 ofs1 (ofs1 + sizeof_comp ce id))). 
-      do 4 (try apply conj); eauto.
-      simpl. rewrite dec_eq_true. rewrite C3. reflexivity.
-      econstructor; eauto.
+  intros.
+  (* progress of loadbytes and storebytes *)
+  exploit sem_wt_loc_merge; eauto. intros SRCWTLOC.
+  exploit sem_wt_loc_range_perm. eapply OWN1. all: eauto. 
+  intros MIMP.
+  assert (MPRED': m1 |= mp3 ** mp2) by admit.
+  rewrite MIMP in MPRED'.
+  exploit Mem.range_perm_loadbytes. 
+  red. intros. eapply MPRED'; eauto.
+  intros (bytes & LOAD).
+  exploit Mem.loadbytes_length; eauto. intros LEN.
+  (* storebytes *)
+  exploit get_owner_loc_footprint_sem_wt_split; eauto.
+  intros (mp1 & mp1' & mp4 & fp1' & A1 & A2 & A3 & A4 & A5).
+  exploit sem_wt_loc_range_perm. eapply OWN2. all: eauto. 
+  intros MIMP2.
+  assert (MPRED1: m1 |= mp4). rewrite A4 in MPRED. eapply MPRED.
+  rewrite MIMP2 in MPRED1.
+  edestruct Mem.range_perm_storebytes with (b:= tb) (ofs := tofs) as (m2 & STORE).
+  red. intros. eapply MPRED1; eauto. rewrite <- SZEQ. rewrite LEN in *.
+  rewrite Z_to_nat_max in H. 
+  (* show sizeof_footprint is positive *)
+  admit.
+  exploit (storebytes_sem_wt_loc ce sfp tb tofs sb sofs mp4 mp2 mp3 (mp1 ** mp1' ** MP)); eauto. 
+  rewrite SZEQ. auto. 
+  rewrite A4 in MPIMP. 
+  (* prove by MPIMP *)
+  admit.
+  rewrite A4 in MPRED. 
+  (* prove by MPRED *)
+  admit.
+  intros (mass3 & B1 & B2).
+  exploit A5; eauto. 
+  eapply shallow_owned_not_emp; eauto.
+intros (mp' & fp1'' & SET & C1 & C2).  
+  exists bytes, m2, fp1'', mp'. 
+  do 4 (try apply conj); eauto.
+  rewrite C2. admit.
 Admitted.
+
+
+(*   (** We may use get_owner_loc_footprint_sem_wt_split to prove this *)
+(*   lemma, instead of doing induction on phl like *)
+(*   store_coherent_var. But the difficult part is how to write a *)
+(*   set_footprint rule after storing the bytes and prove sem_wt_loc *)
+(*   again? *) *)
+(*   (* assert (CLR: exists fp1', clear_owner_footprint ce fp1 phl = Some fp1') by admit. *) *)
+(*   (* destruct CLR as (fp1' & CLR). *) *)
+(*   (* exploit get_owner_loc_footprint_sem_wt_split; eauto. *) *)
+(*   (* intros (mp1 & mp4 & mp5 & A1 & A2 & A3 & A4). *) *)
+(*   (* assert (LOAD: exists bytes, Mem.loadbytes m1 sb sofs (sizeof_footprint ce sfp) = Some bytes) by admit. *) *)
+(*   (* destruct LOAD as (bytes & LOAD). *) *)
+(*   (* assert (STORE: exists m2, Mem.storebytes m1 tb tofs bytes = Some m2) by admit. *) *)
+(*   (* destruct STORE as (m2 & STORE). *) *)
+(*   (* exploit (storebytes_sem_wt_loc ce sfp tb tofs sb sofs mp4 mp2 mp3 (mp1 ** mp5 **  MP)); eauto.  *) *)
+(*   (* admit.  admit. admit. intros (mass3 & B1 & B2). *) *)
+(*   (* (** TODO: set_ootprint *) *)   *)
+(*   induction phl; intros. *)
+(*   - inv GFP.  *)
+(*     (* use storebytes_sem_wt_loc *) *)
+(*     admit. *)
+(*   (* similar to store_coherent_var *) *)
+(*   - simpl in GFP. destruct a; try congruence. *)
+(*     + destr_fp_box fp1 GFP. *)
+(*       inv WTLOC. rewrite EQV in *. rewrite FREE in *. *)
+(*       set (MP1 := hasvalue Mptr b1 ofs1 (Vptr b Ptrofs.zero)) in *. *)
+(*       unfold box_pred in *. rewrite SHALLOW0 in *. *)
+(*       set (MP2 := contains_neg Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr sz)))) in *. *)
+(*       (* prove it with commutative lemmas of sepconj *) *)
+(*       assert (MPRED1: m1 |= nextmp ** mp2 ** (MP ** MP1 ** MP2)) by admit.       *)
+(*       exploit IHphl. eapply SEMWTFP.  all: eauto. admit. *)
+(*       intros (bytes & m2 & fp2 & mass3 & A1 & A2 & A3 & A4 & A5). *)
+(*       exists bytes, m2, (fp_box b sz fp2), (MP1 ** box_pred fp2 b sz mass3). *)
+(*       do 4 (try apply conj); eauto. *)
+(*       * simpl. rewrite A3. reflexivity. *)
+(*       * econstructor; eauto.  *)
+(*       * unfold box_pred. destruct (shallow_init fp2). admit. admit.                *)
+(*     + destr_fp_field fp1 GFP. *)
+(*       inv WTLOC. rewrite EQV in *. *)
+(*       (* split fields_sep *) *)
+(*       exploit fields_loc_sep_find_set; eauto. *)
+(*       intros (mp1 & mp4 & mpi & l1 & l2 & A1 & A2 & A3 & A4 & A5 & A6). subst. *)
+(*       eapply mconj_proj1 in MPRED as MPRED1. *)
+(*       (* change only mpi *) *)
+(*       assert (MPRED1': m1|= mpi ** mp4 ** mp1 ** mp2 ** MP) by admit.       *)
+(*       exploit IHphl. eapply SEMWTFP. eapply SHALLOW.  *)
+(*       massert_imp *)
+(* eapply  *)
+
+(* all: eauto. *)
+(*       intros (bytes & m2 & fp2 & mpi' & C1 & C2 & C3 & C4 & C5). *)
+(*       (* adhoc: we know that storing a location does not change its *)
+(*       permission. *) *)
+(*       assert (MPRED2: m1 |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED. *)
+(*       eapply storebytes_range_unchanged in MPRED2 as MPRED2'; eauto.       *)
+(*       rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.       *)
+(*       exploit frame_mconj. eapply MPRED.  *)
+(*       rewrite <- !sep_assoc in C5. *)
+(*       eapply C5. eauto. intros MPRED3. *)
+(*       rewrite sep_assoc, (sep_swap mpi' mp1 _) in MPRED3. *)
+(*       exists bytes, m2, (fp_struct id (set_field_fp fid fp2 (l1 ++ (fid, (z, f)) :: l2))), (mconj (mp1 ** mpi' ** mp2) (range b1 ofs1 (ofs1 + sizeof_comp ce id))).  *)
+(*       do 4 (try apply conj); eauto. *)
+(*       simpl. rewrite FIND. rewrite C3. reflexivity. *)
+(*       econstructor; eauto. *)
+(*     + destr_fp_enum fp1 GFP. *)
+(*       inv WTLOC. *)
+(*       eapply mconj_proj1 in MPRED as MPRED1. *)
+(*       set (mass1 := hasvalue Mint32 b1 ofs1 (Vint (Int.repr tag))) in *. *)
+(*       (* change only mpi *) *)
+(*       assert (MPRED1': m1|= mass3 ** mass2 ** mass1 ** MP) by admit. *)
+(*       exploit IHphl. eapply FWT. eapply WTVAL. all: eauto. *)
+(*       intros (bytes & m2 & fp2 & mass2' & C1 & C2 & C3 & C4 & C5). *)
+(*       assert (MPRED2: m1 |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED. *)
+(*       eapply storebytes_range_unchanged in MPRED2 as MPRED2'; eauto.       *)
+(*       rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.       *)
+(*       exploit frame_mconj. eapply MPRED.  *)
+(*       rewrite <- !sep_assoc in C5. *)
+(*       eapply C5. eauto. intros MPRED3. *)
+(*       rewrite (sep_comm mass2' mass1) in MPRED3. *)
+(*       exists bytes, m2, (fp_enum id tag fid0 ofs fp2), (mconj (mass1 ** mass2') (range b1 ofs1 (ofs1 + sizeof_comp ce id))).  *)
+(*       do 4 (try apply conj); eauto. *)
+(*       simpl. rewrite dec_eq_true. rewrite C3. reflexivity. *)
+(*       econstructor; eauto. *)
+(* Admitted. *)
 
 (* Some work around for not defining sem_wt_bytes (which may require
  slicing bytes when defining the struct case which is complicated):
@@ -1755,7 +2168,7 @@ Admitted.
  we can use the sem_wt_loc fact (provided by sem_wt_val for
  struct/enum footprint) of the assigner and prove that when storing
  its bytes into the assignee, the target location is sem_wt_loc. *)
-Lemma storebytes_coherent_fpm: forall phl m1 ce fpm mass1 mp1 mp2 sfp tfp sb sofs tb tofs id MP
+Lemma storebytes_coherent_fpm: forall phl m1 ce fpm mass1 mp2 mp3 sfp tfp sb sofs tb tofs id MP
     (COH: coherent_fpm ce fpm mass1)
     (* note that sfp is separated from fpm, meaning that it has been
     moved from *)
@@ -1764,9 +2177,9 @@ Lemma storebytes_coherent_fpm: forall phl m1 ce fpm mass1 mp1 mp2 sfp tfp sb sof
     express the value spec of this location. *)
     (* mp1 is the predicate for the value stored in (sb, sofs) and mp2
     is the footprint of this value *)
-    (WTLOC: sem_wt_loc ce sfp sb sofs (mp1 ** mp2))
-    (SHALLOWLOC: sem_wt_loc ce (clear_footprint_rec ce sfp) sb sofs mp1)
-    (MPIMP: massert_imp mass1 mp1)
+    (SEMWTFP : sem_wt_fp ce sfp mp2)
+    (SHALLOW: sem_wt_loc ce (clear_footprint_rec sfp) sb sofs mp3)
+    (MPIMP: massert_imp (mass1 ** MP) mp3)
     (MPRED: m1 |= mass1 ** mp2 ** MP)
     (* id may denote an external owner? We reduce all store for
     reference into store for their referred owner *)
@@ -1774,7 +2187,13 @@ Lemma storebytes_coherent_fpm: forall phl m1 ce fpm mass1 mp1 mp2 sfp tfp sb sof
     (GFP: get_owner_loc_footprint_map (id, phl) fpm = Some (tb, tofs, tfp))
     (* The following properties should be derived from wt_footprint *)
     (ALEQ: alignof_footprint ce sfp = alignof_footprint ce tfp)
-    (SZEQ: sizeof_footprint ce sfp = sizeof_footprint ce tfp),
+    (SZEQ: sizeof_footprint ce sfp = sizeof_footprint ce tfp)
+    (AL: (alignof_footprint ce sfp | tofs))
+    (WF1: fields_fp_well_formed ce sfp)
+    (WF2: fields_fp_well_formed ce tfp)
+    (* As we need to load bytes from sfp so it must imply range_perm *)
+    (OWN1: shallow_owned sfp = true)
+    (OWN2: shallow_owned tfp = true),
     exists bytes m2 fpm1 mass3,
       Mem.loadbytes m1 sb sofs (sizeof_footprint ce sfp) = Some bytes
       /\ Mem.storebytes m1 tb tofs bytes = Some m2
@@ -1786,24 +2205,25 @@ Proof.
   destruct (fpm ! id) as [(((b1 & ofs1) & ty1) & fp)|] eqn: B; try congruence.
   (* We should split the footprint for the id from mass1 *)
   exploit coherent_fpm_split; eauto.
-  intros (l1 & l2 & mp1 & mp2 & mpi & A1 & A2 & A3 & A4 & A5). subst.
+  intros (l1 & l2 & mp1 & mp4 & mpi & A1 & A2 & A3 & A4 & A5). subst.
   (* apply storebytes_coherent_var *)
   inv A3. inv ELTEQ.
-  assert (MPRED1: m1 |= mpi ** mass2 ** (mp1 ** mp2 ** MP)) by admit.
-  exploit storebytes_coherent_var. eapply MASS. eapply WTLOC. all: eauto. 
-  intros (bytes & m2 & fp2 & mp3 & B1 & B2 & B3 & B4 & B5).
+  assert (MPRED1: m1 |= mpi ** mp2 ** (mp1 ** mp4 ** MP)) by admit.
+  exploit storebytes_coherent_var. eauto. eapply SHALLOW. eapply MASS. 
+  2: eapply MPRED1. admit.      (* easy *)
+  all: eauto.
+  intros (bytes & m2 & fp2 & mass3 & B1 & B2 & B3 & B4 & B5).
   cbn [set_footprint_map]. rewrite B. rewrite B3.
   exists bytes, m2.
-  do 2 eexists. do 4 (try eapply conj); eauto.
-  - instantiate (1 := mp1 ** mp3 ** mp2).
-    econstructor. 
+  exists (PTree.set id0 (b, ofs, ty, fp2) fpm), (mass3 ** mp1 ** mp4).
+  do 4 (try eapply conj); eauto.
+  - econstructor. 
     assert (TODO: PTree.elements (PTree.set id0 (b, ofs, ty, fp2) fpm) = l1 ++ (id0, (b, ofs, ty, fp2)) :: l2) by admit.
-    rewrite TODO.
-    eapply Forall_sep_app. exists mp1, (mp3 ** mp2). 
-    split; eauto. split. econstructor; eauto.
-    econstructor; eauto. reflexivity.
-  - rewrite sep_swap12 in B5. 
-    rewrite <- !sep_assoc, (sep_assoc mp1) in B5.
-    auto.
+    (* rewrite TODO. *)
+    (* eapply Forall_sep_app. exists mp1, (mp3 ** mp2).  *)
+    (* split; eauto. split. econstructor; eauto. *)
+    (* econstructor; eauto. reflexivity. *)
+    admit.
+  - rewrite !sep_assoc. auto.
 Admitted.
 
