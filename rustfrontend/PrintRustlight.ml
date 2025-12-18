@@ -7,8 +7,41 @@ open Cop
 open Rustlight
 open PrintCsyntax
 open PrintRustsyntax
-
 let coq_z_to_ocaml_int = Z.to_int
+let is_slice_type ty =
+  match ty with
+  | Rusttypes.Tslice(_, _, _) -> true
+  | _ -> false
+
+let is_array_type ty =
+  match ty with
+  | Rusttypes.Tarray(_, _, _) -> true
+  | _ -> false
+
+let rec array_element_type ty =
+  match ty with
+  | Rusttypes.Tarray(_, elem, _) -> array_element_type elem
+  | _ -> ty
+
+let is_ptr_like_type ty =
+  match ty with
+  | Rusttypes.Tslice(_, _, _) -> true
+  | Rusttypes.Traw_pointer(_, _) -> true
+  | _ -> false
+
+let pointed_type ty =
+  match ty with
+  | Rusttypes.Tslice(_, elem_ty, _) -> Some elem_ty
+  | Rusttypes.Traw_pointer(_, elem_ty) -> Some elem_ty
+  | _ -> None
+
+let ptr_origin_of_type ty =
+  match ty with
+  | Rusttypes.Tslice(_, _, origin) -> Some origin
+  | _ -> None
+
+let is_slice_target ty = is_slice_type ty
+
 let temp_name (id: AST.ident) =
   try
     "$" ^ Hashtbl.find string_of_atom id
@@ -37,6 +70,12 @@ let string_of_op op=
   | Ole -> "<="
   | Oge -> ">="
   (* | _ -> "no support this operation" *)
+
+let name_unop = function
+  | Onotbool -> "!"
+  | Onotint -> "!"
+  | Oneg -> "-"
+  | Oabsfloat -> "__builtin_fabs"
 
 let print_rust_float p f =
   let s = Printf.sprintf "%.18g" f in
@@ -74,6 +113,60 @@ let precedence = function
   | Emoveplace(_,_) -> (16,NA)
   | Epure pe -> precedence' pe
 
+module StringSet = Set.Make(String)
+
+let global_var_names : StringSet.t ref = ref StringSet.empty
+let current_name_map = Hashtbl.create 97
+let used_local_names : StringSet.t ref = ref StringSet.empty
+
+let rust_reserved_keywords =
+  let keywords = [
+    "as"; "break"; "const"; "continue"; "crate"; "else"; "enum"; "extern";
+    "false"; "fn"; "for"; "if"; "impl"; "in"; "let"; "loop"; "match"; "mod";
+    "move"; "mut"; "pub"; "ref"; "return"; "self"; "Self"; "static"; "struct";
+    "super"; "trait"; "true"; "type"; "unsafe"; "use"; "where"; "while";
+    "async"; "await"; "dyn"; "abstract"; "become"; "box"; "do"; "final";
+    "macro"; "override"; "priv"; "try"; "typeof"; "unsized"; "virtual";
+    "yield"; "union"
+  ] in
+  List.fold_left (fun acc kw -> StringSet.add kw acc) StringSet.empty keywords
+
+let sanitize_rust_identifier name =
+  let base = if name = "" then "__tmp" else name in
+  if StringSet.mem base rust_reserved_keywords then base ^ "_" else base
+
+let lookup_ident_name id =
+  try Hashtbl.find current_name_map id
+  with Not_found -> sanitize_rust_identifier (extern_atom id)
+
+let binding_with_type name ty =
+  Printf.sprintf "%s: %s" name (name_rust_type ty)
+
+let reset_local_name_map () =
+  Hashtbl.clear current_name_map;
+  used_local_names := !global_var_names
+
+let rec reserve_name base idx =
+  let candidate =
+    if idx = 0 then base else Printf.sprintf "%s_%d" base idx
+  in
+  if StringSet.mem candidate !used_local_names then
+    reserve_name base (idx + 1)
+  else begin
+    used_local_names := StringSet.add candidate !used_local_names;
+    candidate
+  end
+
+let register_local_name id =
+  let base = sanitize_rust_identifier (extern_atom id) in
+  let name = reserve_name base 0 in
+  Hashtbl.add current_name_map id name
+
+let setup_local_names (f: Rustlight.coq_function) =
+  reset_local_name_map ();
+  List.iter (fun (id, _) -> register_local_name id) f.fn_params;
+  List.iter (fun (id, _) -> register_local_name id) f.fn_vars
+
 (* 在 rustfrontend/PrintRustlight.ml 中 *)
 
 let is_float_type ty =
@@ -105,15 +198,179 @@ let type_of_pexpr (p : Rustlight.pexpr) : Rusttypes.coq_type =
   | Esizeof (_, ty) -> ty
   | Ederef (_, ty) -> ty
 
-let rec print_place out (p: place) =
+let rec is_ptr_place (p: place) =
+  match p with
+  | Plocal(_, ty) -> is_ptr_like_type ty
+  | Pderef(_, ty) -> is_ptr_like_type ty
+  | Pfield(_, _, ty) -> is_ptr_like_type ty
+  | Pdowncast(_, _, ty) -> is_ptr_like_type ty
+  | Pparenthesize(_, ty, _) -> is_ptr_like_type ty
+  | ParrayIndex(base, _, _) -> is_ptr_place base
+  | Ppair(_, _) -> false
+
+and extract_pointer_field_place (p: place) =
+  match p with
+  | Pfield (Pderef(base, _), fid, ty) when is_ptr_place base -> Some (base, fid, ty)
+  | _ -> None
+
+and extract_ptr_store_target (p: place) =
+  match p with
+  | Pderef (Pparenthesize(_, _, Ebinop(Oadd, base, index, _)), _) ->
+      Some (base, index)
+  | _ -> None
+
+and is_pointer_type ty =
+  match ty with
+  | Rusttypes.Tslice(_, _, _)
+  | Rusttypes.Traw_pointer(_, _) -> true
+  | _ -> false
+
+and is_declared_ptr_type ty =
+  if is_pointer_type ty then true
+  else
+    let ty_name = name_rust_type ty in
+    String.length ty_name >= 4 && String.sub ty_name 0 4 = "Ptr<"
+
+and is_bool_type ty =
+  match ty with
+  | Rusttypes.Tint(Ctypes.IBool, _) -> true
+  | _ -> false
+
+and is_integer_type ty =
+  match ty with
+  | Rusttypes.Tint(_, _) | Rusttypes.Tlong(_) -> true
+  | _ -> false
+
+and is_unit_type ty =
+  match ty with
+  | Rusttypes.Tunit | Rusttypes.Tvoid -> true
+  | _ -> false
+
+and is_u64_type ty =
+  match ty with
+  | Rusttypes.Tlong(Ctypes.Unsigned) -> true
+  | _ -> false
+
+and is_i64_type ty =
+  match ty with
+  | Rusttypes.Tlong(Ctypes.Signed) -> true
+  | _ -> false
+
+and is_u32_type ty =
+  match ty with
+  | Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned) -> true
+  | _ -> false
+
+and is_i32_type ty =
+  match ty with
+  | Rusttypes.Tint(Ctypes.I32, Ctypes.Signed) -> true
+  | _ -> false
+
+and type_of_place (p : place) : Rusttypes.coq_type =
+  match p with
+  | Plocal(_, ty) -> ty
+  | Pderef(_, ty) -> ty
+  | Pfield(_, _, ty) -> ty
+  | Pdowncast(_, _, ty) -> ty
+  | Pparenthesize(_, ty, _) -> ty
+  | ParrayIndex(_, _, ty) -> ty
+  | Ppair(_, _) ->
+      Rusttypes.Tint(Ctypes.I32, Ctypes.Signed)
+
+let rec resolved_place_type place =
+  match place with
+  | Pfield(base, fid, default_ty) ->
+      let base_ty = type_of_place base in
+      (match base_ty with
+       | Rusttypes.Tstruct(_, struct_id) ->
+           let struct_name = extern_atom struct_id in
+           (try
+             let fields = Hashtbl.find struct_field_table struct_name in
+             snd (List.find (fun (name, _) -> name = extern_atom fid) fields)
+           with Not_found -> default_ty)
+       | _ -> default_ty)
+  | _ -> type_of_place place
+
+and is_null_pexpr pe =
+  match pe with
+  | Econst_int (n, _) ->
+      Int32.compare (camlint_of_coqint n) 0l = 0
+  | Econst_long (n, _) ->
+      Int64.compare (camlint64_of_coqint n) 0L = 0
+  | Eas (inner, _) ->
+      is_null_pexpr inner
+  | _ -> false
+
+and is_null_ptr_expr e =
+  match e with
+  | Epure pe -> is_null_pexpr pe
+  | _ -> false
+
+let is_string_literal_place place =
+  match place with
+  | Plocal(id, _) ->
+      let name = extern_atom id in
+      String.length name >= 12 && String.sub name 0 12 = "__stringlit_"
+  | _ -> false
+
+let rec array_place_from_pexpr pe =
+  match pe with
+  | Eas(inner, _) -> array_place_from_pexpr inner
+  | Eplace(place, ty) when is_array_type ty || is_string_literal_place place -> Some place
+  | Eref(_, _, place, _) when is_array_type (type_of_place place) || is_string_literal_place place -> Some place
+  | _ -> None
+
+and array_place_from_expr = function
+  | Epure pe -> array_place_from_pexpr pe
+  | _ -> None
+
+and integer_pexpr_from_pexpr pe =
+  match pe with
+  | Eas(inner, _) -> integer_pexpr_from_pexpr inner
+  | Eplace(place, ty) when is_integer_type ty -> Some pe
+  | Eref(_, _, place, _) ->
+      let place_ty = type_of_place place in
+      if is_integer_type place_ty then
+        Some (Eplace(place, place_ty))
+      else
+        None
+  | _ ->
+      let pe_ty = type_of_pexpr pe in
+      if is_integer_type pe_ty then Some pe else None
+
+and integer_pexpr_from_expr = function
+  | Emoveplace(place, ty) when is_integer_type ty -> Some (Eplace(place, ty))
+  | Epure pe -> integer_pexpr_from_pexpr pe
+  | _ -> None
+
+and is_zero_integer_expr expr =
+  match integer_pexpr_from_expr expr with
+  | Some pe -> is_null_pexpr pe
+  | None -> false
+
+and place_from_ptr_arg expr =
+  match expr with
+  | Epure (Eref(_, _, place, _)) -> Some place
+  | Epure (Eplace(place, _)) -> Some place
+  | Emoveplace(place, _) -> Some place
+  | _ -> None
+
+and print_place out (p: place) =
   match p with
   | Plocal(id, _) ->
-      fprintf out "%s" (extern_atom id)
+      fprintf out "%s" (lookup_ident_name id)
   | Pderef(Pparenthesize(_, _, Ebinop(Oadd, base, index, _)), _) ->
-      (* 关键修复 #2: 在索引表达式后添加 'as usize' *)
-      fprintf out "%a[(%a) as usize]" pexpr (0, base) pexpr (0, index)
+      let base_ty = type_of_pexpr base in
+      if is_declared_ptr_type base_ty then
+        fprintf out "%a.load((%a) as usize)" pexpr (0, base) pexpr (0, index)
+      else
+        (* 关键修复 #2: 在索引表达式后添加 'as usize' *)
+        fprintf out "%a[(%a) as usize]" pexpr (0, base) pexpr (0, index)
   | Pderef(p', _) ->
-      fprintf out "(*%a)" print_place p'
+      if is_ptr_place p' then
+        fprintf out "(*((%a).as_mut_ptr()))" print_place p'
+      else
+        fprintf out "(*%a)" print_place p'
   | Pfield(p', fid, _) ->
       fprintf out "%a.%s" print_place p' (extern_atom fid)
   | Pdowncast(p',fid, _) ->
@@ -121,9 +378,34 @@ let rec print_place out (p: place) =
   | Pparenthesize(_, _, ll) ->
       fprintf out "(%a)" pexpr (0, ll)
   | ParrayIndex(p_base, p_index, _) ->
-      fprintf out "%a[(%s) as usize]" print_place p_base (extern_atom p_index)
+      let base_ty = resolved_place_type p_base in
+      if is_declared_ptr_type base_ty then
+        (match pointed_type base_ty with
+         | Some elem_ty when is_array_type elem_ty ->
+             fprintf out "%a.row((%s) as usize)" print_place p_base (lookup_ident_name p_index)
+         | _ ->
+             fprintf out "%a.load((%s) as usize)" print_place p_base (lookup_ident_name p_index))
+      else
+        fprintf out "%a[(%s) as usize]" print_place p_base (lookup_ident_name p_index)
   | Ppair (p1, p2) -> (* 添加这个 case *)
     fprintf out "(%a, %a)" print_place p1 print_place p2
+
+and print_pointer_operand out pe =
+  match pe with
+  | Eplace (ParrayIndex (base_place, index_id, _), _) ->
+      let base_ty = resolved_place_type base_place in
+      if is_declared_ptr_type base_ty then
+        (match pointed_type base_ty with
+         | Some arr_ty when is_array_type arr_ty ->
+             fprintf out "%a.row((%s) as usize)" print_place base_place (lookup_ident_name index_id)
+         | _ ->
+             pexpr out (0, pe))
+      else
+        pexpr out (0, pe)
+  | Eplace (place, ty) when is_array_type ty ->
+      fprintf out "Ptr::from_ref(&mut %a[..])" print_place place
+  | _ ->
+      pexpr out (0, pe)
 
 and pexpr p (prec, e) =
   let (prec', assoc) = precedence' e in
@@ -135,39 +417,85 @@ and pexpr p (prec, e) =
   then fprintf p "@[<hov 2>("
   else fprintf p "@[<hov 2>";
   begin match e with
+  | Eplace (ParrayIndex(base, idx, _), _) ->
+      let base_ty = resolved_place_type base in
+      if is_declared_ptr_type base_ty then
+        (match pointed_type base_ty with
+         | Some elem_ty when is_array_type elem_ty ->
+             fprintf p "%a.row((%s) as usize)" print_place base (lookup_ident_name idx)
+         | _ ->
+             fprintf p "%a.load((%s) as usize)" print_place base (lookup_ident_name idx))
+      else
+        fprintf p "%a[(%s) as usize]" print_place base (lookup_ident_name idx)
+  | Eplace (place, _) ->
+      (match extract_pointer_field_place place with
+       | Some (ptr_base, fid, _) ->
+           fprintf p "(%a.load(0)).%s" print_place ptr_base (extern_atom fid)
+       | None ->
+           let ty = type_of_place place in
+           if is_slice_type ty then
+             fprintf p "(%a.clone())" print_place place
+           else
+             fprintf p "%a" print_place place)
   | Ederef(Ebinop(Oadd, base, index, _), _) ->
-      (* 关键修复 #2: 在索引表达式后添加 'as usize' *)
-      fprintf p "%a[(%a) as usize]" pexpr (0, base) pexpr (0, index)
+      fprintf p "%a.load((%a) as usize)" pexpr (0, base) pexpr (0, index)
   | Ederef(pe, ty) ->
-      fprintf p "*(%a)" pexpr (prec', pe)
+      let pe_ty = type_of_pexpr pe in
+      (match pointed_type pe_ty with
+       | Some _ ->
+           fprintf p "%a.load(0)" pexpr (0, pe)
+       | _ ->
+           fprintf p "*(%a)" pexpr (prec', pe))
   | Eunit ->  fprintf p "tt"
-  | Eplace(v, _) ->
-    fprintf p "%a" print_place v
   (* ... pexpr 函数的其余部分保持不变 ... *)
-  | Econst_int(n, Rusttypes.Tint(I32, Unsigned)) ->
-    fprintf p "%lu_u32" (camlint_of_coqint n)
-  | Econst_int(n, _) ->
-    fprintf p "%ld" (camlint_of_coqint n)
+  | Econst_int(n, ty) ->
+      (match ty with
+       | Rusttypes.Tslice(_, _, _) ->
+           if Int32.compare (camlint_of_coqint n) 0l = 0 then
+             fprintf p "Ptr::null()"
+           else
+             fprintf p "%ld" (camlint_of_coqint n)
+       | Rusttypes.Tint(I32, Unsigned) ->
+           fprintf p "%lu_u32" (camlint_of_coqint n)
+       | _ ->
+           fprintf p "%ld" (camlint_of_coqint n))
   | Econst_float(f, _) ->
     print_rust_float p (camlfloat_of_coqfloat f)
   | Econst_single(f, _) ->
     fprintf p "%.18g_f32" (camlfloat_of_coqfloat32 f)
-  | Econst_long(n, Rusttypes.Tlong(Unsigned)) ->
-    fprintf p "(%Lu as usize)" (camlint64_of_coqint n)
-  | Econst_long(n, _) ->
-    fprintf p "%Ldi64" (camlint64_of_coqint n)
+  | Econst_long(n, ty) ->
+      (match ty with
+       | Rusttypes.Tslice(_, _, _) ->
+           if Int64.compare (camlint64_of_coqint n) 0L = 0 then
+             fprintf p "Ptr::null()"
+           else
+             fprintf p "%Ldi64" (camlint64_of_coqint n)
+       | Rusttypes.Tlong(Unsigned) ->
+           fprintf p "(%Lu as usize)" (camlint64_of_coqint n)
+       | _ ->
+           fprintf p "%Ldi64" (camlint64_of_coqint n))
   | Eglobal(id, _) ->
     fprintf p "%s" (extern_atom id)
   | Eunop(Oabsfloat, a1, _) ->
     fprintf p "__builtin_fabs(%a)" pexpr (2, a1)
   | Eunop(op, a1, _) ->
     fprintf p "%s%a" (name_unop op) pexpr (prec', a1)
+  | Ebinop(Oadd, a1, a2, ty) when is_pointer_type ty ->
+      fprintf p "%a.offset((%a) as isize)" print_pointer_operand a1 pexpr (0, a2)
+  | Ebinop(Oadd, a1, a2, _) when is_pointer_type (type_of_pexpr a1) && is_integer_type (type_of_pexpr a2) ->
+      fprintf p "%a.offset((%a) as isize)" print_pointer_operand a1 pexpr (0, a2)
+  | Ebinop(Oadd, a1, a2, _) when is_pointer_type (type_of_pexpr a2) && is_integer_type (type_of_pexpr a1) ->
+      fprintf p "%a.offset((%a) as isize)" print_pointer_operand a2 pexpr (0, a1)
+  | Ebinop(Osub, a1, a2, ty) when is_pointer_type ty ->
+      fprintf p "%a.offset(-((%a) as isize))" print_pointer_operand a1 pexpr (0, a2)
+  | Ebinop(Osub, a1, a2, _) when is_pointer_type (type_of_pexpr a1) && is_integer_type (type_of_pexpr a2) ->
+      fprintf p "%a.offset(-((%a) as isize))" print_pointer_operand a1 pexpr (0, a2)
   | Ebinop(op, a1, a2, ty) ->
     (* Special-case: slice compared with NULL-like slice cast (0 as &mut [..]) *)
-    let is_slice_type t = match t with Rusttypes.Tslice(_, _) -> true | _ -> false in
+    let is_slice_type t = match t with Rusttypes.Tslice(_, _, _) -> true | _ -> false in
     let is_zero_slice_cast_expr pe =
       match pe with
-      | Eas (Econst_int(n, _), Rusttypes.Tslice(_, _)) -> Int32.compare (camlint_of_coqint n) 0l = 0
+      | Eas (Econst_int(n, _), Rusttypes.Tslice(_, _, _)) -> Int32.compare (camlint_of_coqint n) 0l = 0
       | _ -> false
     in
     (match op with
@@ -175,21 +503,18 @@ and pexpr p (prec, e) =
          let ty1 = type_of_pexpr a1 in
          let ty2 = type_of_pexpr a2 in
          if is_zero_slice_cast_expr a1 && is_slice_type ty2 then begin
-           (* a1 is NULL slice, a2 is a slice: use is_empty check on a2 *)
            (match op with
-            | Cop.Oeq -> fprintf p "%a.is_empty()" pexpr (0, a2)
-            | Cop.One -> fprintf p "!(%a).is_empty()" pexpr (0, a2)
+            | Cop.Oeq -> fprintf p "%a.is_null()" pexpr (0, a2)
+            | Cop.One -> fprintf p "!(%a).is_null()" pexpr (0, a2)
             | _ -> ());
            ()
          end else if is_zero_slice_cast_expr a2 && is_slice_type ty1 then begin
-           (* a2 is NULL slice, a1 is a slice: use is_empty check on a1 *)
            (match op with
-            | Cop.Oeq -> fprintf p "%a.is_empty()" pexpr (0, a1)
-            | Cop.One -> fprintf p "!(%a).is_empty()" pexpr (0, a1)
+            | Cop.Oeq -> fprintf p "%a.is_null()" pexpr (0, a1)
+            | Cop.One -> fprintf p "!(%a).is_null()" pexpr (0, a1)
             | _ -> ());
            ()
          end else begin
-           (* fall through to generic printing below *)
            ()
          end
      | _ -> ());
@@ -211,6 +536,22 @@ and pexpr p (prec, e) =
     in
     let ty1 = type_of_pexpr a1 in
     let ty2 = type_of_pexpr a2 in
+    let convert_left_to_u64 =
+      if is_u64_type ty2 && is_integer_type ty1 && not (is_u64_type ty1)
+      then Some "u64" else None
+    in
+    let convert_right_to_u64 =
+      if is_u64_type ty1 && is_integer_type ty2 && not (is_u64_type ty2)
+      then Some "u64" else None
+    in
+    let convert_left_to_i64 =
+      if is_i64_type ty2 && is_integer_type ty1 && not (is_i64_type ty1)
+      then Some "i64" else None
+    in
+    let convert_right_to_i64 =
+      if is_i64_type ty1 && is_integer_type ty2 && not (is_i64_type ty2)
+      then Some "i64" else None
+    in
     let needs_type_conversion = is_comparison_op && (
       match ty1, ty2 with
       (* u32 compared with i32 - convert i32 to u32 *)
@@ -218,11 +559,26 @@ and pexpr p (prec, e) =
       | Rusttypes.Tint(Ctypes.I32, Ctypes.Signed), Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned) -> true
       | _ -> false
     ) in
-    (* Helper to check if a type is an integer type *)
-    let is_int_type t = match t with
-      | Rusttypes.Tint(_, _) -> true
-      | Rusttypes.Tlong(_) -> true
-      | _ -> false
+    let result_is_int = is_integer_type ty && not (is_bool_type ty) in
+    (* 对按位与/或/异或、移位等整型运算，统一把参与表达式提升到目标整型，
+       避免 u8 与 i32 混用产生的 E0277/E0308（如 get64le 中的按位拼接）。 *)
+    let needs_int_cast =
+      result_is_int &&
+      (match op with
+       | Cop.Oadd | Cop.Osub | Cop.Omul | Cop.Odiv | Cop.Omod
+       | Cop.Oshl | Cop.Oshr | Cop.Oand | Cop.Oor | Cop.Oxor -> true
+       | _ -> false)
+    in
+    (* 选择一个统一的整型目标：优先保持目标类型；若目标是 bool 或非整型，
+       则根据参与者选择 u64>i64>u32>i32 之一，避免 u8 与 i32 等组合。 *)
+    let int_target_name =
+      if is_integer_type ty && not (is_bool_type ty) then name_rust_type ty else
+      if is_u64_type ty1 || is_u64_type ty2 then "u64" else
+      if is_i64_type ty1 || is_i64_type ty2 then "i64" else
+      if is_u32_type ty1 || is_u32_type ty2 then "u32" else
+      if is_i32_type ty1 || is_i32_type ty2 then "i32" else
+      (* 默认提升到 u64 保守处理按位操作 *)
+      "u64"
     in
     (* Determine target float type name *)
     let float_type_name = match ty with
@@ -230,45 +586,122 @@ and pexpr p (prec, e) =
       | Rusttypes.Tfloat(Ctypes.F64) -> "f64"
       | _ -> "f64"  (* default to f64 *)
     in
-    (* Print first operand *)
-    (match a1 with
-     | Econst_int(n, _) when is_float_op ->
-         fprintf p "%ld.0" (camlint_of_coqint n)
-     | _ ->
-         if needs_type_conversion then
-           match ty1, ty2 with
-           | Rusttypes.Tint(Ctypes.I32, Ctypes.Signed), Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned) ->
-               (* a1 is i32, a2 is u32 - convert a1 to u32 *)
-               fprintf p "(%a as u32)" pexpr (0, a1)
-           | _ -> pexpr p (prec1, a1)
-         else if is_float_op && is_int_type ty1 then
-           (* Float operation with int expression - need conversion *)
-           fprintf p "(%a as %s)" pexpr (prec1, a1) float_type_name
-         else
-           pexpr p (prec1, a1));
+    let print_a1_base fmt () =
+      match a1 with
+      | Econst_int(n, _) when is_float_op ->
+          fprintf fmt "%ld.0" (camlint_of_coqint n)
+      | _ ->
+          if needs_type_conversion then
+            match ty1, ty2 with
+            | Rusttypes.Tint(Ctypes.I32, Ctypes.Signed), Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned) ->
+                fprintf fmt "(%a as u32)" pexpr (0, a1)
+            | _ -> pexpr fmt (prec1, a1)
+          else if is_float_op && is_integer_type ty1 then
+            fprintf fmt "((%a) as %s)" pexpr (0, a1) float_type_name
+          else if needs_int_cast then
+            fprintf fmt "((%a) as %s)" pexpr (0, a1) int_target_name
+          else
+            pexpr fmt (prec1, a1)
+    in
+    let print_a1 fmt =
+      match convert_left_to_u64 with
+      | Some target ->
+          fprintf fmt "((%a) as %s)" print_a1_base () target
+      | None ->
+          (match convert_left_to_i64 with
+           | Some target ->
+               fprintf fmt "((%a) as %s)" print_a1_base () target
+           | None ->
+               print_a1_base fmt ())
+    in
+    print_a1 p;
     fprintf p "@ %s " (name_binop op);
-    (* Print second operand *)
-    (match a2 with
-     | Econst_int(n, _) when is_float_op ->
-         fprintf p "%ld.0" (camlint_of_coqint n)
-     | _ ->
-         if needs_type_conversion then
-           match ty1, ty2 with
-           | Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned), Rusttypes.Tint(Ctypes.I32, Ctypes.Signed) ->
-               (* a1 is u32, a2 is i32 - convert a2 to u32 *)
-               fprintf p "(%a as u32)" pexpr (0, a2)
-           | _ -> pexpr p (prec2, a2)
-         else if is_float_op && is_int_type ty2 then
-           (* Float operation with int expression - need conversion *)
-           fprintf p "(%a as %s)" pexpr (prec2, a2) float_type_name
-         else
-           pexpr p (prec2, a2))
+    let print_a2_base fmt () =
+      match a2 with
+      | Econst_int(n, _) when is_float_op ->
+          fprintf fmt "%ld.0" (camlint_of_coqint n)
+      | _ ->
+          if needs_type_conversion then
+            match ty1, ty2 with
+            | Rusttypes.Tint(Ctypes.I32, Ctypes.Unsigned), Rusttypes.Tint(Ctypes.I32, Ctypes.Signed) ->
+                fprintf fmt "(%a as u32)" pexpr (0, a2)
+            | _ -> pexpr fmt (prec2, a2)
+          else if is_float_op && is_integer_type ty2 then
+            fprintf fmt "((%a) as %s)" pexpr (0, a2) float_type_name
+          else if needs_int_cast then
+            fprintf fmt "((%a) as %s)" pexpr (0, a2) int_target_name
+          else
+            pexpr fmt (prec2, a2)
+    in
+    let print_a2 fmt =
+      match convert_right_to_u64 with
+      | Some target ->
+          fprintf fmt "((%a) as %s)" print_a2_base () target
+      | None ->
+          (match convert_right_to_i64 with
+           | Some target ->
+               fprintf fmt "((%a) as %s)" print_a2_base () target
+           | None ->
+               print_a2_base fmt ())
+    in
+    print_a2 p
   | Ecktag(v, fid) ->
     fprintf p "%s(%a, %s)" "cktag" print_place v (extern_atom fid)
-  | Eref(org, mut, v, _) ->
-    (* Rust reference syntax: &mut place or &place *)
-    fprintf p "&%s%a" (string_of_mut mut) print_place v
+  | Eref(_, mut, v, ty) ->
+    let place_ty = type_of_place v in
+    (match ty with
+     | Rusttypes.Tslice(_, _, origin) ->
+         (match origin with
+          | Rusttypes.PtrBorrowed ->
+              let prefix = string_of_mut mut in
+              (match place_ty with
+               | Rusttypes.Tarray(_, _, _) ->
+                   fprintf p "Ptr::from_ref(&%s%a)" prefix print_place v
+               | _ ->
+                   fprintf p "Ptr::from_mut(&%s%a)" prefix print_place v)
+          | _ ->
+              fprintf p "&%s%a" (string_of_mut mut) print_place v)
+     | _ ->
+         fprintf p "&%s%a" (string_of_mut mut) print_place v)
   | Eas(pe, ty) ->
+      let rec is_zero_pointer_literal pe =
+        match pe with
+        | Econst_int (n, _) -> Int32.compare (camlint_of_coqint n) 0l = 0
+        | Econst_long (n, _) -> Int64.compare (camlint64_of_coqint n) 0L = 0
+        | Eas(inner, _) -> is_zero_pointer_literal inner
+        | _ -> false
+      in
+      let ty_is_slice =
+        match ty with
+        | Rusttypes.Tslice(_, _, _) -> true
+        | _ -> false
+      in
+      let ty_is_pointer = is_pointer_type ty in
+      let ty_is_int = is_integer_type ty in
+      if ty_is_slice && is_zero_pointer_literal pe then
+        let elem_ty =
+          match pointed_type ty with
+          | Some e -> name_rust_type e
+          | None -> "std::ffi::c_void"
+        in
+        fprintf p "Ptr::<%s>::null()" elem_ty
+      else if ty_is_pointer && is_zero_pointer_literal pe then
+        let elem_ty =
+          match pointed_type ty with
+          | Some e -> name_rust_type e
+          | None -> "std::ffi::c_void"
+        in
+        fprintf p "Ptr::<%s>::null()" elem_ty
+      else
+      let pe_ty = type_of_pexpr pe in
+      (match ty, pe_ty with
+       | Rusttypes.Tslice(_, elem_ty, _), Rusttypes.Tslice(_, _, _) ->
+           fprintf p "unsafe { (%a).cast::<%s>() }" pexpr (0, pe) (name_rust_type elem_ty)
+       | _, _ when is_bool_type ty && is_pointer_type pe_ty ->
+           fprintf p "!((%a).is_null())" pexpr (0, pe)
+       | _, _ when ty_is_int && is_pointer_type pe_ty ->
+           fprintf p "((%a).as_ptr() as isize as %s)" pexpr (0, pe) (name_rust_type ty)
+       | _ ->
       (* Check if this is casting a comparison or bool-valued expression to bool - skip it *)
       let rec is_bool_valued_expr pe = 
         match pe with
@@ -290,12 +723,15 @@ and pexpr p (prec, e) =
       (* Check if casting to slice type *)
       let is_casting_to_slice = 
         match ty with
-        | Rusttypes.Tslice(_, _) -> true
+        | Rusttypes.Tslice(_, _, _) -> true
         | _ -> false
       in
+      let array_ref = array_place_from_pexpr pe in
       if is_casting_to_bool && is_bool_valued_expr pe then
         (* Skip redundant cast to bool since expression already returns bool *)
         pexpr p (prec', pe)
+      else if is_casting_to_bool && is_integer_type pe_ty then
+        fprintf p "((%a) != 0)" pexpr (prec', pe)
       else if is_casting_to_slice then
         (* When casting to slice, check if we need to add &mut *)
         (* Don't add &mut if the expression is already a reference (Eref) *)
@@ -303,22 +739,67 @@ and pexpr p (prec, e) =
           | Eref(_, _, _, _) -> true
           | _ -> false
         in
-        if not is_already_ref then
-          (* Need to add &mut or & for the cast *)
-          (match ty with
-           | Rusttypes.Tslice(Rusttypes.Mutable, _) ->
-               fprintf p "(&mut %a as %s)" pexpr (prec', pe) (name_rust_type ty)
-           | Rusttypes.Tslice(Rusttypes.Immutable, _) ->
-               fprintf p "(&%a as %s)" pexpr (prec', pe) (name_rust_type ty)
-           | _ ->
+        (match array_ref with
+         | Some place ->
+             fprintf p "Ptr::from_ref(&mut %a[..])" print_place place
+         | None ->
+             if not is_already_ref then
+               (* Need to add &mut or & for the cast *)
+               (match ty with
+                | Rusttypes.Tslice(Rusttypes.Mutable, _, _) ->
+                    fprintf p "(&mut %a as %s)" pexpr (prec', pe) (name_rust_type ty)
+                | Rusttypes.Tslice(Rusttypes.Immutable, _, _) ->
+                    fprintf p "(&%a as %s)" pexpr (prec', pe) (name_rust_type ty)
+               | _ ->
+                   fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty))
+             else
+               (* Already has &mut, just cast *)
                fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty))
-        else
-          (* Already has &mut, just cast *)
-          fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty)
+      else if ty_is_pointer then
+        (match array_ref with
+         | Some place ->
+             fprintf p "Ptr::from_ref(&mut %a[..])" print_place place
+         | None ->
+            (match pe with
+              | Eref(_, mut, place, _) ->
+                  let place_ty = type_of_place place in
+                  if is_integer_type place_ty then begin
+                    let elem_ty =
+                      match pointed_type ty with
+                      | Some e -> name_rust_type e
+                      | None -> "std::ffi::c_void"
+                    in
+                    fprintf p
+                      "unsafe { Ptr::from_raw_parts(((%a) as isize) as *mut %s, usize::MAX) }"
+                      pexpr (0, Eplace(place, place_ty))
+                      elem_ty
+                  end else begin
+                    let prefix = string_of_mut mut in
+                    (match place_ty with
+                     | Rusttypes.Tarray(_, _, _) ->
+                         fprintf p "Ptr::from_ref(&%s%a)" prefix print_place place
+                     | _ ->
+                         fprintf p "Ptr::from_mut(&%s%a)" prefix print_place place)
+                  end
+              | _ when is_integer_type pe_ty ->
+                  let elem_ty =
+                    match pointed_type ty with
+                    | Some e -> name_rust_type e
+                    | None -> "std::ffi::c_void"
+                  in
+                  fprintf p "unsafe { Ptr::from_raw_parts(((%a) as isize) as *mut %s, usize::MAX) }"
+                    pexpr (0, pe)
+                    elem_ty
+              | _ ->
+                  fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty)))
       else
         fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty)
+      )
   | Esizeof(ty1, ty2) ->
-      fprintf p "::core::mem::size_of::<%s>()" (name_rust_type ty1)
+      let target_name = name_rust_type ty2 in
+      fprintf p "(::std::mem::size_of::<%s>() as %s)"
+        (name_rust_type ty1)
+        target_name
   end;
   if prec' < prec then fprintf p ")@]" else fprintf p "@]"
 
@@ -335,12 +816,113 @@ let expr p (prec, e) =
 
 let print_expr p e = expr p (0, e)
 
+type malloc_info = {
+  malloc_elem_ty : Rusttypes.coq_type;
+  malloc_count : Rustlight.pexpr option;
+}
+
+let pending_malloc_temps : (string, malloc_info) Hashtbl.t = Hashtbl.create 17
+
+let is_digit c = c >= '0' && c <= '9'
+
+let is_gensym_temp name =
+  let len = String.length name in
+  len > 1 && name.[0] = '_' &&
+  let rec loop i =
+    if i = len then true else
+    if is_digit name.[i] then loop (i + 1) else false
+  in loop 1
+
+let place_ident = function
+  | Plocal(id, _) -> Some (lookup_ident_name id)
+  | _ -> None
+
+let rec temp_name_from_pexpr pe =
+  match pe with
+  | Eplace(Plocal(id, _), _) -> Some (lookup_ident_name id)
+  | Eas(inner, _) -> temp_name_from_pexpr inner
+  | _ -> None
+
+let temp_name_from_expr e =
+  match e with
+  | Epure pe -> temp_name_from_pexpr pe
+  | _ -> None
+
+let print_ptr_argument p _ arg =
+  match arg with
+  | Epure (Eref(_, mut, place, _)) ->
+      let place_ty = type_of_place place in
+      let prefix = string_of_mut mut in
+      (match place_ty with
+       | Rusttypes.Tarray(_, _, _) ->
+           fprintf p "Ptr::from_ref(&%s%a)" prefix print_place place
+       | _ ->
+           fprintf p "Ptr::from_mut(&%s%a)" prefix print_place place)
+  | Epure (Eplace(place, ty)) ->
+      (match ty with
+       | Rusttypes.Tarray(_, _, _) ->
+           fprintf p "Ptr::from_ref(&mut %a)" print_place place
+       | _ ->
+           expr p (2, arg))
+  | _ ->
+      expr p (2, arg)
+
 (* type_of_pexpr already defined above *)
 
 let type_of_expr (e : expr) : Rusttypes.coq_type =
   match e with
   | Emoveplace (_, ty) -> ty
   | Epure p -> type_of_pexpr p
+
+let print_store_expr (target_ty: Rusttypes.coq_type) p (expr: expr) =
+  match target_ty, expr with
+  | Rusttypes.Tfloat _, Epure (Econst_int (n, _)) ->
+      fprintf p "(%ld as %s)" (camlint_of_coqint n) (name_rust_type target_ty)
+  | Rusttypes.Tfloat _, Epure (Econst_long (n, _)) ->
+      fprintf p "(%Ld as %s)" (camlint64_of_coqint n) (name_rust_type target_ty)
+  | Rusttypes.Tfloat _, _ when is_integer_type (type_of_expr expr) ->
+      fprintf p "((%a) as %s)" print_expr expr (name_rust_type target_ty)
+  | ty, _ when is_integer_type ty ->
+      let ty_name = name_rust_type ty in
+      let expr_ty = type_of_expr expr in
+      if is_pointer_type expr_ty then
+        fprintf p "((%a).as_ptr() as isize as %s)" print_expr expr ty_name
+      else
+        fprintf p "((%a) as %s)" print_expr expr ty_name
+  | _ ->
+      print_expr p expr
+
+let print_pointer_assignment_value place_ty p (expr: expr) =
+  match integer_pexpr_from_expr expr, pointed_type place_ty with
+  | Some int_pe, Some elem_ty when is_pointer_type place_ty ->
+      fprintf p "unsafe { Ptr::from_raw_parts(((%a) as isize) as *mut %s, usize::MAX) }"
+        pexpr (0, int_pe)
+        (name_rust_type elem_ty)
+  | _ ->
+      (match array_place_from_expr expr with
+       | Some place ->
+           fprintf p "Ptr::from_ref(&mut %a[..])" print_place place
+       | None ->
+           let expr_ty = type_of_expr expr in
+           if is_pointer_type place_ty && is_pointer_type expr_ty then
+             (match pointed_type place_ty with
+              | Some elem_ty ->
+                  let needs_cast =
+                    match pointed_type expr_ty with
+                    | Some src_elem ->
+                        name_rust_type src_elem <> name_rust_type elem_ty
+                    | None -> true
+                  in
+                  if needs_cast then
+                    fprintf p "unsafe { (%a).cast::<%s>() }"
+                      print_expr expr
+                      (name_rust_type elem_ty)
+                  else
+                    print_expr p expr
+              | None ->
+                  print_expr p expr)
+           else
+             print_expr p expr)
 
 let rec print_expr_list p (first, rl) =
   match rl with
@@ -359,72 +941,78 @@ let rec print_expr_list_with_type p (first, exprs, param_tys, is_c_function) =
   | [], [] -> ()
   | r :: rl, ty :: tyl ->
       if not first then fprintf p ",@ ";
-      (* Check if we MUST add .as_mut_ptr() for C FFI compatibility *)
       let expr_ty = type_of_expr r in
-      let needs_ptr_conversion = is_c_function && (
-        match ty, expr_ty with
-        (* C function expects raw pointer, but we have array or slice - MUST convert *)
-        | Rusttypes.Traw_pointer(_, _), Rusttypes.Tarray(_, _, _) -> true
-        | Rusttypes.Traw_pointer(_, _), Rusttypes.Tslice(_, _) -> true
-        (* C function parameter is slice (this represents a pointer in FFI) - MUST convert to raw pointer *)
-        (* This handles both: 1) slice→slice (atoi case), 2) array→slice, 3) void*→any slice *)
-        | Rusttypes.Tslice(_, _), Rusttypes.Tarray(_, _, _) -> true
-        | Rusttypes.Tslice(_, _), Rusttypes.Tslice(_, _) -> true
-        | _ -> false
-      ) in
-      
-      if needs_ptr_conversion then begin
-        (* MUST use .as_mut_ptr() for FFI safety *)
-        (* Check if expression is an Eas (cast) - if so, wrap the whole expression *)
-        let expr_contains_cast = match r with
-          | Epure (Eas(_, _)) -> true
-          | _ -> false
-        in
-        (* Check if target is c_void pointer and we need extra cast *)
-        let needs_cvoid_cast = match ty with
-          | Rusttypes.Traw_pointer(_, Rusttypes.Tvoid) -> true
-          | Rusttypes.Tslice(_, Rusttypes.Tvoid) -> true
-          | _ -> false
-        in
-        if expr_contains_cast then begin
-          if needs_cvoid_cast then
-            fprintf p "(%a).as_mut_ptr() as %s" expr (2, r) (PrintRustsyntax.name_rust_type_ffi ty)
-          else
-            fprintf p "(%a).as_mut_ptr()" expr (2, r)
-        end else begin
-          expr p (2, r);
-          if needs_cvoid_cast then
-            fprintf p ".as_mut_ptr() as %s" (PrintRustsyntax.name_rust_type_ffi ty)
-          else
-            fprintf p ".as_mut_ptr()"
-        end
-      end else begin
-        (* For Rust functions with slice parameters, check if we need to add &mut *)
-        let needs_ref = not is_c_function && (
-          match ty, expr_ty with
-          | Rusttypes.Tslice(Rusttypes.Mutable, _), Rusttypes.Tarray(_, _, _) -> true
-          | Rusttypes.Tslice(Rusttypes.Immutable, _), Rusttypes.Tarray(_, _, _) -> true
-          | _ -> false
-        ) in
-        if needs_ref then begin
-          (* Need to add &mut or & for array to slice conversion *)
-          match ty with
-          | Rusttypes.Tslice(Rusttypes.Mutable, _) ->
-              fprintf p "&mut ";
-              expr p (2, r)
-          | Rusttypes.Tslice(Rusttypes.Immutable, _) ->
-              fprintf p "&";
-              expr p (2, r)
-          | _ -> expr p (2, r)
-        end else begin
-          expr p (2, r);
-          (* Only cast if type is not Tunit and not a slice for Rust functions *)
-          match ty with
-          | Rusttypes.Tunit -> () 
-          | Rusttypes.Tslice(_, _) when not is_c_function -> () (* Rust functions accept slices directly (when already a slice) *)
-          | _ -> fprintf p " as %s" (name_rust_decl "" ty)
-        end
-      end;
+      (match ty with
+       | Rusttypes.Tslice(_, target_elem, origin) ->
+           let print_base fmt = print_ptr_argument fmt origin r in
+           (match target_elem with
+            | Rusttypes.Tvoid ->
+                fprintf p "unsafe { (%t).cast::<%s>() }" print_base (name_rust_type target_elem)
+            | _ ->
+                fprintf p "unsafe { (%t).cast::<%s>() }"
+                  print_base
+                  (name_rust_type target_elem))
+       | _ ->
+           (* Check if we MUST add .as_mut_ptr() for C FFI compatibility *)
+           let needs_ptr_conversion = is_c_function && (
+             match ty, expr_ty with
+             | Rusttypes.Traw_pointer(_, _), Rusttypes.Tarray(_, _, _) -> true
+             | Rusttypes.Traw_pointer(_, _), Rusttypes.Tslice(_, _, _) -> true
+             | _ -> false
+           ) in
+           if needs_ptr_conversion then begin
+             let ptr_accessor =
+               match ty with
+               | Rusttypes.Traw_pointer(Rusttypes.Coq_const, _) -> ".as_ptr()"
+               | _ -> ".as_mut_ptr()"
+             in
+             let expr_contains_cast = match r with
+               | Epure (Eas(_, _)) -> true
+               | _ -> false
+             in
+             let needs_cvoid_cast = match ty with
+               | Rusttypes.Traw_pointer(_, Rusttypes.Tvoid) -> true
+               | Rusttypes.Tslice(_, Rusttypes.Tvoid, _) -> true
+               | _ -> false
+             in
+             if expr_contains_cast then begin
+               if needs_cvoid_cast then
+                 fprintf p "(%a)%s as %s" expr (2, r) ptr_accessor (PrintRustsyntax.name_rust_type_ffi ty)
+               else
+                 fprintf p "(%a)%s" expr (2, r) ptr_accessor
+             end else begin
+               expr p (2, r);
+               if needs_cvoid_cast then
+                 fprintf p "%s as %s" ptr_accessor (PrintRustsyntax.name_rust_type_ffi ty)
+               else
+                 fprintf p "%s" ptr_accessor
+             end
+           end else begin
+             let needs_ref = not is_c_function && (
+               match ty, expr_ty with
+               | Rusttypes.Tslice(Rusttypes.Mutable, _, _), Rusttypes.Tarray(_, _, _) -> true
+               | Rusttypes.Tslice(Rusttypes.Immutable, _, _), Rusttypes.Tarray(_, _, _) -> true
+               | _ -> false
+             ) in
+             if needs_ref then begin
+               match ty with
+               | Rusttypes.Tslice(Rusttypes.Mutable, _, _) ->
+                   fprintf p "&mut ";
+                   expr p (2, r)
+               | Rusttypes.Tslice(Rusttypes.Immutable, _, _) ->
+                   fprintf p "&";
+                   expr p (2, r)
+               | _ -> expr p (2, r)
+             end else begin
+               match ty with
+               | Rusttypes.Tunit ->
+                   expr p (2, r)
+               | Rusttypes.Tslice(_, _, _) when not is_c_function ->
+                   expr p (2, r)
+               | _ ->
+                   fprintf p "(%a) as %s" expr (2, r) (name_rust_decl "" ty)
+             end
+           end);
       print_expr_list_with_type p (false, rl, tyl, is_c_function)
 
   | r :: rl, [] ->
@@ -439,10 +1027,17 @@ let rec print_expr_list_with_type p (first, exprs, param_tys, is_c_function) =
              expr p (2, r)
          | _ ->
              (match expr_ty with
-              | Rusttypes.Tarray(_, _, _) | Rusttypes.Tslice(_, _) ->
+              | Rusttypes.Tslice(mutk, _, _) ->
+                  expr p (2, r);
+                  (match mutk with
+                   | Rusttypes.Immutable -> fprintf p ".as_ptr()"
+                   | Rusttypes.Mutable -> fprintf p ".as_mut_ptr()")
+              | Rusttypes.Tarray(_, _, _) ->
                   (* Arrays and slices MUST be converted to raw pointers for C variadic functions *)
                   expr p (2, r);
                   fprintf p ".as_mut_ptr()"
+              | Rusttypes.Tfloat(Ctypes.F32) ->
+                  fprintf p "((%a) as f64)" expr (2, r)
               | _ ->
                   expr p (2, r)))
       else
@@ -456,39 +1051,28 @@ let rec typelist_to_list = function
   | Rusttypes.Tnil -> []
   | Rusttypes.Tcons(ty, rest) -> ty :: typelist_to_list rest
 
-let parse_malloc_param p v param =
+let parse_malloc_param param =
+  let make_info ty count =
+    Some { malloc_elem_ty = ty; malloc_count = count }
+  in
   match param with
-  (* 匹配 sizeof(T) * N 的模式 *)
   | Epure (Ebinop(Omul, pe1, pe2, _)) ->
-      let sizeof_expr, count_expr =
-        match pe1, pe2 with
-        | (Esizeof _, _) -> (pe1, pe2)
-        | (_, Esizeof _) -> (pe2, pe1)
-        | _ -> (Eunit, Eunit) (* 错误情况 *)
+      let try_pair left right =
+        match left with
+        | Esizeof(ty, _) -> make_info ty (Some right)
+        | _ -> None
       in
-      (match sizeof_expr, count_expr with
-       | (Esizeof(ty, _), count_pe) ->
-           let rust_type = name_rust_type ty in
-           (*
-             关键修复 #1: 使用 `let mut` 直接绑定。
-             这会遮蔽掉函数顶部错误的声明，并创建一个类型正确的 Box。
-             Count expression needs to be usize for vec![]
-           *)
-           fprintf p "@[<hv 2>let mut %a = vec![%s::default(); (%a) as usize].into_boxed_slice();@]"
-             print_place v rust_type pexpr (0, count_pe)
-       | _ ->
-           fprintf p "@[<hv 2>/* Error: could not parse malloc for array */@]")
-  (* 匹配 sizeof(T) 的模式 *)
+      (match try_pair pe1 pe2 with
+       | Some info -> Some info
+       | None -> try_pair pe2 pe1)
   | Epure (Esizeof(ty, _)) ->
-      let rust_type = name_rust_type ty in
-      fprintf p "@[<hv 2>let mut %a = Box::new(%s::default());@]"
-        print_place v rust_type
+      make_info ty None
   | _ ->
-      fprintf p "@[<hv 2>/* Error: could not parse malloc parameter */@]"
+      None
 
 let get_callee_name (e: expr) : string option =
   match e with
-  | Epure (Eplace(Plocal(id, _), _)) -> Some (String.lowercase_ascii (extern_atom id))
+  | Epure (Eplace(Plocal(id, _), _)) -> Some (String.lowercase_ascii (lookup_ident_name id))
   | Epure (Eglobal(id, _))           -> Some (String.lowercase_ascii (extern_atom id))
   | _                                -> None
 
@@ -516,18 +1100,51 @@ let is_comparison_expr e =
   | _ -> false
 
 (* Helper to get the type of a place *)
-let type_of_place (p : place) : Rusttypes.coq_type =
-  match p with
-  | Plocal(_, ty) -> ty
-  | Pderef(_, ty) -> ty
-  | Pfield(_, _, ty) -> ty
-  | Pdowncast(_, _, ty) -> ty
-  | Pparenthesize(_, ty, _) -> ty
-  | ParrayIndex(_, _, ty) -> ty
-  | Ppair(p1, p2) -> 
-      (* For pairs, return a tuple type instead of Tunit *)
-      (* This ensures the assignment is printed for method calls returning tuples *)
-      Rusttypes.Tint(Ctypes.I32, Ctypes.Signed) (* Placeholder: pairs should have their own type *)
+let is_void_pointer_place p =
+  match type_of_place p with
+  | Rusttypes.Tslice(_, Rusttypes.Tvoid, _) -> true
+  | _ -> false
+
+let register_malloc_temp place info =
+  match place_ident place with
+  | Some name when is_gensym_temp name ->
+      Hashtbl.replace pending_malloc_temps name info; true
+  | _ -> false
+
+let take_malloc_temp name =
+  match Hashtbl.find_opt pending_malloc_temps name with
+  | None -> None
+  | Some info ->
+      Hashtbl.remove pending_malloc_temps name;
+      Some info
+
+let print_malloc_assignment p dest info =
+  let type_name = name_rust_type info.malloc_elem_ty in
+  let dest_ty = type_of_place dest in
+  let dest_cast_target =
+    match pointed_type dest_ty with
+    | Some elem_ty ->
+        let dest_name = name_rust_type elem_ty in
+        if dest_name <> type_name then Some dest_name else None
+    | None -> None
+  in
+  let print_alloc fmt count_printer =
+    match dest_cast_target with
+    | Some target ->
+        fprintf fmt "unsafe { Ptr::<%s>::alloc(%t).cast::<%s>() }"
+          type_name count_printer target
+    | None ->
+        fprintf fmt "Ptr::<%s>::alloc(%t)" type_name count_printer
+  in
+  match info.malloc_count with
+  | Some count_expr ->
+      fprintf p "@[<hv 2>%a = %t;@]"
+        print_place dest
+        (fun fmt -> print_alloc fmt (fun fmt -> fprintf fmt "(%a) as usize" pexpr (0, count_expr)))
+  | None ->
+      fprintf p "@[<hv 2>%a = %t;@]"
+        print_place dest
+        (fun fmt -> print_alloc fmt (fun fmt -> fprintf fmt "1"))
 
 (* Helper to create a printer for expression with auto bool->int conversion if needed *)
 let make_expr_printer_with_conversion place_ty e =
@@ -553,24 +1170,44 @@ let make_expr_printer_with_conversion place_ty e =
     else
       fprintf p "%a" print_expr e
 
+let pointer_condition_formatter e =
+  match e with
+  | Epure pe ->
+      (match pe with
+       | Eunop(Onotbool, inner, _) when is_declared_ptr_type (type_of_pexpr inner) ->
+           Some (fun fmt -> fprintf fmt "(%a).is_null()" pexpr (0, inner))
+       | _ ->
+           if is_declared_ptr_type (type_of_pexpr pe) then
+             Some (fun fmt -> fprintf fmt "!((%a).is_null())" pexpr (0, pe))
+           else
+             None)
+  | Emoveplace(_, ty) ->
+      if is_declared_ptr_type ty then
+        Some (fun fmt -> fprintf fmt "!((%a).is_null())" print_expr e)
+      else
+        None
+
 (* Helper to print if condition - adds '!= 0' for int types but not for comparisons *)
 let print_if_condition p e =
-  (* Comparison operators in Rust return bool, so they don't need conversion *)
-  if is_comparison_expr e then
-    fprintf p "%a" print_expr e
-  else
-    (* Non-comparison expressions that are int types need '!= 0' *)
-    let expr_ty = type_of_expr e in
-    let is_int_type = match expr_ty with
-      | Rusttypes.Tint(Ctypes.IBool, _) -> false (* bool doesn't need conversion *)
-      | Rusttypes.Tint(_, _) -> true
-      | Rusttypes.Tlong(_) -> true
-      | _ -> false
-    in
-    if is_int_type then
-      fprintf p "(%a) != 0" print_expr e
-    else
-      fprintf p "%a" print_expr e
+  match pointer_condition_formatter e with
+  | Some printer ->
+      printer p
+  | None ->
+      (* Comparison operators in Rust return bool, so they don't need conversion *)
+      if is_comparison_expr e then
+        fprintf p "%a" print_expr e
+      else
+        (* Non-comparison expressions that are int types need '!= 0' *)
+        let expr_ty = type_of_expr e in
+        let needs_cmp =
+          match expr_ty with
+          | Rusttypes.Tint(Ctypes.IBool, _) -> false
+          | _ -> is_integer_type expr_ty
+        in
+        if needs_cmp then
+          fprintf p "(%a) != 0" print_expr e
+        else
+          fprintf p "%a" print_expr e
 
 (* Convert C format string to Rust format *)
 (* let convert_c_format_to_rust s =
@@ -639,14 +1276,126 @@ let unsafe_c_functions = [
   "time"; "clock"; "difftime"; "mktime"; "localtime"; "gmtime"; "strftime";
 ]
 
+type general_wrapper_kind =
+  | Gw_simple
+  | Gw_qsort of int  (* index of comparator function pointer *)
+  | Gw_bsearch of int  (* index of comparator function pointer *)
+
+type general_wrapper_spec = {
+  gw_name: string;
+  gw_args: Rusttypes.coq_type list;
+  gw_res: Rusttypes.coq_type;
+  gw_kind: general_wrapper_kind;
+}
+
+let wrapped_function_names : string list ref = ref []
+
+let general_wrapper_blocklist = [
+  "printf"; "scanf"; "malloc"; "free";
+]
+
+let rec type_contains_function_pointer ty =
+  match ty with
+  | Rusttypes.Tfunction _ -> true
+  | Rusttypes.Tslice(_, elem, _) -> type_contains_function_pointer elem
+  | Rusttypes.Tarray(_, elem, _) -> type_contains_function_pointer elem
+  | Rusttypes.Treference(_, _, elem) -> type_contains_function_pointer elem
+  | _ -> false
+
+let rec is_pointer_return_type ty =
+  match ty with
+  | Rusttypes.Tslice(_, _, _) -> true
+  | Rusttypes.Traw_pointer(_, _) -> true
+  | Rusttypes.Tarray(_, elem, _) -> is_pointer_return_type elem
+  | _ -> false
+
+let rec find_function_pointer_index args idx =
+  match args with
+  | [] -> None
+  | ty :: rest ->
+      (match ty with
+       | Rusttypes.Tfunction _ -> Some idx
+       | _ -> find_function_pointer_index rest (idx + 1))
+
+let should_generate_general_wrapper name args res cconv =
+  List.mem name unsafe_c_functions
+  && not (List.mem name general_wrapper_blocklist)
+  && cconv.AST.cc_vararg = None
+  && not (type_contains_function_pointer res)
+  && not (List.exists type_contains_function_pointer (typelist_to_list args))
+
+let collect_general_wrappers prog =
+  let rec aux defs acc =
+    match defs with
+    | [] -> List.rev acc
+    | (id, gd) :: rest ->
+        (match gd with
+         | AST.Gfun (Rusttypes.External(_, _, (AST.EF_external _ | AST.EF_runtime _), args, res, cconv)) ->
+             let name = extern_atom id in
+             let args_list = typelist_to_list args in
+             let next =
+               if name = "qsort" then begin
+                 let cmp_idx =
+                   match find_function_pointer_index args_list 0 with
+                   | Some idx -> idx
+                   | None -> List.length args_list - 1
+                 in
+                 { gw_name = name; gw_args = args_list; gw_res = res; gw_kind = Gw_qsort cmp_idx } :: acc
+               end else if name = "bsearch" then begin
+                 let cmp_idx =
+                   match find_function_pointer_index args_list 0 with
+                   | Some idx -> idx
+                   | None -> List.length args_list - 1
+                 in
+                 { gw_name = name; gw_args = args_list; gw_res = res; gw_kind = Gw_bsearch cmp_idx } :: acc
+               end else if should_generate_general_wrapper name args res cconv then
+                 { gw_name = name; gw_args = args_list; gw_res = res; gw_kind = Gw_simple } :: acc
+               else acc
+             in
+             aux rest next
+         | _ -> aux rest acc)
+  in
+  aux prog.Rusttypes.prog_defs []
+
+type wrapper_plan = {
+  plan_scanf: bool;
+  plan_printf: bool;
+  plan_general: general_wrapper_spec list;
+}
+
+let wrapper_names_of_plan plan =
+  let names =
+    List.fold_left (fun acc spec -> spec.gw_name :: acc) [] plan.plan_general
+  in
+  let names =
+    (if plan.plan_scanf then "scanf" :: names else names)
+  in
+  let names =
+    (if plan.plan_printf then "printf" :: names else names)
+  in
+  names
+
+let compute_wrapper_plan prog =
+  let has_fn name =
+    List.exists (fun (id, _) -> extern_atom id = name) prog.Rusttypes.prog_defs
+  in
+  {
+    plan_scanf = has_fn "scanf";
+    plan_printf = has_fn "printf";
+    plan_general = collect_general_wrappers prog;
+  }
+
 (* Helper function to print function name - just prints the name *)
 let print_function_call_name p e =
   match e with
   | Epure (Eglobal(id, _)) ->
       fprintf p "%s" (extern_atom id)
   | Epure (Eplace(Plocal(id, _), _)) ->
-      fprintf p "%s" (extern_atom id)
+      fprintf p "%s" (lookup_ident_name id)
   | _ -> expr p (15, e)
+
+let current_function_is_main = ref false
+let current_function_return_type = ref Rusttypes.Tunit
 
 let rec print_stmt p (s: Rustlight.statement) = 
   match s with
@@ -654,200 +1403,250 @@ let rec print_stmt p (s: Rustlight.statement) =
     (* comment *)
     fprintf p "/*skip*/"
   | Sassign(v, e) ->
+      let handled_ptr_field =
+        match extract_pointer_field_place v with
+        | Some (ptr_base, fid, field_ty) ->
+            fprintf p "@[<v 2>{@ ";
+            fprintf p "let mut __tmp = (%a.load(0));@ " print_place ptr_base;
+            if is_declared_ptr_type field_ty then begin
+              if is_null_ptr_expr e || is_zero_integer_expr e then
+                fprintf p "__tmp.%s = Ptr::null();@ " (extern_atom fid)
+              else
+                fprintf p "__tmp.%s = %a;@ "
+                  (extern_atom fid)
+                  (print_pointer_assignment_value field_ty) e
+            end else
+              fprintf p "__tmp.%s = %a;@ "
+                (extern_atom fid)
+                (print_store_expr field_ty) e;
+            fprintf p "(%a).store(0, __tmp);@ "
+              print_place ptr_base;
+            fprintf p "@;<0 -2>}@]";
+            true
+        | None -> false
+      in
+      if handled_ptr_field then ()
+      else
+      let handled =
+        match temp_name_from_expr e with
+        | Some temp_name ->
+            (match take_malloc_temp temp_name with
+             | Some info ->
+                 print_malloc_assignment p v info;
+                 true
+             | None -> false)
+        | None -> false
+      in
+      if handled then ()
+      else
       (* FIX: 检查 v 是否是我们定义的 Ppair 类型 *)
-      (match v with
-      | Ppair(id_l, id_r) ->
-          fprintf p "@[<hv 2>let %a =@ %a;@]"
-            print_place v
-            print_expr e
-      | _ ->
-          let place_ty = type_of_place v in
-          (* A.1 NULL 表达：当目标是切片类型，且右侧将 0 转为切片时，直接生成空切片赋值 *)
-          let is_slice_target = match place_ty with
-            | Rusttypes.Tslice(_, _) -> true
-            | _ -> false
-          in
-          let expr_is_null_to_slice =
-            let is_zero_pexpr pe =
-              match pe with
-              | Econst_int(n, _) -> (Int32.compare (camlint_of_coqint n) 0l = 0)
-              | _ -> false
-            in
-            match e with
-            | Epure (Eas (pe_inner, ty')) ->
-                (match ty' with
-                 | Rusttypes.Tslice(_, _) -> is_zero_pexpr pe_inner
-                 | _ -> false)
-            | Epure (Econst_int (n, _)) -> (Int32.compare (camlint_of_coqint n) 0l = 0) && is_slice_target
-            | _ -> false
-          in
-          if is_slice_target && expr_is_null_to_slice then (
-            match place_ty with
-            | Rusttypes.Tslice(Rusttypes.Mutable, _) ->
-                fprintf p "@[<hv 2>%a =@ &mut [];@]" print_place v
-            | Rusttypes.Tslice(Rusttypes.Immutable, _) ->
-                fprintf p "@[<hv 2>%a =@ &[];@]" print_place v
-            | _ -> ()
-          ) else (
-            (* Check if expression already returns bool (comparison expr) *)
-            let expr_returns_bool = is_comparison_expr e in
-            (* Get the cast type name from name_rust_decl_var which matches variable declarations *)
+      let default_assign () =
+        match extract_ptr_store_target v with
+        | Some (base_expr, index_expr) ->
+            let base_ty = type_of_pexpr base_expr in
+            if is_array_type base_ty then
+              let elem_ty = array_element_type base_ty in
+              fprintf p "@[<hv 2>%a[(%a) as usize] = %a;@]"
+                pexpr (0, base_expr)
+                pexpr (0, index_expr)
+                (print_store_expr elem_ty) e
+            else
+              let target_ty =
+                match pointed_type base_ty with
+                | Some elem_ty -> elem_ty
+                | None -> type_of_place v
+              in
+              fprintf p "@[<hv 2>%a.store((%a) as usize, %a);@]"
+                pexpr (0, base_expr)
+                pexpr (0, index_expr)
+                (print_store_expr target_ty) e
+        | None ->
+            let place_ty = resolved_place_type v in
             let full_decl = name_rust_decl_var " : " place_ty in
-            let cast_type_name = 
+            let cast_type_name =
               try
                 let colon_idx = String.index full_decl ':' in
                 String.trim (String.sub full_decl (colon_idx + 1) (String.length full_decl - colon_idx - 1))
-              with Not_found -> "i32"  (* fallback *)
+              with Not_found -> "i32"
             in
-            (* Determine if target is bool by checking the actual declared type name *)
-            let is_bool_target = (cast_type_name = "bool") in
-            (* Check if we're casting to a slice type and need to add &mut / 对 Box 使用 as_mut_slice() *)
-            let needs_borrow_for_slice = is_slice_target && (
-              match e with
-              | Epure (Eref(_, _, _, _)) -> false  (* Already a reference *)
-              | Epure (Eplace(place, ty)) -> 
-                  (* Check if this is likely a malloc-generated Box variable *)
-                  let is_likely_box = match place with
-                    | Plocal(id, _) ->
-                        let var_name = extern_atom id in
-                        (String.length var_name > 1 && var_name.[0] = '_' && 
-                         try 
-                           let num = int_of_string (String.sub var_name 1 (String.length var_name - 1)) in
-                           num >= 100
-                         with _ -> false) &&
-                        (match ty with
-                         | Rusttypes.Tslice(_, _) -> true
-                         | _ -> false)
-                    | _ -> false
-                  in
-                  (match ty with
-                   | Rusttypes.Tslice(_, _) when not is_likely_box -> false
-                   | Rusttypes.Treference(_, _, _) -> false
-                   | Rusttypes.Tbox _ -> true
-                   | Rusttypes.Tarray(_, _, _) -> true
-                   | _ when is_likely_box -> true
-                   | _ -> false)
-              | _ -> false
-            ) in
-            (* Handle different cases of bool/int conversions and slice conversions *)
-            if is_bool_target && expr_returns_bool then
-              (* bool expr → bool var: direct assignment *)
-              fprintf p "@[<hv 2>%a =@ %a;@]" print_place v print_expr e
-            else if is_bool_target && not expr_returns_bool then
-              (* int expr → bool var: Rust doesn't allow "i32 as bool", use "!= 0" *)
-              fprintf p "@[<hv 2>%a =@ (%a) != 0;@]" print_place v print_expr e
-            else if (not is_bool_target) && expr_returns_bool then
-              (* bool expr → int var: need to cast bool to int *)
-              fprintf p "@[<hv 2>%a =@ ((%a) as %s);@]" print_place v print_expr e cast_type_name
-            else if needs_borrow_for_slice then
-              (* Casting to slice: prefer .as_mut_slice()/as_slice() for Box, else fall back *)
-              (match place_ty, e with
-               | Rusttypes.Tslice(Rusttypes.Mutable, _), Epure (Eplace(pl_rhs, ty_rhs)) ->
-                   let rhs_likely_box = (match pl_rhs with
-                     | Plocal(id, _) ->
-                         let var_name = extern_atom id in
-                         (String.length var_name > 1 && var_name.[0] = '_' &&
-                          try let num = int_of_string (String.sub var_name 1 (String.length var_name - 1)) in num >= 100 with _ -> false)
-                     | _ -> false) in
-                   (match ty_rhs with
-                    | Rusttypes.Tbox _ -> fprintf p "@[<hv 2>%a =@ %a.as_mut();@]" print_place v print_expr e
-                    | _ when rhs_likely_box -> fprintf p "@[<hv 2>%a =@ %a.as_mut();@]" print_place v print_expr e
-                    | _ -> fprintf p "@[<hv 2>%a =@ (&mut %a as %s);@]" print_place v print_expr e cast_type_name)
-               | Rusttypes.Tslice(Rusttypes.Immutable, _), Epure (Eplace(pl_rhs, ty_rhs)) ->
-                   let rhs_likely_box = (match pl_rhs with
-                     | Plocal(id, _) ->
-                         let var_name = extern_atom id in
-                         (String.length var_name > 1 && var_name.[0] = '_' &&
-                          try let num = int_of_string (String.sub var_name 1 (String.length var_name - 1)) in num >= 100 with _ -> false)
-                     | _ -> false) in
-                   (match ty_rhs with
-                    | Rusttypes.Tbox _ -> fprintf p "@[<hv 2>%a =@ %a.as_ref();@]" print_place v print_expr e
-                    | _ when rhs_likely_box -> fprintf p "@[<hv 2>%a =@ %a.as_ref();@]" print_place v print_expr e
-                    | _ -> fprintf p "@[<hv 2>%a =@ (&%a as %s);@]" print_place v print_expr e cast_type_name)
-               | _ ->
-                   fprintf p "@[<hv 2>%a =@ (%a) as %s;@]" print_place v print_expr e cast_type_name)
-            else
-              (* int expr → int var: standard cast *)
-              fprintf p "@[<hv 2>%a =@ (%a) as %s;@]" print_place v print_expr e cast_type_name
-          )
+            let looks_like_ptr_decl =
+              (String.length cast_type_name >= 4 && String.sub cast_type_name 0 4 = "Ptr<")
+              || (String.length cast_type_name >= 13 && String.sub cast_type_name 0 13 = "extern \"C\" fn")
+            in
+            let expr_is_null_ptr = is_null_ptr_expr e || is_zero_integer_expr e in
+            if is_declared_ptr_type place_ty then
+              (if expr_is_null_ptr then
+                 fprintf p "@[<hv 2>%a =@ Ptr::null();@]" print_place v
+               else
+                 fprintf p "@[<hv 2>%a =@ %a;@]"
+                   print_place v
+                   (print_pointer_assignment_value place_ty) e)
+            else if looks_like_ptr_decl && expr_is_null_ptr then
+              fprintf p "@[<hv 2>%a =@ Ptr::null();@]" print_place v
+            else begin
+                let expr_returns_bool = is_comparison_expr e in
+                let is_bool_target = (cast_type_name = "bool") in
+                if is_bool_target && expr_returns_bool then
+                  fprintf p "@[<hv 2>%a =@ %a;@]" print_place v print_expr e
+                else if is_bool_target && not expr_returns_bool then
+                  fprintf p "@[<hv 2>%a =@ (%a) != 0;@]" print_place v print_expr e
+                else if (not is_bool_target) && expr_returns_bool then
+                  fprintf p "@[<hv 2>%a =@ ((%a) as %s);@]" print_place v print_expr e cast_type_name
+                else
+                  fprintf p "@[<hv 2>%a =@ (%a) as %s;@]" print_place v print_expr e cast_type_name
+            end
+      in
+      (match v with
+      | Ppair(_, _) ->
+          fprintf p "@[<hv 2>let %a =@ %a;@]"
+            print_place v
+            print_expr e
+      | Pderef(base, _) ->
+          (match pointed_type (type_of_place base) with
+           | Some elem_ty ->
+               fprintf p "@[<hv 2>%a.store(0, %a);@]"
+                 print_place base
+                 (print_store_expr elem_ty) e
+           | None ->
+               default_assign ())
+      | ParrayIndex(base, idx, _) ->
+          let base_ty = resolved_place_type base in
+          if is_declared_ptr_type base_ty then
+            (match base_ty with
+             | Rusttypes.Tslice(_, elem_ty, _) ->
+                 fprintf p "@[<hv 2>%a.store((%s) as usize, %a);@]"
+                   print_place base
+                   (lookup_ident_name idx)
+                   (print_store_expr elem_ty) e
+             | _ ->
+                 let target_ty =
+                   match pointed_type base_ty with
+                   | Some elem_ty -> elem_ty
+                   | None -> type_of_place v
+                 in
+                 fprintf p "@[<hv 2>%a.store((%s) as usize, %a);@]"
+                   print_place base
+                   (lookup_ident_name idx)
+                   (print_store_expr target_ty) e)
+          else if is_array_type base_ty then
+            let elem_ty = array_element_type base_ty in
+            fprintf p "@[<hv 2>%a[(%s) as usize] = %a;@]"
+              print_place base
+              (lookup_ident_name idx)
+              (print_store_expr elem_ty) e
+          else
+            default_assign ()
+      | _ ->
+          default_assign ()
       )
   | Sassign_variant (v, enum_id, id, e) ->
     fprintf p "@[<hv 2>%a =@ %s::%s(%a);@]" print_place v (extern_atom enum_id)(extern_atom id) print_expr e
   | Scall(v, e1, el) ->
-        (* detect malloc or free *)
-    let is_malloc_call = match e1 with
-      | Epure (Eglobal(id, _)) -> 
-          let name = extern_atom id in
-          let lower_name = String.lowercase_ascii name in
-          (* 处理各种可能的malloc变体 *)
-          lower_name = "malloc" || lower_name = "__malloc" 
-      | _ -> false
+    let place_ty = type_of_place v in
+    let callee_name =
+      match get_callee_name e1 with
+      | Some name -> Some (String.lowercase_ascii name)
+      | None -> None
     in
-    let is_free_call = match e1 with
-      | Epure (Eglobal(id, _)) -> 
-          let name = extern_atom id in
-          let lower_name = String.lowercase_ascii name in
-          (* handle all type of free *)
-          lower_name = "free" || lower_name = "__free" 
-      | _ -> false
-      in
-      if is_malloc_call then (
-      (* 解析malloc参数并生成对应的Box代码 *)
-      match el with
-      | [param] -> parse_malloc_param p v param
-      | _ ->
-          fprintf p "@[<hv 2>/* 错误：malloc参数数量错误 */@]"
-      ) else if is_free_call then (
-        (* free调用不需要输出，Rust的Box会自动处理释放 *)
-        fprintf p "/* free call replaced by Rust's ownership system */"
-      ) else (
-        (* 这是处理所有其他函数调用的原始逻辑 *)
-          (match get_callee_name e1 with
-        | Some ("malloc" | "__malloc") ->
-            (match el with
-              | [param] -> parse_malloc_param p v param
-              | _ -> fprintf p "@[<hv 2>/* Error: wrong number of arguments for malloc */@]")
-        | Some ("free" | "__free") ->
-            fprintf p "/* free call removed, handled by Box drop */;"
-        | _ ->
-          let fun_ty = type_of_expr e1 in
-           let param_tys = 
-             match fun_ty with 
-             | Rusttypes.Tfunction(_, _, args, _, _) ->  typelist_to_list args
-             | _ -> List.map (fun _ -> Rusttypes.Tunit) el  (* fallback: 全部Tunit *)
-             in
-           (* Check if this is a C function call *)
-           let is_c_function = match e1 with
-             | Epure (Eglobal(id, _)) ->
-                 let name = extern_atom id in
-                 List.mem name unsafe_c_functions
-             | Epure (Eplace(Plocal(id, _), _)) ->
-                 let name = extern_atom id in
-                 List.mem name unsafe_c_functions
-             | _ -> false
-           in
-           (* Check if the destination variable type is Tunit - if so, don't print assignment *)
-           (* This happens when the return value is ignored in the original C code *)
-           let place_ty = type_of_place v in
-           let is_ignored_return = match place_ty with
-             | Rusttypes.Tunit -> true
-             | _ -> false
-           in
-           (* Since function bodies are already wrapped in unsafe blocks,
-              we don't need extra unsafe blocks for calling unsafe C functions *)
-           if is_ignored_return then
-             (* Only print the function call, no assignment *)
-             fprintf p "@[<hv 2>%a@,(@[<hov 0>%a@]);@]"
-               print_function_call_name e1
-               print_expr_list_with_type (true, el, param_tys, is_c_function)
-           else
-             (* Print full assignment statement *)
-             fprintf p "@[<hv 2>%a =@ %a@,(@[<hov 0>%a@]);@]"
+    begin match callee_name, el with
+    | Some "scanf", _ :: second :: _ ->
+        (match place_from_ptr_arg second with
+         | Some target_place ->
+             fprintf p "@[<hv 2>%a = read_i32_with_default(%a);@]"
+               print_place target_place
+               print_place target_place
+         | None ->
+             fprintf p "@[<hv 2>%a = %a@,(@[<hov 0>%a@]);@]"
                print_place v
                print_function_call_name e1
-               print_expr_list_with_type (true, el, param_tys, is_c_function)
-         )
-      )
+               print_expr_list_with_type (true, el, [], true))
+    | Some "malloc", [param] ->
+        (match parse_malloc_param param with
+         | Some info ->
+             if is_void_pointer_place v && register_malloc_temp v info then
+               ()
+             else
+               print_malloc_assignment p v info
+         | None ->
+             fprintf p "@[<hv 2>/* Error: could not parse malloc parameter */@]")
+    | Some "malloc", _ ->
+        fprintf p "@[<hv 2>/* 错误：malloc参数数量错误 */@]"
+    | Some "free", arg :: _ ->
+        (match place_from_ptr_arg arg with
+         | Some place ->
+             fprintf p "@[<hv 2>%a.free();@]" print_place place
+         | None ->
+             fprintf p "@[<hv 2>/* free call could not be translated */@]")
+    | Some "free", [] ->
+        fprintf p "@[<hv 2>/* free call missing argument */@]"
+    | Some "printf", fmt_expr :: rest ->
+        let print_printf_arg fmt () =
+          let arg_ty = type_of_expr fmt_expr in
+          match arg_ty with
+          | Rusttypes.Tarray(_, _, _) ->
+              fprintf fmt "Ptr::from_ref(&mut ";
+              expr fmt (2, fmt_expr);
+              fprintf fmt "[..])"
+          | _ ->
+              expr fmt (2, fmt_expr)
+       in
+        let print_fmt_ptr fmt () =
+          fprintf fmt "%a.as_ptr()" print_printf_arg ()
+        in
+        if rest = [] then
+          (match place_ty with
+           | Rusttypes.Tunit ->
+               fprintf p "@[<hv 2>print_c_string(@[%a@]);@]" print_printf_arg ()
+           | _ ->
+               fprintf p "@[<hv 2>%a =@ print_c_string(@[%a@]);@]"
+                 print_place v
+                 print_printf_arg ())
+        else
+          let print_libc_printf_call fmt () =
+            fprintf fmt "unsafe {@ ";
+            fprintf fmt "__libc_printf(@[%a" print_fmt_ptr ();
+            fprintf fmt "@]";
+            fprintf fmt ",@ %a" print_expr_list_with_type (true, rest, [], true);
+            fprintf fmt ");@ ";
+            fprintf fmt "}"
+          in
+          (match place_ty with
+           | Rusttypes.Tunit ->
+               fprintf p "@[<hv 2>%a;@]" print_libc_printf_call ()
+           | _ ->
+               fprintf p "@[<hv 2>%a =@ " print_place v;
+               print_libc_printf_call p ();
+               fprintf p ";@]")
+    | _ ->
+      let fun_ty = type_of_expr e1 in
+      let param_tys = 
+        match fun_ty with 
+        | Rusttypes.Tfunction(_, _, args, _, _) ->  typelist_to_list args
+        | _ -> List.map (fun _ -> Rusttypes.Tunit) el  (* fallback: 全部Tunit *)
+      in
+      let is_c_function = match e1 with
+        | Epure (Eglobal(id, _)) ->
+            let name = extern_atom id in
+            List.mem name unsafe_c_functions
+        | Epure (Eplace(Plocal(id, _), _)) ->
+            let name = extern_atom id in
+            List.mem name unsafe_c_functions
+        | _ -> false
+      in
+      let is_ignored_return = match place_ty with
+        | Rusttypes.Tunit -> true
+        | _ -> false
+      in
+      if is_ignored_return then
+        fprintf p "@[<hv 2>%a@,(@[<hov 0>%a@]);@]"
+          print_function_call_name e1
+          print_expr_list_with_type (true, el, param_tys, is_c_function)
+      else
+        fprintf p "@[<hv 2>%a =@ %a@,(@[<hov 0>%a@]);@]"
+          print_place v
+          print_function_call_name e1
+          print_expr_list_with_type (true, el, param_tys, is_c_function)
+    end
   | Smethod_call(v, receiver, method_name, el) ->
       (* Method call: place = receiver.method(args) *)
       (* Check if the destination variable type is Tunit - if so, don't print assignment *)
@@ -915,7 +1714,7 @@ let rec print_stmt p (s: Rustlight.statement) =
               print_stmt s1
               print_stmt s2
   | Sloop(s1) ->
-    fprintf p "@[<v 2>while true {@ %a@;<0 -2>}@]"
+    fprintf p "@[<v 2>loop {@ %a@;<0 -2>}@]"
               print_stmt s1
   | Sbreak ->
     fprintf p "break;"
@@ -924,12 +1723,17 @@ let rec print_stmt p (s: Rustlight.statement) =
   (* | Sreturn None ->
     fprintf p "return;" *)
   | Sreturn v ->
-    fprintf p "return %a;" print_place v
+    if !current_function_is_main then
+      fprintf p "::std::process::exit((%a) as i32);" print_place v
+    else if is_unit_type !current_function_return_type then
+      fprintf p "return;"
+    else
+      fprintf p "return %a;" print_place v
   | Sbox(v, e) ->
     fprintf p "@[<hv 2>%a =@ Box::new(%a);@]" print_place v print_expr e
   | Slet(id, ty, s) ->
     fprintf p "@[<v 2>let %s : %s in {@ %a@;<0 -2>}@]"
-            (extern_atom id)
+            (lookup_ident_name id)
             (name_rust_type ty)
             print_stmt s
 
@@ -940,81 +1744,110 @@ let is_main_id id =
   let fun_name = extern_atom id in
   fun_name = "main"
 
+let sanitized_fun_name id = sanitize_rust_identifier (extern_atom id)
+
 let print_function p id f =
+  setup_local_names f;
+  current_function_return_type := f.fn_return;
   if is_main_id id then 
     begin
-    fprintf p "fn main()";
+    let ret_ty = f.fn_return in
+    let ret_annotation =
+      match ret_ty with
+      | Rusttypes.Tunit -> ""
+      | _ -> " -> " ^ (name_rust_type ret_ty)
+    in
+    fprintf p "fn main()%s" ret_annotation;
     fprintf p "{@;@[<v 2>  @[<v 1>@;";
         fprintf p "unsafe {@ ";  (* Wrap in unsafe for static mut access *)
         (* If C main had parameters (argc, argv), declare them as local variables with default values *)
-        List.iter 
-        (fun (param_id, param_ty) ->
-          let var_name = extern_atom param_id in
-          (* Provide default initialization based on parameter name *)
-          match var_name with
-          | "argc" -> fprintf p "let mut argc : i32 = 0;@ "
-          | "argv" -> 
-              (* For argv, use a dangling non-null pointer for empty slice to avoid UB *)
-              fprintf p "let mut argv : &mut [&mut [i8]] = unsafe { std::slice::from_raw_parts_mut(std::ptr::NonNull::<&mut [i8]>::dangling().as_ptr(), 0) };@ "
-          | _ -> fprintf p "let mut %s;@ " (name_rust_decl_var (var_name ^ " : ") param_ty))
-        f.fn_params;
+        let print_param_init (param_id, param_ty) =
+          let var_name = lookup_ident_name param_id in
+          let decl = binding_with_type var_name param_ty in
+          match param_ty with
+          | Rusttypes.Tslice(_, _, _) ->
+              fprintf p "let mut %s = Ptr::null();@ " decl
+          | Rusttypes.Tint(_, _) ->
+              fprintf p "let mut %s = 0;@ " decl
+          | Rusttypes.Tlong(_) ->
+              fprintf p "let mut %s = 0;@ " decl
+          | Rusttypes.Tfloat(_) ->
+              fprintf p "let mut %s = 0.0;@ " decl
+          | Rusttypes.Tunit ->
+              fprintf p "let mut %s;@ " decl
+          | _ ->
+              fprintf p "let mut %s = Default::default();@ " decl
+        in
+        List.iter print_param_init f.fn_params;
         (* Print local variables *)
         List.iter 
         (fun (id, ty) ->
+          if ty = Rusttypes.Tunit then () else
           match ty with
-          | Rusttypes.Tarray(_, elem_ty, sz) ->
-              (* Initialize arrays with default values *)
-              let sz_val = camlint_of_coqint sz in
-              let default_val = match elem_ty with
-                | Rusttypes.Tint(_, _) -> "0"
-                | Rusttypes.Tlong(_) -> "0"
-                | Rusttypes.Tfloat(_) -> "0.0"
-                | _ -> "Default::default()"
-              in
-              fprintf p "let mut %s = [%s; %ld];@ " 
-                (extern_atom id)
-                default_val
-                sz_val
+          | Rusttypes.Tarray(_, _, _) ->
+              let var_name = lookup_ident_name id in
+              fprintf p "let mut %s = %s;@ "
+                (binding_with_type var_name ty)
+                (default_expr_for_type ty)
           | _ ->
-              (* Initialize all variables with default values to avoid E0381 errors *)
-              let default_init = match ty with
-                | Rusttypes.Tint(_, _) -> " = 0"
-                | Rusttypes.Tlong(_) -> " = 0"
-                | Rusttypes.Tfloat(_) -> " = 0.0"
-                | Rusttypes.Tunit -> ""
-                | _ -> " = Default::default()"
-              in
-              fprintf p "let mut %s%s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty) default_init)
+              (* 初始化指针/非指针：指针用 Ptr::null()，其他保持默认 *)
+              (match ty with
+          | Rusttypes.Tslice(_, _, _) ->
+              let var_name = lookup_ident_name id in
+              let decl = binding_with_type var_name ty in
+              fprintf p "let mut %s = Ptr::null();@ " decl
+           | _ ->
+               let default_init = match ty with
+                 | Rusttypes.Tint(_, _) -> " = 0"
+                 | Rusttypes.Tlong(_) -> " = 0"
+                 | Rusttypes.Tfloat(_) -> " = 0.0"
+                 | Rusttypes.Tunit -> ""
+                 | _ -> " = Default::default()"
+               in
+               let var_name = lookup_ident_name id in
+               fprintf p "let mut %s%s;@ " (binding_with_type var_name ty) default_init))
         f.fn_vars;
+        (* 全局指针/包含指针的静态变量在静态初始化阶段只能放零值，
+           真实初始化在 __init_globals 中完成，这里在 main 开头调用一次。 *)
+        if PrintRustsyntax.has_pointer_globals () then
+          fprintf p "__init_globals();@ ";
+        current_function_is_main := true;
         print_stmt p f.fn_body;
+        current_function_is_main := false;
         fprintf p "@;<0 -2>}@ ";
     fprintf p "@]@;<0 -2>}@]@ @ "
     end
   else
     begin
-      fprintf p "fn%s@ "
-                (name_rust_decl_fn (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
+      current_function_is_main := false;
+      let fun_name = sanitized_fun_name id in
+      fprintf p "extern \"C\" fn%s@ "
+                (name_rust_decl_fn
+                   (PrintRustsyntax.name_function_parameters
+                      (fun ident -> sanitize_rust_identifier (lookup_ident_name ident))
+                      fun_name
+                      f.fn_params
+                      f.fn_callconv
+                      f.fn_generic_origins
+                      f.fn_origins_relation)
+                   f.fn_return);
       fprintf p "@[<v 2>{@ ";
         fprintf p "unsafe {@ ";  (* Wrap in unsafe for static mut access *)
         (* Print variables and their types *)
         List.iter 
         (fun (id, ty) ->
+          if ty = Rusttypes.Tunit then () else
           match ty with
-          | Rusttypes.Tarray(_, elem_ty, sz) ->
-              (* Initialize arrays with default values *)
-              let sz_val = camlint_of_coqint sz in
-              let default_val = match elem_ty with
-                | Rusttypes.Tint(_, _) -> "0"
-                | Rusttypes.Tlong(_) -> "0"
-                | Rusttypes.Tfloat(_) -> "0.0"
-                | _ -> "Default::default()"
-              in
-              fprintf p "let mut %s = [%s; %ld];@ " 
-                (extern_atom id)
-                default_val
-                sz_val
+          | Rusttypes.Tarray(_, _, _) ->
+              let var_name = lookup_ident_name id in
+              fprintf p "let mut %s = %s;@ "
+                (binding_with_type var_name ty)
+                (default_expr_for_type ty)
+          | Rusttypes.Tslice(_, _, _) ->
+              let var_name = lookup_ident_name id in
+              let decl = binding_with_type var_name ty in
+              fprintf p "let mut %s = Ptr::null();@ " decl
           | _ ->
-              (* Initialize all variables with default values to avoid E0381 errors *)
               let default_init = match ty with
                 | Rusttypes.Tint(_, _) -> " = 0"
                 | Rusttypes.Tlong(_) -> " = 0"
@@ -1022,7 +1855,8 @@ let print_function p id f =
                 | Rusttypes.Tunit -> ""
                 | _ -> " = Default::default()"
               in
-              fprintf p "let mut %s%s;@ " (name_rust_decl_var (extern_atom id ^ " : ") ty) default_init)
+              let var_name = lookup_ident_name id in
+              fprintf p "let mut %s%s;@ " (binding_with_type var_name ty) default_init)
         f.fn_vars;
         (*
         List.iter
@@ -1042,7 +1876,7 @@ let print_fundef p id fd =
       print_function p id f
 
 let print_fundecl p id fd =
-  let fun_name = extern_atom id in
+  let fun_name = sanitized_fun_name id in
   (* 检查函数名是否在屏蔽列表中 *)
   if List.mem fun_name PrintRustsyntax.suppressed_functions then
     () (* if in unsafe function list, do noting *)
@@ -1052,7 +1886,7 @@ let print_fundecl p id fd =
     | Rusttypes.External(_, _, (AST.EF_external _ | AST.EF_runtime _), args, res, cconv) ->
         (* All external C functions are declared with FFI-safe types *)
         fprintf p "unsafe extern \"C\" { %s; }@ "
-                  (PrintRustsyntax.name_rust_decl_fn_ffi (extern_atom id)
+                  (PrintRustsyntax.name_rust_decl_fn_ffi fun_name
                     (Rusttypes.Tfunction([], [], args, res, cconv)))
     | Rusttypes.External(_, _ ,_, _, _, _) ->
         ()
@@ -1066,16 +1900,208 @@ let print_globdef p (id, gd) =
   | AST.Gvar v -> PrintRustsyntax.print_globvar p id v  (* from PrintRustsyntax.ml *)
 
 let print_globdecl p (id, gd) =
-  match gd with
-  | AST.Gfun f -> print_fundecl p id f
-  | AST.Gvar v -> PrintRustsyntax.print_globvardecl p id v
+  let fun_name = extern_atom id in
+  if List.mem fun_name PrintRustsyntax.suppressed_functions
+     || List.mem fun_name !wrapped_function_names then
+    ()
+  else
+    match gd with
+    | AST.Gfun f -> print_fundecl p id f
+    | AST.Gvar v -> PrintRustsyntax.print_globvardecl p id v
 
 (* Generate safe wrapper functions for unsafe C functions *)
-(* Note: We no longer generate safe wrappers since we automatically wrap 
-   unsafe calls in unsafe blocks at the call site *)
-let print_safe_wrappers p (prog: Rustlight.program) =
-  (* Do nothing - safe wrappers are not needed anymore *)
-  ()
+let rust_type_to_string ty = PrintRustsyntax.name_rust_decl "" ty
+
+let ptr_accessor_for_mut mutk =
+  match mutk with
+  | Rusttypes.Mutable -> ".as_mut_ptr()"
+  | Rusttypes.Immutable -> ".as_ptr()"
+
+let ptr_from_raw_expression ty raw =
+  match ty with
+  | Rusttypes.Tslice(_, elem_ty, _) ->
+      Printf.sprintf "Ptr::from_raw_parts(%s as *mut %s, 1)" raw (rust_type_to_string elem_ty)
+  | Rusttypes.Traw_pointer(_, elem_ty) ->
+      Printf.sprintf "Ptr::from_raw_parts(%s as *mut %s, 1)" raw (rust_type_to_string elem_ty)
+  | _ ->
+      Printf.sprintf "Ptr::from_raw_parts(%s as *mut std::ffi::c_void, 1)" raw
+
+let ffi_info_for_type ty =
+  match ty with
+  | Rusttypes.Tslice(mutk, elem_ty, _) ->
+      let elem_str = rust_type_to_string elem_ty in
+      let ffi_ty =
+        (match mutk with
+         | Rusttypes.Mutable -> "*mut "
+         | Rusttypes.Immutable -> "*const ") ^ elem_str
+      in
+      (rust_type_to_string ty, ffi_ty, fun arg -> arg ^ ptr_accessor_for_mut mutk)
+  | Rusttypes.Traw_pointer(_, elem_ty) ->
+      let elem_str = rust_type_to_string elem_ty in
+      let ffi_ty = "*mut " ^ elem_str in
+      (rust_type_to_string ty, ffi_ty, fun arg -> arg ^ ".as_mut_ptr()")
+  | _ ->
+      let ty_str = rust_type_to_string ty in
+      (ty_str, ty_str, fun arg -> arg)
+
+let print_general_wrapper p spec =
+  let param_name idx = Printf.sprintf "arg%d" idx in
+  let safe_params =
+    List.mapi (fun idx ty ->
+        Printf.sprintf "%s: %s" (param_name idx) (rust_type_to_string ty))
+      spec.gw_args
+  in
+  let safe_params_str = String.concat ", " safe_params in
+  let safe_ret_decl =
+    match spec.gw_res with
+    | Rusttypes.Tunit -> ""
+    | _ -> Printf.sprintf " -> %s" (rust_type_to_string spec.gw_res)
+  in
+  let ffi_ret_decl =
+    match spec.gw_res with
+    | Rusttypes.Tunit -> ""
+    | _ ->
+        let _, ffi_ty, _ = ffi_info_for_type spec.gw_res in
+        Printf.sprintf " -> %s" ffi_ty
+  in
+  match spec.gw_kind with
+  | Gw_simple ->
+      let ffi_params, call_args =
+        List.mapi
+          (fun idx ty ->
+             let _, ffi_ty, conv = ffi_info_for_type ty in
+             (Printf.sprintf "%s: %s" (param_name idx) ffi_ty,
+              conv (param_name idx)))
+          spec.gw_args
+        |> List.split
+      in
+      let ffi_params_str = String.concat ", " ffi_params in
+      let call_args_str = String.concat ", " call_args in
+      fprintf p "extern \"C\" {@ ";
+      fprintf p "  #[link_name = \"%s\"]@ " spec.gw_name;
+      fprintf p "  fn __libc_%s(%s)%s;@ " spec.gw_name ffi_params_str ffi_ret_decl;
+      fprintf p "}@ ";
+      fprintf p "fn %s(%s)%s {@ " spec.gw_name safe_params_str safe_ret_decl;
+      fprintf p "  unsafe {@ ";
+      (match spec.gw_res with
+       | Rusttypes.Tunit ->
+           fprintf p "    __libc_%s(%s);@ " spec.gw_name call_args_str
+       | res_ty when is_pointer_return_type res_ty ->
+           fprintf p "    let raw = __libc_%s(%s);@ " spec.gw_name call_args_str;
+           fprintf p "    %s@ " (ptr_from_raw_expression res_ty "raw")
+       | _ ->
+           fprintf p "    __libc_%s(%s)@ " spec.gw_name call_args_str);
+      fprintf p "  }@ ";
+      fprintf p "}@ "
+  | Gw_qsort cmp_idx ->
+      let base_ty = List.nth spec.gw_args 0 in
+      let nmemb_ty = List.nth spec.gw_args 1 in
+      let size_ty = List.nth spec.gw_args 2 in
+      let _, base_ffi_ty, base_conv = ffi_info_for_type base_ty in
+      let _, nmemb_ffi_ty, nmemb_conv = ffi_info_for_type nmemb_ty in
+      let _, size_ffi_ty, size_conv = ffi_info_for_type size_ty in
+      let base_name = param_name 0 in
+      let nmemb_name = param_name 1 in
+      let size_name = param_name 2 in
+      let cmp_name = param_name cmp_idx in
+      fprintf p "extern \"C\" {@ ";
+      fprintf p "  #[link_name = \"%s\"]@ " spec.gw_name;
+      fprintf p "  fn __libc_%s(%s: %s, %s: %s, %s: %s, %s: extern \"C\" fn(*const std::ffi::c_void, *const std::ffi::c_void) -> i32)%s;@ "
+        spec.gw_name
+        base_name base_ffi_ty
+        nmemb_name nmemb_ffi_ty
+        size_name size_ffi_ty
+        cmp_name
+        ffi_ret_decl;
+      fprintf p "}@ ";
+      fprintf p "fn %s(%s)%s {@ " spec.gw_name safe_params_str safe_ret_decl;
+      fprintf p "  unsafe {@ ";
+      fprintf p "    callback::with_void_comparator(%s, || {@ " cmp_name;
+      fprintf p "      __libc_%s(%s, %s, %s, callback::void_comparator_trampoline);@ "
+        spec.gw_name
+        (base_conv base_name)
+        (nmemb_conv nmemb_name)
+        (size_conv size_name);
+      fprintf p "    });@ ";
+      fprintf p "  }@ ";
+      (match spec.gw_res with
+       | Rusttypes.Tunit -> ()
+       | _ -> fprintf p "  unsafe { ::std::mem::zeroed() }@ ");
+      fprintf p "}@ "
+  | Gw_bsearch cmp_idx ->
+      let key_ty = List.nth spec.gw_args 0 in
+      let base_ty = List.nth spec.gw_args 1 in
+      let nmemb_ty = List.nth spec.gw_args 2 in
+      let size_ty = List.nth spec.gw_args 3 in
+      let _, key_ffi_ty, key_conv = ffi_info_for_type key_ty in
+      let _, base_ffi_ty, base_conv = ffi_info_for_type base_ty in
+      let _, nmemb_ffi_ty, nmemb_conv = ffi_info_for_type nmemb_ty in
+      let _, size_ffi_ty, size_conv = ffi_info_for_type size_ty in
+      let key_name = param_name 0 in
+      let base_name = param_name 1 in
+      let nmemb_name = param_name 2 in
+      let size_name = param_name 3 in
+      let cmp_name = param_name cmp_idx in
+      fprintf p "extern \"C\" {@ ";
+      fprintf p "  #[link_name = \"%s\"]@ " spec.gw_name;
+      fprintf p "  fn __libc_%s(%s: %s, %s: %s, %s: %s, %s: %s, %s: extern \"C\" fn(*const std::ffi::c_void, *const std::ffi::c_void) -> i32)%s;@ "
+        spec.gw_name
+        key_name key_ffi_ty
+        base_name base_ffi_ty
+        nmemb_name nmemb_ffi_ty
+        size_name size_ffi_ty
+        cmp_name
+        ffi_ret_decl;
+      fprintf p "}@ ";
+      fprintf p "fn %s(%s)%s {@ " spec.gw_name safe_params_str safe_ret_decl;
+      fprintf p "  unsafe {@ ";
+      fprintf p "    callback::with_void_comparator(%s, || {@ " cmp_name;
+      fprintf p "      let raw = __libc_%s(%s, %s, %s, %s, callback::void_comparator_trampoline);@ "
+        spec.gw_name
+        (key_conv key_name)
+        (base_conv base_name)
+        (nmemb_conv nmemb_name)
+        (size_conv size_name);
+      fprintf p "      %s@ " (ptr_from_raw_expression spec.gw_res "raw");
+      fprintf p "    })@ ";
+      fprintf p "  }@ ";
+      fprintf p "}@ "
+
+let print_safe_wrappers p (plan: wrapper_plan) =
+  if plan.plan_scanf then begin
+    fprintf p "extern \"C\" {@ ";
+    fprintf p "  #[link_name = \"scanf\"]@ ";
+    fprintf p "  fn __libc_scanf(fmt: *const i8, ...) -> i32;@ ";
+    fprintf p "}@ ";
+    fprintf p "fn read_i32_with_default(default: i32) -> i32 {@ ";
+    fprintf p "  let mut value = default;@ ";
+    fprintf p "  unsafe {@ ";
+    fprintf p "    let fmt = Ptr::from_ref(&mut __stringlit_1[..]);@ ";
+    fprintf p "    __libc_scanf(fmt.as_ptr(), &mut value as *mut i32);@ ";
+    fprintf p "  }@ ";
+    fprintf p "  value@ ";
+    fprintf p "}@ "
+  end;
+  if plan.plan_printf then begin
+    fprintf p "extern \"C\" {@ ";
+    fprintf p "  #[link_name = \"printf\"]@ ";
+    fprintf p "  fn __libc_printf(fmt: *const i8, ...) -> i32;@ ";
+    fprintf p "}@ ";
+    fprintf p "fn print_c_string(fmt: Ptr<i8>) -> i32 {@ ";
+    fprintf p "  unsafe {@ ";
+    fprintf p "    __libc_printf(fmt.as_ptr())@ ";
+    fprintf p "  }@ ";
+    fprintf p "}@ "
+  end;
+  List.iter (print_general_wrapper p) plan.plan_general
+
+let collect_global_var_names defs =
+  List.fold_left
+    (fun acc (id, gd) ->
+       match gd with
+       | AST.Gvar _ -> StringSet.add (sanitize_rust_identifier (extern_atom id)) acc
+       | _ -> acc)
+    StringSet.empty defs
 
 let print_program p (prog: Rustlight.program) =
   (* Check if there are any mutable static variables *)
@@ -1092,6 +2118,14 @@ let print_program p (prog: Rustlight.program) =
       | _ -> false
     ) prog.Rusttypes.prog_defs
   in
+  global_var_names := collect_global_var_names prog.Rusttypes.prog_defs;
+  (* Pre-collect globals whose initializers contain pointers so that we
+     can both (1) avoid non-const pointer operations in their static
+     initializers and (2) generate a runtime __init_globals() that
+     reconstructs the original values. *)
+  PrintRustsyntax.collect_pointer_globals prog.Rusttypes.prog_defs;
+  let plan = compute_wrapper_plan prog in
+  wrapped_function_names := wrapper_names_of_plan plan;
   fprintf p "@[<v 0>";
   (* Add allow attribute if there are static mut variables *)
   if has_static_mut then
@@ -1099,11 +2133,15 @@ let print_program p (prog: Rustlight.program) =
   (* Don't print forward declarations - Rust doesn't support them *)
   (* List.iter (PrintRustsyntax.declare_composite p) prog.Rusttypes.prog_types; *)
   (* Add placeholder for commonly undefined system types *)
+  fprintf p "#[path = \"runtime/ptr.rs\"]@ mod ptr;@ use ptr::*;@ ";
+  fprintf p "#[path = \"runtime/callback.rs\"]@ mod callback;@ ";
   fprintf p "pub struct __sFILEX;@ ";
   List.iter (PrintRustsyntax.define_composite p) prog.Rusttypes.prog_types;
   List.iter (print_globdecl p) prog.Rusttypes.prog_defs;
-  print_safe_wrappers p prog;
   List.iter (print_globdef p) prog.Rusttypes.prog_defs;
+  (* Emit runtime global-initialization function if needed. *)
+  PrintRustsyntax.print_global_initializers p;
+  print_safe_wrappers p plan;
   fprintf p "@]@."
 
 let destination : string option ref = ref None

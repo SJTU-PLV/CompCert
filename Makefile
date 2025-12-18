@@ -225,7 +225,7 @@ GENERATED=\
   backend/SelectDiv.v backend/SplitLong.v \
   cparser/Parser.v
 
-all:copy
+all:
 	@test -f .depend || $(MAKE) depend
 	$(MAKE) proof
 	$(MAKE) extraction
@@ -391,14 +391,14 @@ ifeq ($(INSTALL_COQDEV),true)
 	@(echo "To use, pass the following to coq_makefile or add the following to _CoqProject:"; echo "-R $(COQDEVDIR) compcert") > $(DESTDIR)$(COQDEVDIR)/README
 endif
 
-SOURCE_DIR_COPY = clight2rustlight
-TARGET_DIR_COPY = extraction
-SOURCE_FILES_COPY = SplitTreeOcaml.ml SplitTreeOcaml.mli
+# SOURCE_DIR_COPY = clight2rustlight
+# TARGET_DIR_COPY = extraction
+# SOURCE_FILES_COPY = SplitTreeOcaml.ml SplitTreeOcaml.mli
 
-copy:
-	@mkdir -p $(TARGET_DIR_COPY)
-	cp $(addprefix $(SOURCE_DIR_COPY)/,$(SOURCE_FILES_COPY)) $(TARGET_DIR_COPY)/
-	@echo "Files copied successfully to $(TARGET_DIR_COPY)/"
+# copy:
+# 	@mkdir -p $(TARGET_DIR_COPY)
+# 	cp $(addprefix $(SOURCE_DIR_COPY)/,$(SOURCE_FILES_COPY)) $(TARGET_DIR_COPY)/
+# 	@echo "Files copied successfully to $(TARGET_DIR_COPY)/"
 
 clean:
 	rm -f $(patsubst %, %/*.vo*, $(DIRS))

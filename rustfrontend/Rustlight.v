@@ -21,7 +21,7 @@ Local Open Scope error_monad_scope.
   their size to be 1.  For undefined structures and unions, the size is
   arbitrarily taken to be 0.
 *)
-
+  
 Fixpoint sizeof (env: composite_env) (t: type) : Z :=
   match t with
   | Tunit => 1
@@ -36,7 +36,7 @@ Fixpoint sizeof (env: composite_env) (t: type) : Z :=
   | Tbox _
   | Treference _ _ _
   | Traw_pointer _ _
-  | Tslice _ _ => if Archi.ptr64 then 8 else 4
+  | Tslice _ _ _=> if Archi.ptr64 then 8 else 4
   | Tarray _ t' n => sizeof env t' * Z.max 0 n
   | Tfunction _ _ _ _ _ => 1
   | Tstruct _ id | Tvariant _ id =>

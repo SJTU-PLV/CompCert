@@ -31,8 +31,8 @@ Require Import rustfrontend.Rustlight.
 Import ListNotations.
 Require Import Lists.List.
 
-Require Import compcert.clight2rustlight.TranslationEnv.
-Require Import compcert.clight2rustlight.SplitTree.
+(* Require Import compcert.clight2rustlight.TranslationEnv. *)
+(* Require Import compcert.clight2rustlight.SplitTree. *)
 
 (** State and error monad for generating fresh identifiers. *)
 
@@ -43,57 +43,20 @@ Parameter fresh_atom : unit -> ident.
 
 Definition max_nat_limit := 1000000%positive.
 
-(* Parameter external_find_and_split : ident -> ident -> Z -> Z -> Rustlight.statement. *)
-(* * This new parameter represents the stateful OCaml function.
- * It takes the current scope environment (`TranslationEnv.t`) as an argument
- * and returns a pair: the resulting statement AND the *new* scope environment.
- * This is the function you will implement in OCaml after extraction.
- *)
-Parameter external_find_and_split_stateful
-  : ident -> ident -> Z -> Z -> TranslationEnv.t -> (Rustlight.statement * list (ident * Rusttypes.type) * TranslationEnv.t).
+Record var_info : Type := mkvar_info {
+  vi_type : type;
+  vi_origin : ptr_origin
+}.
 
-Parameter external_flush_assignments_for_vars : list ident -> TranslationEnv.t -> (Rustlight.statement * TranslationEnv.t).
-Parameter external_is_base_ptr_managed : ident -> TranslationEnv.t -> bool.
-Parameter external_resolve_direct_access : ident -> Z.t -> TranslationEnv.t -> (ident * Z.t).
+Definition var_env := PTree.t var_info.
 
-(* Module TranslMonad.
-
-  Definition M (A: Type) : Type :=
-    TranslationEnv.t -> res (A * TranslationEnv.t).
-
-  Definition ret {A: Type} (x: A) : M A :=
-    fun env => OK (x, env).
-
-  Definition err {A: Type} (msg: errmsg) : M A :=
-    fun env => Error msg.
-
-  Definition bind {A B: Type} (m: M A) (f: A -> M B) : M B :=
-    fun env =>
-      match m env with
-      | Error msg => Error msg
-      | OK (v, env') => f v env'
-      end.
-  
-  Notation "'do' x <- m ; f" := (bind m (fun x => f)) (at level 200, x ident, m at level 100, f at level 200).
-
-  Definition with_new_scope {A: Type} (m: M A) : M A :=
-    fun env =>
-      let block_env := TranslationEnv.enter_scope env in
-      match m block_env with
-      | Error msg => Error msg
-      | OK (v, _final_block_env) => OK (v, env)
-      end.
-
-End TranslMonad.
-
-Import TranslMonad. *)
-(** State and error monad for generating fresh identifiers. *)
+Definition empty_var_env : var_env := PTree.empty var_info.
 
 Record generator : Type := mkgenerator {
-                               gen_next: ident;
-                               gen_trail: list (ident * type);
-                               gen_scopes: TranslationEnv.t
-                             }.
+  gen_next : ident;
+  gen_trail : list (ident * type);
+  gen_env : var_env
+}.
 
 (* 查找第一个可用标识符的辅助函数 *)
 Fixpoint find_fresh (candidate: positive) (locals: list ident) (max_limit: nat):=
@@ -144,93 +107,54 @@ Notation "'do' ( X , Y ) <- A ; B" := (bind2 A (fun X Y => B))
                                         (at level 200, X ident, Y ident, A at level 100, B at level 200)
     : gensym_monad_scope.
 
+Local Open Scope gensym_monad_scope.
+
 Definition initial_generator : generator :=
-  mkgenerator 10000%positive nil TranslationEnv.empty.
-
-(** Monadic helpers for scope management **)
-
-(* A computation that returns the current environment *)
-Definition get_gen : mon generator :=
-  fun g => Res g g.
-
-(* A computation that replaces the current environment *)
-Definition set_gen (g': generator) : mon unit :=
-  fun g => Res tt g'.
-
-(* Enters a new scope within the monad *)
-Definition enter_scope_m : mon unit :=
-  bind get_gen (fun g =>
-    set_gen (mkgenerator g.(gen_next) g.(gen_trail) (TranslationEnv.enter_scope g.(gen_scopes)))).
-
-(* Exits the current scope within the monad *)
-Definition exit_scope_m : mon unit :=
-  bind get_gen (fun g =>
-    set_gen (mkgenerator g.(gen_next) g.(gen_trail) (TranslationEnv.exit_scope g.(gen_scopes)))).
-
-(* Higher-order function to run a computation within a new scope *)
-Definition with_new_scope {A: Type} (m: mon A) : mon A :=
-  bind enter_scope_m (fun (_: unit) =>
-    bind m (fun (res: A) =>
-      bind exit_scope_m (fun (_: unit) =>
-        ret res))).
-
-(* * This is our Coq monadic wrapper. It handles all the state-passing logic internally.
- * In `transl_stmt`, you will call this function instead of the old parameter.
- *)
-Definition find_and_split_m (base_ptr_id: ident) (new_ptr_id: ident) (c_offset: Z) (array_size: Z) : mon Rustlight.statement :=
-  (* 1. Get the current generator state *)
-  bind get_gen (fun g =>
-    (* 2. Call the external stateful function with the arguments and the current scopes *)
-    let '((stmt, new_vars), new_scopes) :=
-      external_find_and_split_stateful base_ptr_id new_ptr_id c_offset array_size g.(gen_scopes)
-    in
-    (* 3. Create a new generator with the updated scopes and add new vars to trail *)
-    let g' := mkgenerator g.(gen_next) (g.(gen_trail) ++ new_vars) new_scopes in
-    (* 4. Update the state with the new generator and return the statement *)
-    bind (set_gen g') (fun _ =>
-      ret stmt)).
-
-Definition flush_assignments_m (vars: list ident) : mon Rustlight.statement :=
-  bind get_gen (fun g =>
-    let '(stmt, new_scopes) := 
-      external_flush_assignments_for_vars vars g.(gen_scopes)
-    in
-    let g' := mkgenerator g.(gen_next) g.(gen_trail) new_scopes in
-    bind (set_gen g') (fun _ =>
-      ret stmt)).
-(* Lemma find_fresh_incr0 :
-  forall start locals n,
-  Ple (find_fresh start locals n) (find_fresh (Pos.succ start) locals n).
-Proof.
-  intros. induction start; simpl.
-Admitted.
-Lemma find_fresh_incr : 
-  forall start locals n,
-  Ple start max_nat_limit ->
-  Ple start (find_fresh start locals n).
-Proof.
-  intros. induction n; simpl.
-  - apply H.
-  - destruct (in_dec ident_eq start locals) eqn:E. 
-    + eapply Ple_trans. 2: { apply find_fresh_incr0.  }
-      apply IHn.
-    + apply Ple_refl.
-Qed.
-
-Lemma find_fresh_property g locals :
-  Ple (gen_next g) max_nat_limit ->
-  Ple (gen_next g) (find_fresh (gen_next g) locals (Pos.to_nat max_nat_limit)).
-Proof.
-  apply find_fresh_incr.
-Qed. *)
+  mkgenerator 10000%positive nil empty_var_env.
 
 Definition gensym (locals: list ident) (ty: type) : mon ident :=
   fun (g: generator) =>
   if Pos.leb (Pos.succ (gen_next g)) max_nat_limit then
   let fresh_id := find_fresh (gen_next g) locals (Pos.to_nat max_nat_limit) in
   Res fresh_id
-      (mkgenerator (Pos.succ fresh_id) ((fresh_id, ty) :: gen_trail g) g.(gen_scopes))
+      (mkgenerator (Pos.succ fresh_id) ((fresh_id, ty) :: gen_trail g) g.(gen_env))
   else Err (msg "gensym: out of fresh id limit").
+
+Definition get_gen : mon generator :=
+  fun g => Res g g.
+
+Definition put_gen (g': generator) : mon unit :=
+  fun _ => Res tt g'.
+
+Definition modify_gen (f: generator -> generator) : mon unit :=
+  fun g => Res tt (f g).
+
+Definition update_env (f: var_env -> var_env) : mon unit :=
+  modify_gen (fun g => mkgenerator g.(gen_next) g.(gen_trail) (f g.(gen_env))).
+
+Definition set_var_info (id: ident) (ty: type) (origin: ptr_origin) : mon unit :=
+  update_env (fun env => PTree.set id (mkvar_info ty origin) env).
+
+Definition set_var_info_raw (id: ident) (info: var_info) : mon unit :=
+  update_env (fun env => PTree.set id info env).
+
+Definition get_var_info (id: ident) : mon (option var_info) :=
+  fun g => Res (PTree.get id g.(gen_env)) g.
+
+Definition get_var_origin (id: ident) : mon ptr_origin :=
+  fun g =>
+    match PTree.get id g.(gen_env) with
+    | Some info => Res info.(vi_origin) g
+    | None => Res PtrUnknown g
+    end.
+
+Definition forget_var (id: ident) : mon unit :=
+  update_env (fun env => PTree.remove id env).
+
+Inductive var_scope :=
+| ScopeParam
+| ScopeLocal
+| ScopeTemp.
 
 (* Definition new_origin := 1%positive. *)
 
@@ -243,7 +167,7 @@ Fixpoint to_rusttype (ty: Ctypes.type): Rusttypes.type :=
   | Ctypes.Tfloat fz _ => Rusttypes.Tfloat fz
   | Ctypes.Tstruct id _ => Rusttypes.Tstruct nil id
   | Ctypes.Tunion id _ => Rusttypes.Tvariant nil id
-  | Ctypes.Tpointer ty _ => Rusttypes.Tslice Mutable (to_rusttype ty)
+  | Ctypes.Tpointer ty _ => Rusttypes.Tslice Mutable (to_rusttype ty) Rusttypes.PtrUnknown
   (*todo*)
   | Ctypes.Tarray ty' sz _ => Rusttypes.Tarray Mutable (to_rusttype ty') sz
   | Ctypes.Tfunction tyl ty' cc => 
@@ -259,25 +183,178 @@ with to_rusttypelist (tyl: Ctypes.typelist) : Rusttypes.typelist :=
 
 Definition to_rusttype_global (ty: Ctypes.type): Rusttypes.type :=
   match ty with
-  | Ctypes.Tpointer ty _ => Rusttypes.Tslice Immutable (to_rusttype ty)
+  | Ctypes.Tpointer ty _ => Rusttypes.Tslice Immutable (to_rusttype ty) Rusttypes.PtrUnknown
   (*todo*)
   | Ctypes.Tarray ty' sz _ => Rusttypes.Tarray Immutable (to_rusttype ty') sz
   | _ => to_rusttype ty
   end.
 
-Definition get_return_type fe : option type :=
+Definition is_pointer_type (ty: Ctypes.type) : bool :=
+  match ty with
+  | Ctypes.Tpointer _ _ => true
+  | _ => false
+  end.
+
+Definition rust_type_with_origin (ty: Ctypes.type) (origin: ptr_origin) : type :=
+  match ty with
+  | Ctypes.Tpointer ty' _ => Rusttypes.Tslice Rusttypes.Mutable (to_rusttype ty') origin
+  | _ => to_rusttype ty
+  end.
+
+Definition origin_for_decl (default_origin: ptr_origin) (ty: Ctypes.type) : ptr_origin :=
+  match ty with
+  | Ctypes.Tpointer _ _ => default_origin
+  | _ => PtrUnknown
+  end.
+
+Definition register_single_var (default_origin: ptr_origin) (decl: ident * Ctypes.type) : mon unit :=
+  let '(id, ty) := decl in
+  let origin := origin_for_decl default_origin ty in
+  let rty := rust_type_with_origin ty origin in
+  set_var_info id rty origin.
+
+Fixpoint register_var_list (default_origin: ptr_origin) (decls: list (ident * Ctypes.type)) : mon unit :=
+  match decls with
+  | [] => ret tt
+  | decl :: rest =>
+      do _ <- register_single_var default_origin decl;
+      register_var_list default_origin rest
+  end.
+
+Definition lookup_type_in_env (env: var_env) (id: ident) (fallback: type) : type :=
+  match PTree.get id env with
+  | Some info => info.(vi_type)
+  | None => fallback
+  end.
+
+Definition map_decl_types (env: var_env) (decls: list (ident * Ctypes.type)) :
+  list (ident * type) :=
+  List.map (fun '(id, ty) => (id, lookup_type_in_env env id (to_rusttype ty))) decls.
+
+Definition get_rusttype_for_id (id: ident) (cty: Ctypes.type) : mon type :=
+  fun g => Res (lookup_type_in_env g.(gen_env) id (to_rusttype cty)) g.
+
+Definition update_var_origin (id: ident) (ty: Ctypes.type) (origin: ptr_origin) : mon unit :=
+  set_var_info id (rust_type_with_origin ty origin) origin.
+
+Definition prefer_origin (primary fallback: ptr_origin) : ptr_origin :=
+  match primary with
+  | PtrUnknown => fallback
+  | _ => primary
+  end.
+
+Fixpoint infer_origin_from_expr (e: Clight.expr) : mon ptr_origin :=
+  match e with
+  | Clight.Evar id ty =>
+      match ty with
+      | Ctypes.Tpointer _ _ => get_var_origin id
+      | _ => ret PtrUnknown
+      end
+  | Clight.Etempvar id ty =>
+      match ty with
+      | Ctypes.Tpointer _ _ => get_var_origin id
+      | _ => ret PtrUnknown
+      end
+  | Clight.Econst_int i ty =>
+      match ty with
+      | Ctypes.Tpointer _ _ =>
+          if Int.eq i Int.zero then ret PtrNull else ret PtrUnknown
+      | _ => ret PtrUnknown
+      end
+  | Clight.Econst_long l ty =>
+      match ty with
+      | Ctypes.Tpointer _ _ =>
+          if Int64.eq l Int64.zero then ret PtrNull else ret PtrUnknown
+      | _ => ret PtrUnknown
+      end
+  | Clight.Ecast e' ty =>
+      match ty with
+      | Ctypes.Tpointer _ _ => infer_origin_from_expr e'
+      | _ => ret PtrUnknown
+      end
+  | Clight.Eunop _ e' ty =>
+      match ty with
+      | Ctypes.Tpointer _ _ => infer_origin_from_expr e'
+      | _ => ret PtrUnknown
+      end
+  | Clight.Eaddrof _ ty =>
+      match ty with
+      | Ctypes.Tpointer _ _ => ret PtrBorrowed
+      | _ => ret PtrUnknown
+      end
+  | Clight.Ebinop _ e1 e2 ty =>
+      match ty with
+      | Ctypes.Tpointer _ _ =>
+          do o1 <- infer_origin_from_expr e1;
+          do o2 <- infer_origin_from_expr e2;
+          ret (prefer_origin o1 o2)
+      | _ => ret PtrUnknown
+      end
+  | Clight.Ederef e' ty =>
+      match ty with
+      | Ctypes.Tpointer _ _ => ret PtrUnknown
+      | _ => ret PtrUnknown
+      end
+  | Clight.Efield _ _ ty =>
+      match ty with
+      | Ctypes.Tpointer _ _ => ret PtrUnknown
+      | _ => ret PtrUnknown
+      end
+  | _ => ret PtrUnknown
+  end.
+
+Definition update_var_origin_from_expr (id: ident) (ty: Ctypes.type) (rhs: Clight.expr) : mon unit :=
+  match ty with
+  | Ctypes.Tpointer _ _ =>
+      do origin <- infer_origin_from_expr rhs;
+      update_var_origin id ty origin
+  | _ => ret tt
+  end.
+
+Definition update_place_origin (lhs rhs: Clight.expr) : mon unit :=
+  match lhs with
+  | Clight.Evar id ty => update_var_origin_from_expr id ty rhs
+  | Clight.Etempvar id ty => update_var_origin_from_expr id ty rhs
+  | _ => ret tt
+  end.
+
+Definition update_temp_origin (id: ident) (rhs_ty: Ctypes.type) (rhs: Clight.expr) : mon unit :=
+  update_var_origin_from_expr id rhs_ty rhs.
+
+Parameter (malloc_id free_id: ident).
+
+Definition origin_from_call (call_e: Clight.expr) : ptr_origin :=
+  match call_e with
+  | Clight.Evar fid _ =>
+      if ident_eq fid malloc_id then PtrHeap else PtrUnknown
+  | _ => PtrUnknown
+  end.
+
+Definition update_call_result_origin (id: ident) (ret_ty: Ctypes.type) (call_e: Clight.expr) : mon unit :=
+  match ret_ty with
+  | Ctypes.Tpointer _ _ =>
+      let origin := origin_from_call call_e in
+      update_var_origin id ret_ty origin
+  | _ => ret tt
+  end.
+
+Definition get_return_ctype fe : option Ctypes.type :=
   match fe with
   | Evar _ fty 
   | Etempvar _ fty=>
       match fty with
       | Tpointer (Ctypes.Tfunction _ ty' _) _
-      | Ctypes.Tfunction _ ty' _=> Some (to_rusttype ty')
+      | Ctypes.Tfunction _ ty' _=> Some ty'
       | _ => None
       end
   | _ => None
   end.
 
-Parameter (malloc_id free_id: ident).
+Definition get_return_type fe : option type :=
+  match get_return_ctype fe with
+  | Some ty => Some (to_rusttype ty)
+  | None => None
+  end.
 
 Definition malloc_decl : (Ctypes.fundef Clight.function) :=
   (Ctypes.External EF_malloc (Ctypes.Tcons Ctyping.size_t Ctypes.Tnil) (Tpointer Ctypes.Tvoid noattr) cc_default).
@@ -315,101 +392,6 @@ Section TRANSL.
     | Clight.Etempvar _ _ => 2
     end.
 
-  Fixpoint get_vars_from_expr (e: Clight.expr) : list ident :=
-  match e with
-  | Clight.Evar id _ | Etempvar id _ => [id]
-  | Clight.Ederef e' _ 
-  | Clight.Eaddrof e' _ 
-  | Clight.Eunop _ e' _ 
-  | Clight.Ecast e' _ 
-  | Clight.Efield e' _ _ => get_vars_from_expr e'
-  | Clight.Ebinop _ e1 e2 _ => get_vars_from_expr e1 ++ get_vars_from_expr e2
-  | Clight.Econst_int _ _
-  | Clight.Econst_float _ _
-  | Clight.Econst_single _ _
-  | Clight.Econst_long _ _
-  | Clight.Esizeof _ _
-  | Clight.Ealignof _ _ => []
-  end.
-
-  Fixpoint get_vars_from_expr_list (el: list Clight.expr) : list ident :=
-    match el with
-    | [] => []
-    | e :: rest => get_vars_from_expr e ++ get_vars_from_expr_list rest
-    end.
-
-  Fixpoint get_vars_from_stmt (s: Clight.statement) : list ident :=
-    let get_vars_from_opt_id (optid: option ident) : list ident :=
-      match optid with
-      | Some id => [id]
-      | None => []
-      end
-    in
-    match s with
-    | Clight.Sskip 
-    | Clight.Sbreak 
-    | Clight.Scontinue 
-    | Clight.Sgoto _
-    | Clight.Sreturn None => []
-    | Clight.Sassign e1 e2 => get_vars_from_expr e1 ++ get_vars_from_expr e2
-    | Clight.Sset id e => id :: get_vars_from_expr e
-    | Clight.Scall optid e args =>
-        get_vars_from_opt_id optid ++ get_vars_from_expr e ++ get_vars_from_expr_list args
-    | Sbuiltin optid _ _ args =>
-        get_vars_from_opt_id optid ++ get_vars_from_expr_list args
-    | Clight.Sifthenelse e s1 s2 => 
-        get_vars_from_expr e ++ get_vars_from_stmt s1 ++ get_vars_from_stmt s2
-    | Clight.Sloop s1 s2 => 
-        get_vars_from_stmt s1 ++ get_vars_from_stmt s2
-    | Clight.Sreturn (Some e) => 
-        get_vars_from_expr e
-    | Clight.Sswitch e cases => 
-        get_vars_from_expr e ++ get_vars_from_labeled_stmts cases
-    | Clight.Slabel _ s1 => 
-        get_vars_from_stmt s1
-    | Clight.Ssequence s1 s2 =>
-        get_vars_from_stmt s1 ++ get_vars_from_stmt s2
-    end
-  with get_vars_from_labeled_stmts (ls: Clight.labeled_statements) : list ident :=
-    match ls with
-    | LSnil => []
-    | LScons _ st rest => get_vars_from_stmt st ++ get_vars_from_labeled_stmts rest
-    end.
-
-  (* 新增：常量表达式求值器 *)
-  Fixpoint eval_const_expr (e: Clight.expr) : option Z :=
-    match e with
-    | Clight.Econst_int i _ => Some (Int.unsigned i)
-    | Clight.Ebinop op e1 e2 _ =>
-        match eval_const_expr e1, eval_const_expr e2 with
-        | Some v1, Some v2 =>
-            match op with
-            | Oadd => Some (Z.add v1 v2)
-            | Osub => Some (Z.sub v1 v2)
-            | Omul => Some (Z.mul v1 v2)
-            | Odiv => if Z.eqb v2 0%Z then None else Some (Z.div v1 v2)
-            | Omod => if Z.eqb v2 0%Z then None else Some (Z.rem v1 v2)
-            | _ => None (* 其他二元运算不认为是常量整数运算 *)
-            end
-        | _, _ => None
-        end
-    | Clight.Ecast e' _ =>
-        (* 简单处理类型转换，只关心其内部表达式 *)
-        eval_const_expr e'
-    | _ => None (* 其他所有表达式（如变量）都认为不是常量 *)
-    end.
-
-  Definition find_base_and_index (ptr_expr: Clight.expr) 
-  : option (ident * Ctypes.type * Clight.expr) :=
-    match ptr_expr with
-    (* 匹配 a[i] 这种形式，它在 C light 中通常表示为 *(a+i) *)
-    | Clight.Ebinop Cop.Oadd (Clight.Evar base_id base_ty) index_expr _ =>
-        Some (base_id, base_ty, index_expr)
-    (* 匹配 a[0] 这种形式，它在 C light 中可能简化为 *a *)
-    | Clight.Evar base_id base_ty =>
-        Some (base_id, base_ty, Clight.Econst_int (Int.zero) (Ctypes.Tint Ctypes.I32 Ctypes.Signed noattr))
-    | _ => None
-    end.
 
   (* This helper function is used to generate a place for sub-expr of deref expr in c *)
   Fixpoint sub_cexpr_to_place (locals: list ident) (depth: nat) (e: Clight.expr): mon Rustlight.place :=
@@ -420,21 +402,27 @@ Section TRANSL.
       (* let cexpr_to_place := cexpr_to_place d in *)
       let cexpr_to_pexpr := cexpr_to_pexpr locals d in
       match e with
-      | Clight.Evar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
-      | Clight.Etempvar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
+      | Clight.Evar id ty =>
+          do rty <- get_rusttype_for_id id ty;
+          ret (Rustlight.Plocal id rty)
+      | Clight.Etempvar id ty =>
+          do rty <- get_rusttype_for_id id ty;
+          ret (Rustlight.Plocal id rty)
       | Clight.Ederef e' ty =>
           do p <- sub_cexpr_to_place e';
-          ret (Rustlight.Pderef p (to_rusttype ty))
+          ret (Rustlight.Pderef p (rust_type_with_origin ty PtrUnknown))
       | Clight.Efield e' id ty =>
           do p <- sub_cexpr_to_place e';
-          ret (Rustlight.Pfield p id (to_rusttype ty))
+          ret (Rustlight.Pfield p id (rust_type_with_origin ty PtrUnknown))
       | Clight.Ebinop op e1 e2 ty => 
             match ty with
             | Ctypes.Tpointer _ _ =>
-                do i <- gensym locals (to_rusttype ty);
+                do origin <- infer_origin_from_expr e;
+                let rty := rust_type_with_origin ty origin in
+                do i <- gensym locals rty;
+                do _ <- update_var_origin i ty origin;
                 do e1' <- cexpr_to_pexpr e1;
                 do e2' <- cexpr_to_pexpr e2;
-                let rty := to_rusttype ty in
                 let re := Rustlight.Ebinop op e1' e2' rty in
                 ret (Rustlight.Pparenthesize i rty re)
             | _ =>
@@ -463,64 +451,28 @@ Section TRANSL.
       let sub_cexpr_to_place := sub_cexpr_to_place locals d in
       (* let cexpr_to_pexpr := cexpr_to_pexpr d in *)
       match e with
-      | Clight.Evar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
-      | Clight.Etempvar id ty => ret (Rustlight.Plocal id (to_rusttype ty))
-      | Clight.Ederef e' ty=>
-          match find_base_and_index e' with
-          | Some (base_id, base_ty, index_expr) =>
-                do g <- get_gen;
-                if external_is_base_ptr_managed base_id g.(gen_scopes) then
-                  (* 基指针是分裂树的根，必须特殊处理 *)
-                  match eval_const_expr index_expr with
-                  | Some const_index =>
-                      (* 索引是常量，重写访问 *)
-                      let '(new_base_id, new_index_z) := external_resolve_direct_access base_id const_index g.(gen_scopes) in
-                      (* ty 是 C 中数组元素类型，rty 是对应的 Rust 类型, e.g., i32 *)
-                      let rty := to_rusttype ty in
-                      (* new_base_id 是一个切片，其类型是 &mut [i32] *)
-                      let slice_ty := Rusttypes.Tslice Rusttypes.Mutable rty in
-                      (* index 的类型是 usize *)
-                      let usize_ty := Rusttypes.Tint I32 Unsigned in
-
-                      (* 1. 创建代表切片的 pexpr: e.g., `_b` *)
-                      let new_base_pexpr := Eplace (Plocal new_base_id slice_ty) slice_ty in
-                      (* 2. 创建代表新索引的 pexpr: e.g., `2` *)
-                      let new_index_pexpr := Econst_int (Int.repr new_index_z) usize_ty in
-
-                      (* 3. 构造 (_b + 2) 这个中间表达式，它的类型是一个指向元素的指针 *)
-                      let pointer_ty := to_rusttype (Ctypes.Tpointer ty Ctypes.noattr) in
-                      let binop_expr := Ebinop Oadd new_base_pexpr new_index_pexpr pointer_ty in
-
-                      (* 4. 构造最终的 place: *(_b + 2)，这会被打印成 _b[2] *)
-                      do temp_id <- gensym locals pointer_ty;
-                      ret (Rustlight.Pderef (Pparenthesize temp_id pointer_ty binop_expr) rty)
-                  | None =>
-                      (* 索引是动态的，禁止在已分裂的根数组上使用 *)
-                      error (msg "Dynamic index on a split array is not allowed.")
-                  end
-               else
-                  (* 基指针是叶子节点或普通指针，恢复到原始的翻译逻辑 *)
-                  do p <- sub_cexpr_to_place e';
-                  ret (Rustlight.Pderef p (to_rusttype ty))
-          | None =>
-              (* 不符合 base[index] 模式，作为普通指针解引用处理，恢复到原始逻辑 *)
-              do p <- sub_cexpr_to_place e';
-              ret (Rustlight.Pderef p (to_rusttype ty))
-          end
+      | Clight.Evar id ty =>
+          do rty <- get_rusttype_for_id id ty;
+          ret (Rustlight.Plocal id rty)
+      | Clight.Etempvar id ty =>
+          do rty <- get_rusttype_for_id id ty;
+          ret (Rustlight.Plocal id rty)
+      | Clight.Ederef e' ty =>
+          do p <- sub_cexpr_to_place e';
+          ret (Rustlight.Pderef p (rust_type_with_origin ty PtrUnknown))
       | Clight.Efield e' id ty => 
           do p <- cexpr_to_place e';
-          ret (Rustlight.Pfield p id (to_rusttype ty))
-      | Clight.Ebinop op e1 e2 ty => 
+          ret (Rustlight.Pfield p id (rust_type_with_origin ty PtrUnknown))
+      | Clight.Ebinop _ _ _ _ => 
           error (msg "Unsupported lvalue expression: binary operation")
-      (* FIXME: support Pdowncast *)
       | Clight.Econst_int _ _ => error (msg "Unsupported lvalue expression: constant integer")
       | Clight.Econst_float _ _ => error (msg "Unsupported lvalue expression: constant float")
       | Clight.Econst_single _ _ => error (msg "Unsupported lvalue expression: constant single")
       | Clight.Econst_long _ _ => error (msg "Unsupported lvalue expression: constant long")
-      | Clight.Eunop op e' ty => error (msg ("Unsupported lvalue expression: unary operation "))
-      | Clight.Esizeof ty' ty => error (msg "Unsupported lvalue expression: sizeof")
-      | Clight.Ealignof ty' ty => error (msg "Unsupported lvalue expression: alignof")
-      | Clight.Ecast e' ty => 
+      | Clight.Eunop _ _ _ => error (msg ("Unsupported lvalue expression: unary operation "))
+      | Clight.Esizeof _ _ => error (msg "Unsupported lvalue expression: sizeof")
+      | Clight.Ealignof _ _ => error (msg "Unsupported lvalue expression: alignof")
+      | Clight.Ecast _ _ => 
           error (msg "Unsupported lvalue expression: cast")
       | _ => error (msg "Unsupported lvalue expression: unknown expression")
       end
@@ -533,39 +485,77 @@ Section TRANSL.
       let cexpr_to_place := cexpr_to_place locals d in
       let cexpr_to_pexpr := cexpr_to_pexpr locals d in
       match e with
-      | Clight.Econst_int i ty => ret (Rustlight.Econst_int i (to_rusttype ty))
+      | Clight.Econst_int i ty =>
+          let rty :=
+            match ty with
+            | Ctypes.Tpointer _ _ =>
+                if Int.eq i Int.zero
+                then rust_type_with_origin ty PtrNull
+                else rust_type_with_origin ty PtrUnknown
+            | _ => to_rusttype ty
+            end in
+          ret (Rustlight.Econst_int i rty)
       | Clight.Econst_float f ty => ret (Rustlight.Econst_float f (to_rusttype ty))
       | Clight.Econst_single f ty => ret (Rustlight.Econst_single f (to_rusttype ty))
-      | Clight.Econst_long l ty => ret (Rustlight.Econst_long l (to_rusttype ty))
+      | Clight.Econst_long l ty =>
+          let rty :=
+            match ty with
+            | Ctypes.Tpointer _ _ =>
+                if Int64.eq l Int64.zero
+                then rust_type_with_origin ty PtrNull
+                else rust_type_with_origin ty PtrUnknown
+            | _ => to_rusttype ty
+            end in
+          ret (Rustlight.Econst_long l rty)
       | Clight.Eunop op e' ty => 
           do pe <- cexpr_to_pexpr e';
-          ret (Rustlight.Eunop op pe (to_rusttype ty))
+          match ty with
+          | Ctypes.Tpointer _ _ =>
+              do origin <- infer_origin_from_expr (Clight.Eunop op e' ty);
+              ret (Rustlight.Eunop op pe (rust_type_with_origin ty origin))
+          | _ =>
+              ret (Rustlight.Eunop op pe (to_rusttype ty))
+          end
       | Clight.Ebinop op e1 e2 ty => 
           do pe1 <- cexpr_to_pexpr e1;
           do pe2 <- cexpr_to_pexpr e2;
-          ret (Rustlight.Ebinop op pe1 pe2 (to_rusttype ty))
+          match ty with
+          | Ctypes.Tpointer _ _ =>
+              do origin <- infer_origin_from_expr (Clight.Ebinop op e1 e2 ty);
+              ret (Rustlight.Ebinop op pe1 pe2 (rust_type_with_origin ty origin))
+          | _ =>
+              ret (Rustlight.Ebinop op pe1 pe2 (to_rusttype ty))
+          end
       | Clight.Evar id ty => 
-          let p := Rustlight.Plocal id (to_rusttype ty) in
-          (* ret (Eplace p (to_rusttype ty)) *)
-          ret (Eplace p (to_rusttype ty))
+          do rty <- get_rusttype_for_id id ty;
+          let p := Rustlight.Plocal id rty in
+          ret (Eplace p rty)
       | Clight.Etempvar id ty =>
-          let p := Rustlight.Plocal id (to_rusttype ty) in
-          (* ret (Eplace p (to_rusttype ty)) *)
-          ret (Eplace p (to_rusttype ty))
+          do rty <- get_rusttype_for_id id ty;
+          let p := Rustlight.Plocal id rty in
+          ret (Eplace p rty)
       | Clight.Eaddrof e' ty => 
-          do i <- gensym locals (to_rusttype ty);
+          let rty := rust_type_with_origin ty PtrBorrowed in
+          do i <- gensym locals rty;
           do p <- cexpr_to_place e';
-          ret (Eref i Mutable p (to_rusttype ty))
+          ret (Eref i Mutable p rty)
       | Clight.Ederef e' ty => 
           do e'' <- cexpr_to_pexpr e';
-          ret (Rustlight.Ederef e'' (to_rusttype ty))
+          ret (Rustlight.Ederef e'' (rust_type_with_origin ty PtrUnknown))
       | Clight.Efield e' id ty => 
           do p <- cexpr_to_place e';
-          ret (Rustlight.Eplace (Rustlight.Pfield p id (to_rusttype ty)) (to_rusttype ty))
+          let rty := rust_type_with_origin ty PtrUnknown in
+          ret (Rustlight.Eplace (Rustlight.Pfield p id rty) rty)
       | Clight.Esizeof ty ty' => ret (Rustlight.Esizeof (to_rusttype ty) (to_rusttype ty'))
       | Clight.Ecast e' ty => 
           do pe <- cexpr_to_pexpr e';
-          ret (Rustlight.Eas pe (to_rusttype ty))
+          match ty with
+          | Ctypes.Tpointer _ _ =>
+              do origin <- infer_origin_from_expr (Clight.Ecast e' ty);
+              ret (Rustlight.Eas pe (rust_type_with_origin ty origin))
+          | _ =>
+              ret (Rustlight.Eas pe (to_rusttype ty))
+          end
       (* | Clight.Ealignof ty ty' => ret (Rustlight.Ealignof (to_rusttype ty) (to_rusttype ty')) *)
       | _ => error (msg "Unsupported rvalue expression")
       end
@@ -735,28 +725,7 @@ Section TRANSL.
         Clight.Sbuiltin optid ef tyargs args
     end.
 
-  (* Helper to identify malloc calls *)
-  
-  Definition get_temp_id (e: Clight.expr) : mon ident :=
-  match e with
-  | Clight.Evar id _ 
-  | Clight.Etempvar id _
-  | Clight.Ecast (Clight.Etempvar id _) _
-  | Clight.Ecast (Clight.Evar id _) _ => ret id
-  | _ =>
-      error (msg "Cannot get return value id of function: Clight2Rustlight")
-  end.
-
-  Fixpoint nub {A} (eq_dec: forall x y : A, {x = y} + {x <> y}) (l: list A) : list A :=
-  match l with
-  | [] => []
-  | x :: xs =>
-    if in_dec eq_dec x xs
-    then nub eq_dec xs
-    else x :: nub eq_dec xs
-  end.
-
-  Fixpoint transl_stmt (locals: list ident) (s: Clight.statement): mon Rustlight.statement :=
+  Fixpoint transl_stmt (locals: list ident) (ret_ty: Ctypes.type) (s: Clight.statement): mon Rustlight.statement :=
   let cexpr_to_place := cexpr_to_place locals in
   let cexpr_to_pexpr := cexpr_to_pexpr locals in
   
@@ -766,186 +735,79 @@ Section TRANSL.
   | Clight.Scontinue => ret Rustlight.Scontinue
 
   | Clight.Sassign e1 e2 =>
-    (* 1. uncast helper remains the same *)
-    let fix uncast (e: Clight.expr) : Clight.expr :=
-      match e with
-      | Clight.Ecast e' _ => uncast e'
-      | _ => e
-      end
-    in
-    (* 2. default_assign helper remains the same *)
-    let do_default_assign (_:unit) :=
-      let vars_to_flush := nub ident_eq (get_vars_from_expr e1 ++ get_vars_from_expr e2) in
-      do flush_stmts <- flush_assignments_m vars_to_flush; (* <-- 修改这里 *)
+      do _ <- update_place_origin e1 e2;
       do p <- cexpr_to_place (expr_depth e1) e1;
       do pe <- cexpr_to_pexpr (expr_depth e2) e2;
-      ret (Ssequence flush_stmts (Rustlight.Sassign p (Rustlight.Epure pe)))
-    in
-    (* 3. handle_as_split helper is now modified *)
-    let handle_as_split base_ptr_id ty new_ptr_id c_offset :=
-      let ty_arr := 
-        match ty with
-        | Tpointer ty' _ => ty' (* Look through one level of pointer *)
-        | _ => ty
-        end
-      in
-      match ty_arr with
-      | Ctypes.Tarray _ sz _ =>
-          let array_size := Z.abs sz in
-          if Z.eqb array_size 0%Z then
-            error (msg "SplitTree: Array size is zero or unknown.")
-          else
-            (* MODIFICATION: Call the new monadic wrapper function here.
-               Instead of `ret (external_find_and_split ...)` we now call `find_and_split_m`.
-               Since `find_and_split_m` already returns a `mon` value, we don't need `ret`. *)
-            find_and_split_m base_ptr_id new_ptr_id c_offset array_size
-      | _ =>
-          (* Not an array - check if it's a pointer type (could be from malloc) *)
-          match ty with
-          | Tpointer _ _ =>
-              (* It's a pointer type - treat as potentially malloc'd array, use large size *)
-              find_and_split_m base_ptr_id new_ptr_id c_offset 1000000%Z
-          | _ =>
-              do g <- get_gen;
-              if external_is_base_ptr_managed base_ptr_id g.(gen_scopes) then
-                (* base_ptr is a managed pointer, proceed with split *)
-                find_and_split_m base_ptr_id new_ptr_id c_offset 0%Z
-              else
-                do_default_assign tt
-          end
-      end
-    in
-    (* 4. The main logic remains exactly the same. *)
-    match e1 with
-    | Evar new_ptr_id _ =>
-      match uncast e2 with
-      | Clight.Ebinop Oadd (Clight.Evar base_ptr_id ty) (Clight.Econst_int offset _) _ =>
-          handle_as_split base_ptr_id ty new_ptr_id (Int.unsigned offset)
-      | Clight.Evar base_ptr_id ty_arr =>
-          handle_as_split base_ptr_id ty_arr new_ptr_id 0%Z
-      | _ =>
-          do_default_assign tt
-      end
-    | _ =>
-      do_default_assign tt
-    end
+      ret (Rustlight.Sassign p (Rustlight.Epure pe))
 
   | Clight.Sset id e =>
-      (* Check if this is a pointer assignment that should use split tree *)
-      let uncast e :=
-        match e with
-        | Clight.Ecast e' _ => e'
-        | _ => e
-        end
-      in
-      let do_default_set (_:unit) :=
-        let vars_to_flush := nub ident_eq (get_vars_from_expr e) in
-        do flush_stmts <- flush_assignments_m vars_to_flush;
-        do pe <- cexpr_to_pexpr (expr_depth e) e;
-        let assign_stmt := Rustlight.Sassign (Rustlight.Plocal id (to_rusttype (Clight.typeof e))) (Rustlight.Epure pe) in
-        ret (Ssequence flush_stmts assign_stmt)
-      in
-      let handle_as_split_set base_ptr_id ty new_ptr_id c_offset :=
-        let ty_arr :=
-          match ty with
-          | Tpointer ty' _ => ty'
-          | _ => ty
-          end
-        in
-        match ty_arr with
-        | Ctypes.Tarray _ sz _ =>
-            let array_size := Z.abs sz in
-            if Z.eqb array_size 0%Z then
-              error (msg "SplitTree: Array size is zero or unknown.")
-            else
-              find_and_split_m base_ptr_id new_ptr_id c_offset array_size
-        | _ =>
-            (* Not an array type - check if managed OR if it's a pointer type (could be from malloc) *)
-            match ty with
-            | Tpointer _ _ =>
-                (* It's a pointer type - treat as potentially malloc'd, use large size *)
-                find_and_split_m base_ptr_id new_ptr_id c_offset 1000000%Z
-            | _ =>
-                do g <- get_gen;
-                if external_is_base_ptr_managed base_ptr_id g.(gen_scopes) then
-                  find_and_split_m base_ptr_id new_ptr_id c_offset 0%Z
-                else
-                  do_default_set tt
-            end
-        end
-      in
-      match uncast e with
-      | Clight.Ebinop Oadd (Clight.Evar base_ptr_id ty) (Clight.Econst_int offset _) _ =>
-          handle_as_split_set base_ptr_id ty id (Int.unsigned offset)
-      | Clight.Evar base_ptr_id ty_arr =>
-          (* For simple assignments like a = _128, use a large placeholder size *)
-          (* This allows malloc-derived pointers to be managed by split tree *)
-          handle_as_split_set base_ptr_id ty_arr id 0%Z
-      | _ =>
-          do_default_set tt
-      end
+      let ty := Clight.typeof e in
+      do _ <- update_temp_origin id ty e;
+      do pe <- cexpr_to_pexpr (expr_depth e) e;
+      do rty <- get_rusttype_for_id id ty;
+      let assign_stmt := Rustlight.Sassign (Rustlight.Plocal id rty) (Rustlight.Epure pe) in
+      ret assign_stmt
 
   | Clight.Sifthenelse e s1 s2 =>
-    let vars_to_flush := nub ident_eq (get_vars_from_expr e) in
-    do flush_stmts <- flush_assignments_m vars_to_flush;
-    do pe <- cexpr_to_pexpr (expr_depth e) e;
-    (* 使用 with_new_scope 来为每个分支创建作用域 *)
-    do rs1 <- with_new_scope (transl_stmt locals s1);
-    do rs2 <- with_new_scope (transl_stmt locals s2);
-    let if_stmt := Rustlight.Sifthenelse (Rustlight.Epure pe) rs1 rs2 in
-    ret (Ssequence flush_stmts if_stmt)
+      do pe <- cexpr_to_pexpr (expr_depth e) e;
+      do rs1 <- transl_stmt locals ret_ty s1;
+      do rs2 <- transl_stmt locals ret_ty s2;
+      ret (Rustlight.Sifthenelse (Rustlight.Epure pe) rs1 rs2)
 
   | Clight.Scall optid e args =>
-      let vars_to_flush := nub ident_eq (get_vars_from_expr e ++ get_vars_from_expr_list args) in
-      do flush_stmts <- flush_assignments_m vars_to_flush;
-      do translated_call <- (
-        do pe <- cexpr_to_pexpr (expr_depth e) e;
-        do pargs <- transl_expr_list locals args;
-        match optid with
-        | None => 
-            do dummy_place <- empty_place locals;
-            ret (Rustlight.Scall dummy_place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
-        | Some id => 
-            match get_return_type e with
-            | Some ty' =>
-                let place := Rustlight.Plocal id ty' in
-                ret (Rustlight.Scall place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
-            | None => 
-                error (msg "Cannot get return type of function in Scall: Clight2Rustlight")
-            end
-        end
-      );
-      ret (Ssequence flush_stmts translated_call)
+      do pe <- cexpr_to_pexpr (expr_depth e) e;
+      do pargs <- transl_expr_list locals args;
+      match optid with
+      | None => 
+          do dummy_place <- empty_place locals;
+          ret (Rustlight.Scall dummy_place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
+      | Some id => 
+          match get_return_ctype e with
+          | Some cty =>
+              do _ <- update_call_result_origin id cty e;
+              do rty <- get_rusttype_for_id id cty;
+              let place := Rustlight.Plocal id rty in
+              ret (Rustlight.Scall place (Rustlight.Epure pe) (map pexpr_to_expr pargs))
+          | None => 
+              error (msg "Cannot get return type of function in Scall: Clight2Rustlight")
+          end
+      end
 
   | Clight.Sreturn (Some e) => 
-      let vars_to_flush := nub ident_eq (get_vars_from_expr e) in
-      do flush_stmts <- flush_assignments_m vars_to_flush;
+      let expected_cty := ret_ty in
+      do origin_expr <- infer_origin_from_expr e;
+      let origin :=
+        match expected_cty, e with
+        | Ctypes.Tpointer _ _, Clight.Econst_int i _ =>
+            if Int.eq i Int.zero then PtrNull else origin_expr
+        | Ctypes.Tpointer _ _, Clight.Econst_long l _ =>
+            if Int64.eq l Int64.zero then PtrNull else origin_expr
+        | _, _ => origin_expr
+        end in
+      let rty := rust_type_with_origin expected_cty origin in
       do pe <- cexpr_to_pexpr (expr_depth e) e;
-      do i <- gensym locals (to_rusttype (Clight.typeof e));
-      let ret_place := Rustlight.Plocal i (to_rusttype (Clight.typeof e)) in
+      do i <- gensym locals rty;
+      do _ <- set_var_info i rty origin;
+      let ret_place := Rustlight.Plocal i rty in
       let translated_return := Rustlight.Ssequence
           (Rustlight.Sassign ret_place (Rustlight.Epure pe))
           (Rustlight.Sreturn ret_place)
       in
-      ret (Ssequence flush_stmts translated_return)
+      ret translated_return
       
   | Clight.Sreturn None => 
       do dummy_place <- empty_place locals;
       ret (Rustlight.Sreturn dummy_place)
 
   | Clight.Ssequence s1 s2 => 
-      do rs1 <- transl_stmt locals s1;
-      do rs2 <- transl_stmt locals s2;
+      do rs1 <- transl_stmt locals ret_ty s1;
+      do rs2 <- transl_stmt locals ret_ty s2;
       ret (Rustlight.Ssequence rs1 rs2)
 
   | Clight.Sloop s1 s2 =>
-    (* 循环的两个部分都在同一个新的作用域内 *)
-    do r_body <- with_new_scope (
-        do rs1 <- transl_stmt locals s1;
-        do rs2 <- transl_stmt locals s2;
-        ret (Rustlight.Ssequence rs1 rs2)
-    );
-    ret (Rustlight.Sloop r_body)
+      do rs1 <- transl_stmt locals ret_ty s1;
+      do rs2 <- transl_stmt locals ret_ty s2;
+      ret (Rustlight.Sloop (Rustlight.Ssequence rs1 rs2))
 
   | _ => error (msg "Unsupported statement type in transl_stmt")
   end.
@@ -1057,20 +919,26 @@ Require Import SimplLocals.
     let locals := cenv_ids ++ locals_clight in
     let no_swtich_stmts := elim_switch (Clight.fn_body f) in
 
-    let initial_gen_with_scope :=
-      (* 1. 定义一个简单的递归辅助函数来添加参数 *)
-      let fix add_params_to_scope (params: list (ident * Ctypes.type)) (env: TranslationEnv.t) : TranslationEnv.t :=
-        match params with
-        | [] => env
-        | (p_id, p_ty) :: rest => add_params_to_scope rest (TranslationEnv.add_var p_id p_ty env)
-        end
-      in
-      (* 2. 分步构建初始环境，使类型更明确 *)
-      let g := initial_generator in
-      let initial_env := TranslationEnv.enter_scope g.(gen_scopes) in
-      let env_with_params := add_params_to_scope (Clight.fn_params f) initial_env in
-      mkgenerator g.(gen_next) g.(gen_trail) env_with_params
+    let init_gen :=
+      let after_params := register_var_list PtrBorrowed (Clight.fn_params f) in
+      match after_params initial_generator with
+      | Err msg => Error msg
+      | Res _ g_params =>
+          let after_locals := register_var_list PtrUnknown (Clight.fn_vars f) in
+          match after_locals g_params with
+          | Err msg => Error msg
+          | Res _ g_locals =>
+              let after_temps := register_var_list PtrUnknown (Clight.fn_temps f) in
+              match after_temps g_locals with
+              | Err msg => Error msg
+              | Res _ g_final => OK g_final
+              end
+          end
+      end
     in
+    match init_gen with
+    | Error msg => Error msg
+    | OK initial_gen_with_scope =>
     (* let max_id := Pos.succ (max_pos locals) in *)
     (* main function in rust is different in c 
      c:    int main() { ...; return 0; }
@@ -1079,12 +947,15 @@ Require Import SimplLocals.
       match no_swtich_stmts with
       | Clight.Ssequence inner_stmt _ =>  (* delete Ssequence (return 0) *)
         let inner_stmt := remove_return_zero_pattern inner_stmt in  
-              match transl_stmt locals inner_stmt initial_gen_with_scope with
+              match transl_stmt locals (Clight.fn_return f) inner_stmt initial_gen_with_scope with
               | Err msg => Error msg
               | Res body g =>
                   (* check that temporaries are not repeated *)
                   if list_norepet_dec ident_eq (var_names g.(gen_trail)) then
                     if list_disjoint_dec ident_eq locals (var_names g.(gen_trail)) then
+                    let param_types := map_decl_types g.(gen_env) (Clight.fn_params f) in
+                    let local_types := map_decl_types g.(gen_env)
+                                        (Clight.fn_vars f ++ Clight.fn_temps f) in
                     OK {| Rustlight.fn_generic_origins := [];
                          Rustlight.fn_origins_relation := [];
                          Rustlight.fn_drop_glue := None;
@@ -1092,10 +963,8 @@ Require Import SimplLocals.
                          (* In rust, return value of main is Tunit *)
                          Rustlight.fn_callconv := (Clight.fn_callconv f);
                          (* Rustlight.fn_vars := locals ++ g.(gen_trail); *)
-                         Rustlight.fn_vars := (List.map (fun '(id, ty) => (id, to_rusttype ty)) 
-                                                 (Clight.fn_vars f ++ Clight.fn_temps f)) ++ g.(gen_trail);
-                         Rustlight.fn_params := List.map (fun '(id, ty) => (id, to_rusttype ty)) 
-                                                  (Clight.fn_params f);
+                         Rustlight.fn_vars := local_types ++ g.(gen_trail);
+                         Rustlight.fn_params := param_types;
                          Rustlight.fn_body := body
                        |}
                     else
@@ -1118,21 +987,22 @@ Require Import SimplLocals.
       end
     else
       (* other function *)
-      match transl_stmt locals no_swtich_stmts initial_gen_with_scope with
+      match transl_stmt locals (Clight.fn_return f) no_swtich_stmts initial_gen_with_scope with
       | Err msg => Error msg
       | Res body g =>
           (* check that temporaries are not repeated *)
           if list_norepet_dec ident_eq (var_names g.(gen_trail)) then
             if list_disjoint_dec ident_eq locals (var_names g.(gen_trail)) then
+            let param_types := map_decl_types g.(gen_env) (Clight.fn_params f) in
+            let local_types := map_decl_types g.(gen_env)
+                                    (Clight.fn_vars f ++ Clight.fn_temps f) in
             OK {| Rustlight.fn_generic_origins := [];
                  Rustlight.fn_origins_relation := [];
                  Rustlight.fn_drop_glue := None;
                  Rustlight.fn_return := to_rusttype (Clight.fn_return f);
                  Rustlight.fn_callconv := (Clight.fn_callconv f);
-                 Rustlight.fn_vars := (List.map (fun '(id, ty) => (id, to_rusttype ty)) 
-                                         (Clight.fn_vars f ++ Clight.fn_temps f)) ++ g.(gen_trail);
-                 Rustlight.fn_params := List.map (fun '(id, ty) => (id, to_rusttype ty)) 
-                                          (Clight.fn_params f);
+                 Rustlight.fn_vars := local_types ++ g.(gen_trail);
+                 Rustlight.fn_params := param_types;
                  Rustlight.fn_body := body
                |}
             else
@@ -1150,7 +1020,8 @@ Require Import SimplLocals.
               Error msg
           else
             Error (msg "repeated temporary variables in Clight2rustlight")
-      end.
+      end
+    end.
 
 (* Definition tint := Ctypes.Tint I32 Signed noattr.
 Parameter _b : ident.

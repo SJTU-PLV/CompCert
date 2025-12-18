@@ -90,7 +90,7 @@ let rec find_and_split_rec (tree: t) (target_c_offset: int) : ((statement list *
         let relative_offset = target_c_offset - l.start_offset in
         let left_tmp_id = fresh_atom () in
         let right_tmp_id = fresh_atom () in
-        let slice_type = Tslice(Mutable, Tint(Ctypes.I32, Ctypes.Signed)) in
+        let slice_type = Tslice(Mutable, Tint(Ctypes.I32, Ctypes.Signed), PtrBorrowed) in
         let usize_type = Rusttypes.Tlong(Ctypes.Unsigned) in  (* Use u64 for usize on 64-bit systems *)
         let result_place = Ppair (Plocal (left_tmp_id, slice_type), Plocal (right_tmp_id, slice_type)) in
         let split_stmt =

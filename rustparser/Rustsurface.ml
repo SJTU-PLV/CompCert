@@ -253,7 +253,7 @@ module To_syntax = struct
     | T.Tarray (mut, ty, sz) ->
       pp_print_rust_type symmap pp ty;
       Format.fprintf pp "[%ld]" (Camlcoq.camlint_of_coqint sz)
-    | T.Tslice (mut, ty) ->
+    | T.Tslice (mut, ty, _) ->
       pp_print_rust_type symmap pp ty;
       if mut = T.Mutable then
         pp_print_string pp "mut ";
@@ -1577,4 +1577,3 @@ module To_syntax = struct
     | Errors.Error msg ->
       Diagnostics.fatal_error Diagnostics.no_loc "%a" Driveraux.print_error msg
 end
-

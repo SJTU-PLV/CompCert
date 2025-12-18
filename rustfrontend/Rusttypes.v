@@ -37,6 +37,18 @@ match mt with
 | Mutable => mutable
 | Immutable => const
 end.
+
+Inductive ptr_origin : Type :=
+  | PtrHeap
+  | PtrBorrowed
+  | PtrNull
+  | PtrUnknown.
+
+Lemma ptr_origin_eq :
+  forall (o1 o2 : ptr_origin), {o1 = o2} + {o1 <> o2}.
+Proof.
+  decide equality.
+Defined.
 (** ** Origins  *)
 
 Definition origin : Type := positive.
@@ -51,7 +63,6 @@ Proof.
   decide equality.
 Qed.  
 
-
 (** ** Types  *)
 
 Inductive type : Type :=
@@ -64,7 +75,7 @@ Inductive type : Type :=
 | Treference: origin -> mutkind -> type -> type (**r reference type  *)
 | Traw_pointer:  ptrmutkind -> type -> type (**r raw pointer type *)
 | Tarray: mutkind -> type -> Z -> type                    (**r array type, just used for constant string for now *)
-| Tslice: mutkind -> type -> type  
+| Tslice: mutkind -> type -> ptr_origin -> type  
 | Tstruct: list origin -> ident -> type                              (**r struct types  *)
 | Tvariant: list origin -> ident -> type                             (**r tagged variant types *)
 (* unsafe rust: *)
@@ -116,6 +127,7 @@ Proof.
   decide equality.
   decide equality.
   decide equality.
+  decide equality.
 Defined.
 
 Global Opaque type_eq typelist_eq.
@@ -142,7 +154,7 @@ Fixpoint origin_in_type org ty : bool :=
   | Treference org' _ ty =>
     Pos.eqb org org' || origin_in_type org ty
   | Tarray _ ty _ => origin_in_type org ty
-  | Tslice _ ty => origin_in_type org ty
+  | Tslice _ ty _ => origin_in_type org ty
   | Tstruct orgs _ 
   | Tvariant orgs _ =>
       in_dec Pos.eq_dec org orgs
@@ -156,8 +168,8 @@ Fixpoint replace_type_with_dummy_origin (dummy: origin) (ty: type) : type :=
       Treference dummy mut (replace_type_with_dummy_origin dummy ty)
   | Tarray mt ty sz =>
       Tarray mt (replace_type_with_dummy_origin dummy ty) sz
-  | Tslice mt ty =>
-      Tslice mt (replace_type_with_dummy_origin dummy ty) 
+  | Tslice mt ty po =>
+      Tslice mt (replace_type_with_dummy_origin dummy ty) po
   | Tstruct orgs id =>
       Tstruct (map (fun _ => dummy) orgs) id
   | Tvariant orgs id =>
@@ -200,7 +212,7 @@ Definition access_mode (ty: type) : mode :=
   | Treference _ _ _ => By_value Mptr
   | Traw_pointer _ _ => By_value Mptr
   | Tarray _ _ _ => By_reference
-  | Tslice _ _ => By_value Mptr
+  | Tslice _ _ _ => By_value Mptr
   | Tstruct _ _ => By_copy
   | Tvariant _ _ => By_copy
   | Tvoid => By_nothing
@@ -215,7 +227,7 @@ Definition scalar_type (ty: type) : bool :=
   | Tfloat _
   | Tfunction _ _ _ _ _
   | Tarray _ _ _
-  | Tslice _ _
+  | Tslice _ _ _
   | Treference _ _ _ => true
   | Traw_pointer _ _ => true
   | _ => false
@@ -239,7 +251,7 @@ Fixpoint to_ctype (ty: type) : Ctypes.type :=
   | Tvariant _ id => Ctypes.Tstruct id noattr
   | Treference _ _ ty
   | Traw_pointer _ ty
-  | Tslice _ ty
+  | Tslice _ ty _
   | Tbox ty => Tpointer (to_ctype ty) noattr
       (* match (to_ctype ty) with *)
       (* | Some ty' =>  *)
@@ -340,7 +352,7 @@ Fixpoint complete_type (env: composite_env) (t: type) : bool :=
   | Traw_pointer _ _ => true
   | Tarray _ t' _ => complete_type env t'
   (* | Tslice _ t' => complete_type env t' *)
-  | Tslice _ t' => true
+  | Tslice _ t' _ => true
   | Tstruct _ id | Tvariant _ id =>
       match env!id with Some co => true | None => false end
   end.
@@ -375,7 +387,7 @@ Fixpoint alignof (env: composite_env) (t: type) : Z :=
     | Traw_pointer _ _
     | Tbox _ => if Archi.ptr64 then 8 else 4
     | Tarray _ t' _ => alignof env t'
-    | Tslice _ t' => alignof env t'
+    | Tslice _ t' _ => alignof env t'
     | Tstruct _ id | Tvariant _ id =>
           match env!id with Some co => co_alignof co | None => 1 end
     end).
@@ -542,7 +554,7 @@ Fixpoint sizeof (env: composite_env) (t: type) : Z :=
   | Tfloat F64 => 8
   | Tfunction _ _ _ _ _ => 1
   | Treference _ _ _
-  | Tslice _ _
+  | Tslice _ _ _
   | Traw_pointer _ _
   | Tbox _ => if Archi.ptr64 then 8 else 4
   | Tarray _ t' n => sizeof env t' * Z.max 0 n
@@ -587,7 +599,7 @@ Fixpoint alignof_blockcopy (env: composite_env) (t: type) : Z :=
   | Tint IBool _ => 1
   | Tfunction _ _ _ _ _ => 1
   | Treference _ _ _
-  | Tslice _ _
+  | Tslice _ _ _
   | Traw_pointer _ _
   | Tbox _ => if Archi.ptr64 then 8 else 4
   | Tarray _ t' _ => alignof_blockcopy env t'
@@ -1017,7 +1029,7 @@ Definition typ_of_type (t: type) : AST.typ :=
   | Traw_pointer _ _ 
   | Tbox _ 
   | Tarray _ _ _ 
-  | Tslice _ _ 
+  | Tslice _ _ _
   | Tstruct _ _ 
   | Tvariant _ _ => AST.Tptr
   end.
@@ -1038,7 +1050,7 @@ Definition rettype_of_type (t: type) : AST.rettype :=
   | Tbox _ 
   | Treference _ _ _ 
   | Traw_pointer _ _ 
-  | Tslice _ _ => Tptr 
+  | Tslice _ _ _=> Tptr 
   | Tarray _ _ _ | Tfunction _ _ _ _ _ | Tstruct _ _ | Tvariant _ _ => AST.Tvoid
   end.
 
@@ -1327,17 +1339,18 @@ Lemma field_offset_no_overlap:
   \/ layout_start ofs2 Full + layout_width env ty2 Full <= layout_start ofs1 Full.
 Proof.
   intros until fld. unfold field_offset. generalize 0 as pos.
-  induction fld as [|m fld]; simpl; intros.
-- discriminate.
-- destruct (ident_eq id1 (name_member m)); destruct (ident_eq id2 (name_member m)).
-+ congruence.
-+ inv H0.
-  exploit field_offset_rec_in_range; eauto.
-  exploit layout_field_range; eauto. simpl. lia.
-+ inv H2.
-  exploit field_offset_rec_in_range; eauto.
-  exploit layout_field_range; eauto. simpl. lia.
-+ eapply IHfld; eauto.
+  induction fld as [|m fld IH]; simpl; intros.
+  - discriminate.
+  - destruct (ident_eq id1 (name_member m));
+    destruct (ident_eq id2 (name_member m)).
+    + subst. congruence.
+    + inv H0.
+      exploit field_offset_rec_in_range; eauto.
+      exploit layout_field_range; eauto. simpl. lia.
+    + inv H2.
+      exploit field_offset_rec_in_range; eauto.
+      exploit layout_field_range; eauto. simpl. lia.
+    + eapply IH; eauto.
 Qed.
 
 Lemma field_offset_no_overlap_simplified:
@@ -2521,4 +2534,3 @@ split.
       exists (rsr vi mi).
       split; eexists; constructor; eauto; constructor; eauto.
 Qed.
-
