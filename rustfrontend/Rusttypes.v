@@ -23,6 +23,13 @@ Proof.
   decide equality.
 Defined.
 
+Inductive access_kind := ARead | AWrite.
+
+Lemma access_kind_eq : forall (ak1 ak2 : access_kind), {ak1 = ak2} + {ak1 <> ak2}.
+Proof.
+  decide equality.
+Defined.
+
 
 Inductive flow_kind : Type := ByVal | ByRef.
 

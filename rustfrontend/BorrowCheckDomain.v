@@ -547,18 +547,13 @@ Module LOrgEnv := LUFMap(LOrgSt).
 
 (** Auxilary defintions and functions used for updating origin environment *)
 
-Inductive access_kind : Type :=
-| Aread
-| Awrite.
-
 Inductive access_mode_bor := Ashallow | Adeep.
-
 
 Definition conflict_access (a: access_kind) (mut: mutkind) : bool :=
   match a, mut with
-  | Awrite, _ => true
-  | Aread, Mutable => true
-  | Aread, Immutable => false
+  | AWrite, _ => true
+  | ARead, Mutable => true
+  | ARead, Immutable => false
   end.
 
 (* Definition of relevant loan between the accessed place p with

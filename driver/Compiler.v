@@ -104,6 +104,7 @@ Require RustIRgen.
 Require InitAnalysis.
 Require ElaborateDrop.
 Require MoveChecking.
+Require BorrowCheck.
 Require ReplaceOrigins.
 Require BorrowCheckPolonius.
 Require Clightgen.
@@ -112,7 +113,7 @@ Require Clightgen.
 Require RustIRgenProof.
 Require Clightgenproof.
 Require ElaborateDropProof.
-Require Import MoveCheckingDomain.
+(* Require Import MoveCheckingDomain. *)
 (* Require MoveCheckingSafe. *)
 
 (** Open safety *)
@@ -1311,6 +1312,7 @@ Qed.
              where cc ≡ cc1 @ cc2 (i.e., cc ≡ cc_rust_compcert)
  *)
 
+(*
 
 Theorem rustlight_partial_safe_to_total_safe P Q:
   forall p tp,
@@ -1389,6 +1391,8 @@ Proof.
   intros. eapply rustlight_partial_safe_to_total_safe; auto.
   eapply transf_rustlight_program_match; auto.
 Qed.
+
+*)
 
 (*
 (** Here is the separate compilation case.  Consider a nonempty list [c_units]

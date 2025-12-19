@@ -183,121 +183,121 @@ Fixpoint moved_place_list (al: list expr) : list place :=
 
 (** Prefix of a place  *)
 
-Fixpoint parent_paths (p: place) : list place :=
+Fixpoint parent_places (p: place) : list place :=
   match p with
   | Plocal _ _ => nil
-  | Pfield p' _ _ => p' :: parent_paths p'
-  | Pderef p' _ =>  p' :: parent_paths p'
-  | Pdowncast p' _ _ => p' :: parent_paths p'
+  | Pfield p' _ _ => p' :: parent_places p'
+  | Pderef p' _ =>  p' :: parent_places p'
+  | Pdowncast p' _ _ => p' :: parent_places p'
   end.
 
-Fixpoint shallow_parent_paths (p: place) : list place :=
+Fixpoint shallow_parent_places (p: place) : list place :=
   match p with
   | Plocal _ _ => nil
-  | Pfield p' _ _ => p' :: shallow_parent_paths p'
+  | Pfield p' _ _ => p' :: shallow_parent_places p'
   | Pderef _ _ => nil
   (** FIXMEL: how to handle downcast? *)
-  | Pdowncast p' _ _ => p' :: shallow_parent_paths p'
+  | Pdowncast p' _ _ => p' :: shallow_parent_places p'
   end.
 
-Fixpoint support_parent_paths (p: place) : list place :=
+Fixpoint support_parent_places (p: place) : list place :=
   match p with
   | Plocal _ _ => nil
-  | Pfield p' _ _ => p' :: support_parent_paths p'
+  | Pfield p' _ _ => p' :: support_parent_places p'
   | Pderef p' _ =>
       match typeof_place p' with
       | Tbox _ 
       | Treference _ Mutable _ =>
-          p' :: support_parent_paths p'
+          p' :: support_parent_places p'
       | _ => nil
       end
-  | Pdowncast p' _ _ => p' :: support_parent_paths p'
+  | Pdowncast p' _ _ => p' :: support_parent_places p'
   end.
 
 
 (* Similar to ProjectElem in rustc *)
-Variant path : Type :=
-  | ph_deref
-  | ph_field (fid: ident)
+Variant projection : Type :=
+  | proj_deref
+  | proj_field (fid: ident)
   (* type of the variant here is used in valid_owner proof !! *)
-  | ph_downcast (ty: type) (fid: ident) (* (fty: type) *).
+  | proj_downcast (* (ty: type) *) (fid: ident) (* (fty: type) *)
+.
 
-Lemma path_eq: forall (p1 p2: path), {p1 = p2} + {p1 <> p2}.
+Lemma projection_eq: forall (p1 p2: projection), {p1 = p2} + {p1 <> p2}.
 Proof.
   generalize ident_eq type_eq. intros.
   destruct p1; destruct p2; auto; try (right; congruence).
   destruct (ident_eq fid fid0); subst. auto. right. congruence.
-  destruct (ident_eq fid fid0); destruct (type_eq ty ty0); subst; auto.
-  1-3: right; congruence.
+  destruct (ident_eq fid fid0); subst; auto. right. congruence.
 Defined.
 
-Definition paths : Type := (ident * list path).
+Definition path : Type := (ident * list projection).
 
 (* relate place and path *)
-Fixpoint path_of_place (p: place) : paths :=
+Fixpoint path_of_place (p: place) : path :=
   match p with
   | Plocal id _ =>
       (id, nil)
   | Pderef p1 _ =>
       let (id, phl) := path_of_place p1 in
-      (id, phl ++ [ph_deref])
+      (id, phl ++ [proj_deref])
   | Pfield p1 fid _ =>
       let (id, phl) := path_of_place p1 in
-      (id, phl ++ [ph_field fid])
+      (id, phl ++ [proj_field fid])
   | Pdowncast p1 fid fty =>
       let (id, phl) := path_of_place p1 in
-      (id, phl ++ [ph_downcast (typeof_place p1) fid (* fty *)])
+      (id, phl ++ [proj_downcast (* (typeof_place p1) *) fid (* fty *)])
   end.
 
 (* If ph1 is a prefix of phl2, return trues *)
-Fixpoint paths_contain (phl1 phl2: list path) : bool :=
+Fixpoint projections_contain (phl1 phl2: list projection) : bool :=
   match phl1, phl2 with
   | nil, _ => true
   | ph1 :: phl1', ph2 :: phl2' =>
-      if path_eq ph1 ph2 then
-        paths_contain phl1' phl2'
+      if projection_eq ph1 ph2 then
+        projections_contain phl1' phl2'
       else false
   | _, _ => false
   end.
 
-Fixpoint paths_contain_strict (phl1 phl2: list path) : bool :=
+Fixpoint projections_contain_strict (phl1 phl2: list projection) : bool :=
   match phl1, phl2 with
   | nil, nil => false
   | nil, _ => true
   | ph1 :: phl1', ph2 :: phl2' =>
-      if path_eq ph1 ph2 then
-        paths_contain_strict phl1' phl2'
+      if projection_eq ph1 ph2 then
+        projections_contain_strict phl1' phl2'
       else false
   | _, _ => false
   end.
 
 
-Definition is_shallow_prefix_paths (phl: list path) : bool :=
-  negb (in_dec path_eq ph_deref phl).
+Definition is_shallow_prefix_path (phl: list projection) : bool :=
+  negb (in_dec projection_eq proj_deref phl).
 
-Fixpoint paths_shallow_contain (phl1 phl2: list path) : bool :=
+Fixpoint projections_shallow_contain (phl1 phl2: list projection) : bool :=
   match phl1, phl2 with
-  | nil, _ => is_shallow_prefix_paths phl2
+  | nil, _ => is_shallow_prefix_path phl2
   | ph1 :: phl1', ph2 :: phl2' =>
-      if path_eq ph1 ph2 then
-        paths_shallow_contain phl1' phl2'
+      if projection_eq ph1 ph2 then
+        projections_shallow_contain phl1' phl2'
       else false
   | _, _ => false
   end.
 
 (** TODO: add mutability into path definition *)
-Definition is_support_prefix_paths (phl: list path) : bool :=
+Definition is_support_prefix_path (phl: list projection) : bool :=
   match phl with
-  | ph_deref (* Imutable *) :: _  => false
+  | proj_deref (* Imutable *) :: _  => false
   | _ => true
   end.
 
-Fixpoint paths_support_contain (phl1 phl2: list path) : bool :=
+Fixpoint projection_support_contain (phl1 phl2: list projection) : bool :=
   match phl1, phl2 with
-  | nil, _ => is_support_prefix_paths phl2
+  | nil, _ => is_support_prefix_path phl2
   | ph1 :: phl1', ph2 :: phl2' =>
-      if path_eq ph1 ph2 then
-        paths_support_contain phl1' phl2'
+      if projection_eq ph1 ph2 then
+        projection_support_contain phl1' phl2'
       else false
   | _, _ => false
   end.
@@ -310,28 +310,28 @@ of the places. For example, (Plocal id int) is a prefix of (Pderef
 Definition is_prefix (p1 p2: place) : bool :=
   let (id1, phl1) := path_of_place p1 in
   let (id2, phl2) := path_of_place p2 in
-  ident_eq id1 id2 && paths_contain phl1 phl2.
+  ident_eq id1 id2 && projections_contain phl1 phl2.
 
 Definition is_shallow_prefix (p1 p2: place) : bool :=
   let (id1, phl1) := path_of_place p1 in
   let (id2, phl2) := path_of_place p2 in
-  ident_eq id1 id2 && paths_shallow_contain phl1 phl2.
+  ident_eq id1 id2 && projections_shallow_contain phl1 phl2.
 
 (** TODO: It requires the typing information (i.e., mutability)! So we
 need to add the mutability into the path? For testing, we use the old
 version. *)
 (* Definition is_support_prefix (p1 p2: place) : bool := *)
-(*   let (id1, phl1) := path_of_place p1 in *)
-(*   let (id2, phl2) := path_of_place p2 in *)
-(*   ident_eq id1 id2 && paths_support_contain phl1 phl2. *)
+(*   let (id1, phl1) := projection_of_place p1 in *)
+(*   let (id2, phl2) := projection_of_place p2 in *)
+(*   ident_eq id1 id2 && projection_support_contain phl1 phl2. *)
 
 Definition is_support_prefix (p1 p2: place) : bool :=
-  place_eq p1 p2 || in_dec place_eq p1 (support_parent_paths p2).
+  place_eq p1 p2 || in_dec place_eq p1 (support_parent_places p2).
 
 Definition is_prefix_strict (p1 p2: place) : bool :=
   let (id1, phl1) := path_of_place p1 in
   let (id2, phl2) := path_of_place p2 in
-  ident_eq id1 id2 && paths_contain_strict phl1 phl2.
+  ident_eq id1 id2 && projections_contain_strict phl1 phl2.
 
 Fixpoint local_of_place (p: place) :=
   match p with
@@ -341,89 +341,89 @@ Fixpoint local_of_place (p: place) :=
   | Pdowncast p' _ _ => local_of_place p'
   end.
 
-Lemma paths_contain_refl: forall l,
-    paths_contain l l = true.
+Lemma projections_contain_refl: forall l,
+    projections_contain l l = true.
 Proof.
   induction l; simpl; eauto.
-  destruct path_eq; try congruence; auto.
+  destruct projection_eq; try congruence; auto.
 Qed.
 
 
-Lemma paths_shallow_contain_refl: forall l,
-    paths_shallow_contain l l = true.
+Lemma projections_shallow_contain_refl: forall l,
+    projections_shallow_contain l l = true.
 Proof.
   induction l; simpl; eauto.
-  destruct path_eq; try congruence; auto.
+  destruct projection_eq; try congruence; auto.
 Qed.
 
 
-Lemma paths_contain_strict_not_refl: forall l,
-    paths_contain_strict l l = false.
+Lemma projections_contain_strict_not_refl: forall l,
+    projections_contain_strict l l = false.
 Proof.
   induction l; simpl; eauto.
-  destruct path_eq; try congruence; auto.
+  destruct projection_eq; try congruence; auto.
 Qed.
 
-Lemma paths_contain_trans: forall l1 l2 l3,
-    paths_contain l1 l2 = true ->
-    paths_contain l2 l3 = true ->
-    paths_contain l1 l3 = true.
+Lemma projections_contain_trans: forall l1 l2 l3,
+    projections_contain l1 l2 = true ->
+    projections_contain l2 l3 = true ->
+    projections_contain l1 l3 = true.
 Proof.
   induction l1; intros; simpl in *.
   - destruct l2; simpl in *; auto.
   - destruct l2; simpl in *; auto.
     congruence.
-    destruct path_eq; try congruence. subst.
+    destruct projection_eq; try congruence. subst.
     destruct l3; try congruence.
-    destruct path_eq; eauto.
+    destruct projection_eq; eauto.
 Qed.
 
-Lemma paths_shallow_contain_is_shallow: forall l1 l2,
-    paths_shallow_contain l1 l2 = true ->
-    is_shallow_prefix_paths l1 = true ->
-    is_shallow_prefix_paths l2 = true.
+Lemma projections_shallow_contain_is_shallow: forall l1 l2,
+    projections_shallow_contain l1 l2 = true ->
+    is_shallow_prefix_path l1 = true ->
+    is_shallow_prefix_path l2 = true.
 Proof.
   induction l1; intros; simpl in *; auto.
   destruct l2; try congruence.
-  destruct path_eq; subst; try congruence; auto.
-  unfold is_shallow_prefix_paths in *.
+  destruct projection_eq; subst; try congruence; auto.
+  unfold is_shallow_prefix_path in *.
   eapply negb_true_iff in H0.
-  destruct (in_dec path_eq ph_deref (p :: l1)); simpl in *; try congruence.
+  destruct (in_dec projection_eq proj_deref (p :: l1)); simpl in *; try congruence.
   eapply Decidable.not_or in n. destruct n.
-  destruct path_eq; try congruence.
+  destruct projection_eq; try congruence.
   exploit (IHl1 l2).  auto.
-  eapply negb_true_iff. destruct (in_dec path_eq ph_deref l1); simpl; try congruence; auto.
+  eapply negb_true_iff. destruct (in_dec projection_eq proj_deref l1); simpl; try congruence; auto.
   intros A. eapply negb_true_iff in A.
-  destruct (in_dec path_eq ph_deref l2); simpl in *; try congruence; auto.
+  destruct (in_dec projection_eq proj_deref l2); simpl in *; try congruence; auto.
 Qed.
 
-Lemma paths_shallow_contain_trans: forall l1 l2 l3,
-    paths_shallow_contain l1 l2 = true ->
-    paths_shallow_contain l2 l3 = true ->
-    paths_shallow_contain l1 l3 = true.
+Lemma projections_shallow_contain_trans: forall l1 l2 l3,
+    projections_shallow_contain l1 l2 = true ->
+    projections_shallow_contain l2 l3 = true ->
+    projections_shallow_contain l1 l3 = true.
 Proof.
   induction l1; intros; simpl in *.
-  - eapply paths_shallow_contain_is_shallow; eauto.
+  - eapply projections_shallow_contain_is_shallow; eauto.
   - destruct l2; simpl in *; auto.
     congruence.
-    destruct path_eq; try congruence. subst.
+    destruct projection_eq; try congruence. subst.
     destruct l3; try congruence.
-    destruct path_eq; eauto.
+    destruct projection_eq; eauto.
 Qed.
 
-Lemma paths_contain_strict_trans: forall l1 l2 l3,
-    paths_contain_strict l1 l2 = true ->
-    paths_contain_strict l2 l3 = true ->
-    paths_contain_strict l1 l3 = true.
+Lemma projections_contain_strict_trans: forall l1 l2 l3,
+    projections_contain_strict l1 l2 = true ->
+    projections_contain_strict l2 l3 = true ->
+    projections_contain_strict l1 l3 = true.
 Proof.
   induction l1; intros; simpl in *.
   - destruct l2; simpl in *; auto.
     destruct l3; try congruence.
   - destruct l2; simpl in *; auto.
     congruence.
-    destruct path_eq; try congruence. subst.
+    destruct projection_eq; try congruence. subst.
     destruct l3; try congruence.
-    destruct path_eq; eauto.
+    destruct projection_eq; eauto.
 Qed.
 
     
@@ -456,7 +456,7 @@ Ltac destr_prefix :=
       destruct ident_eq in PRE1; subst; simpl in *; try congruence
   end.
 
-Lemma local_of_paths_of_place: forall p,
+Lemma local_of_path_of_place: forall p,
     local_of_place p = fst (path_of_place p).
 Proof.
   induction p; simpl; auto; destruct (path_of_place p); auto.
@@ -467,7 +467,7 @@ Lemma is_prefix_same_local: forall p1 p2,
     local_of_place p1 = local_of_place p2.
 Proof.
   intros. 
-  rewrite !local_of_paths_of_place. destr_prefix.
+  rewrite !local_of_path_of_place. destr_prefix.
 Qed.  
 
 
@@ -480,7 +480,7 @@ Proof.
   repeat destr_prefix. inv POP.
   eapply andb_true_iff. split; auto.
   destruct ident_eq; try congruence; auto.
-  eapply paths_contain_strict_trans; eauto.
+  eapply projections_contain_strict_trans; eauto.
 Qed.
 
 Lemma is_prefix_refl: forall p, is_prefix p p = true.
@@ -488,7 +488,7 @@ Proof.
   intros. unfold is_prefix.
   destruct (path_of_place p) eqn: POP.
   eapply andb_true_iff. split. destruct ident_eq; try congruence; auto.
-  eapply paths_contain_refl.
+  eapply projections_contain_refl.
 Qed.
 
 Lemma is_prefix_trans: forall p1 p2 p3,
@@ -499,17 +499,17 @@ Proof.
   intros. unfold is_prefix. repeat destr_prefix. inv POP.
   eapply andb_true_iff. split.
   destruct ident_eq; try congruence; auto.
-  eapply paths_contain_trans; eauto.
+  eapply projections_contain_trans; eauto.
 Qed.
 
-Lemma paths_contain_antisym: forall l1 l2,
-    paths_contain_strict l1 l2 = true ->
-    paths_contain l2 l1 = false.
+Lemma projections_contain_antisym: forall l1 l2,
+    projections_contain_strict l1 l2 = true ->
+    projections_contain l2 l1 = false.
 Proof.
   induction l1; intros; simpl in *; auto.
   - destruct l2; try congruence. auto.
   - destruct l2; try congruence. auto.
-    simpl. destruct path_eq; subst; try destruct path_eq; try congruence.
+    simpl. destruct projection_eq; subst; try destruct projection_eq; try congruence.
     auto.
 Qed.
         
@@ -519,23 +519,23 @@ Lemma is_prefix_antisym: forall p1 p2,
 Proof.
   intros. unfold is_prefix.
   destr_prefix. eapply andb_false_iff. right.
-  eapply paths_contain_antisym. eauto.  
+  eapply projections_contain_antisym. eauto.  
 Qed.
 
-Lemma paths_contain_app: forall l1 l2,
-    paths_contain l1 (l1 ++ l2) = true.
+Lemma projections_contain_app: forall l1 l2,
+    projections_contain l1 (l1 ++ l2) = true.
 Proof.
   induction l1; simpl; intros; auto.
-  destruct path_eq; try congruence.
+  destruct projection_eq; try congruence.
 Qed.
 
-Lemma paths_contain_strict_app: forall l1 l2,
+Lemma projections_contain_strict_app: forall l1 l2,
     l2 <> nil ->
-    paths_contain_strict l1 (l1 ++ l2) = true.
+    projections_contain_strict l1 (l1 ++ l2) = true.
 Proof.
   induction l1; simpl; intros; auto.
   destruct l2; try congruence.
-  destruct path_eq; try congruence.
+  destruct projection_eq; try congruence.
   eapply IHl1. auto.
 Qed.
 
@@ -552,41 +552,41 @@ Proof.
     eapply andb_true_iff.
     split.
     destruct ident_eq; try congruence; auto.
-    eapply paths_contain_app; eauto.
+    eapply projections_contain_app; eauto.
 Qed.
 
 Ltac solve_prefix_left :=
   try (eapply andb_true_iff; split;
        [destruct ident_eq; try congruence; auto|]).
 
-Lemma paths_contain_strict_trans2: forall l1 l2 l3,
-    paths_contain l1 l2 = true ->
-    paths_contain_strict l2 l3 = true ->
-    paths_contain_strict l1 l3 = true.
+Lemma projections_contain_strict_trans2: forall l1 l2 l3,
+    projections_contain l1 l2 = true ->
+    projections_contain_strict l2 l3 = true ->
+    projections_contain_strict l1 l3 = true.
 Proof.
   induction l1; intros; simpl in *.
   - destruct l2; simpl in *; auto.
     destruct l3; try congruence.
   - destruct l2; simpl in *; auto.
     congruence.
-    destruct path_eq; try congruence. subst.
+    destruct projection_eq; try congruence. subst.
     destruct l3; try congruence.
-    destruct path_eq; eauto.
+    destruct projection_eq; eauto.
 Qed.
 
-Lemma paths_contain_strict_trans3: forall l1 l2 l3,
-    paths_contain_strict l1 l2 = true ->
-    paths_contain l2 l3 = true ->        
-    paths_contain_strict l1 l3 = true.
+Lemma projections_contain_strict_trans3: forall l1 l2 l3,
+    projections_contain_strict l1 l2 = true ->
+    projections_contain l2 l3 = true ->        
+    projections_contain_strict l1 l3 = true.
 Proof.
   induction l1; intros; simpl in *.
   - destruct l2; simpl in *; auto. congruence.
     destruct l3; try congruence.
   - destruct l2; simpl in *; auto.
     congruence.
-    destruct path_eq; try congruence. subst.
+    destruct projection_eq; try congruence. subst.
     destruct l3; try congruence.
-    destruct path_eq; eauto.
+    destruct projection_eq; eauto.
 Qed.
 
 
@@ -599,16 +599,16 @@ Proof.
   intros. unfold is_prefix_strict.
   repeat destr_prefix. inv POP0.
   solve_prefix_left.
-  eapply paths_contain_strict_trans2; eauto.
+  eapply projections_contain_strict_trans2; eauto.
 Qed.
 
-Lemma paths_contain_strict_implies: forall l1 l2,
-    paths_contain_strict l1 l2 = true ->
-    paths_contain l1 l2 = true.
+Lemma projections_contain_strict_implies: forall l1 l2,
+    projections_contain_strict l1 l2 = true ->
+    projections_contain l1 l2 = true.
 Proof.
   induction l1; simpl; intros; auto.
   destruct l2; try congruence.
-  destruct path_eq; subst; auto.
+  destruct projection_eq; subst; auto.
 Qed.
 
   
@@ -618,7 +618,7 @@ Lemma is_prefix_strict_implies: forall p1 p2,
 Proof.
   intros. unfold is_prefix. destr_prefix.
   solve_prefix_left.
-  eapply paths_contain_strict_implies. auto.
+  eapply projections_contain_strict_implies. auto.
 Qed.
 
 Lemma is_prefix_strict_not_refl: forall p,
@@ -627,18 +627,18 @@ Proof.
   intros. unfold is_prefix_strict.
   destruct (path_of_place p).
   eapply andb_false_iff. right.
-  eapply paths_contain_strict_not_refl.
+  eapply projections_contain_strict_not_refl.
 Qed.
 
 
-Lemma paths_shallow_contain_implies: forall l1 l2,
-    paths_shallow_contain l1 l2 = true ->
-    paths_contain l1 l2 = true.
+Lemma projections_shallow_contain_implies: forall l1 l2,
+    projections_shallow_contain l1 l2 = true ->
+    projections_contain l1 l2 = true.
 Proof.
   induction l1; intros; simpl in *.
   - auto.
   - destruct l2; simpl in *; auto.
-    destruct path_eq; try congruence. subst. auto.
+    destruct projection_eq; try congruence. subst. auto.
 Qed.
     
   
@@ -648,7 +648,7 @@ Lemma is_shallow_prefix_is_prefix: forall p1 p2,
 Proof.
   intros. unfold is_prefix.
   destr_prefix. solve_prefix_left.
-  eapply paths_shallow_contain_implies; auto.
+  eapply projections_shallow_contain_implies; auto.
 Qed.
 
 Lemma is_prefix_strict_trans_prefix: forall p1 p2 p3,
@@ -659,7 +659,7 @@ Proof.
   intros. unfold is_prefix_strict.
   repeat destr_prefix. inv POP.
   solve_prefix_left.
-  eapply paths_contain_strict_trans3; eauto.
+  eapply projections_contain_strict_trans3; eauto.
 Qed.
   
 Lemma is_shallow_prefix_refl: forall p,
@@ -668,7 +668,7 @@ Proof.
   intros. unfold is_shallow_prefix.
   destruct (path_of_place p).
   solve_prefix_left.
-  eapply paths_shallow_contain_refl.
+  eapply projections_shallow_contain_refl.
 Qed.
 
 Lemma is_shallow_prefix_trans: forall p1 p2 p3,
@@ -678,7 +678,7 @@ Lemma is_shallow_prefix_trans: forall p1 p2 p3,
 Proof.
   intros. unfold is_shallow_prefix. repeat destr_prefix.
   inv POP. solve_prefix_left.
-  eapply paths_shallow_contain_trans; eauto.
+  eapply projections_shallow_contain_trans; eauto.
 Qed.
 
 Lemma is_shallow_prefix_same_local: forall p1 p2,
@@ -695,15 +695,15 @@ Proof.
   induction p; simpl; auto.
 Qed.
 
-Lemma paths_not_contain_strict: forall l1 l2,
-    paths_contain l1 l2 = false ->
-    paths_contain l2 l1 = true ->
-    paths_contain_strict l2 l1 = true.
+Lemma projections_not_contain_strict: forall l1 l2,
+    projections_contain l1 l2 = false ->
+    projections_contain l2 l1 = true ->
+    projections_contain_strict l2 l1 = true.
 Proof.
   induction l1; intros; simpl in *.
   congruence.
   destruct l2; simpl in *. auto.
-  destruct path_eq; subst; try destruct path_eq in *; try congruence.
+  destruct projection_eq; subst; try destruct projection_eq in *; try congruence.
   eauto.
 Qed.
 
@@ -717,7 +717,7 @@ Proof.
   solve_prefix_left.
   unfold is_prefix in H. rewrite POP in H. rewrite POP0 in H.
   destruct ident_eq in H; simpl in *; try congruence.
-  eapply paths_not_contain_strict; auto.
+  eapply projections_not_contain_strict; auto.
 Qed.                                    
   
 (** Some trivial is_prefix lemma  *)
@@ -728,7 +728,7 @@ Proof.
   intros. unfold is_prefix. simpl.
   destruct (path_of_place p1).
   solve_prefix_left.
-  eapply paths_contain_app.
+  eapply projections_contain_app.
 Qed.
 
 Lemma is_prefix_strict_field: forall p1 fid fty,
@@ -737,7 +737,7 @@ Proof.
   intros. unfold is_prefix_strict. simpl.
   destruct (path_of_place p1).
   solve_prefix_left.
-  eapply paths_contain_strict_app.
+  eapply projections_contain_strict_app.
   congruence.
 Qed.
 
@@ -747,7 +747,7 @@ Proof.
   intros. unfold is_prefix. simpl.
   destruct (path_of_place p1).
   solve_prefix_left.
-  eapply paths_contain_app.
+  eapply projections_contain_app.
 Qed.
 
 Lemma is_prefix_strict_downcast: forall p1 fid fty,
@@ -756,7 +756,7 @@ Proof.
   intros. unfold is_prefix_strict. simpl.
   destruct (path_of_place p1).
   solve_prefix_left.
-  eapply paths_contain_strict_app.
+  eapply projections_contain_strict_app.
   congruence.
 Qed.
 
@@ -767,7 +767,7 @@ Proof.
   intros. unfold is_prefix. simpl.
   destruct (path_of_place p1).
   solve_prefix_left.
-  eapply paths_contain_app.
+  eapply projections_contain_app.
 Qed.
 
 Lemma is_prefix_strict_deref: forall p1 ty,
@@ -776,17 +776,17 @@ Proof.
   intros. unfold is_prefix_strict. simpl.
   destruct (path_of_place p1).
   solve_prefix_left.
-  eapply paths_contain_strict_app.
+  eapply projections_contain_strict_app.
   congruence.
 Qed.
 
 (** Alternative definition of is_prefix which considers the type information *)
 
 Definition is_prefix_type (p1 p2: place) : bool :=
-  place_eq p1 p2 || in_dec place_eq p1 (parent_paths p2).
+  place_eq p1 p2 || in_dec place_eq p1 (parent_places p2).
 
-Lemma In_place_trans: forall p3 p1 p2, In p1 (parent_paths p2) ->
-In p2 (parent_paths p3) -> In p1 (parent_paths p3).
+Lemma In_place_trans: forall p3 p1 p2, In p1 (parent_places p2) ->
+In p2 (parent_places p3) -> In p1 (parent_places p3).
 Proof.
   induction p3; 
   simpl in *; try intros; auto.
@@ -802,8 +802,8 @@ Proof.
 Qed.
 
 
-Lemma in_parent_paths_is_prefix: forall p2 p1,
-    In p1 (parent_paths p2) ->
+Lemma in_parent_projection_is_prefix: forall p2 p1,
+    In p1 (parent_places p2) ->
     is_prefix p1 p2 = true.
 Proof.
   induction p2; intros p1 IN; simpl in *.
@@ -832,16 +832,16 @@ Proof.
   apply proj_sumbool_true in H. subst.
   apply is_prefix_refl.
   apply proj_sumbool_true in H.
-  eapply in_parent_paths_is_prefix. auto.
+  eapply in_parent_projection_is_prefix. auto.
 Qed.
 
 
-Lemma paths_shallow_contain_app: forall l1 l2,
-    is_shallow_prefix_paths l2 = true ->
-    paths_shallow_contain l1 (l1 ++ l2) = true.
+Lemma projections_shallow_contain_app: forall l1 l2,
+    is_shallow_prefix_path l2 = true ->
+    projections_shallow_contain l1 (l1 ++ l2) = true.
 Proof.
   induction l1; simpl; intros; auto.
-  destruct path_eq; try congruence. eauto.
+  destruct projection_eq; try congruence. eauto.
 Qed.
 
 
@@ -851,8 +851,8 @@ Proof.
   intros. unfold is_shallow_prefix. simpl.
   destruct (path_of_place p1).
   solve_prefix_left.
-  eapply paths_shallow_contain_app.
-  unfold is_shallow_prefix_paths.
+  eapply projections_shallow_contain_app.
+  unfold is_shallow_prefix_path.
   destruct in_dec; try congruence; simpl in *; auto.
   destruct i0; try contradiction. inv H.
 Qed.
@@ -863,8 +863,8 @@ Proof.
   intros. unfold is_shallow_prefix. simpl.
   destruct (path_of_place p1).
   solve_prefix_left.
-  eapply paths_shallow_contain_app.
-  unfold is_shallow_prefix_paths.
+  eapply projections_shallow_contain_app.
+  unfold is_shallow_prefix_path.
   destruct in_dec; try congruence; simpl in *; auto.
   destruct i0; try contradiction. inv H.
 Qed.
@@ -881,19 +881,19 @@ Qed.
 (*
 
 Definition is_prefix (p1 p2: place) : bool :=
-  place_eq p1 p2 || in_dec place_eq p1 (parent_paths p2).
+  place_eq p1 p2 || in_dec place_eq p1 (parent_places p2).
 
 Definition is_shallow_prefix (p1 p2: place) : bool :=
-  place_eq p1 p2 || in_dec place_eq p1 (shallow_parent_paths p2).
+  place_eq p1 p2 || in_dec place_eq p1 (shallow_parent_places p2).
 
 Definition is_support_prefix (p1 p2: place) : bool :=
-  place_eq p1 p2 || in_dec place_eq p1 (support_parent_paths p2).
+  place_eq p1 p2 || in_dec place_eq p1 (support_parent_places p2).
 
 Definition is_prefix_strict (p1 p2: place) : bool :=
-  in_dec place_eq p1 (parent_paths p2).
+  in_dec place_eq p1 (parent_places p2).
 
 
-Lemma In_place_no_refl: forall p, ~In p (parent_paths p).
+Lemma In_place_no_refl: forall p, ~In p (parent_places p).
 Proof.
   unfold not. intros.  
   induction p. 
@@ -902,26 +902,26 @@ Proof.
     + apply IHp. 
       rewrite H at 2. simpl. left. reflexivity.
     + apply IHp. remember (Pfield p i t) as p'.
-      assert (HF: In p (parent_paths p')). rewrite Heqp'.
+      assert (HF: In p (parent_places p')). rewrite Heqp'.
       simpl. left. reflexivity.
       eapply In_place_trans. eauto. eauto.
   - simpl in H. destruct H.
     + apply IHp. 
       rewrite H at 2. simpl. left. reflexivity.
     + apply IHp. remember (Pderef p t) as p'.
-      assert (HF: In p (parent_paths p')). rewrite Heqp'.
+      assert (HF: In p (parent_places p')). rewrite Heqp'.
       simpl. left. reflexivity.
       eapply In_place_trans. eauto. eauto.
   - simpl in H. destruct H.
     + apply IHp. 
       rewrite H at 2. simpl. left. reflexivity.
     + apply IHp. remember (Pdowncast p i t) as p'.
-      assert (HF: In p (parent_paths p')). rewrite Heqp'.
+      assert (HF: In p (parent_places p')). rewrite Heqp'.
       simpl. left. reflexivity.
       eapply In_place_trans. eauto. eauto.
 Qed.
 
-Lemma In_place_no_eql: forall p1 p2, In p1 (parent_paths p2) ->
+Lemma In_place_no_eql: forall p1 p2, In p1 (parent_places p2) ->
   p1 <> p2. 
 Proof.
   intros. destruct (place_eq p1 p2).
@@ -991,7 +991,7 @@ Proof.
   destruct (place_eq (valid_owner p) p); simpl; auto.
   destruct in_dec; simpl; auto. exfalso. apply n0.
   unfold valid_owner.
-  induction p; unfold parent_paths; simpl in *; try congruence.
+  induction p; unfold parent_places; simpl in *; try congruence.
   right.
   apply IHp. eapply Decidable.not_or in n0; destruct n0; auto.
   eapply Decidable.not_or in n0; destruct n0; auto.
@@ -1055,17 +1055,17 @@ Proof.
   reflexivity.
   induction p2; simpl in *; auto.
   - destruct (place_eq p2 p1);simpl in *; auto.
-    destruct (in_dec place_eq p1 (shallow_parent_paths p2)).
-    destruct (in_dec place_eq p1 (parent_paths p2)); simpl; auto.
-    destruct (in_dec place_eq p1 (parent_paths p2)); simpl; auto.
+    destruct (in_dec place_eq p1 (shallow_parent_places p2)).
+    destruct (in_dec place_eq p1 (parent_places p2)); simpl; auto.
+    destruct (in_dec place_eq p1 (parent_places p2)); simpl; auto.
   - destruct (place_eq p2 p1);simpl in *; auto.
-    destruct (in_dec place_eq p1 (shallow_parent_paths p2)).
-    destruct (in_dec place_eq p1 (parent_paths p2)); simpl; auto.
-    destruct (in_dec place_eq p1 (parent_paths p2)); simpl; auto.
+    destruct (in_dec place_eq p1 (shallow_parent_places p2)).
+    destruct (in_dec place_eq p1 (parent_places p2)); simpl; auto.
+    destruct (in_dec place_eq p1 (parent_places p2)); simpl; auto.
   - destruct (place_eq p2 p1);simpl in *; auto.
-    destruct (in_dec place_eq p1 (shallow_parent_paths p2)).
-    destruct (in_dec place_eq p1 (parent_paths p2)); simpl; auto.
-    destruct (in_dec place_eq p1 (parent_paths p2)); simpl; auto.
+    destruct (in_dec place_eq p1 (shallow_parent_places p2)).
+    destruct (in_dec place_eq p1 (parent_places p2)); simpl; auto.
+    destruct (in_dec place_eq p1 (parent_places p2)); simpl; auto.
 Qed.
 
 Lemma is_prefix_strict_trans_prefix: forall p1 p2 p3,
@@ -1090,10 +1090,10 @@ Proof.
   destruct (place_eq p p); simpl; auto.
 Qed.
 
-Lemma in_shallow_parent_paths_trans: forall p3 p2 p1,
-    In p1 (shallow_parent_paths p2) ->
-    In p2 (shallow_parent_paths p3) ->
-    In p1 (shallow_parent_paths p3).
+Lemma in_shallow_parent_projection_trans: forall p3 p2 p1,
+    In p1 (shallow_parent_places p2) ->
+    In p2 (shallow_parent_places p3) ->
+    In p1 (shallow_parent_places p3).
 Proof.
   induction p3; simpl in *; intros; try contradiction.
   - destruct H0.
@@ -1114,7 +1114,7 @@ Proof.
   simpl in *.
   repeat destruct in_dec; simpl in *; try congruence.
   exfalso. eapply n2.
-  eapply in_shallow_parent_paths_trans; eauto.
+  eapply in_shallow_parent_projection_trans; eauto.
 Qed.
 
 Lemma is_shallow_prefix_same_local: forall p1 p2,
@@ -1248,7 +1248,7 @@ Fail Definition test_option_ident_to_expr : option expr  := Some A.
 Definition test_option_ident_to_expr : option expr  := @Some expr A.
 
 (* Print Graph. *)
-(* Print Coercion Paths ident expr. *)
+(* Print Coercion Path ident expr. *)
 
 Definition test : statement :=
   <{ let A : type_int32s in

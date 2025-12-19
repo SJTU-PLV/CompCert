@@ -13,7 +13,7 @@ Require Import RustOp RustIR RustIRcfg Rusttyping.
 Require Import Errors.
 Require Import InitDomain InitAnalysis.
 Require Import RustIRown MoveChecking.
-Require Import MoveCheckingFootprint1 MoveCheckingDomain.
+Require Import MoveCheckingFootprint1.
 Require Import StkBorPermission RustIRbor.
 Require Import RegionLiveness BorrowCheckDomain.
 Require Import BorrowCheckPolonius BorrowCheck.
@@ -30,7 +30,7 @@ Local Open Scope sep_scope.
 Section BORROW_CHECK.
 
 Variable prog: program.
-Variable w: rs_own_world.
+(* Variable w: rs_own_world. *)
 Variable se: Genv.symtbl.
 Hypothesis VALIDSE: Genv.valid_for (erase_program prog) se.
 Let L := semantics prog se.
@@ -39,11 +39,11 @@ Let ge := globalenv se prog.
 (* composite environment *)
 Let ce := ge.(genv_cenv).
 
-Definition mod_sg := match w with
-                    | rsw sg _ _ _ => sg
-                    end.
+(* Definition mod_sg := match w with *)
+(*                     | rsw sg _ _ _ => sg *)
+(*                     end. *)
 
-Let wt_state := wt_state prog se mod_sg.
+(* Let wt_state := wt_state prog se mod_sg. *)
 
 (* split move_check_program_spec into the following hypotheses to simplify the proof *)
 Hypothesis CONSISTENT: composite_env_consistent ce.

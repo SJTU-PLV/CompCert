@@ -53,7 +53,7 @@ Inductive footprint : Type :=
 | fp_struct (id: ident) (fpl: list (ident * ((Z * Z) * footprint)))
 (* orgs are not used for now but it is used to relate to the type *)
 | fp_enum (id: ident) (* (orgs: list origin) *) (tagz: Z) (fid: ident) (fofs: Z) (ffp: footprint)
-| fp_ref (b: block) (ofs: Z) (phs: paths) (* reference to an owner at [phs] with type [ty] *)
+| fp_ref (b: block) (ofs: Z) (phs: path) (* reference to an owner at [phs] with type [ty] *)
 .
 
 (* pattern (fid, ((base, fofs), ffp): base is the end of the last
@@ -271,18 +271,18 @@ Definition set_field_fp (fid: ident) (vfp: footprint) (fpl: list (ffpty)) : list
   set_field fid (fun '(fofs, ffp) => (fofs, vfp)) fpl.
 
 (* set footprint [v] in the path [ph] of footprint [fp] *)
-Fixpoint set_footprint (phl: list path) (v: footprint) (fp: footprint) : option footprint :=
+Fixpoint set_footprint (phl: list projection) (v: footprint) (fp: footprint) : option footprint :=
   match phl with
   | nil => Some v
   | ph :: l =>
       match ph, fp with
-      | ph_deref, fp_box b sz fp1 =>
+      | proj_deref, fp_box b sz fp1 =>
           match set_footprint l v fp1 with
           | Some fp2 =>
               Some (fp_box b sz fp2)
           | None => None
           end
-      | ph_field fid, fp_struct id fpl =>
+      | proj_field fid, fp_struct id fpl =>
           match find_field fid fpl with
           | Some (fofs, ffp) =>
               match set_footprint l v ffp with
@@ -292,8 +292,8 @@ Fixpoint set_footprint (phl: list path) (v: footprint) (fp: footprint) : option 
               end
           | None => None
           end
-      (* TODO: remove pty in ph_downcast *)
-      | ph_downcast _ fid (* fty *), fp_enum id tagz fid1 fofs1 fp1 =>
+      (* TODO: remove pty in proj_downcast *)
+      | proj_downcast fid (* fty *), fp_enum id tagz fid1 fofs1 fp1 =>
           (** Type safe checking *)
           if ident_eq fid fid1 then
             match set_footprint l v fp1 with
@@ -306,7 +306,7 @@ Fixpoint set_footprint (phl: list path) (v: footprint) (fp: footprint) : option 
       end
   end.
 
-Definition set_footprint_map (ps: paths) (v: footprint) (fpm: fp_map) : option fp_map :=
+Definition set_footprint_map (ps: path) (v: footprint) (fpm: fp_map) : option fp_map :=
   let (id, phl) := ps in
   match fpm!id with
   | Some (a, fp1) =>
@@ -320,25 +320,25 @@ Definition set_footprint_map (ps: paths) (v: footprint) (fpm: fp_map) : option f
   end.
 
 
-Fixpoint get_owner_loc_footprint (phl: list path) (fp: footprint) (b: block) (ofs: Z) : option (block * Z * footprint) :=
+Fixpoint get_owner_loc_footprint (phl: list projection) (fp: footprint) (b: block) (ofs: Z) : option (block * Z * footprint) :=
   match phl with
   | nil => Some (b, ofs, fp)
   | ph :: l =>
       match ph, fp with
-      | ph_deref, fp_box b _ fp1 =>
+      | proj_deref, fp_box b _ fp1 =>
           if not_fp_emp fp1 then
             (* We can only deference box pointer that is not moved from *)
             get_owner_loc_footprint l fp1 b 0
           else
             (* The location pointed by this pointer may not be valid *)
             None
-      | ph_field fid, fp_struct _ fpl =>
+      | proj_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
           | Some ((base, fofs), fp1) =>
               get_owner_loc_footprint l fp1 b (ofs + fofs)
           | None => None
           end
-      | ph_downcast _ fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
+      | proj_downcast fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
           if ident_eq fid1 fid2  then
             get_owner_loc_footprint l fp1 b (ofs + fofs)
           else None
@@ -347,20 +347,20 @@ Fixpoint get_owner_loc_footprint (phl: list path) (fp: footprint) (b: block) (of
   end.
 
 (* non-loc version: use it to get some internal footprint *)
-Fixpoint get_owner_footprint (phl: list path) (fp: footprint) : option footprint :=
+Fixpoint get_owner_footprint (phl: list projection) (fp: footprint) : option footprint :=
   match phl with
   | nil => Some fp
   | ph :: l =>
       match ph, fp with
-      | ph_deref, fp_box b _ fp1 =>
+      | proj_deref, fp_box b _ fp1 =>
           get_owner_footprint l fp1
-      | ph_field fid, fp_struct _ fpl =>
+      | proj_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
           | Some (fofs, fp1) =>
               get_owner_footprint l fp1
           | None => None
           end
-      | ph_downcast pty fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
+      | proj_downcast fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
           if ident_eq fid1 fid2 then
             get_owner_footprint l fp1
           else
@@ -369,7 +369,7 @@ Fixpoint get_owner_footprint (phl: list path) (fp: footprint) : option footprint
       end
   end.
 
-Definition get_owner_footprint_map (ps: paths) (fpm: fp_map) : option footprint :=
+Definition get_owner_footprint_map (ps: path) (fpm: fp_map) : option footprint :=
   let (id, phl) := ps in
   match fpm!id with
   | Some (a, fp) =>
@@ -378,7 +378,7 @@ Definition get_owner_footprint_map (ps: paths) (fpm: fp_map) : option footprint 
   end.
 
 
-Definition get_owner_loc_footprint_map (ps: paths) (fpm: fp_map) : option (block * Z * footprint) :=
+Definition get_owner_loc_footprint_map (ps: path) (fpm: fp_map) : option (block * Z * footprint) :=
   let (id, phl) := ps in
   match fpm!id with
   | Some (b, ofs, ty, fp) =>
@@ -403,14 +403,14 @@ Fixpoint clear_footprint_rec (fp: footprint) : footprint :=
       fp_struct id (map (fun '(fid, (fofs, ffp)) => (fid, (fofs, clear_footprint_rec ffp))) fpl)
   end.
 
-Definition clear_owner_footprint fp (phl: list path) : option footprint :=
+Definition clear_owner_footprint fp (phl: list projection) : option footprint :=
   match get_owner_footprint phl fp with
   | Some fp1 =>
       set_footprint phl (clear_footprint_rec fp1) fp 
   | None => None
   end.
 
-Definition clear_footprint_map (ps: paths) (fpm: fp_map) : option fp_map :=
+Definition clear_footprint_map (ps: path) (fpm: fp_map) : option fp_map :=
   let (id, phl) := ps in
   match fpm!id with
   | Some (b, ofs, ty, fp) =>
@@ -425,24 +425,24 @@ Definition clear_footprint_map (ps: paths) (fpm: fp_map) : option fp_map :=
 (* Get location and footprint through paths which may contains
 dereference of reference *)
 
-Fixpoint get_loc_footprint (fpm: fp_map) (phl: list path) (fp: footprint) (b: block) (ofs: Z) : option (block * Z * footprint) :=
+Fixpoint get_loc_footprint (fpm: fp_map) (phl: list projection) (fp: footprint) (b: block) (ofs: Z) : option (block * Z * footprint) :=
   match phl with
   | nil => Some (b, ofs, fp)
   | ph :: l =>
       match ph, fp with
-      | ph_deref, fp_box b _ fp1 =>
+      | proj_deref, fp_box b _ fp1 =>
           get_owner_loc_footprint l fp1 b 0
-      | ph_field fid, fp_struct _ fpl =>
+      | proj_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
           | Some ((base, fofs), fp1) =>
               get_loc_footprint fpm l fp1 b (ofs + fofs)
           | None => None
           end
-      | ph_downcast _ fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
+      | proj_downcast fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
           if ident_eq fid1 fid2  then
             get_loc_footprint fpm l fp1 b (ofs + fofs)
           else None
-      | ph_deref, fp_ref b1 ofs1 phs1 =>
+      | proj_deref, fp_ref b1 ofs1 phs1 =>
           match get_owner_loc_footprint_map phs1 fpm with
           | Some (b2, ofs2, fp2) =>
               (* If this reference is valid, (b1, ofs1) should be
@@ -454,7 +454,7 @@ Fixpoint get_loc_footprint (fpm: fp_map) (phl: list path) (fp: footprint) (b: bl
       end
   end.
 
-Definition get_loc_footprint_map (ps: paths) (fpm: fp_map) : option (block * Z * footprint) :=
+Definition get_loc_footprint_map (ps: path) (fpm: fp_map) : option (block * Z * footprint) :=
   let (id, phl) := ps in
   match fpm!id with
   | Some (b, ofs, ty, fp) =>
@@ -884,24 +884,24 @@ Section COMP_ENV.
 
 Variable ce: composite_env.
 
-Fixpoint wt_path (ty: type) (phl: list path) : res type :=
+Fixpoint wt_projections (ty: type) (phl: list projection) : res type :=
   match phl with
   | nil => OK ty
   | ph :: phl1 =>
       do ty1 <- 
            match ph with
-           | ph_deref => type_deref ty
-           | ph_field fid => type_field ce ty fid
-           | ph_downcast _ fid => type_downcast ce ty fid
+           | proj_deref => type_deref ty
+           | proj_field fid => type_field ce ty fid
+           | proj_downcast fid => type_downcast ce ty fid
            end;
-      wt_path ty1 phl1
+      wt_projections ty1 phl1
   end.
 
-Definition wt_paths (te: typenv) (phs: paths) : res type :=
+Definition wt_path (te: typenv) (phs: path) : res type :=
   let (id, phl) := phs in
   match te ! id with
   | Some ty =>
-      wt_path ty phl
+      wt_projections ty phl
   | None =>
       Error (msg "no local type")
   end.
@@ -2228,4 +2228,15 @@ Proof.
 Admitted.
 
 (** TODO: assign_loc rule  *)
+
+
+(*** Define graph structure for borrow checking properties *)
+
+Require Import StkBorPermission.
+
+(** Borrow stack model *)
+
+(* Module BorStk := BorStk( *)
+
+
 

@@ -263,7 +263,7 @@ Definition check_universe_shallow (universe: Paths.t) : bool :=
 
 Definition check_universe_no_downcast (universe: Paths.t) : bool :=
   Paths.for_all (fun p => forallb (fun ph => match ph with
-                                        | ph_downcast _ _ => false
+                                        | proj_downcast _ => false
                                         | _ => true
                                         end) (snd (path_of_place p))) universe. 
 

@@ -1079,10 +1079,10 @@ Proof.
   eapply init_owned_place_still_owned; eauto.
 Qed.
 
-Lemma in_place_dominatros_and_parent_paths: forall p2 p p1
+Lemma in_place_dominatros_and_parent_places: forall p2 p p1
     (IN1: In p (place_dominators p2))
-    (IN2: In p1 (parent_paths p2)),
-    p1 = p \/ In p1 (parent_paths p) \/ In p (place_dominators p1).
+    (IN2: In p1 (parent_places p2)),
+    p1 = p \/ In p1 (parent_places p) \/ In p (place_dominators p1).
 Proof.
   induction p2; intros; simpl in *.
   - contradiction.
@@ -1109,7 +1109,7 @@ Proof.
   destruct H0.
   - apply proj_sumbool_true in H0. subst. auto.
   - apply proj_sumbool_true in H0.
-    exploit in_place_dominatros_and_parent_paths; eauto.
+    exploit in_place_dominatros_and_parent_places; eauto.
     intros [A|[B|C]].
     + subst. left. eapply orb_true_iff.
       left. apply proj_sumbool_is_true. auto.

@@ -25,7 +25,7 @@ Variable (ce: composite_env).
 (* Support prefixes and support origins *)
 
 Definition support_origins (p: place) : list origin :=
-  let support_prefixes := p :: support_parent_paths p in
+  let support_prefixes := p :: support_parent_places p in
   fold_right (fun elt acc => match elt with
                           | (Pderef p' ty) =>
                               match typeof_place p' with
@@ -66,18 +66,18 @@ Fixpoint transfer_pure_expr (e: LOrgEnv.t) (pe: pexpr) : LOrgEnv.t :=
 Fixpoint check_pure_expr (e: LOrgEnv.t) (pe: pexpr) : res unit :=
   match pe with
  | Eplace p ty =>
-      if illegal_access e p Adeep Aread then
+      if illegal_access e p Adeep ARead then
         Error [MSG "access a place (transfer_pure_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Eplace"]
       else
         OK tt
   | Eref org mut p ty =>
-      let ak := match mut with | Mutable => Awrite | Immutable => Aread end in
+      let ak := match mut with | Mutable => AWrite | Immutable => ARead end in
       if illegal_access e p Adeep ak then
         Error [MSG "access a place (transfer_pure_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Eref"]
       else
         OK tt
   | Ecktag p id =>
-      if illegal_access e p Ashallow Aread then
+      if illegal_access e p Ashallow ARead then
         Error [MSG "access a place (transfer_pure_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Ecktag"]
       else
         OK tt
@@ -104,7 +104,7 @@ Definition transfer_expr (oe: LOrgEnv.t) (e: expr) : LOrgEnv.t :=
 Definition check_expr (oe: LOrgEnv.t) (e: expr) : res unit :=
   match e with
   | Emoveplace p ty =>
-      if illegal_access oe p Adeep Awrite then
+      if illegal_access oe p Adeep AWrite then
         Error [MSG "access a place (transfer_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Emoveplace"]
       else 
         OK tt
@@ -182,7 +182,7 @@ Fixpoint flow_loans_list (e: LOrgEnv.t) (ls ld: list type) (k: flow_kind) : LOrg
 (* Shallow write a place *)
 
 Definition check_shallow_write_place (e: LOrgEnv.t) (p: place) : res unit :=
-  if illegal_access e p Ashallow Awrite then
+  if illegal_access e p Ashallow AWrite then
     Error [MSG "access a place (shallow_write_place) which is borrowed; id is "; CTX (local_of_place p)]    
   else
     OK tt.
@@ -416,7 +416,7 @@ Definition check_storagedead (f: function) (oe1: LOrgEnv.t) (id: ident) : res un
 
 (** TODO: we need to consider p is initialized or not *)
 Definition check_drop (oe1: LOrgEnv.t) (p: place) : res unit :=
-  if illegal_access oe1 p Adeep Awrite then
+  if illegal_access oe1 p Adeep AWrite then
     Error [MSG "access a place which is borrowed: "; CTX (local_of_place p); MSG " in (check_drop)"]
   else OK tt.
 
@@ -498,7 +498,7 @@ Definition transfer_return (f: function) (oe1: LOrgEnv.t) (p: place) : LOrgEnv.t
  
 
 Definition check_return (f: function) (oe1: LOrgEnv.t) (p: place) : res unit :=
-  if illegal_access oe1 p  Adeep Aread then
+  if illegal_access oe1 p  Adeep ARead then
     (* Question: this error should be impossible (or the error has
     been found before this return statement)? Because there is no live
     regions (except generic regions) after the return statement. *)

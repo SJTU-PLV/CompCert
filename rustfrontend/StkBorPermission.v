@@ -5,6 +5,7 @@ Require Import Memory.
 Require Import AST.
 Require Import FSetWeakList DecidableType.
 Require Import Listmisc.
+Require Import Rusttypes.
 
 Import ListNotations.
 
@@ -21,8 +22,6 @@ Definition loc : Type := block * Z.
 natural number in original sb (i.e., stacked borrow) model because we
 want to prevent complicated retagging mechanism *)
 
-Definition tag := loc.
-
 (* Inductive tag := *)
 (* | Tagged (t: loc) *)
 (* | Untagged. *)
@@ -37,7 +36,6 @@ Proof.
   right. congruence.
 Qed.
 
-Definition tag_eq_dec := loc_eq_dec.
 
 (* Lemma tag_eq_dec: forall (t1 t2: tag), {t1 = t2} + {t1 <> t2}. *)
 (* Proof. *)
@@ -48,54 +46,32 @@ Definition tag_eq_dec := loc_eq_dec.
 
 (* Set of tags *)
 
-Module Tag <: DecidableType.DecidableType.
-  Definition t := tag.
+Module Loc <: DecidableType.DecidableType.
+  Definition t := loc.
   Definition eq := @eq t.
-  Definition eq_dec := tag_eq_dec.
+  Definition eq_dec := loc_eq_dec.
   Definition eq_refl: forall x, eq x x := (@eq_refl t).
   Definition eq_sym: forall x y, eq x y -> eq y x := (@eq_sym t).
   Definition eq_trans: forall x y z, eq x y -> eq y z -> eq x z := (@eq_trans t).
-End Tag.
+End Loc.
 
-Module Tags := FSetWeakList.Make(Tag).
+Module Locs := FSetWeakList.Make(Loc).
+
+Module BorStk(Tag: DecidableType).
 
 Inductive item :=
-| Unique (t: tag)
+| Unique (t: Tag.t)
 (* Is there any benefit if we make the tag in sharero a set of tags? *)
-| SharedReadOnly (t: tag)
+| SharedReadOnly (t: Tag.t)
 | SharedReadWrite.
 
 
-(* Inductive stkbor_perm := Unique | SharedReadWrite | SharedReadOnly | Disabled. *)
-
-(* Lemma stkbor_perm_eq_dec: forall (sp1 sp2: stkbor_perm), {sp1 = sp2} + {sp1 <> sp2}. *)
-(* Proof. *)
-(*   decide equality. *)
-(* Qed. *)
-
-(* Record item := mkItem { *)
-(*   perm      : stkbor_perm; *)
-(*   tg        : tag; *)
-(* }. *)
-
-(* Lemma item_eq_dec: forall (i1 i2: item), {i1 = i2} + {i1 <> i2}.  *)
-(* Proof. *)
-(*   generalize tag_eq_dec. *)
-(*   generalize stkbor_perm_eq_dec. *)
-(*   decide equality. *)
-(* Qed. *)
-
-
-
-Definition bor_stack := list item.
-Definition bor_stacks := NMap.t (ZMap.t (option bor_stack)).
+Definition t := list item.
 
 (** Stacked borrow operations (mostly identical to the original stacked borrow) *)
 
-Inductive access_kind := AccessRead | AccessWrite.
-
 (* If bor is None, it means this access is from raw pointer place *)
-Definition item_grants_access (bor: option tag) (access: access_kind) (it: item) : bool :=
+Definition item_grants_access (bor: option Tag.t) (access: access_kind) (it: item) : bool :=
   match bor with
   | None =>
       match it with 
@@ -104,24 +80,24 @@ Definition item_grants_access (bor: option tag) (access: access_kind) (it: item)
       end
   | Some t =>
       match it, access with
-      | SharedReadOnly _, AccessWrite => false
+      | SharedReadOnly _, AWrite => false
       | SharedReadOnly t1, _ =>
-          tag_eq_dec t t1
+          Tag.eq_dec t t1
       | Unique t1, _ =>
-          tag_eq_dec t t1
+          Tag.eq_dec t t1
       | _, _ => false
       end
   end.
 
 Inductive access_from :=
 | from_local
-| from_ref (t: tag)
+| from_ref (t: Tag.t)
 | from_raw.
 
 
 (* Return the index of the granting item. If the tag is None, it means
 that we are accessing a raw pointer variable *)
-Definition find_granting (stk: bor_stack) (access: access_kind) (bor: option tag) : option (nat * item) :=
+Definition find_granting (stk: t) (access: access_kind) (bor: option Tag.t) : option (nat * item) :=
   match list_find (item_grants_access bor access) stk with    
   | Some (idx, item) =>
       Some (idx, item)
@@ -136,7 +112,7 @@ Definition item_is_sharedrw (it: item) :=
 
 (* Find the index RIGHT BEFORE the first incompatible item.
    Remember that 0 is the top of the stack. *)
-Definition find_first_write_incompatible (stk: bor_stack) (it: item) : option nat :=
+Definition find_first_write_incompatible (stk: t) (it: item) : option nat :=
   match it with
   | Unique _ => Some (length stk)
   | SharedReadWrite =>
@@ -148,7 +124,7 @@ Definition find_first_write_incompatible (stk: bor_stack) (it: item) : option na
   end.
 
 (* Remove from `stk` the items before `idx`. *)
-Fixpoint remove_items (stk: bor_stack) (idx: nat) : option bor_stack :=
+Fixpoint remove_items (stk: t) (idx: nat) : option t :=
   match idx, stk with
   (* Assumption: idx ≤ length stk *)
   | S _, nil => None
@@ -159,7 +135,7 @@ Fixpoint remove_items (stk: bor_stack) (idx: nat) : option bor_stack :=
 
 (* Replace any Unique permission with Disabled, starting from the top
 of the stack. *)
-Fixpoint replace_items' (acc stk : bor_stack) : option bor_stack :=
+Fixpoint replace_items' (acc stk : t) : option t :=
   match stk with
   | nil => Some acc
   | it :: stk =>
@@ -171,19 +147,19 @@ Fixpoint replace_items' (acc stk : bor_stack) : option bor_stack :=
       end
   end.
 
-Definition replace_items (stk: bor_stack) : option bor_stack :=
+Definition replace_items (stk: t) : option t :=
   replace_items' [] stk.
 
 (* Test if a memory `access` using pointer tagged `tg` is granted.  If
    yes, return the new stack. *)
-Definition access1 (stk: bor_stack) (access: access_kind) (af: access_from) : option bor_stack :=
+Definition access1 (stk: t) (access: access_kind) (af: access_from) : option t :=
   match af with
   | from_local =>
       match access with
-      | AccessWrite =>
+      | AWrite =>
           (* remove all items *)
           Some nil
-      | AccessRead =>
+      | ARead =>
           (* On a read, *remove* all `Unique` above the granting item. *)
           match replace_items stk with
           | Some stk' =>
@@ -198,7 +174,7 @@ Definition access1 (stk: bor_stack) (access: access_kind) (af: access_from) : op
       | Some (idx, it) =>
           (* Step 2: Remove incompatible items. *)
           match access with
-          | AccessWrite =>
+          | AWrite =>
               (* Remove everything above the write-compatible items, like a proper stack. *)
               match find_first_write_incompatible (firstn idx stk) it with
               | Some incompat_idx =>
@@ -209,7 +185,7 @@ Definition access1 (stk: bor_stack) (access: access_kind) (af: access_from) : op
                   end
               | None => None
               end
-          | AccessRead =>
+          | ARead =>
               (* On a read, *remove* all `Unique` above the granting item. *)
               match replace_items (firstn idx stk) with
               | Some stk' =>
@@ -221,18 +197,60 @@ Definition access1 (stk: bor_stack) (access: access_kind) (af: access_from) : op
       end
   end.
       
+(** Reborrow: push a tag into the stack *)
+
+Definition tag_of_item (it: item) : option Tag.t :=
+  match it with
+  | Unique t
+  | SharedReadOnly t => Some t
+  | _ => None
+  end.
+
+Definition item_not_same_tag (it1 it2: item) : bool :=
+  match tag_of_item it1, tag_of_item it2 with
+  | Some t1, Some t2 =>
+      negb (Tag.eq_dec t1 t2)
+  | _, _ => true
+  end.
+
+Definition remove_old_item (stk: t) (it: item) :=  
+  filter (item_not_same_tag it) stk.
+
+(* If insert_idx is None, it means that we do not need to find the
+location of the granting item and just need to push the new item on
+the top. When we call [grant], we must guarantee that we have checked
+the accssibility of this stack via [access1] *)
+Definition grant (stk: t) (insert_idx: option nat) (it: item) : option t :=
+  let stk1 := remove_old_item stk it in
+  match insert_idx with
+  | None =>
+      Some (it :: stk1)
+  | Some idx =>
+      (* This case, which is used for inserting item adjacent to the
+      sharerw, is not used in safe rust *)
+      Some ((firstn idx stk) ++ [it] ++ (skipn idx stk))
+  end.
+
+End BorStk.
+
+
+(** Instantiation of borrow stack using (block * Z) as the type of tags *)
+
+Module BorStkPerm := BorStk(Loc).
+
+Definition bor_stacks := NMap.t (ZMap.t (option BorStkPerm.t)).
 
 Local Notation "a # b" := (NMap.get _ b a) (at level 1).
 Local Notation "a ## b" := (ZMap.get b a) (at level 1).
 
 Definition init_stacks (stks: bor_stacks) (b: block) (lo hi: Z) : bor_stacks :=  
-  let contents := repeat (Some (@nil item)) (Mem.interval_length lo hi) in
+  let contents := repeat (Some (@nil BorStkPerm.item)) (Mem.interval_length lo hi) in
   NMap.set _ b (Mem.setN contents lo (ZMap.init None)) stks.
 
-Definition set_stacks (stks: bor_stacks) (b: block) (ofs: Z) (stk: option bor_stack) : bor_stacks :=
+Definition set_stacks (stks: bor_stacks) (b: block) (ofs: Z) (stk: option BorStkPerm.t) : bor_stacks :=
   NMap.set _ b (ZMap.set ofs stk (stks # b)) stks.
 
-Fixpoint for_each (stks: bor_stacks) (b: block) (ofs: Z) (n: nat) (dealloc: bool) (f: bor_stack -> option bor_stack) : option bor_stacks :=
+Fixpoint for_each (stks: bor_stacks) (b: block) (ofs: Z) (n: nat) (dealloc: bool) (f: BorStkPerm.t -> option BorStkPerm.t) : option bor_stacks :=
   match n with
   | O => Some stks
   | S n =>
@@ -252,57 +270,23 @@ Fixpoint for_each (stks: bor_stacks) (b: block) (ofs: Z) (n: nat) (dealloc: bool
   end.
 
 (* Perform the access check on a block of continuous memory. *)
-Definition memory_read stks b ofs sz (af: access_from) : option bor_stacks :=
-  for_each stks b ofs (Z.to_nat sz) false (fun stk => access1 stk AccessRead af).
+Definition memory_read stks b ofs sz (af: BorStkPerm.access_from) : option bor_stacks :=
+  for_each stks b ofs (Z.to_nat sz) false (fun stk => BorStkPerm.access1 stk ARead af).
 
-Definition memory_written stks b ofs sz (af: access_from) : option bor_stacks :=
-  for_each stks b ofs (Z.to_nat sz) false (fun stk => access1 stk AccessWrite af).
+Definition memory_written stks b ofs sz (af: BorStkPerm.access_from) : option bor_stacks :=
+  for_each stks b ofs (Z.to_nat sz) false (fun stk => BorStkPerm.access1 stk AWrite af).
 
-Definition memory_access stks b ofs sz (ak: access_kind) (af: access_from) : option bor_stacks :=
+Definition memory_access stks b ofs sz (ak: access_kind) (af: BorStkPerm.access_from) : option bor_stacks :=
   match ak with
-  | AccessRead =>
+  | ARead =>
       memory_read stks b ofs sz af
-  | AccessWrite =>
+  | AWrite =>
       memory_written stks b ofs sz af
   end.
 
-Definition memory_free stks b (lo hi: Z) (af: access_from) : option bor_stacks :=
+Definition memory_free stks b (lo hi: Z) (af: BorStkPerm.access_from) : option bor_stacks :=
   let sz := Mem.interval_length lo hi in
-  for_each stks b lo sz true (fun stk => access1 stk AccessWrite af).
+  for_each stks b lo sz true (fun stk => BorStkPerm.access1 stk AWrite af).
 
-(** Reborrow: push a tag into the stack *)
-
-Definition tag_of_item (it: item) : option tag :=
-  match it with
-  | Unique t
-  | SharedReadOnly t => Some t
-  | _ => None
-  end.
-
-Definition item_not_same_tag (it1 it2: item) : bool :=
-  match tag_of_item it1, tag_of_item it2 with
-  | Some t1, Some t2 =>
-      negb (tag_eq_dec t1 t2)
-  | _, _ => true
-  end.
-
-Definition remove_old_item (stk: bor_stack) (it: item) :=  
-  filter (item_not_same_tag it) stk.
-
-(* If insert_idx is None, it means that we do not need to find the
-location of the granting item and just need to push the new item on
-the top. When we call [grant], we must guarantee that we have checked
-the accssibility of this stack via [access1] *)
-Definition grant (stk: bor_stack) (insert_idx: option nat) (it: item) : option bor_stack :=
-  let stk1 := remove_old_item stk it in
-  match insert_idx with
-  | None =>
-      Some (it :: stk1)
-  | Some idx =>
-      (* This case, which is used for inserting item adjacent to the
-      sharerw, is not used in safe rust *)
-      Some ((firstn idx stk) ++ [it] ++ (skipn idx stk))
-  end.
-
-Definition grantN (stks: bor_stacks) b ofs (sz: nat) (insert_idx: option nat) (new_it: item)  : option bor_stacks :=
-  for_each stks b ofs sz false (fun stk => grant stk insert_idx new_it).
+Definition grantN (stks: bor_stacks) b ofs (sz: nat) (insert_idx: option nat) (new_it: BorStkPerm.item)  : option bor_stacks :=
+  for_each stks b ofs sz false (fun stk => BorStkPerm.grant stk insert_idx new_it).

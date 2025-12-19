@@ -1147,16 +1147,16 @@ Qed.
 
 (** Some properties of is_prefix of well-typed places *)
 
-Lemma paths_contain_app_one_inv: forall l1 l2 ph,
-    paths_contain l1 (l2 ++ [ph]) = true ->
-    l1 = l2 ++ [ph] \/ paths_contain l1 l2 = true.
+Lemma projections_contain_app_one_inv: forall l1 l2 ph,
+    projections_contain l1 (l2 ++ [ph]) = true ->
+    l1 = l2 ++ [ph] \/ projections_contain l1 l2 = true.
 Proof.
   induction l1; intros; simpl in *; auto.
   destruct l2; simpl in *.
-  + destruct path_eq; subst.
+  + destruct projection_eq; subst.
     * destruct l1; simpl in H; try congruence. auto.
     * congruence.
-  + destruct path_eq; subst.
+  + destruct projection_eq; subst.
     * exploit IHl1; eauto.
       intros [A|B].
       -- subst. left. auto.
@@ -1179,7 +1179,7 @@ Proof.
 Qed.  
 
 Lemma path_of_place_field: forall p id fid l,
-    path_of_place p = (id, l ++ [ph_field fid]) ->
+    path_of_place p = (id, l ++ [proj_field fid]) ->
     exists p' fty,
       p = Pfield p' fid fty
       /\ path_of_place p' = (id, l).
@@ -1197,7 +1197,7 @@ Proof.
 Qed.
 
 Lemma path_of_place_deref: forall p id l,
-    path_of_place p = (id, l ++ [ph_deref]) ->
+    path_of_place p = (id, l ++ [proj_deref]) ->
     exists p' ty,
       p = Pderef p' ty
       /\ path_of_place p' = (id, l).
@@ -1214,13 +1214,13 @@ Proof.
     eapply app_inj_tail in H1 as (B1 & B2). inv B2.
 Qed.
 
-Lemma path_of_place_downcast: forall p id ty fid l,
-    path_of_place p = (id, l ++ [ph_downcast ty fid]) ->
+Lemma path_of_place_downcast: forall p id fid l,
+    path_of_place p = (id, l ++ [proj_downcast fid]) ->
     exists p' fty,
       p = Pdowncast p' fid fty
       /\ path_of_place p' = (id, l).
 Proof.
-  induction p; intros id ty fid l A; simpl in *.
+  induction p; intros id fid l A; simpl in *.
   - inv A. exploit app_eq_nil. symmetry. eapply H1.
     intros (A1 & A2). inv A2.
   - destruct (path_of_place p) eqn: P. inv A.
@@ -1276,7 +1276,7 @@ Proof.
   - inv WT2.
     destr_prefix.
     destruct (path_of_place p2) eqn: POP2. inv POP0.
-    exploit paths_contain_app_one_inv. eapply PRE1.
+    exploit projections_contain_app_one_inv. eapply PRE1.
     intros [A|B].
     + subst. eapply path_of_place_field in POP as (p' & fty & A1 & A2).
       subst. inv WT1.
@@ -1298,7 +1298,7 @@ Proof.
   - inv WT2.
     destr_prefix.
     destruct (path_of_place p2) eqn: POP2. inv POP0.
-    exploit paths_contain_app_one_inv. eapply PRE1.
+    exploit projections_contain_app_one_inv. eapply PRE1.
     intros [A|B].
     + subst. eapply path_of_place_deref in POP as (p' & ty & A1 & A2).
       subst. inv WT1.
@@ -1319,7 +1319,7 @@ Proof.
   - inv WT2.
     destr_prefix.
     destruct (path_of_place p2) eqn: POP2. inv POP0.
-    exploit paths_contain_app_one_inv. eapply PRE1.
+    exploit projections_contain_app_one_inv. eapply PRE1.
     intros [A|B].
     + subst. eapply path_of_place_downcast in POP as (p' & fty & A1 & A2).
       subst. inv WT1.

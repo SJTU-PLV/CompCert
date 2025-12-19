@@ -71,24 +71,24 @@ Local Open Scope error_monad_scope.
 
 (** Deference a location based on the type  *)
 
-Definition deref_loc_stkbor_access ce (ty: type) (sb: bor_stacks) (af: access_from) (b: block) (ofs: ptrofs) (ak: access_kind) : option bor_stacks :=
+Definition deref_loc_stkbor_access ce (ty: type) (sb: bor_stacks) (af: BorStkPerm.access_from) (b: block) (ofs: ptrofs) (ak: access_kind) : option bor_stacks :=
   memory_access sb b (Ptrofs.unsigned ofs) (sizeof ce ty) ak af.
 
 
 (* What if ty is nested in some immutable reference? We should rule
 out this situation in borrow checking, which should be significant to
 maintain the invariant *)
-Definition item_of_type (ty: type) (t: tag) : option item := 
+Definition item_of_type (ty: type) (t: loc) : option BorStkPerm.item := 
   match ty with
   | Tbox _
-  | Treference _ Mutable _ => Some (Unique t)
-  | Treference _ Immutable _ => Some (SharedReadOnly t)
+  | Treference _ Mutable _ => Some (BorStkPerm.Unique t)
+  | Treference _ Immutable _ => Some (BorStkPerm.SharedReadOnly t)
   | _ => None
   end.
 
-Definition assign_loc_stkbor_access (ce: composite_env) (ty: type) (sb: bor_stacks) (b: block) (ofs: ptrofs) (af: access_from) (v: val) : option bor_stacks :=
+Definition assign_loc_stkbor_access (ce: composite_env) (ty: type) (sb: bor_stacks) (b: block) (ofs: ptrofs) (af: BorStkPerm.access_from) (v: val) : option bor_stacks :=
   (* write access at (b, ofs) *)
-  match memory_access sb b (Ptrofs.unsigned ofs) (sizeof ce ty) AccessWrite af with
+  match memory_access sb b (Ptrofs.unsigned ofs) (sizeof ce ty) AWrite af with
   | Some sb1 =>
       (* if v is a pointer value point to the target location, we push
       (b, ofs) into the stack of the target location *)
@@ -130,7 +130,7 @@ Inductive bind_parameters (ce: composite_env) (e: env):
       forall m id ty params v1 vl b m1 m2 sb sb1 sb2,
       PTree.get id e = Some(b, ty) ->
       assign_loc ce ty m b Ptrofs.zero v1 m1 ->
-      assign_loc_stkbor_access ce ty sb b Ptrofs.zero from_local v1 = Some sb1 ->
+      assign_loc_stkbor_access ce ty sb b Ptrofs.zero BorStkPerm.from_local v1 = Some sb1 ->
       bind_parameters ce e m1 sb1 params vl m2 sb2 ->
       bind_parameters ce e m sb ((id, ty) :: params) (v1 :: vl) m2 sb2.
 
@@ -145,7 +145,7 @@ Fixpoint stkbor_free_list (sb: bor_stacks) (l: list (block * Z * Z)) : option bo
   match l with
   | nil => Some sb
   | (b, lo, hi) :: l' =>
-      match memory_free sb b lo hi from_local with
+      match memory_free sb b lo hi BorStkPerm.from_local with
       | None => None
       | Some sb' => stkbor_free_list sb' l'
       end
@@ -160,10 +160,10 @@ Variable m: mem.
 (* Different from the eval_place in Rustlight/RustIR, we also return
 the tag which denotes the permission granted for the access of the
 returned location *)
-Inductive eval_place (sb: bor_stacks) : place -> block -> ptrofs -> bor_stacks -> access_from -> Prop :=
+Inductive eval_place (sb: bor_stacks) : place -> block -> ptrofs -> bor_stacks -> BorStkPerm.access_from -> Prop :=
 | eval_Plocal: forall id b ty,
     e!id = Some (b, ty) ->
-    eval_place sb (Plocal id ty) b Ptrofs.zero sb from_local
+    eval_place sb (Plocal id ty) b Ptrofs.zero sb BorStkPerm.from_local
 | eval_Pfield_struct: forall p ty b ofs delta id i co orgs bor_tag sb1,
     eval_place sb p b ofs sb1 bor_tag ->
     typeof_place p = Tstruct orgs id ->
@@ -185,15 +185,15 @@ Inductive eval_place (sb: bor_stacks) : place -> block -> ptrofs -> bor_stacks -
 | eval_Pderef: forall p ty l ofs l' ofs' bor_tag sb1 sb2,
     eval_place sb p l ofs sb1 bor_tag ->
     deref_loc (typeof_place p) m l ofs (Vptr l' ofs') ->
-    deref_loc_stkbor_access ce (typeof_place p) sb1 bor_tag l ofs AccessRead = Some sb2 ->
+    deref_loc_stkbor_access ce (typeof_place p) sb1 bor_tag l ofs ARead = Some sb2 ->
     (* As the value stored in *(l, ofs) is (Vptr l' ofs'), the granted
     tag for this location is (Tagged l ofs) *)
-    eval_place sb (Pderef p ty) l' ofs' sb2 (from_ref (l, Ptrofs.unsigned ofs)).
+    eval_place sb (Pderef p ty) l' ofs' sb2 (BorStkPerm.from_ref (l, Ptrofs.unsigned ofs)).
 
 Definition mut_to_access (mut: mutkind) : access_kind :=
   match mut with
-  | Mutable => AccessWrite
-  | Immutable => AccessRead
+  | Mutable => AWrite
+  | Immutable => ARead
   end.
 
 (* Evaluation of pure expression *)
@@ -228,7 +228,7 @@ Inductive eval_pexpr (se: Genv.symtbl) (sb: bor_stacks) : pexpr -> val -> bor_st
     eval_place sb p b ofs sb1 bor_tag ->
     (* evaluate a place is considered as a read access of this place *)
     deref_loc ty m b ofs v ->
-    deref_loc_stkbor_access ce (typeof_place p) sb1 bor_tag b ofs AccessRead = Some sb2 ->
+    deref_loc_stkbor_access ce (typeof_place p) sb1 bor_tag b ofs ARead = Some sb2 ->
     eval_pexpr se sb (Eplace p ty) v sb2
 | eval_Ecktag: forall (p: place) b ofs tag tagz id fid co orgs bor_tag sb1 sb2
     (EVALP: eval_place sb p b ofs sb1 bor_tag)
@@ -271,7 +271,7 @@ Inductive eval_expr (se: Genv.symtbl) (sb: bor_stacks) : expr -> val -> bor_stac
     eval_place sb p b ofs sb1 bor_tag ->
     deref_loc ty m b ofs v ->
     (* move a place is considered as a write access of this place *)    
-    deref_loc_stkbor_access ce (typeof_place p) sb1 bor_tag b ofs AccessWrite = Some sb2 ->
+    deref_loc_stkbor_access ce (typeof_place p) sb1 bor_tag b ofs AWrite = Some sb2 ->
     eval_expr se sb (Emoveplace p ty) v sb2
 | eval_Epure: forall pe v sb1,
     eval_pexpr se sb pe v sb1 ->
@@ -465,7 +465,7 @@ Inductive step : state -> trace -> state -> Prop :=
     (PADDR2: eval_place ge le m2 sb4 p b1 ofs1 sb5 bor_tag2)
     (* set the tag *)
     (STAG: Mem.storev Mint32 m2 (Vptr b1 ofs1) (Vint (Int.repr tag)) = Some m3)
-    (STAGBOR: memory_access sb5 b1 (Ptrofs.unsigned ofs1) (size_chunk Mint32) AccessWrite bor_tag2 = Some sb6),
+    (STAGBOR: memory_access sb5 b1 (Ptrofs.unsigned ofs1) (size_chunk Mint32) AWrite bor_tag2 = Some sb6),
    step (State f (Sassign_variant p enum_id fid e) k le own1 sb1 m1) E0 (State f Sskip k le own3 sb6 m3)
 | step_box: forall f e p ty k le m1 m2 m3 m4 m5 b v v1 pb pofs own1 own2 own3 sb1 sb2 sb3 sb4 sb5 bor_tag
     (* check ownership *)
@@ -508,7 +508,7 @@ Inductive step : state -> trace -> state -> Prop :=
 | step_storagedead: forall f k le m id own ty b sb1 sb2,
     (* In Miri, storagedead is considered as a deallocation of this local *)
     le ! id = Some (b, ty) ->    (* We should check that this id must be a local variable *)
-    memory_free sb1 b 0 (sizeof ge ty) from_local = Some sb2 ->
+    memory_free sb1 b 0 (sizeof ge ty) BorStkPerm.from_local = Some sb2 ->
     step (State f (Sstoragedead id) k le own sb1 m) E0 (State f Sskip k le own sb2 m)
          
 | step_call: forall f a al k le m vargs tyargs vf fd cconv tyres p orgs org_rels own1 own2 sb1 sb2 sb3
