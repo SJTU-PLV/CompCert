@@ -208,14 +208,14 @@ Definition kill_loans (e: LOrgEnv.t) (p: place) : LOrgEnv.t :=
 
 (* Borrow check an assign statement *)
 
-Definition transfer_assign_base (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t :=
-  transfer_expr oe e.
+(* Definition transfer_assign_base (oe: LOrgEnv.t) (e: expr) : LOrgEnv.t := *)
+(*   transfer_expr oe e. *)
 
 Definition transfer_assignment (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t :=
   (* simple type checking *)
   let ty_dest := typeof_place p in
   let ty_src := typeof e in
-  let oe1 := transfer_assign_base oe p e in
+  let oe1 := transfer_expr oe e in
   (* After checking the evaluation of e *)
   let oe2 := kill_loans oe1 p in
   flow_loans oe2 ty_src ty_dest ByVal.
@@ -223,7 +223,7 @@ Definition transfer_assignment (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t 
 (* The checking function is used for all kinds of assignment *)
 Definition check_assignment (oe: LOrgEnv.t) (p: place) (e: expr) : res unit :=
   do _ <- check_expr oe e;
-  let oe1 := transfer_assign_base oe p e in
+  let oe1 := transfer_expr oe e in
   check_shallow_write_place oe1 p.
 
 
@@ -238,7 +238,7 @@ Definition transfer_assign_variant (oe: LOrgEnv.t) (p: place) (enum_id: ident) (
               let ty_src := typeof e in
               let orgs_src := co.(co_generic_origins) in
               let ty_dest := replace_origin_in_type ty_i (combine orgs_src orgs_dest) in
-              let oe1 := transfer_assign_base oe p e in
+              let oe1 := transfer_expr oe e in
               (* After checking the evaluation of e *)
               let oe2 := kill_loans oe1 p in
               flow_loans oe2 ty_src ty_dest ByVal
@@ -257,7 +257,7 @@ Definition transfer_Sbox (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t :=
   checking phase *)
   let ty_dest := typeof_place p in
   let ty_src := Tbox (typeof e) in
-  let oe1 := transfer_assign_base oe p e in
+  let oe1 := transfer_expr oe e in
   (* After checking the evaluation of e *)
   let oe2 := kill_loans oe1 p in
   flow_loans oe2 ty_src ty_dest ByVal.
@@ -490,7 +490,7 @@ Definition transfer_return (f: function) (oe1: LOrgEnv.t) (p: place) : LOrgEnv.t
   let oe2 := flow_loans oe1 (typeof_place p) f.(fn_return) ByVal in
   (* To accept more programs, we clear all the regions except the
     generic ones before checking dangling references. *)
-  let generic_regions := live_generic_regions (fn_generic_origins f) in
+  let generic_regions := regset_fun f in
   let oe3 := LOrgEnv.apply_liveness generic_regions oe2 in
   (* kill the loans related to parameter *)
   let oe4 := kill_loans_list oe3 f.(fn_params) in
@@ -507,7 +507,7 @@ Definition check_return (f: function) (oe1: LOrgEnv.t) (p: place) : res unit :=
     let oe2 := flow_loans oe1 (typeof_place p) f.(fn_return) ByVal in
     (* To accept more programs, we clear all the regions except the
     generic ones before checking dangling references. *)
-    let generic_regions := live_generic_regions (fn_generic_origins f) in
+    let generic_regions := regset_fun f in
     let oe3 := LOrgEnv.apply_liveness generic_regions oe2 in
     (* check if there is reference to parameters that are stored in
     the generic regions *)
@@ -588,7 +588,7 @@ Definition init_function (f: function) : LOrgEnv.t :=
 
 Definition loans_flow_analyze (ce: composite_env) (f: function) (cfg: rustcfg) (entry: node) : Errors.res (PMap.t RegionSet.t * (PMap.t LoansEnv.t)) :=
   (* Liveness analysis for regions *)
-  let generic_regions := live_generic_regions (fn_generic_origins f) in
+  let generic_regions := regset_fun f in
   match RegionLiveness.analyze f cfg with
   | Some live =>
       let init_oe := init_function f in
@@ -670,7 +670,7 @@ checking, which is not used in the top-level soundness proof. *)
 
 Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res unit :=
   do (entry, cfg) <- generate_cfg f.(fn_body);
-  let generic_regions := live_generic_regions (fn_generic_origins f) in
+  let generic_regions := regset_fun f in
   (** 1. Loans-flow analysis *)
   do loans_flow_res <- loans_flow_analyze ce f cfg entry;
   (** 2. Collect result of the borrow checking ! *)

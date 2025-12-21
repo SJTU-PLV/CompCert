@@ -68,6 +68,12 @@ Inductive item :=
 
 Definition t := list item.
 
+Definition to_item (mut: mutkind) (t: Tag.t) : item :=
+  match mut with
+  | Mutable => Unique t
+  | Immutable => SharedReadOnly t
+  end.
+
 (** Stacked borrow operations (mostly identical to the original stacked borrow) *)
 
 (* If bor is None, it means this access is from raw pointer place *)
@@ -240,8 +246,12 @@ Module BorStkPerm := BorStk(Loc).
 
 Definition bor_stacks := NMap.t (ZMap.t (option BorStkPerm.t)).
 
-Local Notation "a # b" := (NMap.get _ b a) (at level 1).
-Local Notation "a ## b" := (ZMap.get b a) (at level 1).
+Declare Scope map_scope.
+
+Notation "a # b" := (NMap.get _ b a) (at level 1) : map_scope.
+Notation "a ## b" := (ZMap.get b a) (at level 1) : map_scope.
+
+Local Open Scope map_scope.
 
 Definition init_stacks (stks: bor_stacks) (b: block) (lo hi: Z) : bor_stacks :=  
   let contents := repeat (Some (@nil BorStkPerm.item)) (Mem.interval_length lo hi) in

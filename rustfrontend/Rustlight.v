@@ -209,6 +209,8 @@ Fixpoint support_parent_places (p: place) : list place :=
       | Tbox _ 
       | Treference _ Mutable _ =>
           p' :: support_parent_places p'
+      | Treference _ Immutable _ =>
+          p' :: nil
       | _ => nil
       end
   | Pdowncast p' _ _ => p' :: support_parent_places p'
@@ -217,7 +219,7 @@ Fixpoint support_parent_places (p: place) : list place :=
 
 (* Similar to ProjectElem in rustc *)
 Variant projection : Type :=
-  | proj_deref
+  | proj_deref (* (mut: mutkind) *)
   | proj_field (fid: ident)
   (* type of the variant here is used in valid_owner proof !! *)
   | proj_downcast (* (ty: type) *) (fid: ident) (* (fty: type) *)
@@ -293,24 +295,8 @@ Fixpoint projections_shallow_contain (phl1 phl2: list projection) : bool :=
   | _, _ => false
   end.
 
-(** TODO: add mutability into path definition *)
-Definition is_support_prefix_path (phl: list projection) : bool :=
-  match phl with
-  | proj_deref (* Imutable *) :: _  => false
-  | _ => true
-  end.
-
-Fixpoint projection_support_contain (phl1 phl2: list projection) : bool :=
-  match phl1, phl2 with
-  | nil, _ => is_support_prefix_path phl2
-  | ph1 :: phl1', ph2 :: phl2' =>
-      if projection_eq ph1 ph2 then
-        projection_support_contain phl1' phl2'
-      else false
-  | _, _ => false
-  end.
-
-(** Experiment code for new is_prefix  *)
+(** Experiment code for new is_prefix without the comparison of type
+information *)
 
 (* The definition of is_prefix does not consider the type information
 of the places. For example, (Plocal id int) is a prefix of (Pderef
@@ -325,16 +311,11 @@ Definition is_shallow_prefix (p1 p2: place) : bool :=
   let (id2, phl2) := path_of_place p2 in
   ident_eq id1 id2 && projections_shallow_contain phl1 phl2.
 
-(** TODO: It requires the typing information (i.e., mutability)! So we
-need to add the mutability into the path? For testing, we use the old
-version. *)
-(* Definition is_support_prefix (p1 p2: place) : bool := *)
-(*   let (id1, phl1) := projection_of_place p1 in *)
-(*   let (id2, phl2) := projection_of_place p2 in *)
-(*   ident_eq id1 id2 && projection_support_contain phl1 phl2. *)
 
 Definition is_support_prefix (p1 p2: place) : bool :=
-  place_eq p1 p2 || in_dec place_eq p1 (support_parent_places p2).
+  let phs := map path_of_place (p2 :: (support_parent_places p2)) in
+  in_dec path_eq (path_of_place p1) phs.
+
 
 Definition is_prefix_strict (p1 p2: place) : bool :=
   let (id1, phl1) := path_of_place p1 in

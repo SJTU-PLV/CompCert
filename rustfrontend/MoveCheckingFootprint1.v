@@ -36,22 +36,6 @@ Definition sizeof_comp ce (id: ident) :=
   | None => 0
   end.
 
-
-(** Borrow stack model on the tree-shaped memory. We use [path] as the
-type of the tag *)
-
-
-Module Path <: DecidableType.DecidableType.
-  Definition t := path.
-  Definition eq := @eq t.
-  Definition eq_dec := path_eq.
-  Definition eq_refl: forall x, eq x x := (@eq_refl t).
-  Definition eq_sym: forall x y, eq x y -> eq y x := (@eq_sym t).
-  Definition eq_trans: forall x y z, eq x y -> eq y z -> eq x z := (@eq_trans t).
-End Path.
-
-Module BorStk := BorStk(Path).
-
 (** Define the sem_wt_loc/val as a coherence relation between
 footprint and the memory. We try to define it using massert which
 explicitly encode separation. *)
@@ -78,19 +62,10 @@ interval [base, fofs) is used to align this field but we need to
 specify its permission, for which we record it in the footprint. *)
 Definition ffpty : Type := ident * ((Z * Z) * footprint).
 
-(** Tree-shaped stacked borrow memory *)
-
-Inductive borstk_mem : Type :=
-| bor_emp
-| bor_atomic (stk: BorStk.t) (st: borstk_mem)  (* A singleton location storing some
-  object (e.g., box/ref/scalar); [st] is the subtree sb-mem *)
-| bor_fields (stkl: list (ident * borstk_mem)).
-
 
 (* Functions to check whether the footprint owns its value or is initialized *)
 
-(* All one-level children in this footprint (including itself) are not
-fp_emp. There are subtle difference between shallow/deep_owned and
+(* There are subtle difference between shallow/deep_owned and
 shallow/deep_init, the former is used to show whether this footprint
 represents a valid location (we do not care what value inside this
 location). For exmaple, when we moved a box variable, its footprint
@@ -127,6 +102,11 @@ Fixpoint deep_owned (fp: footprint) : bool :=
   | _ => true
   end.
 
+Definition not_fp_emp (fp: footprint) : bool :=
+  match fp with
+  | fp_emp => false
+  | _ => true
+  end.
 
 (* Different from shallow/deep_owned, shallow/deep_init is the
 properties checked by move checking, which should imply
@@ -140,8 +120,10 @@ Fixpoint shallow_init (fp: footprint) : bool :=
       forallb (fun '(_, (_, ffp)) => shallow_init ffp) fpl
   | fp_enum _ _ _ _ ffp =>
       shallow_init ffp
-  (* We cannot simply say that fp1 is not fp_emp *)
-  | fp_box _ _ fp1 => (shallow_owned fp1)
+  (* We cannot simply say that fp1 is not fp_emp because when we pass
+  some field of fp1 to caller, its original footprint would be set to
+  fp_emp, but we cannot owns the whole block anymore. *)
+  | fp_box _ _ fp1 => shallow_owned fp1
   | _ => true
   end.
 
@@ -157,12 +139,6 @@ Fixpoint deep_init (fp: footprint) : bool :=
       deep_init ffp
   | fp_box _ _ fp1 =>
       deep_init fp1
-  | _ => true
-  end.
-
-Definition not_fp_emp (fp: footprint) : bool :=
-  match fp with
-  | fp_emp => false
   | _ => true
   end.
 
@@ -230,7 +206,7 @@ Definition fp_map := PTree.t (block * Z * type * option origin * footprint).
 
 (* Definition fenv := PTree.t (block * Z * type). *)
 
-(* Coercion fenv_to_tenv (fe: fenv) : typenv := PTree.map1 snd fe. *)
+Coercion fpm_to_tenv (fpm: fp_map) : typenv := PTree.map1 (fun '(_, _, ty, _, _) => ty) fpm.
 
 
 (** Footprint map which records the footprint starting from stack
@@ -374,7 +350,8 @@ Fixpoint get_owner_loc_footprint (phl: list projection) (fp: footprint) (b: bloc
       end
   end.
 
-(* non-loc version: use it to get some internal footprint *)
+(* Why we need this? non-loc version: use it to get some internal
+footprint *)
 Fixpoint get_owner_footprint (phl: list projection) (fp: footprint) : option footprint :=
   match phl with
   | nil => Some fp
@@ -397,21 +374,18 @@ Fixpoint get_owner_footprint (phl: list projection) (fp: footprint) : option foo
       end
   end.
 
-Definition get_owner_footprint_map (ps: path) (fpm: fp_map) : option footprint :=
-  let (id, phl) := ps in
-  match fpm!id with
-  | Some (a, fp) =>
-      get_owner_footprint phl fp
-  | _ => None
-  end.
-
-
 Definition get_owner_loc_footprint_map (ps: path) (fpm: fp_map) : option (block * Z * footprint) :=
   let (id, phl) := ps in
   match fpm!id with
   | Some (b, ofs, ty, _, fp) =>
       get_owner_loc_footprint phl fp b ofs
   | _ => None
+  end.
+
+Definition get_owner_footprint_map (ps: path) (fpm: fp_map) : option footprint :=
+  match get_owner_loc_footprint_map ps fpm with
+  | Some (_, _, fp) => Some fp
+  | None => None
   end.
 
 (* In our setting, moving from a value is clearing its inner
@@ -431,22 +405,11 @@ Fixpoint clear_footprint_rec (fp: footprint) : footprint :=
       fp_struct id (map (fun '(fid, (fofs, ffp)) => (fid, (fofs, clear_footprint_rec ffp))) fpl)
   end.
 
-Definition clear_owner_footprint fp (phl: list projection) : option footprint :=
-  match get_owner_footprint phl fp with
-  | Some fp1 =>
-      set_footprint phl (clear_footprint_rec fp1) fp 
-  | None => None
-  end.
 
 Definition clear_footprint_map (ps: path) (fpm: fp_map) : option fp_map :=
-  let (id, phl) := ps in
-  match fpm!id with
-  | Some (b, ofs, ty, fp) =>
-      match (clear_owner_footprint fp phl) with
-      | Some fp1 =>
-          Some (PTree.set id (b, ofs, ty, fp1) fpm)
-      | None => None
-      end
+  match get_owner_footprint_map ps fpm with
+  | Some fp =>
+      set_footprint_map ps (clear_footprint_rec fp) fpm
   | None => None
   end.
 
@@ -518,178 +481,6 @@ Ltac destr_fp_field fp H :=
   destruct find_field as [p|] eqn: FIND; try congruence;
   repeat destruct p; simpl in H;
   exploit find_field_some; eauto; intros A2; subst.
-
-
-(** Functions for updating the borrow stack of the footprint when
-accessing some locations *)
-
-Require Import BorrowCheckDomain RegionLiveness.
-
-(* We also need to know that generic region this path locates
-at....  *)
-Definition extern_loc_region (fpm: fp_map) (ph: path) : option origin :=
-  let (id, pj) := ph in
-  match fpm ! id with
-  | Some (_, _, _, opt_reg, _) =>
-      opt_reg
-  | _ => None
-  end.
-
-Definition loan_approx (fpm: fp_map) (l: loan) (ph: path) : Prop :=
-  match l, extern_loc_region fpm ph with
-  | Lintern _ p, None =>
-      
-      mut1 = mut2 /\ is_prefix p1 p2 = true
-  | Lextern org1, Lextern org2 =>
-      org1 = org2 
-  | _, _ => False
-  end.
-  
-
-(* ph is the location the stack resides in *)
-Inductive borstk_approx_loans (live: RegionSet.t) (orgst: LOrgSt.t) (fpm: fp_map) (stk: BorStkPerm.t) (ph: path) (it: BorStk.item) : Prop :=
-| borstk_approx_loans_intro: forall stk1 stk2 ls,
-    orgstg = Live ls ->
-    (* The item is in the stack *)
-    stk = stk1 ++ it :: stk2 ->
-    (* all valid Unique items in stk2 are approximated by ls *)
-    (forall b ofs ph1 ph2 fp pj,
-        In (BorStkPerm.Unique (b, ofs)) stk2 ->
-        (* ph2 is a node in the footprint tree *)
-        get_owner_loc_footprint_map ph2 fpm = Some (b, ofs, fp) ->
-        (* ph2 is reachable via an arbitary path [ph1] *)
-        get_owner_path_map ph1 fpm = Some ph2 ->
-        (* We should know how ph2 reaches ph; the projections should
-        have the form [proj_deref; proj_field/downcast^*] *)
-        get_owner_path fpm ph2 pj fp = Some ph ->
-        (* ph1 is mutable *)
-        mutable_path fpm ph1 ->
-        (* ph1 is live *)
-        is_live_path live fpm ph1 ->
-        (* The conclusion is that ls contains a loan that is prefix of
-        [ph1; proj_deref]. TODO: what if the location of this stk is
-        within some fields? *)
-        exists ln, 
-          LoanSet.In ln ls 
-          (* If ph1 is from external locations then ln must be
-          Lextern('a) where 'a is the region of this external
-          location; otherwise ln is a prefix of ph1. We use
-          loan_of_path to compute the loan of this path (imagine that
-          it is borrow?) *)
-          /\ loan_approx ls (loan_of_path (fst ph2, snd ph2 ++ pj)))
-
-
-Definition loans_inv ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) (stk_mem: bor_stacks) :=
-  forall ph1 ph2 org mut ty, 
-    (* What if ph1 is a fp_box? *)
-    wt_path fpm ph1 = Some (Treference org mut ty) ->
-    (* ph1 is a live path *)
-    is_live_path live fpm ph1 ->
-    get_owner_path_map ph1 fpm = Some ph2 ->
-    (* The footprint at ph2 is fp_ref *)
-    forall rb rofs ph3, 
-      (* ph3 is not used here, as we need to maintain an invariant
-         about (rb,rofs) must be the address of ph3 if ph2 is a live
-         path. Think: should we define this invariant here? *)
-      get_owner_footprint_map ph2 fpm = Some (fp_ref rb rofs ph3) ->
-      forall del stk,
-        0 <= del < sizeof ce ty ->
-        stk_mem ! rb !! (rofs + del) = Some stk ->
-        (** Since path ph2 is live, it must appear in the
-            stack at (rb, rofs + del). *)
-        borstk_approx_loans live (LOrgEnv.get org le) fpm stk (to_item mut (rb,rofs))
-
-(* get the borrow stack at the path [phl] *)
-Fixpoint get_owner_borstk (phl: list projection) (stk: borstk_mem) : option borstk_mem :=
-  match phl with
-  | nil => Some stk
-  | pj :: l =>
-      match pj, stk with
-      | proj_deref, bor_atomic _ stk1 =>
-          get_owner_borstk l stk1
-      | proj_field fid, bor_fields stks =>
-          match find_field fid stks with
-          | Some (_, stk1) =>
-              get_owner_borstk l stk1
-          | None => None
-          end
-      | proj_downcast _, f =>
-          if ident_eq fid1 fid2  then
-            get_owner_loc_footprint l fp1 b (ofs + fofs)
-          else None
-      | _, _  => None
-      end
-  end.
-
-
-(* update the borrow stack when computing the address of a path and
-return the updated footprint and the footprint *)
-(* ph are the current accumulated path and phl are the remaining
-projections *)
-Fixpoint access_borstk_path (ph: path) (phl: list projection) (stk: borstk_mem) (af: BorStk.access_from) : option borstk_mem :=
-  match phl with
-  | nil => Some stk
-  | pj :: l =>
-      let ph1 := (fst ph, snd ph ++ [pj]) in
-      match pj, fp with
-      | proj_deref, fp_box b sz fp1 stk =>
-          match BorStk.access1 stk ARead af, access_borstk_owner_path ph1 l fp1 (BorStk.from_ref ph) with
-          | Some stk1, Some fp1' =>
-              Some (fp_box b sz fp1' stk1)
-          | _, _ => None
-          end
-      | proj_field fid, fp_struct id fpl =>
-          match find_field fid fpl with
-          | Some ((base, fofs), fp1) =>
-              match access_borstk_owner_path ph1 l fp1 af with
-              | Some fp1' =>
-                  Some (fp_struct id (set_field_fp fid fp1' fpl))
-              | None => None
-              end
-          | None => None
-          end
-      | proj_downcast fid1, fp_enum id tagz fid2 fofs fp1 =>
-          match access_borstk_owner_path ph1 l fp1 af with
-          | Some fp1' =>
-              Some (fp_enum id tagz fid2 fofs fp1')
-          | None => None
-          end
-      | _, _  => None
-      end
-  end.
-
-Fixpoint access_borstk_path (fpm: fp_map) (ph: path) (phl: list projection) (fp: footprint) (af: BorStk.access_from) : option footprint :=
-  match phl with
-  | nil => Some fp
-  | pj :: l =>
-      let ph1 := (fst ph, snd ph ++ [pj]) in
-      match pj, fp with
-      | proj_deref, fp_box b sz fp1 stk =>
-          match BorStk.access1 stk ARead af, access_borstk_owner_path ph1 l fp1 (BorStk.from_ref ph) with
-          | Some stk1, Some fp1' =>
-              Some (fp_box b sz fp1' stk1)
-          | _, _ => None
-          end
-      | proj_field fid, fp_struct id fpl =>
-          match find_field fid fpl with
-          | Some ((base, fofs), fp1) =>
-              match access_borstk_owner_path ph1 l fp1 af with
-              | Some fp1' =>
-                  Some (fp_struct id (set_field_fp fid fp1' fpl))
-              | None => None
-              end
-          | None => None
-          end
-      | proj_downcast fid1, fp_enum id tagz fid2 fofs fp1 =>
-          match access_borstk_owner_path ph1 l fp1 af with
-          | Some fp1' =>
-              Some (fp_enum id tagz fid2 fofs fp1')
-          | None => None
-          end
-      | _, _  => None
-      end
-  end.
-
 
 
 (**************** End of footprint functions ********************  *)
@@ -901,9 +692,9 @@ Inductive sem_wt_val : footprint -> val -> massert -> Prop :=
 (* Qed. *)
 
 
-Inductive coherent_var (elt: (ident * (block * Z * type * footprint))) : massert -> Prop :=
-| coherent_var_intro: forall id b ofs ty mass fp
-    (ELTEQ: elt = (id, (b, ofs, ty, fp)))
+Inductive coherent_var (elt: (ident * (block * Z * type * option origin * footprint))) : massert -> Prop :=
+| coherent_var_intro: forall id b ofs ty mass fp opt_reg
+    (ELTEQ: elt = (id, (b, ofs, ty, opt_reg, fp)))
     (* What if fpm contains more variables than local env? *)
     (MASS: sem_wt_loc fp b ofs mass),
     (* How to express the ownership of external locations passed by reference? *)
@@ -1081,7 +872,6 @@ Qed.
 
 
 (** ** Typing of the footprint: used to make sure the footprint is well-formed *)
-
 
 Section COMP_ENV.
 
@@ -1992,7 +1782,7 @@ Proof.
   do 3 eexists. do 3 (try eapply conj); eauto.
   - instantiate (1 := mp1 ** mp3 ** mp2).
     econstructor. 
-    assert (TODO: PTree.elements (PTree.set id0 (b0, ofs0, ty, fp2) fpm) = l1 ++ (id0, (b0, ofs0, ty, fp2)) :: l2) by admit.
+    assert (TODO: PTree.elements (PTree.set id0 (b0, ofs0, ty, opt_reg, fp2) fpm) = l1 ++ (id0, (b0, ofs0, ty, opt_reg, fp2)) :: l2) by admit.
     rewrite TODO.
     eapply Forall_sep_app. exists mp1, (mp3 ** mp2). 
     split; eauto. split. econstructor; eauto.
@@ -2418,10 +2208,10 @@ Proof.
   intros (bytes & m2 & fp2 & mass3 & B1 & B2 & B3 & B4 & B5).
   cbn [set_footprint_map]. rewrite B. rewrite B3.
   exists bytes, m2.
-  exists (PTree.set id0 (b, ofs, ty, fp2) fpm), (mass3 ** mp1 ** mp4).
+  exists (PTree.set id0 (b, ofs, ty, opt_reg, fp2) fpm), (mass3 ** mp1 ** mp4).
   do 4 (try eapply conj); eauto.
   - econstructor. 
-    assert (TODO: PTree.elements (PTree.set id0 (b, ofs, ty, fp2) fpm) = l1 ++ (id0, (b, ofs, ty, fp2)) :: l2) by admit.
+    assert (TODO: PTree.elements (PTree.set id0 (b, ofs, ty, opt_reg, fp2) fpm) = l1 ++ (id0, (b, ofs, ty, opt_reg, fp2)) :: l2) by admit.
     (* rewrite TODO. *)
     (* eapply Forall_sep_app. exists mp1, (mp3 ** mp2).  *)
     (* split; eauto. split. econstructor; eauto. *)
@@ -2431,4 +2221,3 @@ Proof.
 Admitted.
 
 (** TODO: assign_loc rule  *)
-

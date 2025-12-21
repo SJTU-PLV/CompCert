@@ -121,6 +121,9 @@ Fixpoint live_generic_regions (l: list origin) : RegionSet.t :=
       RegionSet.add r (live_generic_regions l')
   end.
 
+Definition regset_fun (f: function) : RegionSet.t :=
+  live_generic_regions (fn_generic_origins f).
+
 Definition analyze (f: function) (cfg: rustcfg) : option (PMap.t RegionSet.t) :=
   (* All the generic regions are live at all points *)  
   let generic_regions := live_generic_regions f.(fn_generic_origins) in
