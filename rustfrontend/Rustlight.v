@@ -233,6 +233,14 @@ Defined.
 
 Definition path : Type := (ident * list projection).
 
+Lemma path_eq: forall (p1 p2: path), {p1 = p2} + {p1 <> p2}.
+Proof.
+  destruct p1; destruct p2.
+  destruct (ident_eq i i0); subst.
+  destruct (list_eq_dec projection_eq l l0); subst. auto.
+  all: right; congruence.
+Defined.
+
 (* relate place and path *)
 Fixpoint path_of_place (p: place) : path :=
   match p with
