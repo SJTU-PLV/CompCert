@@ -659,6 +659,12 @@ Inductive sem_wt_val : footprint -> val -> massert -> Prop :=
         sem_wt_loc (fp_enum id tagz fid fofs fp) b (Ptrofs.unsigned ofs) (mp1 ** mp)),
     sem_wt_val (fp_enum id tagz fid fofs fp) (Vptr b ofs) mp.
 
+Inductive sem_wt_val_list : list footprint -> list val -> massert -> Prop :=
+| sem_wt_val_nil: sem_wt_val_list nil nil STrue
+| sem_wt_val_cons: forall fp fpl v vl mp1 mp
+     (WTVAL_LIST: sem_wt_val_list fpl vl mp)
+     (WTVAL: sem_wt_val fp v mp1),
+     sem_wt_val_list (fp::fpl) (v::vl) (mp1 ** mp).
 
 (* Lemma fields_loc_sep_equiv: forall fpl b ofs P mass, *)
 (*     fields_loc_sep b ofs P fpl mass <-> *)

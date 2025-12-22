@@ -257,30 +257,28 @@ verified. *)
 Definition transf_rustlight_program (p: Rustlight.program) : res Asm.program :=
   OK p
   !@@ time "Rustlight to RustIR" RustIRgen.transl_program
+  @@@ time "Elaborate drop in RustIR" ElaborateDrop.transl_program
+  (** TODO: add this and add match_prog @@@ time "Replace origins in RustIR" ReplaceOrigins.transl_program *)
   @@@ time "Borrow checking" (fun p => match BorrowCheck.borrow_check_program p with
                                  | OK _ => OK p
                                  | Error msg => Error msg
                                  end)
-  @@@ time "Elaborate drop in RustIR" ElaborateDrop.transl_program
   @@@ time "Generate Clight and insert drop glue" Clightgen.transl_program
   @@@ transf_clight_program.
 
 
-Definition transf_rustlight_program_borck (p: Rustlight.program) : res Asm.program :=
+Definition transf_rustlight_program_complete (p: Rustlight.program) : res Asm.program :=
   OK p
   !@@ time "Rustlight to RustIR" RustIRgen.transl_program
-  (* @@@ time "Move checking" (fun p => match MoveChecking.move_check_program p with *)
-  (*                                | OK _ => OK p *)
-  (*                                | Error msg => Error msg *)
-  (*                                end) *)
+  @@@ time "Elaborate drop in RustIR" ElaborateDrop.transl_program
   @@@ time "Replace origins in RustIR" ReplaceOrigins.transl_program
   @@@ time "Borrow checking" (fun p => match BorrowCheck.borrow_check_program p with
                                  | OK _ => OK p
                                  | Error msg => Error msg
                                  end)
-  @@@ time "Elaborate drop in RustIR" ElaborateDrop.transl_program
   @@@ time "Generate Clight and insert drop glue" Clightgen.transl_program
   @@@ transf_clight_program.
+
 
 
 (** The following lemmas help reason over compositions of passes. *)
@@ -375,13 +373,13 @@ Definition passes_rustlight_rustir :=
 
 Definition CompCertO's_passes_rustir :=
     mkpass ElaborateDropProof.match_prog
+    (** Borrow Checking pass *)
+    ::: pass_partial_identity BorrowCheck.borrow_check_program
     ::: mkpass Clightgenproof.match_prog
     ::: CompCertO's_passes.
 
 Definition CompCertO's_passes_rustlight :=
   mkpass (compose_passes passes_rustlight_rustir)
-    (** Borrow Checking pass *)
-    ::: pass_partial_identity BorrowCheck.borrow_check_program
     ::: CompCertO's_passes_rustir.
 
 (** Composing the [match_prog] relations above, we obtain the relation
@@ -484,16 +482,17 @@ Theorem transf_rustlight_program_match: forall p tp,
 Proof.
   intros p tp T.
   unfold transf_rustlight_program, time in T. simpl in T.
-  destruct BorrowCheck.borrow_check_program eqn: MOVECHECK in T; simpl in T; try congruence.
   set (p1 := (RustIRgen.transl_program p)) in *.
   destruct (ElaborateDrop.transl_program p1) as [p2|e] eqn: P2; simpl in T; try discriminate.
+  (* destruct (ReplaceOrigins.transl_program p2) as [p3|e] eqn: P3; simpl in T; try discriminate. *)
+  destruct BorrowCheck.borrow_check_program eqn: MOVECHECK in T; simpl in T; try congruence.  
   destruct (Clightgen.transl_program p2) as [p3|e] eqn: P3; simpl in T; try discriminate.
   unfold match_prog_rustlight. cbn -[CompCertO's_passes_rustlight].
   exists p1; split. simpl. exists p1. split; auto.
   apply RustIRgenProof.match_transf_program; auto.
-  exists p1; split. simpl. split; auto.
-  eexists. eauto.
   exists p2; split. apply ElaborateDropProof.match_transf_program; auto.
+  exists p2; split. simpl. split; auto.
+  eexists. eauto.
   exists p3; split. apply Clightgenproof.match_transf_program; auto.
   apply transf_clight_program_match; eauto.
 Qed.
@@ -1233,6 +1232,7 @@ Proof.
   intros p tp M. unfold match_prog_rustir, pass_match, CompCertO's_passes_rustir in M. 
   cbn -[CompCertO's_passes] in M.
   repeat DestructM.
+  destruct M; subst.
   assert (F: forward_simulation cc_rustir_compcert cc_rustir_compcert (RustIRown.semantics p) (Asm.semantics tp)).
   { unfold cc_rustir_compcert.
     eapply compose_forward_simulations.
@@ -1257,7 +1257,7 @@ Theorem rustlight_semantic_preservation:
 Proof.
   intros p tp M. unfold match_prog_rustlight, pass_match, CompCertO's_passes_rustlight in M. 
   cbn -[CompCertO's_passes_rustir] in M.
-  repeat DestructM. destruct M. subst.
+  repeat DestructM. subst.
   assert (F: forward_simulation cc_rust_compcert cc_rust_compcert (Rustlightown.semantics p) (Asm.semantics tp)).
   { rewrite cc_rust_expand at 2.
     (* do 2 rewrite <- (cc_compose_assoc _ _ cc_compcert). *)
