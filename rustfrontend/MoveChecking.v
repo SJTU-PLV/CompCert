@@ -232,6 +232,7 @@ Definition move_check_stmt ce (an : IM.t * IM.t * PathsMap.t) (stmt : statement)
             OK stmt
           else
             Error (msg "move_check_expr error in Sreturn")
+      (** TODO: since we do move checking after drop elaboration, we should check p of drop(p) is movable *)
       | _ => OK stmt
       end
   (* impossible *)

@@ -229,7 +229,7 @@ shallowly fp_emp and etc. *)
 (* record the footprint in a drop glue: fpl are the footprint of the
 members to be dropped (the first element of fpl is the current dropped
 footprint); (b, ofs) is the address of this composite. *)
-| fpf_drop (b: block) (ofs: Z) (fpl: list (ffpty)) (fpf: fp_frame)
+(* | fpf_drop (b: block) (ofs: Z) (fpl: list (ffpty)) (fpf: fp_frame) *)
 .
 
 (** Functions for getting and updating the footprint map. *)
@@ -720,11 +720,11 @@ Inductive coherent_fpf : fp_frame -> massert -> Prop :=
 | coherent_fpf_func: forall  fpm fpf mass1 mass2
     (COH1: coherent_fpm fpm mass1)
     (COH2: coherent_fpf fpf mass2),
-    coherent_fpf (fpf_func fpm fpf) (mass1 ** mass2)
-| coherent_fpf_drop: forall fpf fpl b ofs mass1 mass2
-    (COH1: fields_loc_sep b ofs sem_wt_loc fpl mass1)
-    (COH2: coherent_fpf fpf mass2),
-    coherent_fpf (fpf_drop b ofs fpl fpf) (mass1 ** mass2).
+    coherent_fpf (fpf_func fpm fpf) (mass1 ** mass2).
+(* | coherent_fpf_drop: forall fpf fpl b ofs mass1 mass2 *)
+(*     (COH1: fields_loc_sep b ofs sem_wt_loc fpl mass1) *)
+(*     (COH2: coherent_fpf fpf mass2), *)
+(*     coherent_fpf (fpf_drop b ofs fpl fpf) (mass1 ** mass2). *)
 
 Inductive coherent (m: mem) (fpf: fp_frame) : Prop :=
 | coherent_intro: forall mass
@@ -1079,28 +1079,28 @@ Admitted.
 (** Properties of footprint that ensured by move checking *)
 
 (* use it to replace mmatch of the original proofs *)
-Definition move_check_inv (own: own_env) (fpm: fp_map) : Prop :=
+Definition move_check_inv (init uninit universe : PathsMap.t) (fpm: fp_map) : Prop :=
   forall p fp,
     get_owner_footprint_map (path_of_place p) fpm = Some fp ->
-    is_init own p = true ->
+    must_init init uninit universe p = true ->
     shallow_init fp = true 
-    /\ (is_full (own_universe own) p = true ->
+    /\ (is_full universe p = true ->
        deep_init fp = true).
 
 (** An important lemma: if a place pass [must_movable] then the
 footprint stored in the path of this place is deeply init. *)
 
-Lemma movable_place_deep_init: forall ce fp fpm own p init uninit universe
+Lemma movable_place_deep_init: forall ce fp fpm p init uninit universe
+    (INV: move_check_inv init uninit universe fpm)
     (POWN: must_movable ce init uninit universe p false = true)
-    (SOUND: sound_own own init uninit universe)
     (PFP: get_owner_footprint_map (path_of_place p) fpm = Some fp),
     deep_init fp = true.
 Admitted.
 
 (* May be combined with the above lemma *)
-Lemma movable_place_shallow_init: forall ce fp fpm own p init uninit universe
+Lemma movable_place_shallow_init: forall ce fp fpm p init uninit universe
+    (INV: move_check_inv init uninit universe fpm)
     (POWN: must_movable ce init uninit universe p true = true)
-    (SOUND: sound_own own init uninit universe)
     (PFP: get_owner_footprint_map (path_of_place p) fpm = Some fp),
     shallow_init fp = true.
 Admitted.
