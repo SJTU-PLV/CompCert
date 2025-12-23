@@ -20,7 +20,22 @@ Module Place <: DecidableType.DecidableType.
   Definition eq_trans: forall x y z, eq x y -> eq y z -> eq x z := (@eq_trans t).
 End Place.
 
+Module Path <: DecidableType.DecidableType.
+  Definition t := path.
+  Definition eq := @eq t.
+  Definition eq_dec := path_eq.
+  Definition eq_refl: forall x, eq x x := (@eq_refl t).
+  Definition eq_sym: forall x y, eq x y -> eq y x := (@eq_sym t).
+  Definition eq_trans: forall x y z, eq x y -> eq y z -> eq x z := (@eq_trans t).
+End Path.
+
 Module Paths := FSetWeakList.Make(Place).
+
+(* Definition place_to_path : place -> Path.t := path_of_place. *)
+(* Definition path_elt_of_place : place -> Paths.elt := path_of_place. *)
+
+(* Coercion place_to_path : place >-> Path.t. *)
+(* Coercion path_elt_of_place : place >-> Paths.elt. *)
 
 Module LPaths := LFSet(Paths).
 

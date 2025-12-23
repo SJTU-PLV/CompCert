@@ -259,6 +259,8 @@ Fixpoint path_of_place (p: place) : path :=
       (id, phl ++ [proj_downcast (* (typeof_place p1) *) fid (* fty *)])
   end.
 
+Coercion path_of_place : place >-> path.
+
 (* If ph1 is a prefix of phl2, return trues *)
 Fixpoint projections_contain (phl1 phl2: list projection) : bool :=
   match phl1, phl2 with
