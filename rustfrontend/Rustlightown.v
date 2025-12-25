@@ -859,14 +859,14 @@ Inductive eval_pexpr (se: Genv.symtbl) : pexpr -> val ->  Prop :=
     (* Note that to_ctype Tbox = None *)
     to_ctype (typeof_pexpr a) = aty ->
     (** TODO: define a rust-specific sem_unary_operation  *)
-    sem_unary_operation op v1 aty m = Some v ->
+    Cop.sem_unary_operation op v1 aty m = Some v ->
     eval_pexpr se (Eunop op a ty) v
 | eval_Ebinop: forall op a1 a2 ty v1 v2 v ty1 ty2,
     eval_pexpr se a1 v1 ->
     eval_pexpr se a2 v2 ->
     to_ctype (typeof_pexpr a1) = ty1 ->
     to_ctype (typeof_pexpr a2) = ty2 ->
-    sem_binary_operation_rust op v1 ty1 v2 ty2 m = Some v ->
+    Cop.sem_binary_operation_rust op v1 ty1 v2 ty2 m = Some v ->
     (* For now, we do not return moved place in binary operation *)
     eval_pexpr se (Ebinop op a1 a2 ty) v
 | eval_Eplace: forall p b ofs ty v,
@@ -889,6 +889,7 @@ Inductive eval_pexpr (se: Genv.symtbl) : pexpr -> val ->  Prop :=
     the last match arms must be successful. Note that the last match
     arm is in the else statement. This checking is required for the
     soundness of eval_pexpr_error_sound *)   
+    (* This range check can be done in type checking *)
     (RANGE: Int.unsigned tag < list_length_z co.(co_members)),
     eval_pexpr se (Ecktag p fid) (Val.of_bool (Int.eq tag (Int.repr tagz)))
 | eval_Eref: forall p b ofs mut ty org,
@@ -999,9 +1000,9 @@ need to ensure that sem_cast can succeed! *)
     eval_pexpr se a2 v2 ->
     to_ctype (typeof_pexpr a1) = ty ->
     to_ctype (typeof_pexpr a2) = ty ->
-    sem_binary_operation_rust op v1 ty v2 ty m = sem_binarith op1 op2 op3 op4 v1 ty v2 ty m ->
+    Cop.sem_binary_operation_rust op v1 ty v2 ty m = Cop.sem_binarith op1 op2 op3 op4 v1 ty v2 ty m ->
     (* we cannot handle casting v1/v2 to an unknown type produced by binarith_type *)
-    ty = binarith_type (Cop.classify_binarith ty ty) ->
+    ty = Cop.binarith_type (Cop.classify_binarith ty ty) ->
     scalar_type (typeof_pexpr a1) = true ->
     scalar_type (typeof_pexpr a2) = true ->
     (Cop.sem_cast v1 ty ty m = None \/ Cop.sem_cast v2 ty ty m = None) ->
@@ -1088,7 +1089,7 @@ Proof.
     exploit eval_pexpr_det. eapply H4. eauto. intros. subst.
     rewrite H9 in *.
     rewrite H8 in H10.
-    unfold sem_binarith in H10.
+    unfold Cop.sem_binarith in H10.
     destruct Cop.sem_cast eqn: CAST1 in H10.
     rewrite <- H11 in CAST1. rewrite CAST1 in H14. destruct H14; try congruence.
     destruct Cop.sem_cast eqn: CAST2 in H10; try congruence.
@@ -2558,7 +2559,7 @@ return nothing is only valid in void function! *)
     (* there is no receiver for the moved place, so it must be None *)
     eval_expr ge e m ge a v1 ->
     to_ctype (typeof a) = ty ->
-    bool_val v1 ty m = Some b ->
+    Cop.bool_val v1 ty m = Some b ->
     step (State f (Sifthenelse a s1 s2) k e own1 m)
       E0 (State f (if b then s1 else s2) k e own1 m)
 | step_loop: forall f s k e m own,

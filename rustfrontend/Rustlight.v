@@ -324,6 +324,18 @@ Definition is_prefix_strict (p1 p2: place) : bool :=
   let (id2, phl2) := path_of_place p2 in
   ident_eq id1 id2 && projections_contain_strict phl1 phl2.
 
+
+Definition is_prefix_path (ph1 ph2: path) : bool := 
+  let (id1, phl1) := ph1 in
+  let (id2, phl2) := ph2 in
+  ident_eq id1 id2 && projections_contain phl1 phl2.
+
+Definition is_prefix_strict_path (ph1 ph2: path) : bool :=
+  let (id1, phl1) := ph1 in
+  let (id2, phl2) := ph2 in
+  ident_eq id1 id2 && projections_contain_strict phl1 phl2.
+
+
 Fixpoint local_of_place (p: place) :=
   match p with
   | Plocal id _ => id

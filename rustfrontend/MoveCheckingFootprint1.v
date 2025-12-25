@@ -17,6 +17,7 @@ Require Import RustIRown MoveChecking BorrowCheck.
 Require Import Wfsimpl.
 Require Import StkBorPermission RustIRbor.
 Require Import Separation.
+Require Import RustIRspec.
 
 Import ListNotations.
 
@@ -2246,7 +2247,6 @@ output: list (path, footprint) satisfying：
  *)
 
 
-
 (* collect the owner paths stored in the leaf nodes that are fp_ref *)
 Fixpoint collect_footprint_ref_paths (fp: footprint) : list path :=
   match fp with
@@ -2266,105 +2266,21 @@ Definition collect_fpm_ref_paths (fpm: fp_map) : list path :=
   flat_map collect_footprint_ref_paths fpl.
 
 
-Definition is_prefix_path (ph1 ph2: path) : bool := 
-  let (id1, phl1) := ph1 in
-  let (id2, phl2) := ph2 in
-  ident_eq id1 id2 && projections_contain phl1 phl2.
-
-Definition is_prefix_strict_path (ph1 ph2: path) : bool :=
-  let (id1, phl1) := ph1 in
-  let (id2, phl2) := ph2 in
-  ident_eq id1 id2 && projections_contain_strict phl1 phl2.
-
-Definition add_ref_path (ph: path) (l: list path) : list path :=
-  if existsb (fun ph1 => is_prefix_path ph1 ph) l then
-    l
-  else
-    (* We keep the non-prefix paths *)
-    let l1 := filter (fun ph1 => negb (is_prefix_path ph ph1)) l in
-    ph :: l.
-
-Fixpoint add_ref_paths (l acc: list path) : list path :=
-  match l with
-  | nil => acc
-  | ph :: l' =>
-      add_ref_paths l' (add_ref_path ph acc)
+Definition get_owner_footprint_map_ref_paths (fpm: fp_map) (ph: path) : res (list path) :=
+  match get_owner_footprint_map ph fpm with
+  | Some fp =>
+      OK (collect_footprint_ref_paths fp)
+  | None =>
+      Error nil
   end.
 
-Definition lex_ord_lt := lex_ord lt lt.
-
-Lemma remove_first_length_lt {A B: Type} eqA : forall (l1: list A) (l2 l2': list B) x 
-    (InH: In x l1),
-    lex_ord_lt (length (remove eqA x l1), length l2)  (length l1, length l2').
-Proof.
-  intros. eapply lex_ord_left.
-  eapply remove_length_lt. auto.
-Qed.
-
-Lemma lex_lt_cons_snd {A B: Type} : forall (l1: list A) (l2 l2': list B) x
-    (EQ: l2' = x :: l2),
-    lex_ord_lt (length l1, length l2)  (length l1, length l2').
-Proof.
-  intros. rewrite EQ.
-  eapply lex_ord_right. simpl. 
-  econstructor.
-Qed.
-
-(* Recursively collect ref paths. *)
-Fixpoint collect_ref_paths (fpm: fp_map) (collected: list path) (to_visit: list path) (not_visited: list path) (ACC: Acc lex_ord_lt (length not_visited, length to_visit)) {struct ACC} : res (list path) :=
-  (match to_visit as to_visit0 return (to_visit = to_visit0) -> res (list path) with
-  | nil => fun _ => OK collected
-  | ph :: to_visit1 =>
-      fun eqH =>
-        match in_dec path_eq ph not_visited with
-        | left InH =>
-            let not_visited1 := (remove path_eq ph not_visited) in
-            let collected1 := add_ref_path ph collected in
-            match get_owner_footprint_map ph fpm with
-            | Some fp =>
-                let new_paths := collect_footprint_ref_paths fp in
-                let ACC1 := Acc_inv ACC (remove_first_length_lt path_eq not_visited (new_paths ++ to_visit1) to_visit ph InH) in
-                collect_ref_paths fpm collected1 (new_paths ++ to_visit1) not_visited1 ACC1
-            (** We need to prove that it is impossible! *)
-            | None => 
-                Error nil
-            end
-        (* This ph has been visited so we skip it *)
-        | right _ =>
-            let ACC1 := Acc_inv ACC (lex_lt_cons_snd not_visited to_visit1 to_visit ph eqH) in
-            collect_ref_paths fpm collected to_visit1 not_visited ACC1
-        end
-  end) eq_refl.
-
-Lemma lex_ord_lt_acc_intro {A B: Type} : forall (l1: list A) (l2: list B),
-    Acc lex_ord_lt (length l1, length l2).
-Proof. 
-  intros.
-  eapply wf_lex_ord. all: eapply Nat.lt_wf_0.
-Qed.
 
 (* We need to ensure that all the returned paths are disjoint, its
 located note contain deep_init footprint, and form a closure *)
 Definition collect_fpm_args_ref_paths (fpm: fp_map) (args: list footprint) : res (list path) :=
   let not_visited := collect_fpm_ref_paths fpm in
   let to_visit := flat_map collect_footprint_ref_paths args in
-  collect_ref_paths fpm nil to_visit not_visited (lex_ord_lt_acc_intro _ _).
-
-Definition suffix_projections (phl1 phl2: list projection) : list projection :=
-  skipn (length phl1) phl2.
-
-(* We do not return (option path) to simplify the semantics. Note that
-our final goal is to prove no UB in this semantics, so we need to
-ensure that None case is impossible *)
-Definition generate_new_suffix_path (l: list path) (ph: path) : res path :=
-  match list_find (fun ph1 => is_prefix_path ph1 ph) l with
-  | Some (idx, ph1) =>
-      (* We cannot convert zero *)
-      let new_id := Pos.of_nat (S idx) in
-      let pj := suffix_projections (snd ph1) (snd ph) in
-      OK (new_id, pj)
-  | None => Error nil
-  end.
+  collect_ref_paths_generic (get_owner_footprint_map_ref_paths fpm) nil to_visit not_visited (lex_ord_lt_acc_intro _ _).
 
 Fixpoint generate_new_suffix_path_footprint (l: list path) (fp: footprint) : res footprint :=
   match fp with
@@ -2417,19 +2333,6 @@ Definition generate_output_parameters (fpm: fp_map) (args: list footprint) : res
   do extern_fps <- collect_fpm_passed_ref_footprint fpm extern_paths;
   OK (args1, extern_fps, extern_paths).
 
-(* ph= (id, pj) is the returned path where id can be seen as the index
-of the l *)
-Definition recover_ref_path (l: list path) (ph: path) : res path :=
-  let (id, pj) := ph in
-  match nth_error l (pred (Pos.to_nat id)) with
-  | Some ph1 =>
-      (* ph1 is the path in the caller's fpm, the actual path of ph
-      should be defined as appending the projecitons of ph into the
-      projetions of ph1 *)
-      OK ((fst ph1, snd ph1 ++ pj))
-  | None =>
-      Error nil
-  end.
 
 Fixpoint recover_footprint_ref_paths (l: list path) (fp: footprint)  : res footprint :=
   match fp with
@@ -2450,7 +2353,6 @@ Fixpoint recover_footprint_ref_paths (l: list path) (fp: footprint)  : res footp
   | _ =>
       OK fp
   end.
-
 
 
 (* When the caller receives the returned footprint and the
