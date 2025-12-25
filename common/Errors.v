@@ -109,11 +109,18 @@ Notation "'assertion' A ; B" := (if A then B else assertion_failed)
 
 Local Open Scope error_monad_scope.
 
-Fixpoint mmap (A B: Type) (f: A -> res B) (l: list A) {struct l} : res (list B) :=
+Section MMAP.
+
+Variables (A : Type) (B : Type).
+Variable f : A -> res B.
+
+Fixpoint mmap (l: list A) {struct l} : res (list B) :=
   match l with
   | nil => OK nil
-  | hd :: tl => do hd' <- f hd; do tl' <- mmap f tl; OK (hd' :: tl')
+  | hd :: tl => do hd' <- f hd; do tl' <- mmap tl; OK (hd' :: tl')
   end.
+
+End MMAP.
 
 Remark mmap_inversion:
   forall (A B: Type) (f: A -> res B) (l: list A) (l': list B),
@@ -194,3 +201,36 @@ Ltac monadInv H :=
   | (?F _ = OK _) =>
       ((progress simpl in H) || unfold F in H); monadInv1 H
   end.
+
+
+Section MFOLD_LEFT.
+
+  Variables (A : Type) (B : Type).
+  Variable f : A -> B -> res A.
+
+  Fixpoint mfold_left (l:list B) (a0:A) : res A :=
+    match l with
+      | nil => OK a0
+      | cons b t => 
+          do a1 <- f a0 b;
+          mfold_left t a1
+    end.
+
+End MFOLD_LEFT.
+
+Section MFOLD_RIGHT.
+
+  Variables (A : Type) (B : Type).
+  Variable f : B -> A -> res A.
+  Variable a0 : A.
+
+  Fixpoint mfold_right (l:list B) : res A :=
+    match l with
+      | nil => OK a0
+      | cons b t => 
+          do a1 <- mfold_right t;
+          f b a1
+    end.
+
+End MFOLD_RIGHT.
+
