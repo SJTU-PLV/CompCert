@@ -209,6 +209,29 @@ Definition fp_map := PTree.t (block * Z * type * option origin * footprint).
 
 Coercion fpm_to_tenv (fpm: fp_map) : typenv := PTree.map1 (fun '(_, _, ty, _, _) => ty) fpm.
 
+(** Footprint can be seen as a rich form of structured value in
+RustIRspec, which contains extra permission information. We can use
+[fp_to_sval] to remove this information. *)
+
+Require Import RustIRspec.
+
+Fixpoint fp_to_sval (fp: footprint) : sval :=
+  match fp with
+  | fp_emp 
+  | fp_uninit _ _ => sv_bot
+  | fp_scalar _ v => sv_scalar v
+  | fp_box _ _ fp1 => sv_box (fp_to_sval fp1)
+  | fp_struct id fpl => sv_struct id (map (fun '(fid, (_, ffp)) => (fid, fp_to_sval ffp)) fpl)
+  | fp_enum id _ fid _ ffp => sv_enum id fid (fp_to_sval ffp)
+  | fp_ref _ _ ph => sv_ref ph
+  end.
+
+Definition fpm_to_svm (fpm: fp_map) : sv_map :=
+  PTree.map1 (fun '(_, _, _, _, fp) => fp_to_sval fp) fpm.
+
+Coercion fp_to_sval : footprint >-> sval.
+Coercion fpm_to_svm : fp_map >-> sv_map.
+
 
 (** Footprint map which records the footprint starting from stack
 blocks (denoted by variable names). It represents the ownership chain
@@ -666,6 +689,14 @@ Inductive sem_wt_val_list : list footprint -> list val -> massert -> Prop :=
      (WTVAL_LIST: sem_wt_val_list fpl vl mp)
      (WTVAL: sem_wt_val fp v mp1),
      sem_wt_val_list (fp::fpl) (v::vl) (mp1 ** mp).
+
+Inductive sem_wt_loc_list : list (block * Z) -> list footprint  -> massert -> Prop :=
+| sem_wt_loc_nil: sem_wt_loc_list nil nil STrue
+| sem_wt_loc_cons: forall b ofs locl fp fpl mp1 mp
+     (WTLOC_LIST: sem_wt_loc_list locl fpl mp)
+     (WTLOC: sem_wt_loc fp b ofs mp1),
+     sem_wt_loc_list ((b, ofs) :: locl) (fp::fpl) (mp1 ** mp).
+
 
 (* Lemma fields_loc_sep_equiv: forall fpl b ofs P mass, *)
 (*     fields_loc_sep b ofs P fpl mass <-> *)
@@ -2327,12 +2358,29 @@ Fixpoint clear_fpm_passed_ref_footprint (fpm: fp_map) (l: list path) : res fp_ma
 (* The output parameters contain two parts: one for the normal
 arguments and the others are the memory locations passed via
 reference *)
-Definition generate_output_parameters (fpm: fp_map) (args: list footprint) : res (list footprint * list footprint * list path) :=
+Definition generate_call_parameters (fpm: fp_map) (args: list footprint) : res (list footprint * list footprint * list path) :=
   do extern_paths <- collect_fpm_args_ref_paths fpm args;
   do args1 <- mmap (generate_new_suffix_path_footprint extern_paths) args;
   do extern_fps <- collect_fpm_passed_ref_footprint fpm extern_paths;
   OK (args1, extern_fps, extern_paths).
 
+
+(* For funciton return, we need to reset the path name of the external
+reference location to its normalized forms (i.e., the ordinal in the
+list passed by caller). We can reuse the generate_new_suffix_path_footprint
+to do this work. *)
+Definition generate_return_parameters (fpm: fp_map) (retv: footprint) (ns: list ident) : res (footprint * list footprint) :=
+  let phs := map (fun id => (id, nil)) ns in
+  do retv1 <- generate_new_suffix_path_footprint phs retv;
+  do out_params <- collect_fpm_passed_ref_footprint fpm phs;
+  OK (retv1, out_params).
+
+
+(* When receive return value/input arguments from environment, the
+current function should recover the normalized names that are passed
+to environment (or generate new names to avoid name conflict with the
+current variable names at function entry). These two kinds of
+operations can be done using recover_sval_ref_paths. *)
 
 Fixpoint recover_footprint_ref_paths (l: list path) (fp: footprint)  : res footprint :=
   match fp with

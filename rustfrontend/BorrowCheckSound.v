@@ -14,7 +14,7 @@ Require Import Errors.
 Require Import InitDomain InitAnalysis.
 Require Import MoveChecking.
 Require Import MoveCheckingFootprint1.
-Require Import StkBorPermission RustIRsem RustIRbor.
+Require Import StkBorPermission RustIRspec RustIRsem RustIRbor.
 Require Import RegionLiveness BorrowCheckDomain.
 Require Import BorrowCheckPolonius BorrowCheck BorrowCheckInv.
 Require Import Wfsimpl.
@@ -714,49 +714,40 @@ prove wt_path/footprint for the place in drop_place_state *)
 (* soundness of continuation: the execution of current function cannot
 modify the footprint maintained by the continuation *)
 
-(* fp_frame is the nearest stack frame's footprint frame *)
-Inductive sound_cont: INIT_AN -> LOANS_AN -> function -> rustcfg -> cont -> cfg_kinfo -> bor_stacks -> fp_frame -> Prop :=
-| sound_Kstop: forall init_an loans_an f cfg nret stk
+(* fp_frame is the nearest stack frame's footprint frame; We return
+the memory predicate instead of defining coherent_fpf is because we do
+not clear (which is just a design choice) the footprint passed via
+reference to callee. *)
+Inductive match_cont: INIT_AN -> LOANS_AN -> function -> rustcfg -> cont -> RustIRspec.cont -> cfg_kinfo -> bor_stacks -> fp_frame -> massert -> Prop :=
+| match_Kstop: forall init_an loans_an f cfg nret stk
     (RET: cfg ! nret = Some Iend),
-    sound_cont init_an loans_an f cfg Kstop (mk_cfg_kinfo nret None None nret) stk fpf_emp
-| sound_Kseq: forall init_an loans_an f cfg s ts k pc next cont brk nret m fpf
+    match_cont init_an loans_an f cfg Kstop RustIRspec.Kstop (mk_cfg_kinfo nret None None nret) stk fpf_emp STrue
+| match_Kseq: forall init_an loans_an f cfg s ts k pc next cont brk nret m fpf tk MP
     (MCK_STMT: move_check_stmt init_an f.(fn_body) cfg s ts (mk_cfg_info pc next cont brk nret))
     (BORCK_STMT: borrow_check_stmt loans_an (regset_fun f) f cfg s ts (mk_cfg_info pc next cont brk nret))
-    (MCONT: sound_cont init_an loans_an f cfg k (mk_cfg_kinfo next cont brk nret) m fpf),
-    sound_cont init_an loans_an f cfg (Kseq s k) (mk_cfg_kinfo pc cont brk nret) m fpf
-| sound_Kloop: forall init_an loans_an f cfg s ts k body_start loop_jump_node exit_loop nret contn brk m fpf
+    (MCONT: match_cont init_an loans_an f cfg k tk (mk_cfg_kinfo next cont brk nret) m fpf MP),
+    match_cont init_an loans_an f cfg (Kseq s k) (RustIRspec.Kseq s tk) (mk_cfg_kinfo pc cont brk nret) m fpf MP
+| match_Kloop: forall init_an loans_an f cfg s ts k body_start loop_jump_node exit_loop nret contn brk m fpf tk MP
     (START: cfg ! loop_jump_node = Some (Inop body_start))
     (MCK_STMT: move_check_stmt init_an f.(fn_body) cfg s ts (mk_cfg_info body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret))
     (BORCK_STMT: borrow_check_stmt loans_an (regset_fun f) f cfg s ts (mk_cfg_info body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret))
-    (MCONT: sound_cont init_an loans_an f cfg k (mk_cfg_kinfo exit_loop contn brk nret) m fpf),
-    sound_cont init_an loans_an f cfg (Kloop s k) (mk_cfg_kinfo loop_jump_node (Some loop_jump_node) (Some exit_loop) nret) m fpf
-| sound_Kcall: forall init_an loans_an f1 cfg k nret f2 e p m fpf
-    (MSTK: sound_stacks (Kcall (Some p) f2 e k) m fpf)
+    (MCONT: match_cont init_an loans_an f cfg k tk (mk_cfg_kinfo exit_loop contn brk nret) m fpf MP),
+    match_cont init_an loans_an f cfg (Kloop s k) (RustIRspec.Kloop s tk) (mk_cfg_kinfo loop_jump_node (Some loop_jump_node) (Some exit_loop) nret) m fpf MP
+| match_Kcall: forall init_an loans_an f1 cfg k nret f2 e p stk fpf ns svm tk phl MP
+    (MSTK: match_stacks (Kcall (Some p) f2 e k) (RustIRspec.Kcall p f2 phl ns svm tk) stk fpf MP)
     (RET: cfg ! nret = Some Iend),
     (* (WFOWN: wf_own_env e ce own), *)
-    sound_cont init_an loans_an f1 cfg (Kcall (Some p) f2 e k) (mk_cfg_kinfo nret None None nret) m fpf
-(* | sound_Kdropcall: forall init_an loans_an body cfg k pc cont brk nret fpf st co ofs b membs fpl id m *)
-(*     (CO: ce ! id = Some co) *)
-(*     (* (DROPMEMB: drop_member_footprint m co b (Ptrofs.unsigned ofs) fp st) *) *)
-(*     (* (MEMBFP: list_forall2 (member_footprint m co b (Ptrofs.unsigned ofs)) fpl membs) *) *)
-(*     (RANGE: Ptrofs.unsigned ofs + co_sizeof co <= Ptrofs.max_unsigned) *)
-(*     (** Do we need some separation properties? *) *)
-(*     (SOUND: sound_cont init_an loans_an body cfg k (mk_cfg_kinfo pc cont brk nret) m fpf), *)
-(*     (* (INFRM: In b (flat_fp_frame fpf)) *) *)
-(*     (* (CONTDIS: ~ In b (footprint_flat fp ++ flat_map footprint_flat fpl)), *) *)
-(*     sound_cont init_an loans_an body cfg (Kdropcall id (Vptr b ofs) st membs k) (mk_cfg_kinfo pc cont brk nret) m (fpf_drop b (Ptrofs.unsigned ofs) fpl fpf) *)
+    match_cont init_an loans_an f1 cfg (Kcall (Some p) f2 e k) (RustIRspec.Kcall p f2 phl ns svm tk) (mk_cfg_kinfo nret None None nret) stk fpf MP
 
-with sound_stacks : cont -> bor_stacks -> fp_frame -> Prop :=
-| sound_stacks_stop: forall stk,
-    sound_stacks Kstop stk fpf_emp
-| sound_stacks_call: forall f nret cfg pc contn brk k p e stk maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit live loans_env LoansEnv mayinit0 mayuninit0
+with match_stacks : cont -> RustIRspec.cont -> bor_stacks -> fp_frame -> massert -> Prop :=
+| match_stacks_call: forall f nret cfg pc contn brk k p e stk maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit live loans_env LoansEnv mayinit0 mayuninit0 MP1 MP2 tk phl ns fpm1
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
     (* The init set and loans environment of the current pc *)
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
     (LOANS_ST: LoansEnv!!pc = LoansEnv.State loans_env)
     (* Invariant for continuation *)
-    (CONT: sound_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k (mk_cfg_kinfo pc contn brk nret) stk fpf)
+    (CONT: match_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k tk (mk_cfg_kinfo pc contn brk nret) stk fpf MP2)
     (* may(un)init0 are the intermediate state of this function call
     statement before initializing p *)
     (MAY_INIT: mayinit = add_place universe p mayinit0)
@@ -764,43 +755,47 @@ with sound_stacks : cont -> bor_stacks -> fp_frame -> Prop :=
     (* we need to maintain this invariant for p's evaluation when
     function return *)
     (DOM: dominators_must_init mayinit0 mayuninit0 universe p = true)
-    (** Invariant of the move checking. TODO: it is not correct
-    because we may move out some reference passed location. Maybe we
-    can label those locations? *)
+    (* Invariant of the move checking. *)
     (MCKINV: move_check_inv mayinit0 mayuninit0 universe fpm)
     (* Invariant of the borrow checking *)
-    (BORCK_INV: borrow_check_inv ce (live!!pc) loans_env fpm stk), 
-    sound_stacks (Kcall (Some p) f e k) stk (fpf_func fpm fpf).
+    (BORCK_INV: borrow_check_inv ce (live!!pc) loans_env fpm stk)
+    (* coherent relation is defined on the fpm whose passed reference
+    footprint is cleared. *)
+    (FPM: clear_fpm_passed_ref_footprint fpm phl = OK fpm1)
+    (COH: coherent_fpm ge fpm1 MP1), 
+    match_stacks (Kcall (Some p) f e k) (RustIRspec.Kcall p f phl ns fpm tk) stk (fpf_func fpm fpf) (MP1 ** MP2).
     
-(* The invariant of the continuation of dropstate is a little different *)
-Inductive sound_drop_cont: cont -> bor_stacks -> fp_frame -> Prop :=
-| sound_drop_Kcall: forall f nret cfg pc contn brk k e stk maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit live loans_env LoansEnv
+(* The invariant of the continuation of dropstate is a little
+different. Note that the drop operation in RustIRspec is a big step
+operation. *)
+Inductive match_drop_cont (f: function) : cont -> RustIRspec.cont -> bor_stacks -> fp_frame -> massert -> Prop :=
+| match_drop_Kcall: forall nret cfg pc contn brk k e stk maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit live loans_env LoansEnv tk MP
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
     (* The init set and loans environment of the current pc *)
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
     (LOANS_ST: LoansEnv!!pc = LoansEnv.State loans_env)
     (* Invariant for continuation *)
-    (CONT: sound_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k (mk_cfg_kinfo pc contn brk nret) stk fpf)
+    (MCONT: match_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k tk (mk_cfg_kinfo pc contn brk nret) stk fpf MP)
     (** Invariant of the move checking. *)
     (MCKINV: move_check_inv mayinit mayuninit universe fpm)
     (* Invariant of the borrow checking *)
     (BORCK_INV: borrow_check_inv ce (live!!pc) loans_env fpm stk),
-    sound_drop_cont (Kcall None f e k) stk (fpf_func fpm fpf)
-| sound_Kdropcall: forall k fpf st co ofs b membs id ph fpm fp stk
+    match_drop_cont f (Kcall None f e k) tk stk (fpf_func fpm fpf) MP
+| match_Kdropcall: forall k fpf st co ofs b membs id ph fpm fp stk tk MP
     (CO: ce ! id = Some co)
     (GFP: get_owner_loc_footprint_map ph fpm = Some (b, Ptrofs.unsigned ofs, fp))
     (* drop_member_footprint says that fp matches (co, st, membs) *)
     (DROPMEMB: drop_member_footprint id co fp st membs)
     (RANGE: Ptrofs.unsigned ofs + co_sizeof co <= Ptrofs.max_unsigned)
     (** Do we need some separation properties? *)
-    (SOUND: sound_drop_cont k stk (fpf_func fpm fpf)),
-    sound_drop_cont (Kdropcall id (Vptr b ofs) st membs k)  stk (fpf_func fpm fpf).
+    (MCONT: match_drop_cont f k tk stk (fpf_func fpm fpf) MP),
+    match_drop_cont f (Kdropcall id (Vptr b ofs) st membs k) tk stk (fpf_func fpm fpf) MP.
   
 
 (** TODO: invariant for the borrow checking  *)
-Inductive sound_state: state -> Prop :=
-| sound_regular_state: forall f cfg entry maybeInit maybeUninit universe s ts pc next cont brk nret k e m fpm fpf mayinit mayuninit live LoansEnv loans_env bor_stk MP
+Inductive match_states: state -> RustIRspec.state -> Prop :=
+| match_regular_state: forall f cfg entry maybeInit maybeUninit universe s ts pc next cont brk nret k e m fpm fpf mayinit mayuninit live LoansEnv loans_env bor_stk MP ns tk FMP
     (* The init and loans-flow analysis results *)
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
@@ -811,11 +806,11 @@ Inductive sound_state: state -> Prop :=
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
     (LOANS_ST: LoansEnv!!pc = LoansEnv.State loans_env)
     (* Invariant for continuation *)
-    (CONT: sound_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k (mk_cfg_kinfo next cont brk nret) bor_stk fpf)
+    (CONT: match_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k tk (mk_cfg_kinfo next cont brk nret) bor_stk fpf FMP)
     (* Invariant of the move checking *)
     (MCKINV: move_check_inv mayinit mayuninit universe fpm)
-    (COHERENT: coherent_fpf ce (fpf_func fpm fpf) MP)
-    (MPRED: m |= MP)            (** Coherent relation between fpm and memory *)
+    (COHERENT: coherent_fpm ce fpm MP)
+    (MPRED: m |= MP ** FMP)            (** Coherent relation between fpm and memory *)
     (* Invariant of the borrow checking *)
     (BORCK_INV: borrow_check_inv ce (live!!pc) loans_env fpm bor_stk),
     (* (ACC: rsw_acc w (rsw sg flat_fp m Hm)) *)
@@ -823,57 +818,73 @@ Inductive sound_state: state -> Prop :=
     (* (WFENV: wf_env fpm ce m e) *)
     (* invariant of the own_env *)
     (* (WFOWN: wf_own_env e ce own), *)
-    sound_state (State f s k e bor_stk m)
-| sound_dropstate: forall id co fp b ofs st m membs k fpf bor_stk MP fpm ph
+    match_states (State f s k e bor_stk m) (RustIRspec.State f s tk ns fpm)
+| match_dropstate: forall id co fp b ofs st m membs k fpf bor_stk MP fpm (p: place) FMP tk ns f
     (CO: ce ! id = Some co)
     (RANGE: Ptrofs.unsigned ofs + co_sizeof co <= Ptrofs.max_unsigned)
     (* The location of the dropped place *)
-    (GFP: get_owner_loc_footprint_map ph fpm = Some (b, Ptrofs.unsigned ofs, fp))
+    (GFP: get_owner_loc_footprint_map p fpm = Some (b, Ptrofs.unsigned ofs, fp))
     (* drop_member_footprint says that fp matches (co, st, membs) *)
     (DROPMEMB: drop_member_footprint id co fp st membs)
-    (CONT: sound_drop_cont k bor_stk (fpf_func fpm fpf))
-    (** We cannot remove the element from fpl because it would make the
-    location (b, ofs) not freeable anymore! *)
+    (MCONT: match_drop_cont f k tk bor_stk (fpf_func fpm fpf) FMP)
     (* fpl1 is the locations that have been dropped *)
-    (COHERENT: coherent_fpf ce (fpf_func fpm fpf) MP)
-    (MPRED: m |= MP),
+    (COHERENT: coherent_fpm ce fpm MP)
+    (MPRED: m |= MP ** FMP),
     (* (ACC: rsw_acc w (rsw sg flat_fp m Hm)) *)
-    sound_state (Dropstate id (Vptr b ofs) st membs k bor_stk m)
-| sound_callstate: forall vf fd orgs org_rels tyargs tyres cconv m fpl args fpf k bor_stk VMP MP
-    (FUNC: Genv.find_funct ge vf = Some fd)
+    match_states (Dropstate id (Vptr b ofs) st membs k bor_stk m) (RustIRspec.State f (Sdrop p) tk ns fpm)
+| match_callstate: forall vf fd orgs org_rels tyargs tyres cconv m fpl args fpf k bor_stk MP1 MP2 MP3 out_fpl out_locs tk sargs sparams fun_id
+    (* TODO: show that fun_id also points to this function *)
+    (FUNC: Genv.find_funct ge vf = Some fd)    
     (FUNTY: type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv)
     (* arguments are semantics well typed *)
-    (WTVAL_LIST: sem_wt_val_list ce fpl args VMP)
+    (WTVAL_LIST: sem_wt_val_list ce fpl args MP1)
+    (** output memory locations are sem_wt_loc *)
+    (WTLOC_LIST: sem_wt_loc_list ce out_locs out_fpl MP2)
     (* Used in assign_loc_sound in function entry proof *)
     (ANORM: val_casted_list args tyargs)
     (WTFP: list_forall2 (wt_footprint ce) (type_list_of_typelist tyargs) fpl)
-    (COHERENT: coherent_fpf ce fpf MP)
-    (MPRED: m |= VMP ** MP)
-    (STK: sound_stacks k bor_stk fpf),
-    (** TODO: borrow check invariant is missing at function call *)
+    (MPRED: m |= MP1 ** MP2 ** MP3)
+    (STK: match_stacks k tk bor_stk fpf MP3)
+    (** How to produce sargs and sparams *)
+    (SARGS: map fp_to_sval fpl = sargs)
+    (REF_PARAMS: map fp_to_sval out_fpl = sparams),
+    (** TODO: use fpl and out_fpl to define borrow check invariant *)
     (* also disjointness of fpl and fpf *)
-    sound_state (Callstate vf args k bor_stk m)
-| sound_returnstate: forall sg fpf m k retty rfp v bor_stk VMP MP
+    match_states (Callstate vf args k bor_stk m) (RustIRspec.Callstate fun_id sargs sparams tk)
+| sound_returnstate: forall sg fpf m k retty rfp v bor_stk MP1 MP2 MP3 out_locs out_fpl tk sparams sv
     (* For now, all function must have return type *)
     (RETY: typeof_cont_call (rs_sig_res sg) k = retty)
-    (WTVAL: sem_wt_val ce rfp v VMP)
+    (WTVAL: sem_wt_val ce rfp v MP1)
+    (** output memory locations are sem_wt_loc *)
+    (WTLOC_LIST: sem_wt_loc_list ce out_locs out_fpl MP2)
     (CAST: val_casted v retty)
     (WTFP: wt_footprint ce retty rfp)
-    (COHERENT: coherent_fpf ce fpf MP)
-    (MPRED: m |= VMP ** MP)    
-    (STK: sound_stacks k bor_stk fpf),
-    (** TODO: borrow check invariant is missing at function return *)
+    (MPRED: m |= MP1 ** MP2 ** MP3)    
+    (STK: match_stacks k tk bor_stk fpf MP3)
+    (** How to produce sargs and sparams *)
+    (SRET: fp_to_sval rfp = sv)
+    (REF_PARAMS: map fp_to_sval out_fpl = sparams),
+    (** TODO: use fpl and out_fpl to define borrow check invariant *)
     (* (ACC: rsw_acc w (rsw sg flat_fp m Hm)), *)
-    sound_state (Returnstate v k bor_stk m)
+    match_states (Returnstate v k bor_stk m) (RustIRspec.Returnstate sv sparams tk)
 .
-
 
 
 End BORROW_CHECK.
 
 
 (** TODO: the interface for the borrow checking *)
-Definition rs_bor : invariant li_rs_bor := inv_bot.
+Definition rs_spec : invariant li_rs_spec := inv_bot.
+
+Program Definition rs_bor : callconv li_rs_bor li_rs_spec := 
+{|  ccworld := unit;
+    match_senv w := eq;
+    match_query w q1 q2 := True;
+    match_reply w r1 r2 := True;
+  |}.
+Solve All Obligations with
+  cbn; intros; subst; try split; auto.
+
 
 Definition own2bor (I: invariant li_rs) : invariant li_rs_bor :=
   {| inv_world := inv_world I;
@@ -881,34 +892,24 @@ Definition own2bor (I: invariant li_rs) : invariant li_rs_bor :=
     query_inv w (q: query li_rs_bor) := (query_inv I w q);
     reply_inv w (r: reply li_rs_bor) := (reply_inv I w r); |}.
 
-(* Given a module [M], if it passes the borrow checking and it does
-not contain errors except for memory errors at its source semantics,
-then its stacked borrow semantics (which is defined by adding stacked
-borrow rules to the original RustIR semanitcs) has no undefined
-behavior. As our semantics are open, we should specify the
-rely-guarantee conditions at the module boundaries to restrict the
-interference with the unknown environment. We use the interface
-[rs_bor] to represent this condition. *)
-Lemma borrow_check_soundness_stacked_borrow (P Q: invariant li_rs) (M M': RustIR.program) :
-  module_type_safe P Q (RustIRown.semantics M) (RustIRown.mem_error M) ->  
+(* Given a RustIR module [M], if it passes the borrow checking, we
+have two results: the first is that the RustIRspec semantics of [M] is
+refined by the RustIRbor semantics of [M], so if [M]_RustIRspec is
+safe then [M]_RustIRbor is safe; the second is that [M]_RustIRspec is
+almost safe, except that it may reach some error states that cannot be
+checked by the borrow checking, e.g., division-by-zero. The interface
+of the refinement is defined as [rs_bor]. *)
+Lemma borrow_check_refinement (P Q: invariant li_rs) (M M': RustIR.program) :
   borrow_check_program M = OK M' ->
-  module_type_safe ((own2bor P) @@ rs_bor) ((own2bor Q) @@ rs_bor) (RustIRbor.semantics M) SIF.
+  (* It also shows that if RustIRspec is progress then RustIRbor is progress *)
+  forward_simulation_progress rs_bor rs_bor (RustIRbor.semantics M) (RustIRspec.semantics M).
 Proof.
 Admitted.
 
-
-Definition rs_bor1 : invariant li_rs :=
-  {| inv_world := inv_world rs_bor;
-    symtbl_inv := symtbl_inv rs_bor;
-    query_inv w (q: query li_rs) := exists stk, query_inv rs_bor w (rsbor_q q stk);
-    reply_inv w (r: reply li_rs) := exists stk, reply_inv rs_bor w (rsbor_r r stk) |}.
-
-(* When module [M] has no UB in the stacked borrow semantics, it also
-has no UB in the orignal semantics, under the interface [rs_bor1 q :=
-exists stk, rs_bor (q, stk)]. *)
-Theorem borrow_check_safe (P Q: invariant li_rs) (M M': RustIR.program) :
-  module_type_safe P Q (RustIRown.semantics M) (RustIRown.mem_error M) ->  
+(** TODO: we should prove that RustIRspec is partial safe instead of
+total safe. How to define its safety interface? *)
+Theorem borrow_check_spec_safe (M M': RustIR.program) :
   borrow_check_program M = OK M' ->
-  module_type_safe (P @@ rs_bor1) (Q @@ rs_bor1) (RustIRown.semantics M) SIF.
+  module_type_safe rs_spec rs_spec (RustIRspec.semantics M) SIF.
 Proof.
 Admitted.

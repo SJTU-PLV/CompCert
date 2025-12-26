@@ -48,7 +48,7 @@ Definition sem_cast (sv : sval) (t1 t2 : type) : res sval :=
   | _ => OK sv
   end.
 
-Definition val_casted (sv: sval) (ty: type) : Prop :=
+Definition sval_casted (sv: sval) (ty: type) : Prop :=
   match sv with
   | sv_scalar v =>
       val_casted v ty
@@ -56,11 +56,11 @@ Definition val_casted (sv: sval) (ty: type) : Prop :=
   end.
 
 
-Inductive val_casted_list : list sval -> typelist -> Prop :=
-  | vcl_nil : val_casted_list nil Tnil
+Inductive sval_casted_list : list sval -> typelist -> Prop :=
+  | vcl_nil : sval_casted_list nil Tnil
   | vcl_cons : forall (v1 : sval) (vl : list sval) (ty1 : type) (tyl : typelist),
-               val_casted v1 ty1 ->
-               val_casted_list vl tyl -> val_casted_list (v1 :: vl) (Tcons ty1 tyl).
+               sval_casted v1 ty1 ->
+               sval_casted_list vl tyl -> sval_casted_list (v1 :: vl) (Tcons ty1 tyl).
 
 (* Operations for the environment *)
 
@@ -350,12 +350,28 @@ Fixpoint clear_svm_passed_ref_sval (svm: sv_map) (l: list path) : res sv_map :=
 (* The output parameters contain two parts: one for the normal
 arguments and the others are the memory locations passed via
 reference *)
-Definition generate_output_parameters (svm: sv_map) (args: list sval) : res (list sval * list sval * list path) :=
+Definition generate_call_parameters (svm: sv_map) (args: list sval) : res (list sval * list sval * list path) :=
   do extern_paths <- collect_svm_args_ref_paths svm args;
   do args1 <- mmap (generate_new_suffix_path_sval extern_paths) args;
   do extern_svs <- collect_svm_passed_ref_sval svm extern_paths;
   OK (args1, extern_svs, extern_paths).
 
+(* For funciton return, we need to reset the path name of the external
+reference location to its normalized forms (i.e., the ordinal in the
+list passed by caller). We can reuse the generate_new_suffix_path_sval
+to do this work. *)
+Definition generate_return_parameters (svm: sv_map) (retv: sval) (ns: list ident) : res (sval * list sval) :=
+  let phs := map (fun id => (id, nil)) ns in
+  do retv1 <- generate_new_suffix_path_sval phs retv;
+  do out_params <- collect_svm_passed_ref_sval svm phs;
+  OK (retv1, out_params).
+
+
+(* When receive return value/input arguments from environment, the
+current function should recover the normalized names that are passed
+to environment (or generate new names to avoid name conflict with the
+current variable names at function entry). These two kinds of
+operations can be done using recover_sval_ref_paths. *)
 Fixpoint recover_sval_ref_paths (l: list path) (sv: sval)  : res sval :=
   match sv with
   | sv_ref ph =>
@@ -388,6 +404,12 @@ Definition receive_return_sval (svm: sv_map) (l: list path) (retv: sval) (extern
   let phs_externs := combine l externs1 in
   do svm1 <- mfold_left (fun acc '(ph, sv) => set_sval_map ph sv acc) phs_externs svm;
   OK (retv1, svm1).
+
+Definition receive_incoming_params (fresh_paths: list path) (args: list sval) (in_params: list sval) : res (list sval * list sval) :=
+  do args1 <- mmap (recover_sval_ref_paths fresh_paths) args;
+  do in_params1 <- mmap (recover_sval_ref_paths fresh_paths) in_params;
+  OK (args1, in_params1).
+  
 
 Section SEMANTICS.
 
@@ -553,8 +575,7 @@ Definition function_entry (f: function) (args: list sval) (in_params: list sval)
   let fresh_vars := npos (length in_params) fresh_var in
   (* Substitute the old name in args and in_params with the fresh names *)
   let fresh_paths : list path := map (fun id => (id, nil)) fresh_vars in
-  do args1 <- mmap (recover_sval_ref_paths fresh_paths) args;
-  do in_params1 <- mmap (recover_sval_ref_paths fresh_paths) in_params;
+  do (args1, in_params1) <- receive_incoming_params fresh_paths args in_params;
   (* set the value to the map *)
   do m1 <- bind_params (PTree.empty sval) (field_idents (fn_params f)) args1;
   do m2 <- bind_params m1 fresh_vars in_params1;
@@ -605,7 +626,7 @@ Inductive step : state -> trace -> state -> Prop :=
     (EVAL: eval_exprlist m1 al tyargs = OK (args, m2))
     (NOT_DROP: function_not_drop_glue fd)
     (* Collect the footprint that is passed via reference *)
-    (REF_OUT: generate_output_parameters m2 args = OK (args1, out_params, phl)),
+    (REF_OUT: generate_call_parameters m2 args = OK (args1, out_params, phl)),
     step (State f (Scall p (Eglobal fun_id ty) al) k ns m1) E0 (Callstate fun_id args1 out_params (Kcall p f phl ns m2 k))
 | step_internal_function: forall fun_id vargs in_params k m f ns
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun (Internal f)))
@@ -628,15 +649,14 @@ Inductive step : state -> trace -> state -> Prop :=
 (*     Mem.free_list m1 lb = Some m2 -> *)
 (*     (* return unit or Vundef? *) *)
 (*     step (State f (Sreturn None) k e m1) E0 (Returnstate Vundef (call_cont k) m2) *)
-| step_return_1: forall p v v1 m1 f k ck ns
+| step_return_1: forall p v v1 v2 m1 f k ck ns out_params
     (CONT: call_cont k = Some ck)
     (EVAL: eval_pexpr m1 (Eplace p (typeof_place p)) = OK v)
-    (CAST: sem_cast v (typeof_place p) f.(fn_return) = OK v1),
-    (** TODO: Rename the external footprint to match the use of the names passed
+    (CAST: sem_cast v (typeof_place p) f.(fn_return) = OK v1)
+    (** Rename the external footprint to match the use of the names passed
     in this function *)
-    (** TODO: recover_sval_ref_paths may be a general definition, see
-    how to use it to define general name substitution for sval? *)
-    step (State f (Sreturn p) k ns m1) E0 (Returnstate v1 nil ck)
+    (NORMALIZE: generate_return_parameters m1 v1 ns = OK (v2, out_params)),
+    step (State f (Sreturn p) k ns m1) E0 (Returnstate v2 out_params ck)
 (* no return statement but reach the end of the function *)
 (* | step_skip_call: forall e lb m1 m2 f k, *)
 (*     is_call_cont k -> *)
@@ -650,7 +670,7 @@ Inductive step : state -> trace -> state -> Prop :=
     assignment because p may locate in those ref-passed locations *)
     (PUTBACK: receive_return_sval m1 phl v out_params = OK (v1, m2))
     (EVALP: get_owner_path_sv_map p m1 = OK ph)
-    (CASTED: val_casted v1 (typeof_place p))
+    (CASTED: sval_casted v1 (typeof_place p))
     (ASS: set_sval_map ph v1 m2 = OK m3),
     step (Returnstate v out_params (Kcall p f phl ns m1 k)) E0 (State f Sskip k ns m2)
 
@@ -718,7 +738,7 @@ Inductive initial_state: (query li_rs_spec) -> state -> Prop :=
     (* This function must not be drop glue *)
     (NOTDROP: f.(fn_drop_glue) = None)
     (* how to use it? *)
-    (CAST: val_casted_list vargs targs),
+    (CAST: sval_casted_list vargs targs),
     (* Mem.sup_include (Genv.genv_sup ge) (Mem.support m) -> *)
     initial_state (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs in_params)
       (Callstate fun_id vargs in_params Kstop).
@@ -746,4 +766,3 @@ End SEMANTICS.
 
 Definition semantics (p: program) :=
   Semantics_gen step initial_state at_external (fun _ => after_external) (fun _ => final_state) globalenv p.
-

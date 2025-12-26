@@ -215,14 +215,14 @@ Inductive eval_pexpr (se: Genv.symtbl) (sb: bor_stacks) : pexpr -> val -> bor_st
     (* Note that to_ctype Tbox = None *)
     to_ctype (typeof_pexpr a) = aty ->
     (** TODO: define a rust-specific sem_unary_operation  *)
-    sem_unary_operation op v1 aty m = Some v ->
+    Cop.sem_unary_operation op v1 aty m = Some v ->
     eval_pexpr se sb (Eunop op a ty) v sb1
 | eval_Ebinop: forall op a1 a2 ty v1 v2 v ty1 ty2 sb1 sb2,
     eval_pexpr se sb a1 v1 sb1 ->
     eval_pexpr se sb1 a2 v2 sb2 ->
     to_ctype (typeof_pexpr a1) = ty1 ->
     to_ctype (typeof_pexpr a2) = ty2 ->
-    sem_binary_operation_rust op v1 ty1 v2 ty2 m = Some v ->
+    Cop.sem_binary_operation_rust op v1 ty1 v2 ty2 m = Some v ->
     (* For now, we do not return moved place in binary operation *)
     eval_pexpr se sb (Ebinop op a1 a2 ty) v sb2
 | eval_Eplace: forall p b ofs ty v bor_tag sb1 sb2,
@@ -534,7 +534,7 @@ skip return, see Rustlightown.v *)
     (* there is no receiver for the moved place, so it must be None *)
     eval_expr ge e m ge sb1 a v1 sb2 ->
     to_ctype (typeof a) = ty ->
-    bool_val v1 ty m = Some b ->
+    Cop.bool_val v1 ty m = Some b ->
     step (State f (Sifthenelse a s1 s2) k e sb1 m)
       E0 (State f (if b then s1 else s2) k e  sb2 m)
 | step_loop: forall f s k e m sb,
