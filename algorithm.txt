@@ -1,0 +1,457 @@
+# Pointer Lowering Algorithm
+
+本算法描述如何将 C 指针安全地映射到 Rust，并同时满足以下目标：
+1. `NULL` ↔ `None` 的一一对应；
+2. `malloc` 返回拥有者，生命周期覆盖整段内存；
+3. 允许 `p = q` 形成别名，并利用现有的“分裂树”逻辑拆分成互不重叠的子段；
+4. 遇到指针算术或解引用时，仍能重用切片语义生成安全代码。
+
+## 指针表示
+
+我们为每个 C 指针生成一个轻量封装类型 `Ptr<T>`，而不是直接暴露 `Option<Box<[T]>>`：
+
+```rust
+struct Ptr<T> {
+    owner: Option<std::rc::Rc<std::cell::RefCell<Box<[T]>>>>,
+    offset: usize,   // 当前视图起点（字节数 = offset * size_of::<T>()）
+    len: Option<usize>, // 分裂树推导出的可用长度；未知时为 None
+}
+```
+
+- `owner = None` 表示 `NULL`；`Some(..)` 表示拥有一块由 `Box<[T]>` 支撑的内存。
+- `offset`/`len` 使我们能在不移动 Box 的情况下实现 `p = p + k`、`split_at_mut` 等操作。
+- `Rc<RefCell<...>>` 让多个 `Ptr<T>` 可共享同一块内存；每次需要可变借用时通过分裂树保证互斥，然后借用 `RefCell` 并在作用域末尾释放。
+
+## 生成规则
+
+1. **声明**：所有 Clight 中的 `Tslice(T)`/指针变量都打印为 `Ptr<T>`。默认初始化为 `Ptr::null()`。
+2. **NULL 赋值**：生成 `ptr = Ptr::null();`。
+3. **malloc**：
+   - 解析元素类型和长度，生成 `Ptr::alloc(len)`，内部调用 `vec![T::default(); len].into_boxed_slice()` 并包进 `Rc<RefCell<_>>`。
+   - `Ptr::alloc` 返回 `owner=Some(..), offset=0, len=Some(len)`。
+4. **赋值/别名 (`p = q`)**：简单按值复制 `Ptr<T>`；由于内部是 `Rc`，两个指针共享同一 owner，但 offset/len 独立。
+5. **指针算术 (`p = q + k`)**：生成 `ptr = q.add(k as usize);`。`add` 只调整 offset/len，不触碰 owner，并在调试模式下断言新 offset 不越界。
+6. **解引用/索引/分裂树**：
+   - 当需要切片语义时，调用 `let view = ptr.borrow_mut_slice();`，返回一个短生命周期的 `RefMut<[T]>`（或包装类型）。
+   - 分裂树算法保持不变：对 `view` 调用 `split_at_mut`，随后把新视图重新封装回 `Ptr`（通过 `Ptr::from_parts(owner.clone(), new_offset, new_len)`）。
+7. **free**：被 Box 的 Drop 自动处理；生成器继续移除显式 `free`。
+
+## 示例：翻译 `malloc`、`p = q`、`p = p + 1`
+
+```rust
+let mut a: Ptr<i32> = Ptr::null();
+let mut b: Ptr<i32> = Ptr::null();
+
+a = Ptr::alloc(10);      // malloc
+b = a.clone();           // p = q，alias
+a = a.add(1);            // p = p + 1，仅调整 offset
+
+if let Some(mut slot) = b.borrow_mut_slice().get_mut(3) {
+    *slot = 42;
+}
+```
+
+其中 `borrow_mut_slice()` 返回 `MutSliceGuard<'a, T>`，内部持有 `RefMut<Box<[T]>>` 并把 `offset/len` 映射成切片。
+
+## 已知问题与权衡示例
+
+假设原 C 代码是：
+
+```c
+int *p = malloc(2 * sizeof(int));
+int *q = p;
+free(p);
+q[0] = 1;   // UB in C，但很多旧代码会这样写
+```
+
+在我们的算法里：
+
+1. `p`、`q` 都是 `Ptr<i32>`，共享同一个 `Rc<RefCell<Box<[i32;2]>>>`。
+2. `free(p)` 被移除，生命周期托管给 `Rc`；只要 `p` 或 `q` 仍持有 `owner`，内存不会释放，从而避免悬垂，但**行为与 C 的 UB 不一致**。
+3. 如果我们仍尝试模拟 `free`（例如把 `p.owner = None`），那么 `q` 会在下一次 `borrow_mut_slice()` 时触发运行时 panic（检测到已被释放），或重新分配失败。
+
+因此：
+
+- 该算法保证了 Rust 层面的内存安全，但对于依赖 `free` 后继续访问的 C UB 代码，行为会与原生执行不同（Rust 版本不会崩溃，反而静默保留内存）。
+- 为了与 C 行为更一致，我们可以在 `free` 时把 `owner` 清空并标记“已释放”；随后任何访问 `Ptr` 的操作会触发 `panic!("use-after-free")`，帮助定位问题，但这属于运行时错误而非 UB。
+
+这个差异需要在文档中明确，避免调试时产生困惑。
+
+## 与 "Option<Box<[T]>>" 方案的对比示例
+
+下列示例展示了“旧方案”（直接把指针翻译成 `Option<Box<[T]>>`）无法正确表达 C 语义的情形，并给出本算法生成的 Rust 代码作为对照。
+
+### 1. 别名 `p = q`
+
+**C 原文**
+
+```c
+int *p = malloc(2 * sizeof(int));
+int *q = p;
+q[0] = 1;
+return p[0];
+```
+
+**旧方案翻译（示意）**
+
+```rust
+let mut p: Option<Box<[i32]>> = Some(vec![0; 2].into_boxed_slice());
+let mut q = p.clone();          // clone 产生两份独立内存，如果不克隆p就没有所有权无法再次访问了
+q.as_mut().unwrap()[0] = 1;
+return p.as_ref().unwrap()[0];  // 仍然是 0，行为与 C 不符
+```
+
+**现方案翻译（示意）**
+
+```rust
+let mut p: Ptr<i32> = Ptr::alloc(2);
+let mut q = p.clone();          // 共享同一 owner（Rc）
+q.store(0, 1);                  // 内部通过 borrow_mut_slice()
+return p.load(0);               // 正确得到 1
+```
+
+### 2. 指针算术 `p = p + 1`
+
+**C 原文**
+
+```c
+int *p = malloc(2 * sizeof(int));
+p = p + 1;
+*p = 42;
+```
+
+**旧方案翻译（示意）**
+
+```rust
+let mut p: Option<Box<[i32]>> = Some(vec![0; 2].into_boxed_slice());
+p = Some(p.unwrap().into_tail());   // 试图“截掉”前缀
+// drop 时释放的是偏移后的地址，相当于 free(p + 1) ⇒ UB
+*p.as_mut().unwrap().get_mut(0).unwrap() = 42;
+```
+
+**现方案翻译（示意）**
+
+```rust
+let mut p: Ptr<i32> = Ptr::alloc(2);
+p = p.add(1);                      // 只调整 offset，不动 owner
+p.store(0, 42);                    // 通过偏移后的视图写入，Drop 时仍释放原地址
+```
+
+### 3. 生命周期 / 悬垂引用
+
+**C 原文**
+
+```c
+int *p = NULL;
+if (cond) {
+  p = malloc(10 * sizeof(int));
+}
+if (p != NULL) { p[0] = 7; }
+```
+
+**旧方案翻译（示意）**
+
+```rust
+let mut p: Option<Box<[i32]>> = None;
+if cond {
+    let mut tmp = vec![0; 10].into_boxed_slice();
+    p = Some(tmp.as_mut_slice());   // tmp 在 if 结束时被 drop ⇒ E0597
+}
+if p.is_some() { p.as_mut().unwrap()[0] = 7; }
+```
+
+**现方案翻译（示意）**
+
+```rust
+let mut p: Ptr<i32> = Ptr::null();
+if cond {
+    p = Ptr::alloc(10);             // owner 覆盖整个作用域
+}
+if !p.is_null() {
+    p.store(0, 7);
+}
+```
+
+`Ptr::alloc` 将 `Rc<RefCell<Box<[T]>>>` 存入结构体，作用域结束后也不会被提前 drop；只有当所有 `Ptr` 克隆都离开作用域时，Box 才会释放，从根本上解决了 E0597。
+
+------------------------------------------------------------
+
+## runtime/ptr.rs 中 Ptr 数据结构与关键函数
+
+为了在 Rust 端承接上述算法，`runtime/ptr.rs` 实现了一个通用的指针包装类型 `Ptr<T>`，并提供了一组操作接口，用来统一表达：
+
+- 堆分配出来、可能被别名的数组（对应 C 里的 `malloc` / 全局数组）；
+- 对现有内存的借用视图（对应 C 里的局部数组/参数、`&arr[i]` 之类的地址）；
+- 空指针（`NULL`）；
+- 以及运行时边界检查（防止越界、负偏移等未定义行为）。
+
+### 1. 所有权表示：`PtrOwner<T>`
+
+```rust
+pub enum PtrOwner<T> {
+    Heap(Rc<RefCell<Box<[T]>>>),
+    Borrowed { base: NonNull<T>, len: usize },
+    Null,
+}
+```
+
+- `Heap`：表示这段内存由 `Ptr` 这边“拥有”，底层用 `Rc<RefCell<Box<[T]>>>` 持有一块连续数组。
+  - `Rc`：允许多个 `Ptr<T>` 共享一块堆内存，对应 C 里 `p = q` 形成别名。
+  - `RefCell`：在内部做动态借用检查，让多个 `store`/`load` 可以安全地并发借用。
+- `Borrowed { base, len }`：表示这是对某段现有内存的借用视图，记录：
+  - `base: NonNull<T>`：该视图的“逻辑起点”；
+  - `len: usize`：从这个起点起可访问的元素个数。
+  - 典型来源：
+    - `Ptr::from_ref(&mut slice[..])`：由 Rust 数组/切片借用转成 `Ptr<T>`；
+    - `Ptr::from_raw_parts(ptr, len)`：由裸指针 + 长度重建出的视图。
+- `Null`：对应 C 里的 `NULL` 指针；对它做 `load`/`store` 会直接 panic（显性化错误）。
+
+### 2. 核心结构：`Ptr<T>`
+
+```rust
+pub struct Ptr<T> {
+    owner: PtrOwner<T>,
+    offset: isize,
+    len: Option<usize>,
+}
+```
+
+- `owner`：上面提到的三种所有权模式之一。
+- `offset`：当前视图相对于 `owner` 所在那块内存起点的偏移（单位是元素个数，而不是字节）。
+  - 通过 `offset` 可以表达 `p + k`、`p - k` 之类的指针算术，而不需要改变 `owner`。
+- `len: Option<usize>`：
+  - `Some(total_len)`：表示我们知道这块内存从“原始起点”到“原始终点”的长度；
+  - `None`：长度未知，仅能用作裸指针传递。
+  - 注意：暴露给用户的长度通常通过 `len()` 函数计算，而不是直接使用这里的 `len` 字段。
+
+#### 2.1 基本构造与缺省实现
+
+- `pub const fn null() -> Self`  
+  返回一个空指针：`owner = Null, offset = 0, len = Some(0)`。  
+  - 用途：翻译 C 中未初始化指针 / `NULL`。
+
+- `impl<T> Default for Ptr<T>`  
+  `Default::default()` 直接调用 `Ptr::null()`，方便在结构体默认值、数组默认值里使用。
+
+#### 2.2 堆分配与借用构造
+
+- `pub fn alloc(n: usize) -> Self where T: Default + Clone`
+
+  ```rust
+  let b = vec![T::default(); n].into_boxed_slice();
+  Ptr {
+      owner: PtrOwner::Heap(Rc::new(RefCell::new(b))),
+      offset: 0,
+      len: Some(n),
+  }
+  ```
+
+  - 语义：对应 C 里的 `malloc(n * sizeof(T))`，返回一块长度为 `n` 的数组。
+  - 分配的内存挂在 `Heap` 变体里，由 `Rc` 管理引用计数；所有由这个 `Ptr` clone 出去的别名都共享这块内存。
+
+- `pub fn from_ref(slice: &mut [T]) -> Self`
+
+  ```rust
+  let len = slice.len();
+  let base = NonNull::new(slice.as_mut_ptr()).expect("slice pointer");
+  Ptr {
+      owner: PtrOwner::Borrowed { base, len },
+      offset: 0,
+      len: Some(len),
+  }
+  ```
+
+  - 语义：把一个可变切片 `&mut [T]` 包装成 `Ptr<T>`，不接管所有权，仅记录起点地址与长度。
+  - 应用：
+    - 将 Rust 局部数组 / 全局数组暴露为 `Ptr`，方便统一用 `load`/`store` 操作；
+    - 翻译 C 全局数组/局部数组时的默认入口。
+
+- `pub fn from_mut(value: &mut T) -> Self`
+
+  - 实现：通过 `std::slice::from_mut(value)` 构造长度为 1 的切片，再调用 `from_ref`。
+  - 语义：将一个 `&mut T` 视作长度为 1 的 `Ptr<T>`，常用于结构体字段、单元素指针。
+
+- `pub unsafe fn from_raw_parts(ptr: *mut T, len: usize) -> Self`
+
+  - 语义：**从生指针 + 长度构造出一个 `Borrowed` 视图**。
+  - 实现：
+    - 若 `ptr` 为非空，构造 `PtrOwner::Borrowed { base, len }`，`offset = 0`；
+    - 若 `ptr` 为 null，则退化为 `Ptr::null()`。
+  - 用途：
+    - 翻译 C FFI 回调、`void*` 转型之后再包装回 `Ptr`；
+    - 从栈里恢复保存过的原始指针值（例如 `vmach` 里把 `pc` 压栈再取出）。
+  - 安全性：函数标记为 `unsafe`，调用者必须保证：
+    - `ptr .. ptr + len` 这一段内存是有效且对齐的；
+    - 后续对 `Ptr` 的访问不会越过这段范围。
+
+### 3. 核心检查逻辑：`actual_index` 与边界保护
+
+```rust
+fn actual_index(&self, idx: usize) -> usize {
+    let idx_isize = isize::try_from(idx).expect("index overflow");
+    let actual = self.offset
+        .checked_add(idx_isize)
+        .expect("pointer offset overflow");
+    assert!(actual >= 0, "pointer index before allocation start");
+    if let Some(len) = self.len {
+        assert!((actual as usize) < len, "pointer index out of bounds");
+    }
+    actual as usize
+}
+```
+
+- 作用：给定一个“逻辑索引” `idx`（通常是 `load(idx)` / `store(idx)` 传进来的），计算在底层数组中的实际下标 `actual`，并做三类检查：
+  1. `idx` 本身不能溢出到负数；
+  2. `offset + idx` 不能发生 isize 溢出；
+  3. `actual >= 0` 且 `actual < len`（若 `len` 已知）。
+- 对 C 语义的对应：
+  - 若 C 代码在分配范围之外读/写（比如往前减到“数组起点之前”），这里会在调试阶段直接 panic ：  
+    `"pointer index before allocation start"` 或 `"pointer index out of bounds"`。
+  - 这比原生 C 行为更严格：C 会产生未定义行为（通常是静默内存破坏），而这里会显式报错。
+
+`actual_index` 是几乎所有读写接口的基础，下面的 `load` / `store` / `row` 都依赖它。
+
+### 4. 指针算术与长度查询
+
+- `pub fn is_null(&self) -> bool`
+  - 判断 `owner` 是否为 `Null`，用于翻译 C 中 `p == NULL` 这类判断。
+
+- `pub fn add(&self, k: usize) -> Self`
+  - 简写：等价于 `self.offset(k as isize)`，主要用在 C 翻译时表达 `p + k` 这种偏移。
+
+- `pub fn offset(&self, delta: isize) -> Self`
+
+  ```rust
+  let new_offset = self.offset
+      .checked_add(delta)
+      .expect("pointer offset overflow");
+  Ptr { owner: self.owner.clone(), offset: new_offset, len: self.len }
+  ```
+
+  - 语义：返回一个新的 `Ptr`，共享同一个 `owner`，但 `offset` 改为 `old_offset + delta`。
+  - 若加法溢出，则立即 panic `"pointer offset overflow"`。
+  - 对应 C 中各种 `p += k` / `p = q + k` / 通过整数地址恢复指针后再跳转的模式。
+
+- `pub fn len(&self) -> Option<usize>`
+
+  ```rust
+  self.len.map(|total| {
+      if self.offset >= 0 {
+          total.saturating_sub(self.offset as usize)
+      } else {
+          total.saturating_add((-self.offset) as usize)
+      }
+  })
+  ```
+
+  - 语义：基于“原始总长 `total`”和当前偏移计算**剩余可访问长度**。
+  - 若 `offset >= 0`：剩余长度为 `total - offset`（向右移动，前面那段不再可用）；
+  - 若 `offset < 0`：说明指针被移到了“起点之前”，这里用 `total + (-offset)` 只是防止 underflow，本质上这种情况会在 `actual_index` 的断言里优先被拦截。
+  - 典型用途：在需要把 `Ptr<T>` 转成 Rust 切片时，计算 `&mut [T]` 的长度。
+
+### 5. 读写、释放与原始指针导出
+
+- `pub fn store(&self, idx: usize, val: T)`
+  - 先调用 `actual_index` 做完整边界检查；
+  - 然后根据 `owner` 分支：
+    - `Heap(rc)`：借用 `RefCell` 中的 `Box<[T]>`，直接写入 `borrowed[actual]`；
+    - `Borrowed`：通过 `base.as_ptr().add(actual)` 计算地址，用 `ptr::write` 写入；
+    - `Null`：`panic!("store through NULL ptr")`。
+
+- `pub fn load(&self, idx: usize) -> T where T: Clone`
+  - 同样先 `actual_index` 检查；
+  - 再从 `Heap` 或 `Borrowed` 内存里 clone 出数据；如果是 `Null` 则 panic。
+
+  这两个接口共同提供了“数组下标读写”的抽象，是 Clight2Rustlight 中所有 `*p` / `p[i]` / `a[i] = ...` 的生成目标。
+
+- `pub fn free(&mut self)`
+  - 语义：只对 `Heap` 所有者生效，把 `owner` 置为 `Null`，`offset = 0`，`len = Some(0)`。
+  - 目前主要作用是：
+    - 在 Rust 端显式地把某些 `Ptr` 标记为已释放，防止后续误用；
+    - 真正的内存释放仍由 `Rc` 的引用计数和 Box 的 Drop 完成。
+
+- `pub fn as_ptr(&self) -> *const T` / `pub fn as_mut_ptr(&self) -> *mut T`
+  - 将安全的 `Ptr<T>` 降级为裸指针，用在 FFI 交互或 `printf` 这类 C 函数调用中。
+  - 对 `Heap` 和 `Borrowed`：
+    - 断言 `offset >= 0`（防止负偏移原地导出），然后在底层指针上做 `add(offset as usize)`。
+  - 对 `Null`：返回 `std::ptr::null()`。
+  - `as_mut_ptr` 只是把 `as_ptr` 的结果 cast 成 `*mut T`。
+
+### 6. 类型转换：`cast` 与多维数组行视图
+
+- `pub unsafe fn cast<U>(&self) -> Ptr<U>`
+
+  ```rust
+  mem::transmute(self.clone())
+  ```
+
+  - 语义：在**不改变底层地址与 owner** 的前提下，把 `Ptr<T>` 强制视作 `Ptr<U>`。
+  - 用途：
+    - 翻译 C 中的 `(T*)p` 强制类型转换；
+    - 处理 `void*` / `char*` 等通用指针，再 cast 回具体类型。
+  - 安全性：调用方必须保证 `T` 与 `U` 在布局上兼容，否则会产生未定义行为。
+
+- `impl<T, const N: usize> Ptr<[T; N]> { pub fn row(&self, idx: usize) -> Ptr<T> }`
+
+  - 针对“数组的数组”/矩阵提供按“行”索引的工具：
+    - 计算第 `idx` 行在底层 `[T; N]` 数组中的实际位置；
+    - 找到那一行的首元素 `*mut T`；
+    - 构造一个新的 `PtrOwner::Borrowed { base, len: N }`，`offset = 0`。
+  - 作用：支持 Clight 中多维数组访问 `a[i][j]` 的翻译。
+
+### 7. 针对 Rust 数组的扩展 trait
+
+- `pub trait ArrayPtrExt<T> { fn offset(&mut self, delta: isize) -> Ptr<T>; }`
+
+  ```rust
+  impl<T, const N: usize> ArrayPtrExt<T> for [T; N] {
+      fn offset(&mut self, delta: isize) -> Ptr<T> {
+          Ptr::from_ref(&mut self[..]).offset(delta)
+      }
+  }
+  ```
+
+  - 作用：允许对一个真正的 Rust 数组 `[T; N]` 直接调用 `.offset(delta)` 得到一个 `Ptr<T>` 视图，语义等价于：
+    - 先把整个数组借用为 `&mut [T]`；
+    - 再通过 `from_ref` + `offset` 创建带偏移的指针。
+
+- `pub trait ArrayPtrCastExt { fn cast<U>(&self) -> Ptr<U>; }`
+
+  ```rust
+  impl<T, const N: usize> ArrayPtrCastExt for [T; N] {
+      fn cast<U>(&self) -> Ptr<U> {
+          unsafe {
+              Ptr::from_raw_parts(self.as_ptr() as *mut U, N)
+          }
+      }
+  }
+  ```
+
+  - 作用：从一个数组引用 `[T; N]` 构造出不同元素类型的 `Ptr<U>`，常用在把 `u8` 数组视作某种结构数组的情况。
+  - 同样是 `unsafe` 语义：`T` 和 `U` 必须在布局上兼容。
+
+### 8. 数组默认值构造：`array_default`
+
+```rust
+pub fn array_default<T: Default, const N: usize>() -> [T; N] {
+    let mut data: [MaybeUninit<T>; N] =
+        unsafe { MaybeUninit::uninit().assume_init() };
+    let mut i = 0;
+    while i < N {
+        data[i] = MaybeUninit::new(T::default());
+        i += 1;
+    }
+    unsafe { ptr::read((&data as *const _ as *const [T; N])) }
+}
+```
+
+- 语义：构造一个长度为 `N` 的数组 `[T; N]`，其中每个元素都填充为 `T::default()`。
+- 实现细节：
+  - 先分配一个未初始化的 `[MaybeUninit<T>; N]`；
+  - 用循环逐个填入 `T::default()`；
+  - 最后通过 `ptr::read` 从 `&data` 强转成真正的 `[T; N]`，并“夺走”所有权。
+- 用途：
+  - 作为全局/局部数组的缺省初始化方式，对应 C 里“静态零初始化”的安全版本；
+  - 在结构体默认值中，用于生成如 `[u8; 64]` 这类字段的默认数组。
+
+综上，`runtime/ptr.rs` 提供了一个“带所有权与边界信息的通用指针”实现，是整个 C→Rust 翻译过程中所有 `T*`/数组访问/指针算术的基础。算法层面的各种规则（`malloc`、别名、分裂树、offset 计算等）最终都落在对 `Ptr<T>` 这些基础操作的组合上。通过在这里加入运行时断言，我们可以在保留 C 风格指针表达力的同时，把大量潜在的 UB 提前暴露出来，方便调试与验证。 
