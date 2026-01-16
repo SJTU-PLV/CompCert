@@ -75,7 +75,7 @@ Inductive type : Type :=
 | Tvariant: list origin -> ident -> type                             (**r tagged variant types *)
 | Tadt: ident -> type            (* opaque object. For now we do not
   allow this object to contain reference, so the type does not have
-  generic regions. *)
+  generic regions. We explicitly annotate its size *)
 with typelist : Type :=
 | Tnil: typelist
 | Tcons: type -> typelist -> typelist.

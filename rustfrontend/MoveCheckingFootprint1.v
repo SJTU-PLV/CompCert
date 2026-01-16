@@ -42,6 +42,13 @@ Lemma Forall_sep_app {A: Type} : forall (l1 l2: list A) P mass,
       (exists mass1 mass2, Forall_sep P l1 mass1 /\ Forall_sep P l2 mass2 /\ mass = mass1 ** mass2).
 Admitted.
 
+Fixpoint range_list (l: list (block * Z * Z)) : massert :=
+  match l with
+  | nil => STrue
+  | (b, lo, hi) :: l1 =>
+      range b lo hi ** range_list l1
+  end.
+
 
 (** Define the semantic interpretation of abstract data type written
 in unsafe module *)
@@ -50,105 +57,28 @@ Record massert_rel_functional (P: massert -> Prop) : Prop :=
   { mass_rel_left_total: exists mp, P mp;
     mass_rel_right_unique: forall mp1 mp2, P mp1 -> P mp2 -> massert_eqv mp1 mp2; }.
 
-Record Adt : Type := {
-    repr: Type;
+Record Adt_mem : Type := {
+    mem_repr: Type;
+    mem_exposed_borrow: mem_repr -> list (ident * ((block * Z * Z) * type));
     (* layout *)
     adt_size : Z;
     adt_align: Z;
     
-    repr_loc: repr -> loc;        (* The locaiton of this Adt *)
-    change_loc: repr -> loc -> repr; (* Move this adt *)
-    mem_pred: repr -> massert -> Prop; (* How it locates in the memory *)
-    mem_loc_pred: repr -> massert -> Prop; (* This predicate only expresses
-    the value stored in the location of this adt. It is useful since
-    we may want to memcpy this adt into other locations *)
-    mem_val_pred: repr -> massert -> Prop; (* This predicate expresses the
-    memory occupied by the value of this adt. *)
-    repr_inv: repr -> Prop;         (* representation invariant *)
+    mem_pred: mem_repr -> block -> Z -> massert -> Prop; (* How it locates in the memory *)
+    repr_inv: mem_repr -> Prop;         (* representation invariant *)
 
     (* Propertis of mem_pred, e.g., it is total and deterministic *)
-    mem_pred_functional: forall r, massert_rel_functional (mem_pred r);
-    mem_loc_pred_functional: forall r, massert_rel_functional (mem_loc_pred r);
-    mem_val_pred_functional: forall r, massert_rel_functional (mem_val_pred r);
+    mem_pred_functional: forall r b ofs, massert_rel_functional (mem_pred r b ofs);
     
-    mem_pred_split: forall r P,
-      mem_pred r P ->
-      exists P1 P2, 
-        mem_loc_pred r P1
-        /\ mem_val_pred r P2
-        /\ massert_eqv P (P1 ** P2);
-
-    mem_pred_merge: forall r P1 P2,
-      mem_loc_pred r P1 ->
-      mem_val_pred r P2 ->
-      exists P,
-        mem_pred r P
-        /\ massert_eqv P (P1 ** P2);
-
-    (* The location of this adt has enough permission, which may be
-    useful in memory copy *)
-    mem_loc_pred_perm: forall r P b ofs,
-      mem_loc_pred r P ->
-      repr_inv r ->
-      repr_loc r = (b, ofs) ->
-      massert_imp P (range b ofs (ofs + adt_size));
-
-    (* change loc *)
-    change_loc_result: forall r b ofs,
-      repr_loc (change_loc r (b, ofs)) = (b, ofs);
-
-    (* We can move this representation by memory copy *)
-    mem_pred_memcpy: forall r mp1 mp2 mp3 MP sb sofs tb tofs m1 m2 bytes,
-      m1 |= mp1 ** mp2 ** MP ->
-      repr_loc r = (sb, sofs) ->
-      mem_val_pred r mp2 ->
-      mem_loc_pred r mp3 ->
-      massert_imp mp1 (range tb tofs (tofs + adt_size)) ->
-      massert_imp (mp1 ** MP) mp3 ->
-      Mem.loadbytes m1 sb sofs adt_size = Some bytes ->
-      Mem.storebytes m1 tb tofs bytes = Some m2 ->
-      (adt_align | tofs) ->
-      repr_inv r ->
-      exists mp, mem_pred (change_loc r (tb, tofs)) mp /\ m2 |= mp ** MP;
-
+    (* mem_pred implies that the location is freeable if the exposed
+    borrowable subparts are also freeable, which is used in freeable
+    the block of this object *)
+    mem_pred_range: forall r b ofs MP,
+      mem_pred r b ofs MP ->
+      massert_imp (MP ** range_list (map (compose fst snd) (mem_exposed_borrow r))) (range b ofs (ofs + adt_size));
+    
   }.
 
-
-(* For now, we only support lens of the form (Adt <-> (list Adt)) *)
-Record Lens_list (C A: Adt) : Type := {
-    get: (repr C) -> list (repr A);
-    put: (repr C) -> list (repr A) -> (repr C);
-
-    (* Well formedness *)
-    get_put: forall c, put c (get c) = c;
-    put_get: forall c a, get (put c a) = a;
-
-    (* Separation properties *)
-    get_split: forall c P1 P2, 
-      C.(mem_pred) c P1 ->
-      Forall_sep A.(mem_pred) (get c) P2 ->
-      exists P3, massert_eqv P1 (P2 ** P3);
-    set_frame_preserve: forall c a P1 P2 P3 P1' P2',
-      C.(mem_pred) c P1 ->
-      Forall_sep A.(mem_pred) (get c) P2 ->
-      massert_eqv P1 (P2 ** P3) ->
-      C.(mem_pred) (put c a) P1' ->
-      Forall_sep A.(mem_pred) a P2' ->
-      massert_eqv P1' (P2' ** P3);
-
-    (* getter and setter preserves the representation invariant *)
-    get_repr_inv: forall (c: repr C),
-      Forall A.(repr_inv) (get c);
-    set_repr_inv: forall a c,
-      Forall A.(repr_inv) a ->
-      C.(repr_inv) (put c a);
-
-    (* the update cannot change the locations *)
-    set_loc_unchanged: forall a c,
-      map A.(repr_loc) (get c) = map A.(repr_loc) a ->
-      C.(repr_loc) c = C.(repr_loc) (put c a);
-
-  }.
 
 Definition alignof_comp ce (id: ident) :=
   match ce ! id with
@@ -166,11 +96,14 @@ Definition sizeof_comp ce (id: ident) :=
 footprint and the memory. We try to define it using massert which
 explicitly encode separation. *)
 
-Definition adt_env : Type := ident -> Adt.
+Definition adt_mem_env : Type := ident -> Adt_mem.
+
+Section ADT_ENV.
+
 (* I think this environment is a premise for the whole borrow checking
 proof. When we want to use the borow checking proof, we must provide
 its instance. *)
-Variable ae: adt_env.
+Variable ame: adt_mem_env.
 
 
 (** Definition of footprint *)
@@ -181,14 +114,15 @@ Inductive footprint : Type :=
 | fp_emp  (* empty footprint. *)
 | fp_uninit (sz al: Z) (*  Uninitialized footprint. We need to record its size and align *)
 | fp_scalar (chunk: memory_chunk) (v: val)  (* scalar type. *)
-| fp_box (b: block) (sz: Z) (fp: footprint) (* A heap block storing values that occupy footprint fp *)
+| fp_box (b: block) (* (sz: Z) *) (fp: footprint) (* A heap block storing values that occupy footprint fp. We do not record size here because if fp is fp_emp the size is meaningless and wt_footprint cannot be defined for Box(Adt) *)
 (* (field ident, field type, field offset,field footprint) *)
 | fp_struct (id: ident) (fpl: list (ident * ((Z * Z) * footprint)))
 (* orgs are not used for now but it is used to relate to the type *)
 | fp_enum (id: ident) (tagz: Z) (fid: ident) (fofs: Z) (ffp: footprint)
 | fp_ref (b: block) (ofs: Z) (ph: path) (* reference to an owner at [phs] with type [ty] *)
-| fp_object (id: ident) (obj: (repr (ae id)))
+| fp_object (id: ident) (obj: (mem_repr (ame id))) (exposed: list (ident * (loc * footprint)))
 .
+
 
 (* pattern (fid, ((base, fofs), ffp): base is the end of the last
 field's offset (it is 0 if this field is the first field). The
@@ -231,7 +165,7 @@ Fixpoint deep_owned (fp: footprint) : bool :=
       forallb (fun '(_, (_, ffp)) => deep_owned ffp) fpl
   | fp_enum _ _ _ _ ffp =>
       deep_owned ffp
-  | fp_box _ _ fp1 =>
+  | fp_box _ fp1 =>
       deep_owned fp1
   | _ => true
   end.
@@ -257,7 +191,7 @@ Fixpoint shallow_init (fp: footprint) : bool :=
   (* We cannot simply say that fp1 is not fp_emp because when we pass
   some field of fp1 to caller, its original footprint would be set to
   fp_emp, but we cannot owns the whole block anymore. *)
-  | fp_box _ _ fp1 => shallow_owned fp1
+  | fp_box _ fp1 => shallow_owned fp1
   | _ => true
   end.
 
@@ -271,7 +205,7 @@ Fixpoint deep_init (fp: footprint) : bool :=
       forallb (fun '(_, (_, ffp)) => deep_init ffp) fpl
   | fp_enum _ _ _ _ ffp =>
       deep_init ffp
-  | fp_box _ _ fp1 =>
+  | fp_box _ fp1 =>
       deep_init fp1
   | _ => true
   end.
@@ -300,11 +234,11 @@ Variable (P: footprint -> Prop)
   (HPemp: P fp_emp)
   (HPuninit: forall sz al, P (fp_uninit sz al))
   (HPscalar: forall chunk v, P (fp_scalar chunk v))
-  (HPbox: forall (b : block) sz (fp : footprint), P fp -> P (fp_box b sz fp))
+  (HPbox: forall (b : block) (fp : footprint), P fp -> P (fp_box b fp))
   (HPstruct: forall id fpl, (forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl -> P ffp) -> P (fp_struct id fpl))
   (HPenum: forall id (tag : Z) fid fofs (ffp : footprint), P ffp -> P (fp_enum id tag fid fofs ffp))
   (HPref: forall b ofs ref_owner, P (fp_ref b ofs ref_owner))
-  (HPobj: forall id obj, P (fp_object id obj)).
+  (HPobj: forall id obj bors, (forall fid b ofs ffp, In (fid, (b, ofs, ffp)) bors -> P ffp) -> P (fp_object id obj bors)).
 
 Fixpoint strong_footprint_ind t: P t.
 Proof.
@@ -321,7 +255,11 @@ Proof.
       * apply (IHfpl fid base fofs ffp H). 
   - apply HPenum. apply strong_footprint_ind.
   - apply HPref. 
-  - apply HPobj. 
+  - eapply HPobj. induction exposed.
+    + intros. inv H.
+    + intros. destruct a as (fid1 & ((b1 & ofs1) & fp1)). simpl in H. destruct H.
+      * specialize (strong_footprint_ind fp1). inv H. apply strong_footprint_ind.
+      * apply (IHexposed fid b ofs ffp H). 
 Qed.
     
 End FP_IND.
@@ -333,7 +271,7 @@ of the local variables in fp_map for simplicity *)
 
 (* The [option origin] is used to indicate that this "variable" is
 local var/param (None) or a name for some locations passed by
-reference (Some org where org is the region of this location) *)
+reference (Some org where org is the generic region of this location) *)
 Definition fp_map := PTree.t (block * Z * type * option origin * footprint).
 
 (* A footprint in a function frame *)
@@ -398,12 +336,11 @@ Definition sizeof_footprint ce (fp: footprint) : Z :=
   | fp_emp => 0
   | fp_uninit sz _ => sz
   | fp_scalar chunk _ => size_chunk chunk
-  | fp_box _ _ _ => size_chunk Mptr
+  | fp_box _ _ => size_chunk Mptr
   | fp_enum id _ _ _ _ => sizeof_comp ce id
   | fp_struct id _ => sizeof_comp ce id
   | fp_ref _ _ _ => size_chunk Mptr
-  (** TODO: add extern type to composite environment *)
-  | fp_object id _ => sizeof_comp ce id
+  | fp_object id _ _ => adt_size (ame id)
   end.
 
 Definition alignof_footprint ce (fp: footprint) : Z :=
@@ -411,13 +348,12 @@ Definition alignof_footprint ce (fp: footprint) : Z :=
   | fp_emp => 0
   | fp_uninit _ al => al
   | fp_scalar chunk _ => align_chunk chunk
-  | fp_box _ _ _ => align_chunk Mptr
+  | fp_box _ _ => align_chunk Mptr
   | fp_enum id _ _ _ _ => alignof_comp ce id
   | fp_struct id _ => alignof_comp ce id
   | fp_ref _ _ _ => align_chunk Mptr
-  | fp_object id _ => alignof_comp ce id
+  | fp_object id _ _ => adt_align (ame id)
   end.
-
 
 
 (* [set_footprint] and [set_footprint_map] set some footprint [fp] to
@@ -433,8 +369,8 @@ paths. This distinguishment may not be needed for set functions as we
 can ensure that we only set owner paths?  *)
 
 
-Definition set_field_fp (fid: ident) (vfp: footprint) (fpl: list (ffpty)) : list ffpty :=
-  set_field fid (fun '(fofs, ffp) => (fofs, vfp)) fpl.
+Definition set_field_fp {L: Type} (fid: ident) (vfp: footprint) (fpl: list (ident * (L * footprint))) : list (ident * (L * footprint)) :=
+  set_field fid (fun '(l, ffp) => (l, vfp)) fpl.
 
 (* set footprint [v] in the path [ph] of footprint [fp] *)
 Fixpoint set_footprint (phl: list projection) (v: footprint) (fp: footprint) : option footprint :=
@@ -442,10 +378,10 @@ Fixpoint set_footprint (phl: list projection) (v: footprint) (fp: footprint) : o
   | nil => Some v
   | ph :: l =>
       match ph, fp with
-      | proj_deref, fp_box b sz fp1 =>
+      | proj_deref, fp_box b fp1 =>
           match set_footprint l v fp1 with
           | Some fp2 =>
-              Some (fp_box b sz fp2)
+              Some (fp_box b fp2)
           | None => None
           end
       | proj_field fid, fp_struct id fpl =>
@@ -458,6 +394,16 @@ Fixpoint set_footprint (phl: list projection) (v: footprint) (fp: footprint) : o
               end
           | None => None
           end
+      | proj_field fid, fp_object id obj exposed =>
+          match find_field fid exposed with
+          | Some ((b, ofs), ffp) =>
+              match set_footprint l v ffp with
+              | Some ffp1 =>
+                  Some (fp_object id obj (set_field_fp fid ffp1 exposed))
+              | None => None
+              end
+          | None => None
+          end                  
       (* TODO: remove pty in proj_downcast *)
       | proj_downcast fid (* fty *), fp_enum id tagz fid1 fofs1 fp1 =>
           (** Type safe checking *)
@@ -491,7 +437,7 @@ Fixpoint get_owner_loc_footprint (phl: list projection) (fp: footprint) (b: bloc
   | nil => Some (b, ofs, fp)
   | ph :: l =>
       match ph, fp with
-      | proj_deref, fp_box b _ fp1 =>
+      | proj_deref, fp_box b fp1 =>
           if not_fp_emp fp1 then
             (* We can only deference box pointer that is not moved from *)
             get_owner_loc_footprint l fp1 b 0
@@ -502,6 +448,12 @@ Fixpoint get_owner_loc_footprint (phl: list projection) (fp: footprint) (b: bloc
           match find_field fid fpl with
           | Some ((base, fofs), fp1) =>
               get_owner_loc_footprint l fp1 b (ofs + fofs)
+          | None => None
+          end
+      | proj_field fid, fp_object id obj fpl =>
+          match find_field fid fpl with
+          | Some (b, ofs, fp1) =>
+              get_owner_loc_footprint l fp1 b ofs
           | None => None
           end
       | proj_downcast fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
@@ -519,11 +471,17 @@ Fixpoint get_owner_footprint (phl: list projection) (fp: footprint) : option foo
   | nil => Some fp
   | ph :: l =>
       match ph, fp with
-      | proj_deref, fp_box b _ fp1 =>
+      | proj_deref, fp_box b fp1 =>
           get_owner_footprint l fp1
       | proj_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
           | Some (fofs, fp1) =>
+              get_owner_footprint l fp1
+          | None => None
+          end
+      | proj_field fid, fp_object id obj fpl =>
+          match find_field fid fpl with
+          | Some (b, ofs, fp1) =>
               get_owner_footprint l fp1
           | None => None
           end
@@ -560,9 +518,9 @@ Fixpoint clear_footprint_rec (fp: footprint) : footprint :=
   (* What about moving a reference? *)
   | fp_ref _ _ _
   | fp_uninit _ _
-  | fp_object _ _               (* impossible?*)
+  | fp_object _ _ _               (* impossible?*)
   | fp_emp => fp
-  | fp_box b sz fp1 => fp_box b sz fp_emp
+  | fp_box b fp1 => fp_box b fp_emp
   | fp_enum id tagz fid fofs ffp => fp_enum id tagz fid fofs (clear_footprint_rec ffp)
   | fp_struct id fpl =>
       fp_struct id (map (fun '(fid, (fofs, ffp)) => (fid, (fofs, clear_footprint_rec ffp))) fpl)
@@ -589,9 +547,15 @@ Fixpoint get_owner_path (fpm: fp_map) (ph: path) (phl: list projection) (fp: foo
   | pj :: l =>
       let ph1 := (fst ph, snd ph ++ [pj]) in
       match pj, fp with
-      | proj_deref, fp_box _ _ fp1 =>
+      | proj_deref, fp_box _ fp1 =>
           get_owner_path fpm ph1 l fp1
       | proj_field fid, fp_struct _ fpl =>
+          match find_field fid fpl with
+          | Some (_, fp1) =>
+              get_owner_path fpm ph1 l fp1
+          | None => None
+          end
+      | proj_field fid, fp_object _ _ fpl =>
           match find_field fid fpl with
           | Some (_, fp1) =>
               get_owner_path fpm ph1 l fp1
@@ -674,6 +638,16 @@ Inductive fields_fp_sep (P: footprint -> massert -> Prop) : list ffpty -> masser
     (EQV: massert_eqv mp (mass1 ** mass2)),
     fields_fp_sep P ((fid, ((base, fofs), ffp)) :: l) mp.
 
+Inductive exposed_loc_sep (P: footprint -> block -> Z -> massert -> Prop) : list (ident * (loc * footprint)) -> massert -> Prop :=
+| exposed_loc_sep_nil: forall mp
+    (EQV: massert_eqv mp STrue),
+    exposed_loc_sep P nil mp
+| exposed_loc_sep_cons: forall fid b ofs ffp l mass1 mass2 mp
+    (IND: exposed_loc_sep P l mass2)
+    (FWT: P ffp b ofs mass1)
+    (EQV: massert_eqv mp (mass1 ** mass2)),
+    exposed_loc_sep P ((fid, (b, ofs, ffp)) :: l) mp.
+
 
 Section COMP_ENV.
 
@@ -681,11 +655,11 @@ Variable ce: composite_env.
 
 (** * Definitions of semantics typedness *)
 
-Definition box_pred fp b sz mp :=
+Definition box_pred fp b mp :=
   (* Remember that if we can move the permission of some field of
   (b,0), e.g., via passing by reference, then shallow_owned is false
   but we should still own the remaining location! *) 
-  if not_fp_emp fp then (contains_neg Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr sz)))) ** mp else STrue.
+  if not_fp_emp fp then (contains_neg Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr (sizeof_footprint ce fp))))) ** mp else STrue.
 
 Inductive sem_wt_loc : footprint -> block -> Z -> massert -> Prop :=
 | sem_wt_emp: forall b ofs mp
@@ -708,14 +682,14 @@ say this location is still sem_wt_loc *)
 | sem_wt_ref: forall b1 b2 ofs1 ofs2 phs mp
     (EQV: massert_eqv mp (hasvalue Mptr b1 ofs1 (Vptr b2 (Ptrofs.repr ofs2)))),
     sem_wt_loc (fp_ref b2 ofs2 phs) b1 ofs1 mp
-| sem_wt_box: forall b ofs fp b1 sz nextmp mp mp1
+| sem_wt_box: forall b ofs fp b1 nextmp mp mp1
     (* (WTVAL: sem_wt_val (fp_box b1 sz1 fp) v mass), *)
     (* When this box pointer is not moved from (i.e., shallow_init is
     false), its point-to location is freeable and sem_wt_loc *)
-    (FREE: massert_eqv mp (box_pred fp b1 sz nextmp))
+    (FREE: massert_eqv mp (box_pred fp b1 nextmp))
     (WTLOC: sem_wt_loc fp b1 0 nextmp)
     (EQV: massert_eqv mp1 ((hasvalue Mptr b ofs (Vptr b1 Ptrofs.zero)) ** mp)),
-    sem_wt_loc (fp_box b1 sz fp) b ofs mp1
+    sem_wt_loc (fp_box b1 fp) b ofs mp1
 
 | sem_wt_struct: forall b ofs fpl id mass mp
     (FWT: fields_loc_sep b ofs sem_wt_loc fpl mass)
@@ -733,11 +707,11 @@ say this location is still sem_wt_loc *)
     (ALPERM: padmp = range b (ofs + size_chunk Mint32) (ofs + fofs))
     (EQV: massert_eqv mp (mass1 ** padmp ** mass2 ** (spure (alignof_comp ce id | ofs)))),
     sem_wt_loc (fp_enum id tagz fid fofs fp) b ofs mp
-| sem_wt_object: forall id obj mp mp1 b ofs
-    (PRED: (ae id).(mem_pred) obj mp)
-    (EQV: massert_eqv mp mp1)
-    (LOCEQ: (ae id).(repr_loc) obj = (b, ofs)),
-    sem_wt_loc (fp_object id obj) b ofs mp1
+| sem_wt_object: forall id obj mp1 mp2 mp3 b ofs exposed
+    (PRED: (ame id).(mem_pred) obj b ofs mp1)
+    (EXPOSED: exposed_loc_sep sem_wt_loc exposed mp2)
+    (EQV: massert_eqv (mp1 ** mp2) mp3),
+    sem_wt_loc (fp_object id obj exposed) b ofs mp3
 .
 
 (* The interpretation of footprint *)
@@ -755,10 +729,10 @@ Inductive sem_wt_fp : footprint -> massert -> Prop :=
 | sem_fp_ref: forall phs b ofs mp
     (EQV: massert_eqv mp (spure True)),
     sem_wt_fp (fp_ref b ofs phs) mp
-| sem_fp_box: forall b fp sz nextmp mp
+| sem_fp_box: forall b fp nextmp mp
     (WTLOC: sem_wt_loc fp b 0 nextmp)
-    (EQV: massert_eqv mp (box_pred fp b sz nextmp)),
-    sem_wt_fp (fp_box b sz fp) mp
+    (EQV: massert_eqv mp (box_pred fp b nextmp)),
+    sem_wt_fp (fp_box b fp) mp
 | sem_fp_struct: forall id fpl mp1 mp
     (FFP: fields_fp_sep sem_wt_fp fpl mp1)
     (* (* We use magic wand to capture the by_copy notion *) *)
@@ -790,9 +764,9 @@ Inductive sem_wt_val : footprint -> val -> massert -> Prop :=
 | wt_val_ref: forall phs b ofs mp
     (MP: sem_wt_fp (fp_ref b ofs phs) mp),
     sem_wt_val (fp_ref b ofs phs) (Vptr b (Ptrofs.repr ofs)) mp
-| wt_val_box: forall b fp sz mp
-    (MP: sem_wt_fp (fp_box b sz fp) mp),
-    sem_wt_val (fp_box b sz fp) (Vptr b Ptrofs.zero) mp
+| wt_val_box: forall b fp mp
+    (MP: sem_wt_fp (fp_box b fp) mp),
+    sem_wt_val (fp_box b fp) (Vptr b Ptrofs.zero) mp
 | wt_val_struct: forall b ofs id fpl mp
     (MP: sem_wt_fp (fp_struct id fpl) mp)
     (WTLOC: forall mp1, 
@@ -981,11 +955,16 @@ Proof.
     exploit IHfp. eauto. eapply WTLOC. intros. unfold box_pred.
     destruct not_fp_emp. rewrite H. reflexivity. reflexivity.
   - rewrite EQV, EQV0.
+    eapply sepconj_morph_2.
     eapply fields_loc_sep_unique; eauto.
+    reflexivity.
   - rewrite EQV, EQV0. eapply sepconj_morph_2. reflexivity.
     eapply sepconj_morph_2. reflexivity.
-    eapply IHfp; eauto.
-Qed.
+    eapply sepconj_morph_2. 
+    eapply IHfp; eauto. reflexivity.
+  - subst_dep.
+    admit.
+Admitted.
 
 Lemma fields_fp_sep_unique : forall fpl mp1 mp2 (P: footprint -> massert -> Prop)
     (EQVP: forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl ->
@@ -1126,10 +1105,12 @@ Inductive wt_footprint : type -> footprint -> Prop :=
     (WT: wt_footprint ty fp),
     (* It is used to make sure that dropping any location within a
     block does not cause overflow *)
-    wt_footprint (Tbox ty) (fp_box b (sizeof ce ty) fp)
+    wt_footprint (Tbox ty) (fp_box b fp)
 | wt_fp_ref: forall ty b ofs phs org mut,
     (** Do we need to prove that phs is well-typed path? *)
-    wt_footprint (Treference org mut ty) (fp_ref b ofs phs).
+    wt_footprint (Treference org mut ty) (fp_ref b ofs phs)
+(* | wt_fp_object: forall *)
+.
 
 Definition wt_footprint_list tyl fpl :=
   list_forall2 wt_footprint tyl fpl.

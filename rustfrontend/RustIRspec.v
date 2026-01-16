@@ -48,7 +48,7 @@ Inductive sval : Type :=
 | sv_box (sv: sval) 
 | sv_struct (id: ident) (svl: list (ident * sval))
 | sv_enum (id: ident) (fid: ident) (sv: sval)
-| sv_ref (ph: path) (* (cached: option sval) (getter: sval -> sval) (setter: sval -> sval -> sval) *) (* reference to an owner at [phs] *)
+| sv_ref (ph: path) (* reference to an owner at [phs] *)
 | sv_object (id: ident) (obj: repr (ae id)) (exposed: list (ident * sval))
 .
 
