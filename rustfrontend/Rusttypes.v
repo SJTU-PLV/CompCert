@@ -73,6 +73,9 @@ Inductive type : Type :=
 | Tarray: type -> Z -> type                    (**r array type, just used for constant string for now *)
 | Tstruct: list origin -> ident -> type                              (**r struct types  *)
 | Tvariant: list origin -> ident -> type                             (**r tagged variant types *)
+| Tadt: ident -> type            (* opaque object. For now we do not
+  allow this object to contain reference, so the type does not have
+  generic regions. *)
 with typelist : Type :=
 | Tnil: typelist
 | Tcons: type -> typelist -> typelist.
@@ -278,6 +281,7 @@ Definition access_mode (ty: type) : mode :=
   | Tarray _ _ => By_reference
   | Tstruct _ _ => By_copy
   | Tvariant _ _ => By_copy
+  | Tadt _ => By_copy
 end.
 
 (* Used to indicate which places need to be dropped *)
@@ -289,7 +293,10 @@ Definition drop_type (ty: type) : bool :=
   | Tfloat _
   | Tfunction _ _ _ _ _
   | Tarray _ _
-  | Treference _ _ _ => false
+  | Treference _ _ _ 
+  (* For opaque object, it is the responsibility of user to drop its
+  value, e.g., by calling its destructor *)
+  | Tadt _  => false
   | _ => true
   end.
 
@@ -307,6 +314,10 @@ Fixpoint to_ctype (ty: type) : Ctypes.type :=
   | Tlong si => Ctypes.Tlong si noattr
   | Tfloat fz => Ctypes.Tfloat fz noattr
   | Tstruct _ id  => Ctypes.Tstruct id noattr
+  | Tadt id => Ctypes.Tstruct id noattr (* In C, the opaque object is
+    an external struct. All its usage must be behind a pointer for
+    now. In the future, we can translate opaque object into list of
+    bytes. *)
   (* variant = Struct {tag: .. ; f: union} *)
   | Tvariant _ id => Ctypes.Tstruct id noattr
   | Treference _ _ ty
@@ -408,6 +419,8 @@ Fixpoint complete_type (env: composite_env) (t: type) : bool :=
   | Tarray t' _ => complete_type env t'
   | Tstruct _ id | Tvariant _ id =>
       match env!id with Some co => true | None => false end
+  (* Adt can only be used via box/reference *)
+  | Tadt id => false
   end.
 
 Definition complete_or_function_type (env: composite_env) (t: type) : bool :=
@@ -438,8 +451,9 @@ Fixpoint alignof (env: composite_env) (t: type) : Z :=
     | Treference _ _ _
     | Tbox _ => if Archi.ptr64 then 8 else 4
     | Tarray t' _ => alignof env t'
-      | Tstruct _ id | Tvariant _ id =>
-          match env!id with Some co => co_alignof co | None => 1 end
+    | Tstruct _ id | Tvariant _ id =>
+       match env!id with Some co => co_alignof co | None => 1 end
+    | Tadt _ => 1        
     end).
 
 
@@ -463,6 +477,7 @@ Proof.
     apply IHt.
     destruct (env!i). apply co_alignof_two_p. exists 0%nat; auto.
     destruct (env!i). apply co_alignof_two_p. exists 0%nat; auto.
+    exists 0%nat; auto.
 Qed.
 
 Lemma alignof_pos:
@@ -613,7 +628,8 @@ Fixpoint sizeof (env: composite_env) (t: type) : Z :=
       match env!id with
       | Some co => co_sizeof co
       | None => 0
-      end                    
+      end
+  | Tadt _ => 0
   end.
 
 Lemma type_eq_sizeof_eq (ty1 ty2: type) ce:
@@ -639,6 +655,7 @@ Proof.
 - change 0 with (0 * Z.max 0 z) at 2. apply Zmult_ge_compat_r. auto. lia.
 - destruct (env!i). apply co_sizeof_pos. lia.
 - destruct (env!i). apply co_sizeof_pos. lia.
+- lia.
 Qed.
 
 Fixpoint alignof_blockcopy (env: composite_env) (t: type) : Z :=
@@ -661,6 +678,7 @@ Fixpoint alignof_blockcopy (env: composite_env) (t: type) : Z :=
       | Some co => Z.min 8 (co_alignof co)
       | None => 1
       end
+  | Tadt _ => 1
   end.
 
 Lemma alignof_blockcopy_1248:
@@ -688,6 +706,7 @@ Proof.
   apply IHty.
   destruct (env!i); auto.
   destruct (env!i); auto.
+  auto.
 Qed.
 
 Lemma sizeof_alignof_blockcopy_compat:
@@ -718,6 +737,7 @@ Proof.
   apply Z.divide_mul_l. auto.
   destruct (env!i). apply X. apply Z.divide_0_r.
   destruct (env!i). apply X. apply Z.divide_0_r.
+  apply Z.divide_0_r.
 Qed.
 
 Lemma alignof_implies_alignof_blockcopy: forall env ty ofs,    
@@ -1109,7 +1129,7 @@ Definition typ_of_type (t: type) : AST.typ :=
   | Tlong _ => AST.Tlong
   | Tfloat F32 => AST.Tsingle
   | Tfloat F64 => AST.Tfloat
-  | Tfunction _ _ _ _ _ | Treference _ _ _ | Tbox _ | Tarray _ _ | Tstruct _ _ | Tvariant _ _ => AST.Tptr
+  | Tfunction _ _ _ _ _ | Treference _ _ _ | Tbox _ | Tarray _ _ | Tstruct _ _ | Tvariant _ _ | Tadt _  => AST.Tptr
   end.
 
 Definition rettype_of_type (t: type) : AST.rettype :=
@@ -1125,7 +1145,7 @@ Definition rettype_of_type (t: type) : AST.rettype :=
   | Tfloat F32 => AST.Tsingle
   | Tfloat F64 => AST.Tfloat
   | Tbox _ | Treference _ _ _ => Tptr
-  | Tarray _ _ | Tfunction _ _ _ _ _ | Tstruct _ _ | Tvariant _ _ => AST.Tvoid
+  | Tarray _ _ | Tfunction _ _ _ _ _ | Tstruct _ _ | Tvariant _ _ | Tadt _ => AST.Tvoid
   end.
 
 Fixpoint typlist_of_typelist (tl: typelist) : list AST.typ :=
@@ -2826,6 +2846,3 @@ Proof.
   lia.
   lia. lia.
 Qed.
-
-
-  

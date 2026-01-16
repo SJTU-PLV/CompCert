@@ -617,6 +617,7 @@ Proof.
   - inv H. eapply deref_loc_reference; eauto.
   - inv H. eapply deref_loc_copy; eauto.
   - inv H. eapply deref_loc_copy; eauto.
+  - inv H. eapply deref_loc_copy; eauto.
 Qed.
 
 (* copy from Cexe *)

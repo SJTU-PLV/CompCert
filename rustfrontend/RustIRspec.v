@@ -18,6 +18,24 @@ Import ListNotations.
 
 Local Open Scope error_monad_scope.
 
+(* Definition of Adt *)
+
+Record Adt : Type := {
+    repr: Type;
+    repr_inv: repr -> Prop;         (* representation invariant. It may
+    not useful in RustIRspec *)
+    exposed_borrow: repr -> list ident; (* The exposed borrow indexes *)
+  }.
+
+Definition adt_env : Type := ident -> Adt.
+
+Section SPEC.
+
+(* I think this environment is a premise for the whole borrow checking
+proof and the RustIRspec. When we want to use the borow checking
+proof, we must provide its instance. *)
+Variable ae: adt_env.
+
 (** RustIR functional specification. *)
 
 (* Function environment *)
@@ -30,7 +48,8 @@ Inductive sval : Type :=
 | sv_box (sv: sval) 
 | sv_struct (id: ident) (svl: list (ident * sval))
 | sv_enum (id: ident) (fid: ident) (sv: sval)
-| sv_ref (ph: path) (* reference to an owner at [phs] *)
+| sv_ref (ph: path) (* (cached: option sval) (getter: sval -> sval) (setter: sval -> sval -> sval) *) (* reference to an owner at [phs] *)
+| sv_object (id: ident) (obj: repr (ae id)) (exposed: list (ident * sval))
 .
 
 Definition sv_map := PTree.t sval.
@@ -77,6 +96,13 @@ Fixpoint get_owner_sval (phl: list projection) (sv: sval) : res sval :=
               get_owner_sval l sv1
           | None => Error nil
           end
+      (* Get the object's exposed borrowable value *)
+      | proj_field fid, sv_object _ _ vl =>
+          match find_field fid vl with
+          | Some sv1 =>
+              get_owner_sval l sv1
+          | None => Error nil
+          end
       | proj_downcast fid1, sv_enum _ fid2 sv1 =>
           if ident_eq fid1 fid2 then
             get_owner_sval l sv1
@@ -112,7 +138,14 @@ Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval)
               get_owner_path e ph1 l sv1
           | None => Error nil
           end
+      | proj_field fid, sv_object _ _ fpl =>
+          match find_field fid fpl with
+          | Some sv1 =>
+              get_owner_path e ph1 l sv1
+          | None => Error nil
+          end
       | proj_downcast _, sv_enum _ _ sv1 =>
+          (* Should we add tag checking here? *)
           get_owner_path e ph1 l sv1
       | proj_deref, sv_ref ph2 =>
           do fp2 <- get_owner_sval_map ph2 e;
@@ -149,6 +182,13 @@ Fixpoint set_sval (phl: list projection) (v: sval) (root: sval) : res sval :=
               OK (sv_struct id (set_field_sv fid fsv1 svl)) 
           | None => Error nil
           end
+      | proj_field fid, sv_object id obj svl =>
+          match find_field fid svl with
+          | Some fsv =>
+              do fsv1 <- set_sval l v fsv;
+              OK (sv_object id obj (set_field_sv fid fsv1 svl)) 
+          | None => Error nil
+          end
       | proj_downcast fid, sv_enum id fid1 sv1 =>
           if ident_eq fid fid1 then
             do sv2 <- set_sval l v sv1;
@@ -168,21 +208,11 @@ Definition set_sval_map (ph: path) (v: sval) (e: sv_map) : res sv_map :=
   end.
 
 
-Fixpoint clear_sval_rec (fp: sval) : sval :=
-  match fp with
-  | sv_scalar _
-  (* What about moving a reference? *)
-  | sv_ref _
-  | sv_bot => fp
-  | sv_box fp1 => sv_box sv_bot
-  | sv_enum id fid ffp => sv_enum id fid (clear_sval_rec ffp)
-  | sv_struct id fpl =>
-      sv_struct id (map (fun '(fid, sv) => (fid, clear_sval_rec sv)) fpl)
-  end.
-
+(* Different from the footprint in the simulation, we set sv_bot to
+the location of the original value that is to be cleared *)
 Definition clear_sval_map (ph: path) (e: sv_map) : res sv_map :=
   do sv <- get_owner_sval_map ph e;
-  set_sval_map ph (clear_sval_rec sv) e.
+  set_sval_map ph sv_bot e.
 
 (* Operations for the function call and return *)
 
@@ -295,6 +325,8 @@ Fixpoint collect_sval_ref_paths (sv: sval) : list path :=
       collect_sval_ref_paths sv1
   | sv_ref ph =>
       ph :: nil
+  (* We assume that object cannot have referenece to the current environment *)
+  (* | sv_object *)
   | _ => nil
   end.
 
@@ -529,16 +561,16 @@ Inductive state: Type :=
     (f: function)
     (s: statement)
     (k: cont)
-    (names: list ident)         (* used to record the new idents for the in-out parameters *)
+    (inout: list ident)         (* used to record the new idents for the in-out parameters *)
     (e: sv_map): state
 | Callstate
     (fun_id: ident)
     (args: list sval)
-    (in_params: list sval) 
+    (inout: list sval)
     (k: cont): state
 | Returnstate
     (res: sval)
-    (out_params: list sval)
+    (inout: list sval)
     (k: cont): state.
 
 
@@ -766,3 +798,5 @@ End SEMANTICS.
 
 Definition semantics (p: program) :=
   Semantics_gen step initial_state at_external (fun _ => after_external) (fun _ => final_state) globalenv p.
+
+End SPEC.

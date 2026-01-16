@@ -20,10 +20,135 @@ Require Import Separation.
 Require Import RustIRspec.
 
 Import ListNotations.
+Local Open Scope sep_scope.
 
 Definition spure := Separation.pure.
 
 Definition STrue := spure True.
+
+
+Inductive Forall_sep {A : Type} (P : A -> massert -> Prop) : list A -> massert -> Prop :=
+    Forall_sep_nil : forall mass,
+      massert_eqv STrue mass ->
+      Forall_sep P nil mass
+  | Forall_sep_cons : forall (x : A) (l : list A) mass1 mass2 mass3,
+      P x mass1 -> 
+      Forall_sep P l mass2 -> 
+      massert_eqv (mass1 ** mass2) mass3 ->
+      Forall_sep P (x :: l) mass3.
+
+Lemma Forall_sep_app {A: Type} : forall (l1 l2: list A) P mass,
+    Forall_sep P (l1 ++ l2) mass <-> 
+      (exists mass1 mass2, Forall_sep P l1 mass1 /\ Forall_sep P l2 mass2 /\ mass = mass1 ** mass2).
+Admitted.
+
+
+(** Define the semantic interpretation of abstract data type written
+in unsafe module *)
+
+Record massert_rel_functional (P: massert -> Prop) : Prop :=
+  { mass_rel_left_total: exists mp, P mp;
+    mass_rel_right_unique: forall mp1 mp2, P mp1 -> P mp2 -> massert_eqv mp1 mp2; }.
+
+Record Adt : Type := {
+    repr: Type;
+    (* layout *)
+    adt_size : Z;
+    adt_align: Z;
+    
+    repr_loc: repr -> loc;        (* The locaiton of this Adt *)
+    change_loc: repr -> loc -> repr; (* Move this adt *)
+    mem_pred: repr -> massert -> Prop; (* How it locates in the memory *)
+    mem_loc_pred: repr -> massert -> Prop; (* This predicate only expresses
+    the value stored in the location of this adt. It is useful since
+    we may want to memcpy this adt into other locations *)
+    mem_val_pred: repr -> massert -> Prop; (* This predicate expresses the
+    memory occupied by the value of this adt. *)
+    repr_inv: repr -> Prop;         (* representation invariant *)
+
+    (* Propertis of mem_pred, e.g., it is total and deterministic *)
+    mem_pred_functional: forall r, massert_rel_functional (mem_pred r);
+    mem_loc_pred_functional: forall r, massert_rel_functional (mem_loc_pred r);
+    mem_val_pred_functional: forall r, massert_rel_functional (mem_val_pred r);
+    
+    mem_pred_split: forall r P,
+      mem_pred r P ->
+      exists P1 P2, 
+        mem_loc_pred r P1
+        /\ mem_val_pred r P2
+        /\ massert_eqv P (P1 ** P2);
+
+    mem_pred_merge: forall r P1 P2,
+      mem_loc_pred r P1 ->
+      mem_val_pred r P2 ->
+      exists P,
+        mem_pred r P
+        /\ massert_eqv P (P1 ** P2);
+
+    (* The location of this adt has enough permission, which may be
+    useful in memory copy *)
+    mem_loc_pred_perm: forall r P b ofs,
+      mem_loc_pred r P ->
+      repr_inv r ->
+      repr_loc r = (b, ofs) ->
+      massert_imp P (range b ofs (ofs + adt_size));
+
+    (* change loc *)
+    change_loc_result: forall r b ofs,
+      repr_loc (change_loc r (b, ofs)) = (b, ofs);
+
+    (* We can move this representation by memory copy *)
+    mem_pred_memcpy: forall r mp1 mp2 mp3 MP sb sofs tb tofs m1 m2 bytes,
+      m1 |= mp1 ** mp2 ** MP ->
+      repr_loc r = (sb, sofs) ->
+      mem_val_pred r mp2 ->
+      mem_loc_pred r mp3 ->
+      massert_imp mp1 (range tb tofs (tofs + adt_size)) ->
+      massert_imp (mp1 ** MP) mp3 ->
+      Mem.loadbytes m1 sb sofs adt_size = Some bytes ->
+      Mem.storebytes m1 tb tofs bytes = Some m2 ->
+      (adt_align | tofs) ->
+      repr_inv r ->
+      exists mp, mem_pred (change_loc r (tb, tofs)) mp /\ m2 |= mp ** MP;
+
+  }.
+
+
+(* For now, we only support lens of the form (Adt <-> (list Adt)) *)
+Record Lens_list (C A: Adt) : Type := {
+    get: (repr C) -> list (repr A);
+    put: (repr C) -> list (repr A) -> (repr C);
+
+    (* Well formedness *)
+    get_put: forall c, put c (get c) = c;
+    put_get: forall c a, get (put c a) = a;
+
+    (* Separation properties *)
+    get_split: forall c P1 P2, 
+      C.(mem_pred) c P1 ->
+      Forall_sep A.(mem_pred) (get c) P2 ->
+      exists P3, massert_eqv P1 (P2 ** P3);
+    set_frame_preserve: forall c a P1 P2 P3 P1' P2',
+      C.(mem_pred) c P1 ->
+      Forall_sep A.(mem_pred) (get c) P2 ->
+      massert_eqv P1 (P2 ** P3) ->
+      C.(mem_pred) (put c a) P1' ->
+      Forall_sep A.(mem_pred) a P2' ->
+      massert_eqv P1' (P2' ** P3);
+
+    (* getter and setter preserves the representation invariant *)
+    get_repr_inv: forall (c: repr C),
+      Forall A.(repr_inv) (get c);
+    set_repr_inv: forall a c,
+      Forall A.(repr_inv) a ->
+      C.(repr_inv) (put c a);
+
+    (* the update cannot change the locations *)
+    set_loc_unchanged: forall a c,
+      map A.(repr_loc) (get c) = map A.(repr_loc) a ->
+      C.(repr_loc) c = C.(repr_loc) (put c a);
+
+  }.
 
 Definition alignof_comp ce (id: ident) :=
   match ce ! id with
@@ -41,6 +166,13 @@ Definition sizeof_comp ce (id: ident) :=
 footprint and the memory. We try to define it using massert which
 explicitly encode separation. *)
 
+Definition adt_env : Type := ident -> Adt.
+(* I think this environment is a premise for the whole borrow checking
+proof. When we want to use the borow checking proof, we must provide
+its instance. *)
+Variable ae: adt_env.
+
+
 (** Definition of footprint *)
 
 (* A tree structured footprint (maybe similar to some separation logic
@@ -55,6 +187,7 @@ Inductive footprint : Type :=
 (* orgs are not used for now but it is used to relate to the type *)
 | fp_enum (id: ident) (tagz: Z) (fid: ident) (fofs: Z) (ffp: footprint)
 | fp_ref (b: block) (ofs: Z) (ph: path) (* reference to an owner at [phs] with type [ty] *)
+| fp_object (id: ident) (obj: (repr (ae id)))
 .
 
 (* pattern (fid, ((base, fofs), ffp): base is the end of the last
@@ -170,7 +303,8 @@ Variable (P: footprint -> Prop)
   (HPbox: forall (b : block) sz (fp : footprint), P fp -> P (fp_box b sz fp))
   (HPstruct: forall id fpl, (forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl -> P ffp) -> P (fp_struct id fpl))
   (HPenum: forall id (tag : Z) fid fofs (ffp : footprint), P ffp -> P (fp_enum id tag fid fofs ffp))
-  (HPref: forall b ofs ref_owner, P (fp_ref b ofs ref_owner)).
+  (HPref: forall b ofs ref_owner, P (fp_ref b ofs ref_owner))
+  (HPobj: forall id obj, P (fp_object id obj)).
 
 Fixpoint strong_footprint_ind t: P t.
 Proof.
@@ -187,6 +321,7 @@ Proof.
       * apply (IHfpl fid base fofs ffp H). 
   - apply HPenum. apply strong_footprint_ind.
   - apply HPref. 
+  - apply HPobj. 
 Qed.
     
 End FP_IND.
@@ -213,24 +348,24 @@ Coercion fpm_to_tenv (fpm: fp_map) : typenv := PTree.map1 (fun '(_, _, ty, _, _)
 RustIRspec, which contains extra permission information. We can use
 [fp_to_sval] to remove this information. *)
 
-Require Import RustIRspec.
+(* Require Import RustIRspec. *)
 
-Fixpoint fp_to_sval (fp: footprint) : sval :=
-  match fp with
-  | fp_emp 
-  | fp_uninit _ _ => sv_bot
-  | fp_scalar _ v => sv_scalar v
-  | fp_box _ _ fp1 => sv_box (fp_to_sval fp1)
-  | fp_struct id fpl => sv_struct id (map (fun '(fid, (_, ffp)) => (fid, fp_to_sval ffp)) fpl)
-  | fp_enum id _ fid _ ffp => sv_enum id fid (fp_to_sval ffp)
-  | fp_ref _ _ ph => sv_ref ph
-  end.
+(* Fixpoint fp_to_sval (fp: footprint) : sval := *)
+(*   match fp with *)
+(*   | fp_emp  *)
+(*   | fp_uninit _ _ => sv_bot *)
+(*   | fp_scalar _ v => sv_scalar v *)
+(*   | fp_box _ _ fp1 => sv_box (fp_to_sval fp1) *)
+(*   | fp_struct id fpl => sv_struct id (map (fun '(fid, (_, ffp)) => (fid, fp_to_sval ffp)) fpl) *)
+(*   | fp_enum id _ fid _ ffp => sv_enum id fid (fp_to_sval ffp) *)
+(*   | fp_ref _ _ ph => sv_ref ph *)
+(*   end. *)
 
-Definition fpm_to_svm (fpm: fp_map) : sv_map :=
-  PTree.map1 (fun '(_, _, _, _, fp) => fp_to_sval fp) fpm.
+(* Definition fpm_to_svm (fpm: fp_map) : sv_map := *)
+(*   PTree.map1 (fun '(_, _, _, _, fp) => fp_to_sval fp) fpm. *)
 
-Coercion fp_to_sval : footprint >-> sval.
-Coercion fpm_to_svm : fp_map >-> sv_map.
+(* Coercion fp_to_sval : footprint >-> sval. *)
+(* Coercion fpm_to_svm : fp_map >-> sv_map. *)
 
 
 (** Footprint map which records the footprint starting from stack
@@ -266,7 +401,9 @@ Definition sizeof_footprint ce (fp: footprint) : Z :=
   | fp_box _ _ _ => size_chunk Mptr
   | fp_enum id _ _ _ _ => sizeof_comp ce id
   | fp_struct id _ => sizeof_comp ce id
-  | fp_ref _ _ _ => size_chunk Mptr      
+  | fp_ref _ _ _ => size_chunk Mptr
+  (** TODO: add extern type to composite environment *)
+  | fp_object id _ => sizeof_comp ce id
   end.
 
 Definition alignof_footprint ce (fp: footprint) : Z :=
@@ -277,7 +414,8 @@ Definition alignof_footprint ce (fp: footprint) : Z :=
   | fp_box _ _ _ => align_chunk Mptr
   | fp_enum id _ _ _ _ => alignof_comp ce id
   | fp_struct id _ => alignof_comp ce id
-  | fp_ref _ _ _ => align_chunk Mptr      
+  | fp_ref _ _ _ => align_chunk Mptr
+  | fp_object id _ => alignof_comp ce id
   end.
 
 
@@ -422,6 +560,7 @@ Fixpoint clear_footprint_rec (fp: footprint) : footprint :=
   (* What about moving a reference? *)
   | fp_ref _ _ _
   | fp_uninit _ _
+  | fp_object _ _               (* impossible?*)
   | fp_emp => fp
   | fp_box b sz fp1 => fp_box b sz fp_emp
   | fp_enum id tagz fid fofs ffp => fp_enum id tagz fid fofs (clear_footprint_rec ffp)
@@ -509,27 +648,6 @@ Ltac destr_fp_field fp H :=
 
 (**************** End of footprint functions ********************  *)
 
-Local Open Scope sep_scope.
-
-(** Unused for now *)
-Fixpoint sepconj_list (l: list massert) : massert :=
-  match l with
-  | nil => STrue
-  | a :: l' =>
-      a ** (sepconj_list l')
-  end.
-
-Inductive Forall_sep {A : Type} (P : A -> massert -> Prop) : list A -> massert -> Prop :=
-    Forall_sep_nil : Forall_sep P nil STrue
-  | Forall_sep_cons : forall (x : A) (l : list A) mass1 mass2,
-      P x mass1 -> 
-      Forall_sep P l mass2 -> 
-      Forall_sep P (x :: l) (mass1 ** mass2).
-
-Lemma Forall_sep_app {A: Type} : forall (l1 l2: list A) P mass,
-    Forall_sep P (l1 ++ l2) mass <-> 
-      (exists mass1 mass2, Forall_sep P l1 mass1 /\ Forall_sep P l2 mass2 /\ mass = mass1 ** mass2).
-Admitted.
 
 (* We cannot write Forall (fun ... => sem_wt_loc ... in sem_wt_struct)
 which would report error that sem_wt_loc does not occur positively, so
@@ -579,8 +697,8 @@ say this location is still sem_wt_loc *)
 | sem_wt_uninit: forall b ofs sz al mp
     (* This location is not initialized, but it should be aligned *)
 (*     properly and have enough permission *)
-    (AL: (al | ofs))
-    (EQV: massert_eqv mp (range b ofs (ofs + sz))),
+    (* (AL: (al | ofs)) *)
+    (EQV: massert_eqv mp ((range b ofs (ofs + sz)) ** (spure (al | ofs)))),
     sem_wt_loc (fp_uninit sz al) b ofs mp
 | sem_wt_scalar: forall b ofs chunk v mp
     (* (MODE: Rusttypes.access_mode ty = Ctypes.By_value chunk), *)
@@ -601,20 +719,25 @@ say this location is still sem_wt_loc *)
 
 | sem_wt_struct: forall b ofs fpl id mass mp
     (FWT: fields_loc_sep b ofs sem_wt_loc fpl mass)
-    (AL: (alignof_comp ce id | ofs))
+    (* (AL: (alignof_comp ce id | ofs)) *)
     (* The reason why we do not add range here is that splitting
     fields w.r.t. the range is very difficult. *)
-    (EQV: massert_eqv mp (* (mconj mass (range b ofs (ofs + sizeof_comp ce id)))) *) mass),
+    (EQV: massert_eqv mp (* (mconj mass (range b ofs (ofs + sizeof_comp ce id)))) *) (mass ** (spure (alignof_comp ce id | ofs)))),
     sem_wt_loc (fp_struct id fpl) b ofs mp
 | sem_wt_enum: forall fp b ofs tagz fid fofs id mass1 mass2 mp padmp
     (* Interpret the field by the tag and prove that it is well-typed *)
     (TAG: mass1 = hasvalue Mint32 b ofs (Vint (Int.repr tagz)))
     (FWT: sem_wt_loc fp b (ofs + fofs) mass2)
-    (AL: (alignof_comp ce id | ofs))
+    (* (AL: (alignof_comp ce id | ofs)) *)
     (* permission for the padding location *)
     (ALPERM: padmp = range b (ofs + size_chunk Mint32) (ofs + fofs))
-    (EQV: massert_eqv mp (mass1 ** padmp ** mass2)),
+    (EQV: massert_eqv mp (mass1 ** padmp ** mass2 ** (spure (alignof_comp ce id | ofs)))),
     sem_wt_loc (fp_enum id tagz fid fofs fp) b ofs mp
+| sem_wt_object: forall id obj mp mp1 b ofs
+    (PRED: (ae id).(mem_pred) obj mp)
+    (EQV: massert_eqv mp mp1)
+    (LOCEQ: (ae id).(repr_loc) obj = (b, ofs)),
+    sem_wt_loc (fp_object id obj) b ofs mp1
 .
 
 (* The interpretation of footprint *)
@@ -772,8 +895,8 @@ Global Instance sem_wt_loc_eqv ce b ofs fp : Proper (massert_eqv ==> iff) (sem_w
 Proof.
   intros mp1 mp2 EQV. 
   split; intros WTLOC.
-  - destruct fp; inv WTLOC; econstructor; try rewrite EQV in *; eauto.
-  - destruct fp; inv WTLOC; econstructor; try rewrite EQV in *; eauto.
+  - destruct fp; inv WTLOC; econstructor; try rewrite EQV in *; try subst_dep;eauto.
+  - destruct fp; inv WTLOC; econstructor; try rewrite EQV in *; try subst_dep;eauto.
 Qed.
 
 Global Instance fields_loc_sep_eqv ce b ofs fpl : Proper (massert_eqv ==> iff) (fields_loc_sep b ofs (sem_wt_loc ce) fpl).
@@ -909,6 +1032,8 @@ Proof.
 Qed.
 
 
+
+
 (** ** Typing of the footprint: used to make sure the footprint is well-formed *)
 
 Section COMP_ENV.
@@ -1010,6 +1135,24 @@ Definition wt_footprint_list tyl fpl :=
   list_forall2 wt_footprint tyl fpl.
 
 End COMP_ENV.
+
+(** (b, ofs, footprint, type) can form an Adt *)
+
+Program Definition footprint_adt ce : Adt := {|
+    repr := block * Z * footprint * type;
+    repr_loc '(b, ofs, _, _) := (b, ofs);
+    mem_pred '(b, ofs, fp, _) := sem_wt_loc ce fp b ofs;
+    repr_inv '(_, _, fp, ty) := wt_footprint ce ty fp /\ deep_init fp = true; |}.
+Next Obligation.
+Admitted.
+Next Obligation.
+  eapply sem_wt_loc_unique; eauto.
+Defined.
+Next Obligation.
+ Admitted.
+
+Definition lens_map ce := list (path * option {id : ident & Lens_list (ae id) (footprint_adt ce)}).
+
 
 (* Properties of fields_sep *)
 

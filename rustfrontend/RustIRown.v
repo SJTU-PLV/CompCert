@@ -1142,7 +1142,7 @@ Qed.
  
 Lemma access_mode_by_copy: forall ty,
     access_mode ty = Ctypes.By_copy ->
-    (exists orgs id, ty = Tstruct orgs id) \/ (exists orgs id, ty = Tvariant orgs id).
+    (exists orgs id, ty = Tstruct orgs id) \/ (exists orgs id, ty = Tvariant orgs id) \/ (exists id, ty = Tadt id).
 Proof.
   destruct ty; intros A; simpl in *; try (inv A; congruence); eauto.
   destruct i; destruct s; try congruence.
@@ -1155,7 +1155,7 @@ Lemma sem_cast_by_copy_same: forall v1 ty1 ty2 v2,
     v1 = v2 /\ type_eq_except_origins ty1 ty2 = true.
 Proof. 
   intros until v2. intros CAST MODE.
-  exploit access_mode_by_copy; eauto. intros [(orgs & id & TY) | (orgs & id & TY)]; subst.
+  exploit access_mode_by_copy; eauto. intros [(orgs & id & TY) | [(orgs & id & TY) | (id & TY)]]; subst.
   - destruct ty1; inv CAST.
     unfold sem_cast in H0. simpl in H0.
     destruct ident_eq in H0; subst; destruct v1; inv H0; auto.
@@ -1164,6 +1164,7 @@ Proof.
     unfold sem_cast in H0. simpl in H0.
     destruct ident_eq in H0; subst; destruct v1; inv H0; auto.
     split; auto. simpl. eapply proj_sumbool_is_true. eauto.
+  - inv CAST.
 Qed.
 
 Lemma sound_mem_error: forall p,
