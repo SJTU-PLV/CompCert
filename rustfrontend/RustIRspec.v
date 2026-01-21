@@ -362,6 +362,13 @@ Fixpoint generate_new_suffix_path_sval (l: list path) (sv: sval) : res sval :=
   | sv_enum id fid fsv =>
       do fsv1 <- generate_new_suffix_path_sval l fsv;
       OK (sv_enum id fid fsv1)
+  | sv_object id obj svl =>
+      do svl1 <- (mmap (fun '(fid, fsv) => 
+                            do fsv1 <- generate_new_suffix_path_sval l fsv;
+                            OK (fid, fsv1)) svl);      do svl1 <- (mmap (fun '(fid, fsv) => 
+                            do fsv1 <- generate_new_suffix_path_sval l fsv;
+                            OK (fid, fsv1)) svl);
+      OK (sv_object id obj svl1)
   | _ => OK sv
   end.
 
@@ -420,6 +427,11 @@ Fixpoint recover_sval_ref_paths (l: list path) (sv: sval)  : res sval :=
   | sv_enum id fid fsv =>
       do fsv1 <- recover_sval_ref_paths l fsv;
       OK (sv_enum id fid fsv1)
+  | sv_object id obj svl =>
+      do svl1 <- mmap (fun '(fid, fsv) => 
+                        do fsv1 <- recover_sval_ref_paths l fsv;
+                        OK (fid, fsv1)) svl;
+      OK (sv_object id obj svl1)
   | _ =>
       OK sv
   end.
