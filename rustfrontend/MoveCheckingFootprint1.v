@@ -57,15 +57,20 @@ Record massert_rel_functional (P: massert -> Prop) : Prop :=
   { mass_rel_left_total: exists mp, P mp;
     mass_rel_right_unique: forall mp1 mp2, P mp1 -> P mp2 -> massert_eqv mp1 mp2; }.
 
+(* Adt instrumented with information of memory locations *)
 Record Adt_mem : Type := {
     mem_repr: Type;
+    mem_pure_adt: Adt;          (* mem_repr can be seen as the
+    instrumented version of this pure representation with some
+    information about memory location *)
+    mem_to_pure_repr: mem_repr -> mem_pure_adt.(repr);
     mem_exposed_borrow: mem_repr -> list (ident * ((block * Z * Z) * type));
     (* layout *)
     adt_size : Z;
     adt_align: Z;
     
     mem_pred: mem_repr -> block -> Z -> massert -> Prop; (* How it locates in the memory *)
-    repr_inv: mem_repr -> Prop;         (* representation invariant *)
+    (* repr_inv: mem_repr -> Prop;         (* representation invariant *) *)
 
     (* Propertis of mem_pred, e.g., it is total and deterministic *)
     mem_pred_functional: forall r b ofs, massert_rel_functional (mem_pred r b ofs);
@@ -77,6 +82,9 @@ Record Adt_mem : Type := {
       mem_pred r b ofs MP ->
       massert_imp (MP ** range_list (map (compose fst snd) (mem_exposed_borrow r))) (range b ofs (ofs + adt_size));
     
+    exposed_borrow_consistent: forall r,
+      map fst (mem_exposed_borrow r) = exposed_borrow mem_pure_adt (mem_to_pure_repr r);
+
   }.
 
 
@@ -103,7 +111,7 @@ Section ADT_ENV.
 (* I think this environment is a premise for the whole borrow checking
 proof. When we want to use the borow checking proof, we must provide
 its instance. *)
-Variable ame: adt_mem_env.
+Context {ame: adt_mem_env}.
 
 
 (** Definition of footprint *)
@@ -123,6 +131,7 @@ Inductive footprint : Type :=
 | fp_object (id: ident) (obj: (mem_repr (ame id))) (exposed: list (ident * (loc * footprint)))
 .
 
+Implicit Type fp : footprint.
 
 (* pattern (fid, ((base, fofs), ffp): base is the end of the last
 field's offset (it is 0 if this field is the first field). The
@@ -273,6 +282,8 @@ of the local variables in fp_map for simplicity *)
 local var/param (None) or a name for some locations passed by
 reference (Some org where org is the generic region of this location) *)
 Definition fp_map := PTree.t (block * Z * type * option origin * footprint).
+
+Implicit Type fpm : fp_map.
 
 (* A footprint in a function frame *)
 
@@ -1116,7 +1127,11 @@ Inductive wt_footprint : type -> footprint -> Prop :=
     (** Do we need to prove that phs is well-typed path? *)
     wt_footprint (Treference org mut ty) (fp_ref b ofs phs)
 | wt_fp_object: forall id obj exposed
-    (WF: Forall2 (obj_exposed_wf wt_footprint) (mem_exposed_borrow (ame id) obj) exposed),
+    (WF: Forall2 (obj_exposed_wf wt_footprint) (mem_exposed_borrow (ame id) obj) exposed)
+    (* The object always satisfies the representation invariant (this
+    invariant should not depend on the properties of borrowable
+    subparts) *)
+    (REPR_INV: repr_inv (ame id).(mem_pure_adt) (mem_to_pure_repr (ame id) obj)),
     wt_footprint (Tadt id) (fp_object id obj exposed)            
 .
 
@@ -2586,3 +2601,5 @@ Definition receive_return_footprint (fpm: fp_map) (l: list path) (retv: footprin
                                          | None => Error nil
                                          end) phs_externs fpm;
   OK (retv1, fpm1).
+
+End ADT_ENV.

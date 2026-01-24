@@ -13,10 +13,22 @@ Require Import Errors.
 Require Import Listmisc.
 Require Import BorrowCheck.
 Require Import MoveCheckingFootprint1.
-Require Import StkBorPermission RustIRbor.
+(* Unsupported for now *)
+(* Require Import StkBorPermission RustIRbor. *)
+Require Import RustIRspec.
 Require Import BorrowCheckDomain RegionLiveness.
 
 Import ListNotations.
+
+Section ADT_ENV.
+
+Context {ame: adt_mem_env}.
+
+Notation footprint := (@footprint ame).
+Notation fp_map := (@fp_map ame).
+Notation ae := (fun id => (ame id).(mem_pure_adt)).
+Notation sval := (@sval ae).
+Notation sv_map := (@sv_map ae).
 
 
 Section COMP_ENV.
@@ -82,6 +94,70 @@ Definition extern_loc_region (fpm: fp_map) (ph: path) : option origin :=
       opt_reg
   | _ => None
   end.
+
+(* ph is the location the reference points to *)
+Inductive alias_graph_approx_loans ce (live: RegionSet.t) (orgst: LOrgSt.t) (svm: sv_map) (ph: path) : Prop :=
+| alias_graph_approx_loans_intro: forall stk1 stk2 ls,
+    orgst = Live ls ->
+    (* For safety: all owner paths that have the ability to change the
+    semantic typed of the stored value or permission of the location
+    that the reference points to should be approximated by (i.e., they
+    should appear as loans in the loan set of this region) the borrow
+    check result. However, borrow checker checks more properties than
+    safety, which is not expressed in this invariant (in order to make
+    our proof more simpler and we only care safety for now). For
+    example, borrow checker would check the stack discipline of
+    multiple mutable borrows, which can be expressed by adding stacked
+    borrow model into each owner path. These multiple mutable accesses
+    cannot perform "full write" to the locations they point to. They
+    can only perfom in-place write which would ensure the
+    well-typedness of the new values. *)
+    forall phl ph1, 
+      dominator_paths ce live svm ph phl ->
+      In ph1 phl ->
+      
+    (* all valid Unique items in stk2 are approximated by ls *)
+    (forall b ofs ph1 ph2 fp pj,
+        In (BorStkPerm.Unique (b, ofs)) stk2 ->
+        (* ph2 is a node in the footprint tree *)
+        get_owner_loc_footprint_map ph2 fpm = Some (b, ofs, fp) ->
+        (* ph2 is reachable via an arbitary path [ph1] *)
+        get_owner_path_map ph1 fpm = Some ph2 ->
+        (* We should know how ph2 reaches ph; the projections should
+        have the form [proj_deref; proj_field/downcast^*] *)
+        get_owner_path fpm ph2 pj fp = Some ph ->
+        (* ph1 is mutable *)
+        mutable_path ce fpm ph1 = true ->
+        (* ph1 is live *)
+        is_live_path live fpm ph1 = true ->
+        (* The conclusion is that ls contains a loan that is prefix of
+        [ph1; proj_deref]. TODO: what if the location of this stk is
+        within some fields? *)
+        exists ln, 
+          LoanSet.In ln ls 
+          (* If ph1 is from external locations then ln must be
+          Lextern('a) where 'a is the region of this external
+          location; otherwise ln is a prefix of ph1. We use
+          loan_of_path to compute the loan of this path (imagine that
+          it is borrow?) *)
+          /\ loan_approx fpm ln ph2) ->
+    borstk_approx_loans ce live orgst fpm stk ph it.
+
+(* aliasing invariant which can be defined only on the structured value map *)
+Definition borchk_ref_alias_inv ce (live: RegionSet.t) (le: LOrgEnv.t) (svm: sv_map) :=
+  forall ph1 ph2 org mut ty, 
+    wt_path ce fpm ph1 = OK (Treference org mut ty) ->
+    (* ph1 is a live path *)
+    is_live_path live fpm ph1 = true ->
+    get_owner_path_sv_map ph1 svm = Some ph2 ->
+    (* The footprint at ph2 is fp_ref *)
+    forall rb rofs ph3, 
+      get_owner_sval_map ph2 svm = Some (sv_ref ph3) ->
+      alias_graph_approx_loans ce live (LOrgEnv.get org le) svm stk ph3.
+
+
+
+(* Old version of the borrow check invariant which contains properties about stacked borrow
 
 Definition loan_approx (fpm: fp_map) (l: loan) (ph: path) : Prop :=
   match l, extern_loc_region fpm ph with
@@ -175,3 +251,5 @@ Record borrow_check_inv ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) (st
   { borrowck_stkbor_ref: stkbor_ref_inv ce live le fpm stk_mem;
     borrowck_stkbor_box: stkbor_box_inv live le fpm stk_mem;
     borrowck_fpm_ref: fpm_ref_inv live fpm }.
+
+*) 

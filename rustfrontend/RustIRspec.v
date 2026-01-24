@@ -13,10 +13,13 @@ Require Import Cop RustOp.
 Require Import Ctypes Rusttypes Rustlight.
 Require Import RustIR.
 Require Import LanguageInterface.
+Require Import InitDomain StkBorPermission.
 
 Import ListNotations.
 
 Local Open Scope error_monad_scope.
+
+Module BorStk := BorStk(Path).
 
 (* Definition of Adt *)
 
@@ -34,7 +37,7 @@ Section SPEC.
 (* I think this environment is a premise for the whole borrow checking
 proof and the RustIRspec. When we want to use the borow checking
 proof, we must provide its instance. *)
-Variable ae: adt_env.
+Context {ae: adt_env}.
 
 (** RustIR functional specification. *)
 
@@ -50,6 +53,7 @@ Inductive sval : Type :=
 | sv_enum (id: ident) (fid: ident) (sv: sval)
 | sv_ref (ph: path) (* reference to an owner at [phs] *)
 | sv_object (id: ident) (obj: repr (ae id)) (exposed: list (ident * sval))
+| sv_loan (stk: BorStk.t) (sv: sval)            (* This path is borrowed *)
 .
 
 Definition sv_map := PTree.t sval.
@@ -83,10 +87,19 @@ Inductive sval_casted_list : list sval -> typelist -> Prop :=
 
 (* Operations for the environment *)
 
+(* May be we should report error when there are multiple nested loans *)
+Fixpoint skip_outer_loan (sv: sval) : sval :=
+  match sv with
+  | sv_loan _ sv1 =>
+       skip_outer_loan sv1
+  | _ => sv
+  end.
+
 Fixpoint get_owner_sval (phl: list projection) (sv: sval) : res sval :=
   match phl with
   | nil => OK sv
   | ph :: l =>
+      let sv := skip_outer_loan sv in
       match ph, sv with
       | proj_deref, sv_box sv1 =>
           get_owner_sval l sv1
@@ -129,6 +142,7 @@ Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval)
   | nil => OK ph
   | pj :: l =>
       let ph1 := (fst ph, snd ph ++ [pj]) in
+      let sv := skip_outer_loan sv in
       match pj, sv with
       | proj_deref, sv_box sv1 =>
           get_owner_path e ph1 l sv1
@@ -171,6 +185,7 @@ Fixpoint set_sval (phl: list projection) (v: sval) (root: sval) : res sval :=
   match phl with
   | nil => OK v
   | ph :: l =>
+      let root := skip_outer_loan root in
       match ph, root with
       | proj_deref, sv_box sv1 =>
           do sv2 <- set_sval l v sv1;
