@@ -65,9 +65,9 @@ Fixpoint mutable_projections (ty: type) (phl: list projection) : bool :=
 computing the mutablity of a path. If we add mutablity information
 into the path itselt, the tree path in the footprint is not unique
 anymore, I don't know if there is any problem there. *)
-Definition mutable_path (fpm: fp_map) (ph: path) : bool :=
+Definition mutable_path (svm: sv_map) (ph: path) : bool :=
   let (id, phl) := ph in
-  match fpm ! id with
+  match svm ! id with
   | Some (_, _, ty, _, _) =>
       mutable_projections ty phl
   | None =>
@@ -96,22 +96,25 @@ Definition extern_loc_region (fpm: fp_map) (ph: path) : option origin :=
   end.
 
 (* ph is the location the reference points to *)
-Inductive alias_graph_approx_loans ce (live: RegionSet.t) (orgst: LOrgSt.t) (svm: sv_map) (ph: path) : Prop :=
-| alias_graph_approx_loans_intro: forall stk1 stk2 ls,
+Inductive alias_graph_approx_loans ce (live: RegionSet.t) (orgst: LOrgSt.t) (svm: sv_map) (vs: views) (ph: path) : Prop :=
+| alias_graph_approx_loans_intro: forall ls,
     orgst = Live ls ->
     (* For safety: all owner paths that have the ability to change the
     semantic typed of the stored value or permission of the location
     that the reference points to should be approximated by (i.e., they
     should appear as loans in the loan set of this region) the borrow
     check result. However, borrow checker checks more properties than
-    safety, which is not expressed in this invariant (in order to make
-    our proof more simpler and we only care safety for now). For
-    example, borrow checker would check the stack discipline of
-    multiple mutable borrows, which can be expressed by adding stacked
-    borrow model into each owner path. These multiple mutable accesses
-    cannot perform "full write" to the locations they point to. They
-    can only perfom in-place write which would ensure the
-    well-typedness of the new values. *)
+    safety. For example, borrow checker would check the stack
+    discipline of multiple mutable borrows, which can be expressed by
+    adding stacked borrow model into each owner path. These multiple
+    mutable accesses cannot perform "full write" to the locations they
+    point to. They can only perfom in-place write which would ensure
+    the well-typedness of the new values. *)
+    forall ph1 vs1,
+      get_owner_path_sv_map ph1 svm = OK (ph, vs1) ->
+      is_live_path live svm ph1 = true ->
+      mutable_path ce svm
+
     forall phl ph1, 
       dominator_paths ce live svm ph phl ->
       In ph1 phl ->

@@ -10,7 +10,7 @@ Require Import Globalenvs.
 Require Import Smallstep SmallstepSafe.
 Require Import Listmisc.
 Require Import Cop RustOp.
-Require Import Ctypes Rusttypes Rustlight.
+Require Import Ctypes Rusttypes Rusttyping Rustlight.
 Require Import RustIR.
 Require Import LanguageInterface.
 Require Import InitDomain StkBorPermission.
@@ -19,7 +19,33 @@ Import ListNotations.
 
 Local Open Scope error_monad_scope.
 
-Module BorStk := BorStk(Path).
+Section WT_PATH.
+
+Variable ce: composite_env.
+
+Fixpoint wt_projections (ty: type) (phl: list projection) : res type :=
+  match phl with
+  | nil => OK ty
+  | ph :: phl1 =>
+      do ty1 <- 
+           match ph with
+           | proj_deref => type_deref ty
+           | proj_field fid => type_field ce ty fid
+           | proj_downcast fid => type_downcast ce ty fid
+           end;
+      wt_projections ty1 phl1
+  end.
+
+Definition wt_path (te: typenv) (phs: path) : res type :=
+  let (id, phl) := phs in
+  match te ! id with
+  | Some ty =>
+      wt_projections ty phl
+  | None =>
+      Error (msg "no local type")
+  end.
+
+End WT_PATH.
 
 (* Definition of Adt *)
 
@@ -66,7 +92,10 @@ Inductive sval : Type :=
 | sv_object (id: ident) (obj: repr (ae id)) (exposed: list (ident * sval))
 .
 
-Definition sv_map := PTree.t sval.
+Definition sv_map := PTree.t (option origin * type * sval).
+
+Coercion svm_to_tenv (svm: sv_map) : typenv := PTree.map1 (fun '(_, ty, _) => ty) svm.
+
 
 (* Operations for sval *)
 
@@ -129,7 +158,7 @@ Fixpoint get_owner_sval (phl: list projection) (sv: sval) : res sval :=
 Definition get_owner_sval_map (ph: path) (e: sv_map) : res sval :=
   let (id, pj) := ph in
   match e ! id with
-  | Some sv =>
+  | Some (_, _, sv) =>
       get_owner_sval pj sv
   | None =>
       Error nil
@@ -178,7 +207,7 @@ Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval)
 Definition get_owner_path_sv_map (ps: path) (e: sv_map) : res (path * views) :=
   let (id, phl) := ps in
   match e!id with
-  | Some sv =>
+  | Some (_, _, sv) =>
       get_owner_path e (id, nil) phl sv nil
   | _ => Error nil
   end.
@@ -221,9 +250,9 @@ Fixpoint set_sval (phl: list projection) (v: sval) (root: sval) : res sval :=
 Definition set_sval_map (ph: path) (v: sval) (e: sv_map) : res sv_map :=
   let (id, phl) := ph in
   match e!id with
-  | Some sv =>
+  | Some (ty, r, sv) =>
       do sv1 <- set_sval phl v sv;
-      OK (PTree.set id sv1 e)
+      OK (PTree.set id (ty, r, sv1) e)
   | None => Error nil
   end.
 
@@ -238,13 +267,13 @@ Definition clear_sval_map (ph: path) (e: sv_map) : res sv_map :=
 
 (** Some generic operations for adding and collecting paths from fpm or sv_map *)
 
-Definition add_ref_path_views (ph: path) (vs: views) (l: list (path * views)) : list (path * views):=
+Definition add_ref_path_views (ph: path) (vs: views) (r: origin) (ty: type) (l: list (path * (views * origin * type))) : list (path * (views * origin * type)):=
   if existsb (fun ph1 => is_prefix_path ph1 ph) (map fst l) then
     l
   else
     (* We keep the non-prefix paths *)
-    let l1 := filter (fun '(ph1, _) => negb (is_prefix_path ph ph1)) l in
-    (ph, vs) :: l.
+    let l1 := filter (fun '(ph1, (_, _, _)) => negb (is_prefix_path ph ph1)) l in
+    (ph, (vs, r, ty)) :: l.
 
 Definition lex_ord_lt := lex_ord lt lt.
 
@@ -276,22 +305,22 @@ along with the views of this reference. It may be not useful to
 parametrize the get_paths as we can just use the result from the
 RustIRspec to construct the footprint that are passed to the callee
 instead of using footprint's specific get_paths function. *)
-Fixpoint collect_ref_paths_generic (get_paths: path -> res (list (path * views))) (collected: list (path * views)) (to_visit: list (path * views)) (not_visited: list (path * views)) (ACC: Acc lex_ord_lt (length not_visited, length to_visit)) {struct ACC} : res (list (path * views)) :=
-  (match to_visit as to_visit0 return (to_visit = to_visit0) -> res (list (path * views)) with
+Fixpoint collect_ref_paths_generic (get_paths: path -> type -> res (list (path * (views * origin * type)))) (collected: list (path * (views * origin * type))) (to_visit: list (path * (views * origin * type))) (not_visited: list path) (ACC: Acc lex_ord_lt (length not_visited, length to_visit)) {struct ACC} : res (list (path * (views * origin * type))) :=
+  (match to_visit as to_visit0 return (to_visit = to_visit0) -> res (list (path * (views * origin * type))) with
   | nil => fun _ => OK collected
-  | (ph, vs) :: to_visit1 =>
+  | (ph, (vs, r, ty)) :: to_visit1 =>
       fun eqH =>
         (** TODO: it may be better to use filter instead of remove  *)
-        match in_dec path_views_eq (ph, vs) not_visited with
+        match in_dec path_eq ph not_visited with
         | left InH =>
-            let not_visited1 := (remove path_views_eq (ph, vs) not_visited) in
-            let collected1 := add_ref_path_views ph vs collected in
-            do new_paths <- get_paths ph;
-            let ACC1 := Acc_inv ACC (remove_first_length_lt path_views_eq not_visited (new_paths ++ to_visit1) to_visit (ph, vs) InH) in
+            let not_visited1 := (remove path_eq ph not_visited) in
+            let collected1 := add_ref_path_views ph vs r ty collected in
+            do new_paths <- get_paths ph ty;
+            let ACC1 := Acc_inv ACC (remove_first_length_lt path_eq not_visited (new_paths ++ to_visit1) to_visit ph InH) in
             collect_ref_paths_generic get_paths collected1 (new_paths ++ to_visit1) not_visited1 ACC1
         (* This ph has been visited so we skip it *)
         | right _ =>
-            let ACC1 := Acc_inv ACC (lex_lt_cons_snd not_visited to_visit1 to_visit (ph, vs) eqH) in
+            let ACC1 := Acc_inv ACC (lex_lt_cons_snd not_visited to_visit1 to_visit (ph, (vs, r, ty)) eqH) in
             collect_ref_paths_generic get_paths collected to_visit1 not_visited ACC1
         end
   end) eq_refl.
@@ -337,36 +366,73 @@ Definition recover_ref_path (l: list path) (ph: path) : res path :=
 
 (** Implementation dependent operations *)
 
-(* collect the owner paths stored in the leaf nodes that are sv_ref *)
-Fixpoint collect_sval_ref_paths (sv: sval) : list (path * views) :=
+(* collect the owner paths stored in the leaf nodes that are
+sv_ref. *)
+Fixpoint collect_sval_ref_paths (sv: sval) : list path :=
   match sv with
   | sv_struct _ svl =>
-      flat_map  (fun '(_, fsv) => collect_sval_ref_paths fsv) svl
-  | sv_enum _ _ fsv =>
-      collect_sval_ref_paths fsv
+      flat_map  (fun '(fid, fsv) => collect_sval_ref_paths fsv) svl
+  | sv_enum _ fid fsv =>
+      collect_sval_ref_paths fsv 
   | sv_box sv1 =>
       collect_sval_ref_paths sv1
   | sv_ref ph vs =>
-      (ph, vs) :: nil
+      ph :: nil
   (* We assume that object cannot have referenece to the current environment *)
   (* | sv_object *)
   | _ => nil
   end.
 
-Definition collect_svm_ref_paths (svm: sv_map) : list (path * views):=
-  let svl := map (fun '(_, sv) => sv) (PTree.elements svm) in
-  flat_map collect_sval_ref_paths svl.
+(* Similar to collect_sval_ref_paths, we also return the projections
+of the reference path. It is only used in collect_sval_ref_paths_types *)
+Fixpoint collect_sval_ref_paths_projections (pj: list projection) (sv: sval) : list (path * views * list projection) :=
+  match sv with
+  | sv_struct _ svl =>
+      flat_map  (fun '(fid, fsv) => collect_sval_ref_paths_projections (pj ++ [proj_field fid]) fsv) svl
+  | sv_enum _ fid fsv =>
+      collect_sval_ref_paths_projections (pj ++ [proj_downcast fid]) fsv 
+  | sv_box sv1 =>
+      collect_sval_ref_paths_projections (pj ++ [proj_deref]) sv1
+  | sv_ref ph vs =>
+      (ph, vs, pj) :: nil
+  (* We assume that object cannot have referenece to the current environment *)
+  (* | sv_object *)
+  | _ => nil
+  end.
 
-Definition get_owner_sval_map_ref_paths (svm: sv_map) (ph: path) : res (list (path * views)) :=
+Definition collect_ref_type_region ce (ty: type) (pj: list projection) : res (origin * type) :=
+    do ty1 <- wt_projections ce ty pj;
+    match ty1 with
+    | Treference r _ ty2 =>
+        OK (r, ty2)
+    | _ => Error nil
+    end.
+
+Definition collect_sval_ref_paths_types ce (ty_sv: type * sval) : res (list (path * (views * origin * type))) :=
+  let (ty, sv) := ty_sv in
+  let l := collect_sval_ref_paths_projections nil sv in
+  mmap (fun '(ph, vs, pj) => do (r, ty1) <- collect_ref_type_region ce ty pj;
+                          OK (ph, (vs, r, ty1))) l.
+
+(* collect all the unvisited owner path *)
+Definition collect_svm_ref_paths (svm: sv_map) : list path :=
+  let svl := map (fun '(_, (_, _, sv)) => sv) (PTree.elements svm) in
+  flat_map (collect_sval_ref_paths) svl.
+
+(* [ty] should be computed from the function arguments types *)
+Definition get_owner_sval_map_ref_paths ce (svm: sv_map) (ph: path) (ty: type) : res (list (path * (views * origin * type))) :=
   do sv <- get_owner_sval_map ph svm;
-  OK (collect_sval_ref_paths sv).
+  (collect_sval_ref_paths_types ce (ty, sv)).
 
 (* We need to ensure that all the returned paths are disjoint, its
-located note contain deep_init sval, and form a closure *)
-Definition collect_svm_args_ref_paths (svm: sv_map) (args: list sval) : res (list (path * views)) :=
+located note contain deep_init sval, and form a closure. The types of
+the argument come from function signature, meaning that they contain
+generic regions. *)
+Definition collect_svm_args_ref_paths ce (svm: sv_map) (args: list (type * sval)) : res (list (path * (views * origin * type))) :=
   let not_visited := collect_svm_ref_paths svm in
-  let to_visit := flat_map collect_sval_ref_paths args in
-  collect_ref_paths_generic (get_owner_sval_map_ref_paths svm) nil to_visit not_visited (lex_ord_lt_acc_intro _ _).
+  do l <- mmap (collect_sval_ref_paths_types ce) args;  
+  let to_visit := concat l in
+  collect_ref_paths_generic (get_owner_sval_map_ref_paths ce svm) nil to_visit not_visited (lex_ord_lt_acc_intro _ _).
 
 
 Fixpoint generate_new_suffix_path_sval (process_views: path -> views -> views) (l: list path) (sv: sval) : res sval :=
@@ -414,11 +480,13 @@ Fixpoint clear_svm_passed_ref_sval (svm: sv_map) (l: list path) : res sv_map :=
 (* The output parameters contain two parts: one for the normal
 arguments and the others are the memory locations passed via
 reference *)
-Definition generate_call_parameters (svm: sv_map) (args: list sval) : res (list sval * list sval * list (path * views)) :=
-  do extern_paths <- collect_svm_args_ref_paths svm args;
-  do args1 <- mmap (generate_new_suffix_path_sval (fun ph _ => ph :: nil) (map fst extern_paths)) args;
-  do extern_svs <- collect_svm_passed_ref_sval (fun ph _ => ph :: nil) svm (map fst extern_paths);
-  OK (args1, extern_svs, extern_paths).
+Definition generate_call_parameters ce (svm: sv_map) (args: list (type * sval)) : res (list sval * list (origin * type * sval) * list (path * (views * origin * type))) :=
+  do extern_paths <- collect_svm_args_ref_paths ce svm args;  
+  do args1 <- mmap (generate_new_suffix_path_sval (fun ph _ => ph :: nil) (map fst extern_paths)) (map snd args);
+  do inout_svals <- collect_svm_passed_ref_sval (fun ph _ => ph :: nil) svm (map fst extern_paths);
+  (* collect (origin, type) for the inout arguments *)
+  let inout_params := combine (map (fun '(_, (_, r, ty)) => (r, ty)) extern_paths) inout_svals in
+  OK (args1, inout_params, extern_paths).
 
 Definition normalize_returned_views (phs: list path) (_: path) (vs: views) : views :=
   (* If we cannot find the path in phs, it means that it is a local
@@ -503,10 +571,12 @@ Definition rename_views (l: list path) (phl: list path) : views :=
                     | _ => nil
                     end) phl.
 
-Definition receive_incoming_params (fresh_paths: list path) (args: list sval) (in_params: list sval) : res (list sval * list sval) :=
+Definition receive_incoming_params (fresh_paths: list path) (args: list sval) (inout_params: list (origin * type * sval)) : res (list sval * list (origin * type * sval)) :=
   do args1 <- mmap (recover_sval_ref_paths (rename_views fresh_paths) fresh_paths) args;
-  do in_params1 <- mmap (recover_sval_ref_paths (rename_views fresh_paths) fresh_paths) in_params;
-  OK (args1, in_params1).
+  do inout_params1 <- mmap (fun '(r, ty, sv) => 
+                          do sv1 <- recover_sval_ref_paths (rename_views fresh_paths) fresh_paths sv;
+                          OK (r, ty, sv1)) inout_params;
+  OK (args1, inout_params1).
   
 
 Section SEMANTICS.
@@ -603,7 +673,7 @@ Inductive cont : Type :=
 | Kstop: cont
 | Kseq: statement -> cont -> cont
 | Kloop: statement -> cont -> cont
-| Kcall: place -> function -> list (path * views) -> list ident -> sv_map -> cont -> cont
+| Kcall: place -> function -> list (path * (views * origin * type)) -> list ident -> sv_map -> cont -> cont
 .
 
 
@@ -633,7 +703,7 @@ Inductive state: Type :=
 | Callstate
     (fun_id: ident)
     (args: list sval)
-    (inout: list sval)
+    (inout: list (origin * type * sval))
     (k: cont): state
 | Returnstate
     (res: sval)
@@ -658,27 +728,38 @@ Fixpoint npos (n: nat) (p: positive) : list positive :=
       p :: (npos n' (Pos.succ p))
   end.
 
-Fixpoint bind_params (m: sv_map) (l: list ident) (vl: list sval) : res sv_map :=
+Fixpoint bind_params (m: sv_map) (l: list (ident * type)) (vl: list (option origin * sval)) : res sv_map :=
   match l, vl with
   | nil, nil => OK m
-  | id :: l1, v :: vl1 =>
-      do m1 <- set_sval_map (id, nil) v m;
+  | (id, ty) :: l1, (r, v) :: vl1 =>
+      let m1 := PTree.set id (r, ty, v) m in
       bind_params m1 l1 vl1
   | _, _ => Error nil
   end.
-      
 
-Definition function_entry (f: function) (args: list sval) (in_params: list sval) : res (list ident * sv_map) :=
+Fixpoint bind_inout_params (m: sv_map) (l: list ident) (vl: list (origin * type * sval)) : res sv_map :=
+  match l, vl with
+  | nil, nil => OK m
+  | id :: l1, (r, ty, v) :: vl1 =>
+      let m1 := PTree.set id (Some r, ty, v) m in
+      bind_inout_params m1 l1 vl1
+  | _, _ => Error nil
+  end.
+
+
+(* We should assume that the types in inout_params contain generic
+regions instead of the local regions from the caller. *)
+Definition function_entry (f: function) (args: list sval) (inout_params: list (origin * type * sval)) : res (list ident * sv_map) :=
   let names := field_idents (fn_params f ++ fn_vars f) in
   let fresh_var := Pos.succ (find_max_pos names) in
-  let fresh_vars := npos (length in_params) fresh_var in
+  let fresh_vars := npos (length inout_params) fresh_var in
   (* Substitute the old name in args and in_params with the fresh names *)
   let fresh_paths : list path := map (fun id => (id, nil)) fresh_vars in
-  do (args1, in_params1) <- receive_incoming_params fresh_paths args in_params;
+  do (args1, inout_params1) <- receive_incoming_params fresh_paths args inout_params;
   (* set the value to the map *)
-  do m1 <- bind_params (PTree.empty sval) (field_idents (fn_params f)) args1;
-  do m2 <- bind_params m1 fresh_vars in_params1;
-  do m3 <- bind_params m2 (field_idents (fn_vars f)) (repeat sv_bot (length (fn_vars f)));
+  do m1 <- bind_params (PTree.empty (option origin * type * sval)) (fn_params f) (map (fun v => (None, v)) args1);
+  do m2 <- bind_inout_params m1 fresh_vars inout_params1;
+  do m3 <- bind_params m2 (fn_vars f) (repeat (None, sv_bot) (length (fn_vars f)));
   OK (fresh_vars, m3).
 
 Section SMALLSTEP.
@@ -718,20 +799,20 @@ Inductive step : state -> trace -> state -> Prop :=
     step (State f (Sstoragelive id) k ns m) E0 (State f Sskip k ns m)
 | step_storagedead: forall f k ns m id,
     step (State f (Sstoragedead id) k ns m) E0 (State f Sskip k ns m)
-| step_call: forall f ty al k tyargs fd cconv tyres p orgs org_rels fun_id m1 m2 args args1 out_params ns phl
+| step_call: forall f ty al k tyargs fd cconv tyres p orgs org_rels fun_id m1 m2 args args1 inout_params ns phl
     (CASE: classify_fun ty = fun_case_f tyargs tyres cconv)
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun fd))
     (TYF: type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv)
     (EVAL: eval_exprlist m1 al tyargs = OK (args, m2))
     (NOT_DROP: function_not_drop_glue fd)
     (* Collect the footprint that is passed via reference *)
-    (REF_OUT: generate_call_parameters m2 args = OK (args1, out_params, phl)),
-    step (State f (Scall p (Eglobal fun_id ty) al) k ns m1) E0 (Callstate fun_id args1 out_params (Kcall p f phl ns m2 k))
-| step_internal_function: forall fun_id vargs in_params k m f ns
+    (REF_OUT: generate_call_parameters ge m2 (combine (type_list_of_typelist tyargs) args) = OK (args1, inout_params, phl)),
+    step (State f (Scall p (Eglobal fun_id ty) al) k ns m1) E0 (Callstate fun_id args1 inout_params (Kcall p f phl ns m2 k))
+| step_internal_function: forall fun_id vargs inout_params k m f ns
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun (Internal f)))
     (NORMAL: f.(fn_drop_glue) = None)
-    (ENTRY: function_entry f vargs in_params = OK (ns, m)),
-    step (Callstate fun_id vargs in_params k) E0 (State f f.(fn_body) k ns m)
+    (ENTRY: function_entry f vargs inout_params = OK (ns, m)),
+    step (Callstate fun_id vargs inout_params k) E0 (State f f.(fn_body) k ns m)
 
 (** We do not support axiomatic external call *)
 (* | step_external_function: forall vf vargs k m m' cc ty typs ef v t orgs org_rels *)
@@ -767,7 +848,7 @@ Inductive step : state -> trace -> state -> Prop :=
 | step_returnstate: forall (p: place) v v1 m1 m2 m3 f k out_params phl ph ns vs
     (* We need to first putback the ref-passed location and the do the
     assignment because p may locate in those ref-passed locations *)
-    (PUTBACK: receive_return_sval m1 phl v out_params = OK (v1, m2))
+    (PUTBACK: receive_return_sval m1 (map (fun '(ph, (vs, _, _)) => (ph, vs)) phl) v out_params = OK (v1, m2))
     (EVALP: get_owner_path_sv_map p m1 = OK (ph, vs))
     (CASTED: sval_casted v1 (typeof_place p))
     (ASS: set_sval_map ph v1 m2 = OK m3),
@@ -811,7 +892,7 @@ Record rust_spec_query :=
     rspec_fid: ident;
     rspec_sg: rust_signature;
     rspec_args: list sval;
-    rspec_in_params: list sval;
+    rspec_inout_params: list (origin * type * sval);
   }.
 
 Record rust_spec_reply :=
@@ -831,7 +912,7 @@ Definition li_rs_spec : language_interface :=
 (** Open semantics *)
 
 Inductive initial_state: (query li_rs_spec) -> state -> Prop :=
-| initial_state_intro: forall f targs tres tcc vargs orgs org_rels fun_id in_params
+| initial_state_intro: forall f targs tres tcc vargs orgs org_rels fun_id inout_params
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun (Internal f)))
     (TYF: type_of_function f = Tfunction orgs org_rels targs tres tcc)
     (* This function must not be drop glue *)
@@ -839,8 +920,8 @@ Inductive initial_state: (query li_rs_spec) -> state -> Prop :=
     (* how to use it? *)
     (CAST: sval_casted_list vargs targs),
     (* Mem.sup_include (Genv.genv_sup ge) (Mem.support m) -> *)
-    initial_state (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs in_params)
-      (Callstate fun_id vargs in_params Kstop).
+    initial_state (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs inout_params)
+      (Callstate fun_id vargs inout_params Kstop).
 
 
 Inductive at_external: state -> (query li_rs_spec) -> Prop :=

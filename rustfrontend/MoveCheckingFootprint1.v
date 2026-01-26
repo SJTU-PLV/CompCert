@@ -15,7 +15,7 @@ Require Import Listmisc.
 Require Import InitDomain InitAnalysis.
 Require Import RustIRown MoveChecking BorrowCheck.
 Require Import Wfsimpl.
-Require Import StkBorPermission RustIRbor.
+Require Import StkBorPermission.
 Require Import Separation.
 Require Import RustIRspec.
 
@@ -1029,28 +1029,6 @@ Qed.
 Section COMP_ENV.
 
 Variable ce: composite_env.
-
-Fixpoint wt_projections (ty: type) (phl: list projection) : res type :=
-  match phl with
-  | nil => OK ty
-  | ph :: phl1 =>
-      do ty1 <- 
-           match ph with
-           | proj_deref => type_deref ty
-           | proj_field fid => type_field ce ty fid
-           | proj_downcast fid => type_downcast ce ty fid
-           end;
-      wt_projections ty1 phl1
-  end.
-
-Definition wt_path (te: typenv) (phs: path) : res type :=
-  let (id, phl) := phs in
-  match te ! id with
-  | Some ty =>
-      wt_projections ty phl
-  | None =>
-      Error (msg "no local type")
-  end.
 
 (** Move it to Rusttypes.v  *)
 
@@ -2433,6 +2411,12 @@ Admitted.
 
 (** TODO: assign_loc rule  *)
 
+(*
+
+(** I think we can just define the following functions in RustIRspec
+and use the result in RustIRspec to construct the footprint? So there
+is no need to define these functions in footprint? *)
+
 (** Define functions for extracting the footprint that represents the
 locations passed by reference *)
 
@@ -2601,5 +2585,6 @@ Definition receive_return_footprint (fpm: fp_map) (l: list path) (retv: footprin
                                          | None => Error nil
                                          end) phs_externs fpm;
   OK (retv1, fpm1).
+*) 
 
 End ADT_ENV.
