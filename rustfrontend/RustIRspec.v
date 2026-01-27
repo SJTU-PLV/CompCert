@@ -87,10 +87,9 @@ Inductive sval : Type :=
 | sv_box (sv: sval) 
 | sv_struct (id: ident) (svl: list (ident * sval))
 | sv_enum (id: ident) (fid: ident) (sv: sval)
-| sv_ref (mut: mutkind) (ph: path) (vs: views) (* reference to an
-  owner at [phs]. We use [vs] to record other owner path that directly
-  mutably reference to [ph] (precisely shallow children of [ph]). *)
-| sv_object (id: ident) (obj: repr (ae id)) (exposed: list (ident * (type * sval)))
+| sv_ref (ph: path) (view: views) (* reference to an owner at
+  [phs]. We also record the reborrowed paths of ph *)
+| sv_object (id: ident) (obj: repr (ae id)) (exposed: list (ident * sval))
 .
 
 Definition sv_map := PTree.t (option origin * type * sval).
@@ -143,7 +142,7 @@ Fixpoint get_owner_sval (phl: list projection) (sv: sval) : res sval :=
       (* Get the object's exposed borrowable value *)
       | proj_field fid, sv_object _ _ vl =>
           match find_field fid vl with
-          | Some (_, sv1) =>
+          | Some sv1 =>
               get_owner_sval l sv1
           | None => Error nil
           end
@@ -171,9 +170,9 @@ Definition append_proj (pj: projection) (ph: path) :=
 (* To get the location of arbitary path, we divide it into two steps:
 first we use [get_owner_path] to obtain the path of these projections
 in the tree and second we use [get_owner_sval] to obtain its sval. We
-also collect all aliased paths (which directly points to the owner
-path) of this owner path to do dynamic alias analysis. *)
-Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval) (alias: list path) : res (path * views) :=
+also collect all aliased paths of this owner path to do dynamic alias
+analysis. *)
+Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval) (alias: list path) : res (path * list path) :=
   match phl with
   | nil => OK (ph, alias)
   | pj :: l =>
@@ -181,9 +180,7 @@ Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval)
       let alias1 := map (append_proj pj) alias in
       match pj, sv with
       | proj_deref, sv_box sv1 =>
-          (* Since we get the reference of ph1 via its dominator, we
-          do not need to record other paths that point to ph1 *)
-          get_owner_path e ph1 l sv1 nil
+          get_owner_path e ph1 l sv1 alias1
       | proj_field fid, sv_struct _ fpl =>
           match find_field fid fpl with
           | Some sv1 =>
@@ -192,28 +189,16 @@ Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval)
           end
       | proj_field fid, sv_object _ _ fpl =>
           match find_field fid fpl with
-          | Some (_, sv1) =>
-              (* Since object is the dominator of its exposed fields
-              and note that all the paths alias set are the paths that
-              point to the object itself, but there may be other paths
-              that point to this object which are created by
-              reborrowing, which cannot be tracted by alias set, so we
-              require that all the paths reachable to this object must
-              be included in the loans of the created reference. *)
-              get_owner_path e ph1 l sv1 nil
+          | Some sv1 =>
+              get_owner_path e ph1 l sv1 alias1
           | None => Error nil
           end
       | proj_downcast _, sv_enum _ _ sv1 =>
           (* Should we add tag checking here? *)
           get_owner_path e ph1 l sv1 alias1
-      | proj_deref, sv_ref mut ph2 vs =>
+      | proj_deref, sv_ref ph2 rebor =>
           do sv2 <- get_owner_sval_map ph2 e;
-          (* It this reference is mutable reference, we add the deref
-          path of this reference and its views as the alias path of
-          [ph2]. It it is immutable, we should add [vs] only because
-          all the path in [vs] can mutate the value in [ph2]. *)
-          let alias2 := match mut with | Mutable => ph1 :: vs | Immutable => vs end in
-          get_owner_path e ph2 l sv2 alias2
+          get_owner_path e ph2 l sv2 (ph1 :: rebor ++ alias1)
       | _, _  => Error nil
       end
   end.
@@ -230,7 +215,6 @@ Definition get_owner_path_sv_map (ps: path) (e: sv_map) : res (path * views) :=
 
 Definition set_field_sv (fid: ident) (v: sval) (svl: list (ident * sval)) : list (ident * sval) :=
   set_field fid (fun _ => v) svl.
-
 
 Fixpoint set_sval (phl: list projection) (v: sval) (root: sval) : res sval :=
   match phl with
@@ -249,9 +233,9 @@ Fixpoint set_sval (phl: list projection) (v: sval) (root: sval) : res sval :=
           end
       | proj_field fid, sv_object id obj svl =>
           match find_field fid svl with
-          | Some (fty, fsv) =>
+          | Some fsv =>
               do fsv1 <- set_sval l v fsv;
-              OK (sv_object id obj (set_field fid (fun _ => (fty, fsv1)) svl)) 
+              OK (sv_object id obj (set_field_sv fid fsv1 svl)) 
           | None => Error nil
           end
       | proj_downcast fid, sv_enum id fid1 sv1 =>
@@ -392,7 +376,7 @@ Fixpoint collect_sval_ref_paths (sv: sval) : list path :=
       collect_sval_ref_paths fsv 
   | sv_box sv1 =>
       collect_sval_ref_paths sv1
-  | sv_ref _ ph vs =>
+  | sv_ref ph vs =>
       ph :: nil
   (* We assume that object cannot have referenece to the current environment *)
   (* | sv_object *)
@@ -409,7 +393,7 @@ Fixpoint collect_sval_ref_paths_projections (pj: list projection) (sv: sval) : l
       collect_sval_ref_paths_projections (pj ++ [proj_downcast fid]) fsv 
   | sv_box sv1 =>
       collect_sval_ref_paths_projections (pj ++ [proj_deref]) sv1
-  | sv_ref _ ph vs =>
+  | sv_ref ph vs =>
       (ph, vs, pj) :: nil
   (* We assume that object cannot have referenece to the current environment *)
   (* | sv_object *)
@@ -453,10 +437,10 @@ Definition collect_svm_args_ref_paths ce (svm: sv_map) (args: list (type * sval)
 
 Fixpoint generate_new_suffix_path_sval (process_views: path -> views -> views) (l: list path) (sv: sval) : res sval :=
   match sv with
-  | sv_ref mut ph vs =>
+  | sv_ref ph vs =>
       do ph1 <- generate_new_suffix_path l ph;
       (* We can directly use ph1 as the abstract view for callee? *)
-      OK (sv_ref mut ph1 (process_views ph1 vs))
+      OK (sv_ref ph1 (process_views ph1 vs))
   | sv_box sv1 =>
       do sv1' <- generate_new_suffix_path_sval process_views l sv1;
       OK (sv_box sv1')
@@ -469,9 +453,11 @@ Fixpoint generate_new_suffix_path_sval (process_views: path -> views -> views) (
       do fsv1 <- generate_new_suffix_path_sval process_views l fsv;
       OK (sv_enum id fid fsv1)
   | sv_object id obj svl =>
-      do svl1 <- (mmap (fun '(fid, (fty, fsv)) => 
+      do svl1 <- (mmap (fun '(fid, fsv) => 
                             do fsv1 <- generate_new_suffix_path_sval process_views l fsv;
-                            OK (fid, (fty, fsv1))) svl);
+                            OK (fid, fsv1)) svl);      do svl1 <- (mmap (fun '(fid, fsv) => 
+                            do fsv1 <- generate_new_suffix_path_sval process_views l fsv;
+                            OK (fid, fsv1)) svl);
       OK (sv_object id obj svl1)
   | _ => OK sv
   end.
