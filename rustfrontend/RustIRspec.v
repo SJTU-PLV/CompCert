@@ -87,15 +87,14 @@ Inductive sval : Type :=
 | sv_box (sv: sval) 
 | sv_struct (id: ident) (svl: list (ident * sval))
 | sv_enum (id: ident) (fid: ident) (sv: sval)
-| sv_ref (ph: path) (view: views) (* reference to an owner at
+| sv_ref (mut: mutkind) (ph: path) (view: views) (* reference to an owner at
   [phs]. We also record the reborrowed paths of ph *)
-| sv_object (id: ident) (obj: repr (ae id)) (exposed: list (ident * sval))
+| sv_object (id: ident) (obj: repr (ae id)) (exposed: list (ident * (type * sval)))
 .
 
 Definition sv_map := PTree.t (option origin * type * sval).
 
 Coercion svm_to_tenv (svm: sv_map) : typenv := PTree.map1 (fun '(_, ty, _) => ty) svm.
-
 
 (* Operations for sval *)
 
@@ -142,7 +141,7 @@ Fixpoint get_owner_sval (phl: list projection) (sv: sval) : res sval :=
       (* Get the object's exposed borrowable value *)
       | proj_field fid, sv_object _ _ vl =>
           match find_field fid vl with
-          | Some sv1 =>
+          | Some (fty1, sv1) =>
               get_owner_sval l sv1
           | None => Error nil
           end
@@ -155,6 +154,40 @@ Fixpoint get_owner_sval (phl: list projection) (sv: sval) : res sval :=
       end
   end.
 
+(* To also extract the type, use this function *)
+Fixpoint get_owner_sval_type ce (phl: list projection) (ty: type) (sv: sval) : res (type * sval) :=
+  match phl with
+  | nil => OK (ty, sv)
+  | ph :: l =>
+      match ph, sv with
+      | proj_deref, sv_box sv1 =>
+          do ty1 <- type_deref ty;
+          get_owner_sval_type ce l ty1 sv1
+      | proj_field fid, sv_struct _ fpl =>
+          match find_field fid fpl with
+          | Some sv1 =>
+              do fty <- type_field ce ty fid;
+              get_owner_sval_type ce l fty sv1
+          | None => Error nil
+          end
+      (* Get the object's exposed borrowable value *)
+      | proj_field fid, sv_object _ _ vl =>
+          match find_field fid vl with
+          | Some (fty1, sv1) =>
+              get_owner_sval_type ce l fty1 sv1
+          | None => Error nil
+          end
+      | proj_downcast fid1, sv_enum _ fid2 sv1 =>
+          if ident_eq fid1 fid2 then
+              do fty <- type_field ce ty fid1;
+            get_owner_sval_type ce l fty sv1
+          else
+            Error nil
+      | _, _  => Error nil
+      end
+  end.
+
+
 Definition get_owner_sval_map (ph: path) (e: sv_map) : res sval :=
   let (id, pj) := ph in
   match e ! id with
@@ -164,6 +197,16 @@ Definition get_owner_sval_map (ph: path) (e: sv_map) : res sval :=
       Error nil
   end.
 
+Definition get_owner_sval_type_map ce (ph: path) (e: sv_map) : res (type * sval) :=
+  let (id, pj) := ph in
+  match e ! id with
+  | Some (_, ty, sv) =>
+      get_owner_sval_type ce pj ty sv
+  | None =>
+      Error nil
+  end.
+
+
 Definition append_proj (pj: projection) (ph: path) :=
   (fst ph, snd ph ++ [pj]).
 
@@ -172,7 +215,7 @@ first we use [get_owner_path] to obtain the path of these projections
 in the tree and second we use [get_owner_sval] to obtain its sval. We
 also collect all aliased paths of this owner path to do dynamic alias
 analysis. *)
-Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval) (alias: list path) : res (path * list path) :=
+Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval) (alias: list path) : res (path * views) :=
   match phl with
   | nil => OK (ph, alias)
   | pj :: l =>
@@ -189,16 +232,25 @@ Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval)
           end
       | proj_field fid, sv_object _ _ fpl =>
           match find_field fid fpl with
-          | Some sv1 =>
+          | Some (_, sv1) =>
               get_owner_path e ph1 l sv1 alias1
           | None => Error nil
           end
       | proj_downcast _, sv_enum _ _ sv1 =>
           (* Should we add tag checking here? *)
           get_owner_path e ph1 l sv1 alias1
-      | proj_deref, sv_ref ph2 rebor =>
+      | proj_deref, sv_ref mut ph2 rebor =>
           do sv2 <- get_owner_sval_map ph2 e;
-          get_owner_path e ph2 l sv2 (ph1 :: rebor ++ alias1)
+          (* dynamic computation of reborrow paths based on the
+          supporting prefix technique of the borrow checker *)
+          let alias2 := match mut with
+                        | Mutable => (ph1 :: ph2 :: rebor ++ alias1)
+                        (* ph1 and alias1 cannot modify the content in
+                        ph2, so they are not added in the reborrow
+                        paths *)
+                        | Immutable => (ph2 :: rebor)
+                        end in
+          get_owner_path e ph2 l sv2 alias2
       | _, _  => Error nil
       end
   end.
@@ -213,9 +265,6 @@ Definition get_owner_path_sv_map (ps: path) (e: sv_map) : res (path * views) :=
   end.
 
 
-Definition set_field_sv (fid: ident) (v: sval) (svl: list (ident * sval)) : list (ident * sval) :=
-  set_field fid (fun _ => v) svl.
-
 Fixpoint set_sval (phl: list projection) (v: sval) (root: sval) : res sval :=
   match phl with
   | nil => OK v
@@ -228,14 +277,14 @@ Fixpoint set_sval (phl: list projection) (v: sval) (root: sval) : res sval :=
           match find_field fid svl with
           | Some fsv =>
               do fsv1 <- set_sval l v fsv;
-              OK (sv_struct id (set_field_sv fid fsv1 svl)) 
+              OK (sv_struct id (set_field fid (fun _ => fsv1) svl)) 
           | None => Error nil
           end
       | proj_field fid, sv_object id obj svl =>
           match find_field fid svl with
-          | Some fsv =>
+          | Some (fty, fsv) =>
               do fsv1 <- set_sval l v fsv;
-              OK (sv_object id obj (set_field_sv fid fsv1 svl)) 
+              OK (sv_object id obj (set_field fid (fun _ => (fty, fsv1)) svl)) 
           | None => Error nil
           end
       | proj_downcast fid, sv_enum id fid1 sv1 =>
@@ -376,7 +425,7 @@ Fixpoint collect_sval_ref_paths (sv: sval) : list path :=
       collect_sval_ref_paths fsv 
   | sv_box sv1 =>
       collect_sval_ref_paths sv1
-  | sv_ref ph vs =>
+  | sv_ref _ ph vs =>
       ph :: nil
   (* We assume that object cannot have referenece to the current environment *)
   (* | sv_object *)
@@ -393,7 +442,7 @@ Fixpoint collect_sval_ref_paths_projections (pj: list projection) (sv: sval) : l
       collect_sval_ref_paths_projections (pj ++ [proj_downcast fid]) fsv 
   | sv_box sv1 =>
       collect_sval_ref_paths_projections (pj ++ [proj_deref]) sv1
-  | sv_ref ph vs =>
+  | sv_ref _ ph vs =>
       (ph, vs, pj) :: nil
   (* We assume that object cannot have referenece to the current environment *)
   (* | sv_object *)
@@ -408,6 +457,10 @@ Definition collect_ref_type_region ce (ty: type) (pj: list projection) : res (or
     | _ => Error nil
     end.
 
+(** TODO: there may be no need to compute the type when collecting the
+inout parameters path. We can build a substitution function to
+substitute the type computed from get_owner_sval_type at the inout
+parameter path. *)
 Definition collect_sval_ref_paths_types ce (ty_sv: type * sval) : res (list (path * (views * origin * type))) :=
   let (ty, sv) := ty_sv in
   let l := collect_sval_ref_paths_projections nil sv in
@@ -437,10 +490,10 @@ Definition collect_svm_args_ref_paths ce (svm: sv_map) (args: list (type * sval)
 
 Fixpoint generate_new_suffix_path_sval (process_views: path -> views -> views) (l: list path) (sv: sval) : res sval :=
   match sv with
-  | sv_ref ph vs =>
+  | sv_ref mut ph vs =>
       do ph1 <- generate_new_suffix_path l ph;
       (* We can directly use ph1 as the abstract view for callee? *)
-      OK (sv_ref ph1 (process_views ph1 vs))
+      OK (sv_ref mut ph1 (process_views ph1 vs))
   | sv_box sv1 =>
       do sv1' <- generate_new_suffix_path_sval process_views l sv1;
       OK (sv_box sv1')
@@ -453,11 +506,9 @@ Fixpoint generate_new_suffix_path_sval (process_views: path -> views -> views) (
       do fsv1 <- generate_new_suffix_path_sval process_views l fsv;
       OK (sv_enum id fid fsv1)
   | sv_object id obj svl =>
-      do svl1 <- (mmap (fun '(fid, fsv) => 
+      do svl1 <- (mmap (fun '(fid, (fty, fsv)) => 
                             do fsv1 <- generate_new_suffix_path_sval process_views l fsv;
-                            OK (fid, fsv1)) svl);      do svl1 <- (mmap (fun '(fid, fsv) => 
-                            do fsv1 <- generate_new_suffix_path_sval process_views l fsv;
-                            OK (fid, fsv1)) svl);
+                            OK (fid, (fty, fsv1))) svl);
       OK (sv_object id obj svl1)
   | _ => OK sv
   end.
@@ -514,12 +565,12 @@ current variable names at function entry). These two kinds of
 operations can be done using recover_sval_ref_paths. *)
 Fixpoint recover_sval_ref_paths (process_views: views -> views) (l: list path) (sv: sval)  : res sval :=
   match sv with
-  | sv_ref ph vs =>
+  | sv_ref mut ph vs =>
       (* There may be view from the callee local paths (e.g., by
       returning a reborrowed path), which should be ignored when
       recovering the concrete views. *)
       do ph1 <- recover_ref_path l ph; 
-      OK (sv_ref ph1 (process_views vs))
+      OK (sv_ref mut ph1 (process_views vs))
   | sv_box sv1 =>
       do sv1' <- recover_sval_ref_paths process_views l sv1;
       OK (sv_box sv1')
@@ -532,9 +583,9 @@ Fixpoint recover_sval_ref_paths (process_views: views -> views) (l: list path) (
       do fsv1 <- recover_sval_ref_paths process_views l fsv;
       OK (sv_enum id fid fsv1)
   | sv_object id obj svl =>
-      do svl1 <- mmap (fun '(fid, fsv) => 
+      do svl1 <- mmap (fun '(fid, (fty, fsv)) => 
                         do fsv1 <- recover_sval_ref_paths process_views l fsv;
-                        OK (fid, fsv1)) svl;
+                        OK (fid, (fty, fsv1))) svl;
       OK (sv_object id obj svl1)
   | _ =>
       OK sv
@@ -637,9 +688,9 @@ Fixpoint eval_pexpr (e: sv_map) (pe: pexpr) : res sval :=
           OK (sv_scalar (Val.of_bool (ident_eq fid fid1)))
       | _ => Error nil
       end
-  | Eref _ _ p _ =>
+  | Eref _ mut p _ =>
       do (ph, vs) <- get_owner_path_sv_map p e;
-      OK (sv_ref ph vs)
+      OK (sv_ref mut ph vs)
   | _ => Error nil
   end.
       

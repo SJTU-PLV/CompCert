@@ -61,14 +61,11 @@ Fixpoint mutable_projections (ty: type) (phl: list projection) : bool :=
       end
   end.
 
-(* For now, I have no idea how to define a more simpler version of
-computing the mutablity of a path. If we add mutablity information
-into the path itselt, the tree path in the footprint is not unique
-anymore, I don't know if there is any problem there. *)
+
 Definition mutable_path (svm: sv_map) (ph: path) : bool :=
   let (id, phl) := ph in
   match svm ! id with
-  | Some (_, _, ty, _, _) =>
+  | Some (_, ty, sv) =>
       mutable_projections ty phl
   | None =>
       false
@@ -87,77 +84,89 @@ Definition is_live_path (live: RegionSet.t) (te: typenv) (ph: path) : bool :=
 
 (* We also need to know that generic region this path locates
 at....  *)
-Definition extern_loc_region (fpm: fp_map) (ph: path) : option origin :=
+Definition extern_loc_region (svm: sv_map) (ph: path) : option origin :=
   let (id, pj) := ph in
-  match fpm ! id with
-  | Some (_, _, _, opt_reg, _) =>
-      opt_reg
+  match svm ! id with
+  | Some (r, _, _) =>
+      r
   | _ => None
   end.
 
+(* [ln] is a prefix of [ph] *)
+Definition loan_approx (svm: sv_map) (ln: loan) (ph: path) : Prop :=
+  match ln, extern_loc_region svm ph with
+  | Lintern _ p, None =>
+      (* TODO: maybe we should use path uniformly *)
+      let (id1, pj1) := path_of_place p in
+      let (id2, pj2) := ph in
+      id1 = id2 /\ projections_contain pj1 pj2 = true
+  | Lextern org1, Some org2 =>
+      org1 = org2 
+  | _, _ => False
+  end.
+
 (* ph is the location the reference points to *)
-Inductive alias_graph_approx_loans ce (live: RegionSet.t) (orgst: LOrgSt.t) (svm: sv_map) (vs: views) (ph: path) : Prop :=
-| alias_graph_approx_loans_intro: forall ls,
-    orgst = Live ls ->
-    (* For safety: all owner paths that have the ability to change the
-    semantic typed of the stored value or permission of the location
-    that the reference points to should be approximated by (i.e., they
-    should appear as loans in the loan set of this region) the borrow
-    check result. However, borrow checker checks more properties than
-    safety. For example, borrow checker would check the stack
-    discipline of multiple mutable borrows, which can be expressed by
-    adding stacked borrow model into each owner path. These multiple
-    mutable accesses cannot perform "full write" to the locations they
-    point to. They can only perfom in-place write which would ensure
-    the well-typedness of the new values. *)
+Definition alias_graph_approx_loans ce (live: RegionSet.t) (ls: LoanSet.t) (svm: sv_map) (vs: views) (ph: path) : Prop :=
+  forall vph vs1,
+    In vph vs ->
+    is_live_path live svm vph = true ->
+    mutable_path ce svm vph = true ->
+    get_owner_path_sv_map vph svm = OK (ph, vs1) ->
+    exists ln, 
+      LoanSet.In ln ls ->
+      loan_approx svm ln vph.
+
+
+Definition sound_loan_analysis ce (live: RegionSet.t) (le: LOrgEnv.t) (svm: sv_map) : Prop :=
+  forall rph ph vs mut ty ls r,
+    get_owner_sval_map rph svm = OK (sv_ref mut ph vs) ->
+    wt_path ce svm rph = OK (Treference r mut ty) ->
+    LOrgEnv.get r le = Live ls ->
+    alias_graph_approx_loans ce live ls svm vs ph.
+
+(* Maybe useful comment *)
+(* For safety: all owner paths that have the ability to change the
+   semantic typed of the stored value or permission of the location
+   that the reference points to should be approximated by (i.e., they
+   should appear as loans in the loan set of this region) the borrow
+   check result. However, borrow checker checks more properties than
+   safety. For example, borrow checker would check the stack
+   discipline of multiple mutable borrows, which can be expressed by
+   adding stacked borrow model into each owner path. These multiple
+   mutable accesses cannot perform "full write" to the locations they
+   point to. They can only perfom in-place write which would ensure
+   the well-typedness of the new values. *)
+
+(** Invariant: the views stored at each reference path can
+precisely(?) capature all reachable paths (that are live and mutable)
+to this reference path excluding the paths created by reborrowed from
+this reference path. *)
+
+Definition alias_graph_views_sufficient ce (live: RegionSet.t) (svm: sv_map) : Prop :=
+  forall rph ph vs mut,
+    (* Do we need to say that rph must be live? *)
+    get_owner_sval_map rph svm = OK (sv_ref mut ph vs) ->
+    (** TODO: The deref of rph must be not in [vs], otherwise we
+    cannot prove the premise of not In in the following conclusion. *)    
     forall ph1 vs1,
       get_owner_path_sv_map ph1 svm = OK (ph, vs1) ->
       is_live_path live svm ph1 = true ->
-      mutable_path ce svm
+      mutable_path ce svm ph1 = true ->
+      (* The views of ph1, i.e., vs1 does not contain reborrowed path
+      of rph *)
+      ~ In (append_proj proj_deref rph) vs1 ->
+      In ph1 vs.
 
-    forall phl ph1, 
-      dominator_paths ce live svm ph phl ->
-      In ph1 phl ->
-      
-    (* all valid Unique items in stk2 are approximated by ls *)
-    (forall b ofs ph1 ph2 fp pj,
-        In (BorStkPerm.Unique (b, ofs)) stk2 ->
-        (* ph2 is a node in the footprint tree *)
-        get_owner_loc_footprint_map ph2 fpm = Some (b, ofs, fp) ->
-        (* ph2 is reachable via an arbitary path [ph1] *)
-        get_owner_path_map ph1 fpm = Some ph2 ->
-        (* We should know how ph2 reaches ph; the projections should
-        have the form [proj_deref; proj_field/downcast^*] *)
-        get_owner_path fpm ph2 pj fp = Some ph ->
-        (* ph1 is mutable *)
-        mutable_path ce fpm ph1 = true ->
-        (* ph1 is live *)
-        is_live_path live fpm ph1 = true ->
-        (* The conclusion is that ls contains a loan that is prefix of
-        [ph1; proj_deref]. TODO: what if the location of this stk is
-        within some fields? *)
-        exists ln, 
-          LoanSet.In ln ls 
-          (* If ph1 is from external locations then ln must be
-          Lextern('a) where 'a is the region of this external
-          location; otherwise ln is a prefix of ph1. We use
-          loan_of_path to compute the loan of this path (imagine that
-          it is borrow?) *)
-          /\ loan_approx fpm ln ph2) ->
-    borstk_approx_loans ce live orgst fpm stk ph it.
+(** TODO: Type invariants: the reference type must be equal to the type it
+points to *)
 
-(* aliasing invariant which can be defined only on the structured value map *)
-Definition borchk_ref_alias_inv ce (live: RegionSet.t) (le: LOrgEnv.t) (svm: sv_map) :=
-  forall ph1 ph2 org mut ty, 
-    wt_path ce fpm ph1 = OK (Treference org mut ty) ->
-    (* ph1 is a live path *)
+(* If a reference is live, then its value is the same as the location
+of the owner it points to *)
+Definition fpm_ref_inv (live: RegionSet.t) (fpm: fp_map) : Prop :=
+  forall ph1 b ofs ph2,
+    get_owner_footprint_map ph1 fpm = Some (fp_ref b ofs ph2) ->
     is_live_path live fpm ph1 = true ->
-    get_owner_path_sv_map ph1 svm = Some ph2 ->
-    (* The footprint at ph2 is fp_ref *)
-    forall rb rofs ph3, 
-      get_owner_sval_map ph2 svm = Some (sv_ref ph3) ->
-      alias_graph_approx_loans ce live (LOrgEnv.get org le) svm stk ph3.
-
+    exists fp, get_owner_loc_footprint_map ph2 fpm = Some (b, ofs, fp). 
 
 
 (* Old version of the borrow check invariant which contains properties about stacked borrow
