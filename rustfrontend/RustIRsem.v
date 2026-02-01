@@ -52,6 +52,19 @@ Definition is_call_cont (k: cont) : Prop :=
   | _ => False
   end.
 
+Fixpoint typeof_cont_call (ttop: type) (k: cont) : type :=
+  match k with
+  | Kcall (Some p) _ _ _ =>
+      typeof_place p
+  | Kcall NOne _ _ _ =>
+      Tunit
+  | Kstop => ttop
+  | Kseq _ k
+  | Kloop _ k
+  (* impossible? *)
+  | Kdropcall _ _ _ _ k => typeof_cont_call ttop k
+  end.
+
 (** States *)
 
 Inductive state: Type :=

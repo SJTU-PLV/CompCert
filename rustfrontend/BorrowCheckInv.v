@@ -157,17 +157,59 @@ Definition alias_graph_views_sufficient ce (live: RegionSet.t) (svm: sv_map) : P
       ~ In (append_proj proj_deref rph) vs1 ->
       In ph1 vs.
 
-(** TODO: Type invariants: the reference type must be equal to the type it
+(** Type invariants: the reference type must be equal to the type it
 points to *)
+
+Definition svm_ref_inv ce (live: RegionSet.t) (svm: sv_map) : Prop :=
+  forall ph1 ph2 vs r mut ty1,
+    get_owner_sval_map ph1 svm = OK (sv_ref mut ph2 vs) ->
+    is_live_path live svm ph1 = true ->
+    wt_path ce svm ph1 = OK (Treference r mut ty1) ->
+    exists ty2, wt_path ce svm ph2 = OK ty2 /\ type_eq_except_origins ty1 ty2 = true.
 
 (* If a reference is live, then its value is the same as the location
 of the owner it points to *)
 Definition fpm_ref_inv (live: RegionSet.t) (fpm: fp_map) : Prop :=
-  forall ph1 b ofs ph2,
-    get_owner_footprint_map ph1 fpm = Some (fp_ref b ofs ph2) ->
-    is_live_path live fpm ph1 = true ->
+  forall ph1 b ofs ph2 mut vs,
+    get_owner_footprint_map ph1 fpm = Some (fp_ref mut b ofs ph2 vs) ->
+    is_live_path live (fpm_to_tenv fpm) ph1 = true ->
     exists fp, get_owner_loc_footprint_map ph2 fpm = Some (b, ofs, fp). 
 
+
+(** Footprint can be seen as a rich form of structured value in
+RustIRspec, which contains extra permission information. We can use
+[fp_to_sval] to remove this information. *)
+
+
+(* Translate footprint to structured value *)
+Fixpoint fp_to_sval (fp: footprint) : sval :=
+  match fp with
+  | fp_emp
+  | fp_uninit _ _ => sv_bot
+  | fp_scalar _ v => sv_scalar v
+  | fp_box _ fp1 => sv_box (fp_to_sval fp1)
+  | fp_struct id fpl => sv_struct id (map (fun '(fid, (_, ffp)) => (fid, fp_to_sval ffp)) fpl)
+  | fp_enum id _ fid _ ffp => sv_enum id fid (fp_to_sval ffp)
+  | fp_ref mut _ _ ph vs => sv_ref mut ph vs 
+  | fp_object id obj exposed => sv_object id (mem_to_pure_repr (ame id) obj) (map (fun '(fid, (_,
+ty, ffp)) => (fid, (ty, fp_to_sval ffp))) exposed)
+  end.
+
+Definition fpm_to_svm (fpm: fp_map) : sv_map :=
+  PTree.map1 (fun '(_, r, ty, fp) => (r, ty, fp_to_sval fp)) fpm.
+
+
+(* The invariant established and preserved by the borrow checking *)
+Record borrow_check_inv ce (live: RegionSet.t) (le: LOrgEnv.t) (svm: sv_map) (fpm: fp_map) : Prop :=
+  { borrowck_approximation: sound_loan_analysis ce live le svm;
+    borrowck_sufficient_views: alias_graph_views_sufficient ce live svm;
+    borrowck_svm_ref_inv: svm_ref_inv ce live svm;
+    borrowck_fpm_ref_inv: fpm_ref_inv live fpm; }.
+
+End ADT_ENV.
+
+Coercion fp_to_sval : footprint >-> sval.
+Coercion fpm_to_svm : fp_map >-> sv_map.
 
 (* Old version of the borrow check invariant which contains properties about stacked borrow
 

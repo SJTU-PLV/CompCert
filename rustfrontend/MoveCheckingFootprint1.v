@@ -127,8 +127,8 @@ Inductive footprint : Type :=
 | fp_struct (id: ident) (fpl: list (ident * ((Z * Z) * footprint)))
 (* orgs are not used for now but it is used to relate to the type *)
 | fp_enum (id: ident) (tagz: Z) (fid: ident) (fofs: Z) (ffp: footprint)
-| fp_ref (b: block) (ofs: Z) (ph: path) (* reference to an owner at [phs] with type [ty] *)
-| fp_object (id: ident) (obj: (mem_repr (ame id))) (exposed: list (ident * (loc * footprint)))
+| fp_ref (mut: mutkind) (b: block) (ofs: Z) (ph: path) (vs: views) (* reference to an owner at [phs] with type [ty] *)
+| fp_object (id: ident) (obj: (mem_repr (ame id))) (exposed: list (ident * ((block * Z) * type * footprint)))
 .
 
 Implicit Type fp : footprint.
@@ -246,7 +246,7 @@ Variable (P: footprint -> Prop)
   (HPbox: forall (b : block) (fp : footprint), P fp -> P (fp_box b fp))
   (HPstruct: forall id fpl, (forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl -> P ffp) -> P (fp_struct id fpl))
   (HPenum: forall id (tag : Z) fid fofs (ffp : footprint), P ffp -> P (fp_enum id tag fid fofs ffp))
-  (HPref: forall b ofs ref_owner, P (fp_ref b ofs ref_owner))
+  (HPref: forall mut b ofs ref_owner vs, P (fp_ref mut b ofs ref_owner vs))
   (HPobj: forall id obj bors, (forall fid b ofs ffp, In (fid, (b, ofs, ffp)) bors -> P ffp) -> P (fp_object id obj bors)).
 
 Fixpoint strong_footprint_ind t: P t.
@@ -281,7 +281,7 @@ of the local variables in fp_map for simplicity *)
 (* The [option origin] is used to indicate that this "variable" is
 local var/param (None) or a name for some locations passed by
 reference (Some org where org is the generic region of this location) *)
-Definition fp_map := PTree.t (block * Z * type * option origin * footprint).
+Definition fp_map := PTree.t (block * Z * option origin * type * footprint).
 
 Implicit Type fpm : fp_map.
 
@@ -291,31 +291,7 @@ Implicit Type fpm : fp_map.
 
 (* Definition fenv := PTree.t (block * Z * type). *)
 
-Coercion fpm_to_tenv (fpm: fp_map) : typenv := PTree.map1 (fun '(_, _, ty, _, _) => ty) fpm.
-
-(** Footprint can be seen as a rich form of structured value in
-RustIRspec, which contains extra permission information. We can use
-[fp_to_sval] to remove this information. *)
-
-(* Require Import RustIRspec. *)
-
-(* Fixpoint fp_to_sval (fp: footprint) : sval := *)
-(*   match fp with *)
-(*   | fp_emp  *)
-(*   | fp_uninit _ _ => sv_bot *)
-(*   | fp_scalar _ v => sv_scalar v *)
-(*   | fp_box _ _ fp1 => sv_box (fp_to_sval fp1) *)
-(*   | fp_struct id fpl => sv_struct id (map (fun '(fid, (_, ffp)) => (fid, fp_to_sval ffp)) fpl) *)
-(*   | fp_enum id _ fid _ ffp => sv_enum id fid (fp_to_sval ffp) *)
-(*   | fp_ref _ _ ph => sv_ref ph *)
-(*   end. *)
-
-(* Definition fpm_to_svm (fpm: fp_map) : sv_map := *)
-(*   PTree.map1 (fun '(_, _, _, _, fp) => fp_to_sval fp) fpm. *)
-
-(* Coercion fp_to_sval : footprint >-> sval. *)
-(* Coercion fpm_to_svm : fp_map >-> sv_map. *)
-
+Definition fpm_to_tenv (fpm: fp_map) : typenv := PTree.map1 (fun '(_, _, _, ty, _) => ty) fpm.
 
 (** Footprint map which records the footprint starting from stack
 blocks (denoted by variable names). It represents the ownership chain
@@ -340,6 +316,8 @@ footprint); (b, ofs) is the address of this composite. *)
 (* | fpf_drop (b: block) (ofs: Z) (fpl: list (ffpty)) (fpf: fp_frame) *)
 .
 
+Implicit Type fpf : fp_frame.
+
 (** Functions for getting and updating the footprint map. *)
 
 Definition sizeof_footprint ce (fp: footprint) : Z :=
@@ -350,7 +328,7 @@ Definition sizeof_footprint ce (fp: footprint) : Z :=
   | fp_box _ _ => size_chunk Mptr
   | fp_enum id _ _ _ _ => sizeof_comp ce id
   | fp_struct id _ => sizeof_comp ce id
-  | fp_ref _ _ _ => size_chunk Mptr
+  | fp_ref _ _ _ _ _ => size_chunk Mptr
   | fp_object id _ _ => adt_size (ame id)
   end.
 
@@ -362,7 +340,7 @@ Definition alignof_footprint ce (fp: footprint) : Z :=
   | fp_box _ _ => align_chunk Mptr
   | fp_enum id _ _ _ _ => alignof_comp ce id
   | fp_struct id _ => alignof_comp ce id
-  | fp_ref _ _ _ => align_chunk Mptr
+  | fp_ref _ _ _ _ _ => align_chunk Mptr
   | fp_object id _ _ => adt_align (ame id)
   end.
 
@@ -463,7 +441,7 @@ Fixpoint get_owner_loc_footprint (phl: list projection) (fp: footprint) (b: bloc
           end
       | proj_field fid, fp_object id obj fpl =>
           match find_field fid fpl with
-          | Some (b, ofs, fp1) =>
+          | Some (b, ofs, ty, fp1) =>
               get_owner_loc_footprint l fp1 b ofs
           | None => None
           end
@@ -527,7 +505,7 @@ Fixpoint clear_footprint_rec (fp: footprint) : footprint :=
   match fp with
   | fp_scalar _ _
   (* What about moving a reference? *)
-  | fp_ref _ _ _
+  | fp_ref _ _ _ _ _
   | fp_uninit _ _
   | fp_object _ _ _               (* impossible?*)
   | fp_emp => fp
@@ -574,7 +552,7 @@ Fixpoint get_owner_path (fpm: fp_map) (ph: path) (phl: list projection) (fp: foo
           end
       | proj_downcast _, fp_enum _ _ _ _ fp1 =>
           get_owner_path fpm ph1 l fp1
-      | proj_deref,fp_ref _ _ ph2 =>
+      | proj_deref, fp_ref _ _ _ ph2 _ =>
           match get_owner_loc_footprint_map ph2 fpm with
           | Some (_, _, fp2) =>
               get_owner_path fpm ph2 l fp2
@@ -649,15 +627,15 @@ Inductive fields_fp_sep (P: footprint -> massert -> Prop) : list ffpty -> masser
     (EQV: massert_eqv mp (mass1 ** mass2)),
     fields_fp_sep P ((fid, ((base, fofs), ffp)) :: l) mp.
 
-Inductive exposed_loc_sep (P: footprint -> block -> Z -> massert -> Prop) : list (ident * (loc * footprint)) -> massert -> Prop :=
+Inductive exposed_loc_sep (P: footprint -> block -> Z -> massert -> Prop) : list (ident * ((block * Z) * type * footprint)) -> massert -> Prop :=
 | exposed_loc_sep_nil: forall mp
     (EQV: massert_eqv mp STrue),
     exposed_loc_sep P nil mp
-| exposed_loc_sep_cons: forall fid b ofs ffp l mass1 mass2 mp
+| exposed_loc_sep_cons: forall fid b ofs fty ffp l mass1 mass2 mp
     (IND: exposed_loc_sep P l mass2)
     (FWT: P ffp b ofs mass1)
     (EQV: massert_eqv mp (mass1 ** mass2)),
-    exposed_loc_sep P ((fid, (b, ofs, ffp)) :: l) mp.
+    exposed_loc_sep P ((fid, (b, ofs, fty, ffp)) :: l) mp.
 
 
 Section COMP_ENV.
@@ -690,9 +668,9 @@ say this location is still sem_wt_loc *)
     (* hasvalue already contain the align requirement *)
     (EQV: massert_eqv mp (hasvalue chunk b ofs v)),
     sem_wt_loc (fp_scalar chunk v) b ofs mp
-| sem_wt_ref: forall b1 b2 ofs1 ofs2 phs mp
+| sem_wt_ref: forall b1 b2 ofs1 ofs2 phs mp mut vs
     (EQV: massert_eqv mp (hasvalue Mptr b1 ofs1 (Vptr b2 (Ptrofs.repr ofs2)))),
-    sem_wt_loc (fp_ref b2 ofs2 phs) b1 ofs1 mp
+    sem_wt_loc (fp_ref mut b2 ofs2 phs vs) b1 ofs1 mp
 | sem_wt_box: forall b ofs fp b1 nextmp mp mp1
     (* (WTVAL: sem_wt_val (fp_box b1 sz1 fp) v mass), *)
     (* When this box pointer is not moved from (i.e., shallow_init is
@@ -737,9 +715,9 @@ Inductive sem_wt_fp : footprint -> massert -> Prop :=
     (* We should ensure that the value in the footprint is loaded from memory *)
     (EQV: massert_eqv mp (spure True)),
     sem_wt_fp (fp_scalar chunk v) mp
-| sem_fp_ref: forall phs b ofs mp
+| sem_fp_ref: forall phs b ofs mp mut vs
     (EQV: massert_eqv mp (spure True)),
-    sem_wt_fp (fp_ref b ofs phs) mp
+    sem_wt_fp (fp_ref mut b ofs phs vs) mp
 | sem_fp_box: forall b fp nextmp mp
     (WTLOC: sem_wt_loc fp b 0 nextmp)
     (EQV: massert_eqv mp (box_pred fp b nextmp)),
@@ -772,9 +750,9 @@ Inductive sem_wt_val : footprint -> val -> massert -> Prop :=
     from memory) *)
     (VEQ: v1 = Val.load_result chunk v2),
     sem_wt_val (fp_scalar chunk v1) v2 mp
-| wt_val_ref: forall phs b ofs mp
-    (MP: sem_wt_fp (fp_ref b ofs phs) mp),
-    sem_wt_val (fp_ref b ofs phs) (Vptr b (Ptrofs.repr ofs)) mp
+| wt_val_ref: forall phs b ofs mp mut vs
+    (MP: sem_wt_fp (fp_ref mut b ofs phs vs) mp),
+    sem_wt_val (fp_ref mut b ofs phs vs) (Vptr b (Ptrofs.repr ofs)) mp
 | wt_val_box: forall b fp mp
     (MP: sem_wt_fp (fp_box b fp) mp),
     sem_wt_val (fp_box b fp) (Vptr b Ptrofs.zero) mp
@@ -838,9 +816,9 @@ Inductive sem_wt_loc_list : list (block * Z) -> list footprint  -> massert -> Pr
 (* Qed. *)
 
 
-Inductive coherent_var (elt: (ident * (block * Z * type * option origin * footprint))) : massert -> Prop :=
+Inductive coherent_var (elt: (ident * (block * Z *  option origin * type * footprint))) : massert -> Prop :=
 | coherent_var_intro: forall id b ofs ty mass fp opt_reg
-    (ELTEQ: elt = (id, (b, ofs, ty, opt_reg, fp)))
+    (ELTEQ: elt = (id, (b, ofs, opt_reg, ty, fp)))
     (* What if fpm contains more variables than local env? *)
     (MASS: sem_wt_loc fp b ofs mass),
     (* How to express the ownership of external locations passed by reference? *)
@@ -1056,10 +1034,10 @@ Inductive fp_match_field (co: composite) (P: type -> footprint -> Prop): ffpty -
     (WTFP: P fty ffp),
     fp_match_field co P (fid, ((base, fofs), ffp)) (Member_plain fid fty).
 
-Inductive obj_exposed_wf (P: type -> footprint -> Prop): (ident * (block * Z * Z * type)) -> (ident * (loc * footprint)) -> Prop :=
+Inductive obj_exposed_wf (P: type -> footprint -> Prop): (ident * (block * Z * Z * type)) -> (ident * (block * Z * type * footprint)) -> Prop :=
 | obj_exposed_wf_intro: forall fid b lo ty ffp
     (WTFP: P ty ffp),
-    obj_exposed_wf P (fid, (b, lo, lo + sizeof ce ty, ty)) (fid, ((b, lo), ffp)).
+    obj_exposed_wf P (fid, (b, lo, lo + sizeof ce ty, ty)) (fid, ((b, lo), ty, ffp)).
 
 
 (* Definition of wt_footprint (well-typed footprint). Intuitively, it
@@ -1101,9 +1079,9 @@ Inductive wt_footprint : type -> footprint -> Prop :=
     (* It is used to make sure that dropping any location within a
     block does not cause overflow *)
     wt_footprint (Tbox ty) (fp_box b fp)
-| wt_fp_ref: forall ty b ofs phs org mut,
+| wt_fp_ref: forall ty b ofs phs org mut vs,
     (** Do we need to prove that phs is well-typed path? *)
-    wt_footprint (Treference org mut ty) (fp_ref b ofs phs)
+    wt_footprint (Treference org mut ty) (fp_ref mut b ofs phs vs)
 | wt_fp_object: forall id obj exposed
     (WF: Forall2 (obj_exposed_wf wt_footprint) (mem_exposed_borrow (ame id) obj) exposed)
     (* The object always satisfies the representation invariant (this
@@ -1573,7 +1551,7 @@ Definition fp_match_chunk fp chunk : Prop :=
   | fp_scalar chunk1 _ =>
       chunk1 = chunk
   | fp_box _ _
-  | fp_ref _ _ _ => chunk = Mptr
+  | fp_ref _ _ _ _ _ => chunk = Mptr
   | fp_emp
   | fp_struct _ _
   | fp_enum _ _ _ _ _ 
@@ -1615,7 +1593,7 @@ Inductive fields_fp_well_formed ce : footprint -> Prop :=
 | fp_uninit_wf sz al: fields_fp_well_formed ce (fp_uninit sz al)
 | fp_scalar_wf chunk v: fields_fp_well_formed ce (fp_scalar chunk v)
 | fp_box_wf b fp: fields_fp_well_formed ce (fp_box b fp)
-| fp_ref_wf b ofs phs: fields_fp_well_formed ce (fp_ref b ofs phs)
+| fp_ref_wf mut b ofs phs vs: fields_fp_well_formed ce (fp_ref mut b ofs phs vs)
 | fp_object_wf id obj exposed: fields_fp_well_formed ce (fp_object id obj exposed)
 | fp_struct_wf: forall id fpl
      (* This property says that all fields are within the size of this
@@ -1955,7 +1933,7 @@ Proof.
   do 3 eexists. do 3 (try eapply conj); eauto.
   - instantiate (1 := mp1 ** mp3 ** mp2).
     econstructor. 
-    assert (TODO: PTree.elements (PTree.set id0 (b0, ofs0, ty, opt_reg, fp2) fpm) = l1 ++ (id0, (b0, ofs0, ty, opt_reg, fp2)) :: l2) by admit.
+    assert (TODO: PTree.elements (PTree.set id0 (b0, ofs0, opt_reg, ty, fp2) fpm) = l1 ++ (id0, (b0, ofs0, opt_reg, ty, fp2)) :: l2) by admit.
     rewrite TODO.
     eapply Forall_sep_app. exists mp1, (mp3 ** mp2). 
     split; eauto. split. econstructor; eauto.
@@ -2397,10 +2375,10 @@ Proof.
   intros (bytes & m2 & fp2 & mass3 & B1 & B2 & B3 & B4 & B5).
   cbn [set_footprint_map]. rewrite B. rewrite B3.
   exists bytes, m2.
-  exists (PTree.set id0 (b, ofs, ty, opt_reg, fp2) fpm), (mass3 ** mp1 ** mp4).
+  exists (PTree.set id0 (b, ofs, opt_reg, ty, fp2) fpm), (mass3 ** mp1 ** mp4).
   do 4 (try eapply conj); eauto.
   - econstructor. 
-    assert (TODO: PTree.elements (PTree.set id0 (b, ofs, ty, opt_reg, fp2) fpm) = l1 ++ (id0, (b, ofs, ty, opt_reg, fp2)) :: l2) by admit.
+    assert (TODO: PTree.elements (PTree.set id0 (b, ofs, opt_reg, ty, fp2) fpm) = l1 ++ (id0, (b, ofs, opt_reg, ty, fp2)) :: l2) by admit.
     (* rewrite TODO. *)
     (* eapply Forall_sep_app. exists mp1, (mp3 ** mp2).  *)
     (* split; eauto. split. econstructor; eauto. *)
@@ -2411,11 +2389,6 @@ Admitted.
 
 (** TODO: assign_loc rule  *)
 
-(*
-
-(** I think we can just define the following functions in RustIRspec
-and use the result in RustIRspec to construct the footprint? So there
-is no need to define these functions in footprint? *)
 
 (** Define functions for extracting the footprint that represents the
 locations passed by reference *)
@@ -2434,6 +2407,7 @@ output: list (path, footprint) satisfying：
 
  *)
 
+(*
 
 (* collect the owner paths stored in the leaf nodes that are fp_ref *)
 Fixpoint collect_footprint_ref_paths (fp: footprint) : list path :=
@@ -2504,6 +2478,7 @@ Definition collect_fpm_passed_ref_footprint (fpm: fp_map) (l: list path) : res (
                   Error nil
               end) l.
 
+*) 
 (* set fp_emp to the location that passed via reference *)
 Fixpoint clear_fpm_passed_ref_footprint (fpm: fp_map) (l: list path) : res fp_map :=
   match l with
@@ -2517,6 +2492,8 @@ Fixpoint clear_fpm_passed_ref_footprint (fpm: fp_map) (l: list path) : res fp_ma
       end
   end.
 
+
+(*
 (* The output parameters contain two parts: one for the normal
 arguments and the others are the memory locations passed via
 reference *)

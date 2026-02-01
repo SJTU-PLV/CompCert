@@ -14,7 +14,7 @@ Require Import Errors.
 Require Import InitDomain InitAnalysis.
 Require Import MoveChecking.
 Require Import MoveCheckingFootprint1.
-Require Import StkBorPermission RustIRspec RustIRsem RustIRbor.
+Require Import RustIRspec RustIRsem.
 Require Import RegionLiveness BorrowCheckDomain.
 Require Import BorrowCheckPolonius BorrowCheck BorrowCheckInv.
 Require Import Wfsimpl.
@@ -26,6 +26,20 @@ Import ListNotations.
 Local Open Scope error_monad_scope.
 Local Open Scope inv_scope.
 Local Open Scope sep_scope.
+
+(* The final theorem of borrow checking depends on the instance of
+opaque types *)
+
+Section ADT_ENV.
+
+Context {ame: adt_mem_env}.
+
+Notation footprint := (@footprint ame).
+Notation fp_map := (@fp_map ame).
+Notation fp_frame := (@fp_frame ame).
+Notation ae := (fun id => (ame id).(mem_pure_adt)).
+Notation sval := (@sval ae).
+Notation sv_map := (@sv_map ae).
 
 Section BORROW_CHECK.
 
@@ -552,9 +566,9 @@ location of the value. fp is the start of the footprint. *)
 Inductive deref_loc_rec_footprint (fty: type) (fp: footprint) : list type -> type -> footprint -> Prop :=
 | deref_loc_rec_footprint_nil:
   deref_loc_rec_footprint fty fp nil fty fp
-| deref_loc_rec_footprint_cons: forall ty tys fp1 b sz
+| deref_loc_rec_footprint_cons: forall ty tys fp1 b 
     (* simulate type_to_drop_member_state *)
-    (DEREF: deref_loc_rec_footprint fty fp tys (Tbox ty) (fp_box b sz fp1)),
+    (DEREF: deref_loc_rec_footprint fty fp tys (Tbox ty) (fp_box b fp1)),
     deref_loc_rec_footprint fty fp ((Tbox ty) :: tys) ty fp1.
 
     (* (DROPMEMB: drop_member_footprint co fpl1 fpl2 st membs) *)
@@ -718,28 +732,28 @@ modify the footprint maintained by the continuation *)
 the memory predicate instead of defining coherent_fpf is because we do
 not clear (which is just a design choice) the footprint passed via
 reference to callee. *)
-Inductive match_cont: INIT_AN -> LOANS_AN -> function -> rustcfg -> cont -> RustIRspec.cont -> cfg_kinfo -> bor_stacks -> fp_frame -> massert -> Prop :=
-| match_Kstop: forall init_an loans_an f cfg nret stk
+Inductive match_cont: INIT_AN -> LOANS_AN -> function -> rustcfg -> RustIRspec.cont -> cont -> cfg_kinfo -> fp_frame -> massert -> Prop :=
+| match_Kstop: forall init_an loans_an f cfg nret
     (RET: cfg ! nret = Some Iend),
-    match_cont init_an loans_an f cfg Kstop RustIRspec.Kstop (mk_cfg_kinfo nret None None nret) stk fpf_emp STrue
-| match_Kseq: forall init_an loans_an f cfg s ts k pc next cont brk nret m fpf tk MP
+    match_cont init_an loans_an f cfg RustIRspec.Kstop Kstop (mk_cfg_kinfo nret None None nret) fpf_emp STrue
+| match_Kseq: forall init_an loans_an f cfg s ts k pc next cont brk nret fpf tk MP
     (MCK_STMT: move_check_stmt init_an f.(fn_body) cfg s ts (mk_cfg_info pc next cont brk nret))
     (BORCK_STMT: borrow_check_stmt loans_an (regset_fun f) f cfg s ts (mk_cfg_info pc next cont brk nret))
-    (MCONT: match_cont init_an loans_an f cfg k tk (mk_cfg_kinfo next cont brk nret) m fpf MP),
-    match_cont init_an loans_an f cfg (Kseq s k) (RustIRspec.Kseq s tk) (mk_cfg_kinfo pc cont brk nret) m fpf MP
-| match_Kloop: forall init_an loans_an f cfg s ts k body_start loop_jump_node exit_loop nret contn brk m fpf tk MP
+    (MCONT: match_cont init_an loans_an f cfg k tk (mk_cfg_kinfo next cont brk nret) fpf MP),
+    match_cont init_an loans_an f cfg (RustIRspec.Kseq s k) (Kseq s tk) (mk_cfg_kinfo pc cont brk nret) fpf MP
+| match_Kloop: forall init_an loans_an f cfg s ts k body_start loop_jump_node exit_loop nret contn brk fpf tk MP
     (START: cfg ! loop_jump_node = Some (Inop body_start))
     (MCK_STMT: move_check_stmt init_an f.(fn_body) cfg s ts (mk_cfg_info body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret))
     (BORCK_STMT: borrow_check_stmt loans_an (regset_fun f) f cfg s ts (mk_cfg_info body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret))
-    (MCONT: match_cont init_an loans_an f cfg k tk (mk_cfg_kinfo exit_loop contn brk nret) m fpf MP),
-    match_cont init_an loans_an f cfg (Kloop s k) (RustIRspec.Kloop s tk) (mk_cfg_kinfo loop_jump_node (Some loop_jump_node) (Some exit_loop) nret) m fpf MP
-| match_Kcall: forall init_an loans_an f1 cfg k nret f2 e p stk fpf ns svm tk phl MP
-    (MSTK: match_stacks (Kcall (Some p) f2 e k) (RustIRspec.Kcall p f2 phl ns svm tk) stk fpf MP)
+    (MCONT: match_cont init_an loans_an f cfg k tk (mk_cfg_kinfo exit_loop contn brk nret) fpf MP),
+    match_cont init_an loans_an f cfg (RustIRspec.Kloop s k) (Kloop s tk) (mk_cfg_kinfo loop_jump_node (Some loop_jump_node) (Some exit_loop) nret) fpf MP
+| match_Kcall: forall init_an loans_an f1 cfg k nret f2 e p fpf ns svm tk phl MP
+    (MSTK: match_stacks (RustIRspec.Kcall p f2 phl ns svm k) (Kcall (Some p) f2 e tk) fpf MP)
     (RET: cfg ! nret = Some Iend),
     (* (WFOWN: wf_own_env e ce own), *)
-    match_cont init_an loans_an f1 cfg (Kcall (Some p) f2 e k) (RustIRspec.Kcall p f2 phl ns svm tk) (mk_cfg_kinfo nret None None nret) stk fpf MP
+    match_cont init_an loans_an f1 cfg (RustIRspec.Kcall p f2 phl ns svm k)  (Kcall (Some p) f2 e tk) (mk_cfg_kinfo nret None None nret) fpf MP
 
-with match_stacks : cont -> RustIRspec.cont -> bor_stacks -> fp_frame -> massert -> Prop :=
+with match_stacks : RustIRspec.cont -> cont -> fp_frame -> massert -> Prop :=
 | match_stacks_call: forall f nret cfg pc contn brk k p e stk maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit live loans_env LoansEnv mayinit0 mayuninit0 MP1 MP2 tk phl ns fpm1
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
@@ -747,7 +761,7 @@ with match_stacks : cont -> RustIRspec.cont -> bor_stacks -> fp_frame -> massert
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
     (LOANS_ST: LoansEnv!!pc = LoansEnv.State loans_env)
     (* Invariant for continuation *)
-    (CONT: match_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k tk (mk_cfg_kinfo pc contn brk nret) stk fpf MP2)
+    (CONT: match_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k tk (mk_cfg_kinfo pc contn brk nret) fpf MP2)
     (* may(un)init0 are the intermediate state of this function call
     statement before initializing p *)
     (MAY_INIT: mayinit = add_place universe p mayinit0)
@@ -761,14 +775,14 @@ with match_stacks : cont -> RustIRspec.cont -> bor_stacks -> fp_frame -> massert
     (BORCK_INV: borrow_check_inv ce (live!!pc) loans_env fpm stk)
     (* coherent relation is defined on the fpm whose passed reference
     footprint is cleared. *)
-    (FPM: clear_fpm_passed_ref_footprint fpm phl = OK fpm1)
+    (FPM: clear_fpm_passed_ref_footprint fpm (map fst phl) = OK fpm1)
     (COH: coherent_fpm ge fpm1 MP1), 
-    match_stacks (Kcall (Some p) f e k) (RustIRspec.Kcall p f phl ns fpm tk) stk (fpf_func fpm fpf) (MP1 ** MP2).
+    match_stacks (RustIRspec.Kcall p f phl ns fpm k) (Kcall (Some p) f e tk) (fpf_func fpm fpf) (MP1 ** MP2).
     
 (* The invariant of the continuation of dropstate is a little
 different. Note that the drop operation in RustIRspec is a big step
 operation. *)
-Inductive match_drop_cont (f: function) : cont -> RustIRspec.cont -> bor_stacks -> fp_frame -> massert -> Prop :=
+Inductive match_drop_cont (f: function) : RustIRspec.cont -> cont -> fp_frame -> massert -> Prop :=
 | match_drop_Kcall: forall nret cfg pc contn brk k e stk maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit live loans_env LoansEnv tk MP
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
@@ -776,25 +790,24 @@ Inductive match_drop_cont (f: function) : cont -> RustIRspec.cont -> bor_stacks 
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
     (LOANS_ST: LoansEnv!!pc = LoansEnv.State loans_env)
     (* Invariant for continuation *)
-    (MCONT: match_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k tk (mk_cfg_kinfo pc contn brk nret) stk fpf MP)
+    (MCONT: match_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k tk (mk_cfg_kinfo pc contn brk nret) fpf MP)
     (** Invariant of the move checking. *)
     (MCKINV: move_check_inv mayinit mayuninit universe fpm)
     (* Invariant of the borrow checking *)
     (BORCK_INV: borrow_check_inv ce (live!!pc) loans_env fpm stk),
-    match_drop_cont f (Kcall None f e k) tk stk (fpf_func fpm fpf) MP
-| match_Kdropcall: forall k fpf st co ofs b membs id ph fpm fp stk tk MP
+    match_drop_cont f k (Kcall None f e tk) (fpf_func fpm fpf) MP
+| match_Kdropcall: forall k fpf st co ofs b membs id ph fpm fp tk MP
     (CO: ce ! id = Some co)
     (GFP: get_owner_loc_footprint_map ph fpm = Some (b, Ptrofs.unsigned ofs, fp))
     (* drop_member_footprint says that fp matches (co, st, membs) *)
     (DROPMEMB: drop_member_footprint id co fp st membs)
     (RANGE: Ptrofs.unsigned ofs + co_sizeof co <= Ptrofs.max_unsigned)
     (** Do we need some separation properties? *)
-    (MCONT: match_drop_cont f k tk stk (fpf_func fpm fpf) MP),
-    match_drop_cont f (Kdropcall id (Vptr b ofs) st membs k) tk stk (fpf_func fpm fpf) MP.
-  
+    (MCONT: match_drop_cont f k tk (fpf_func fpm fpf) MP),
+    match_drop_cont f k (Kdropcall id (Vptr b ofs) st membs tk) (fpf_func fpm fpf) MP.
 
 (** TODO: invariant for the borrow checking  *)
-Inductive match_states: state -> RustIRspec.state -> Prop :=
+Inductive match_states: RustIRspec.state -> state -> Prop :=
 | match_regular_state: forall f cfg entry maybeInit maybeUninit universe s ts pc next cont brk nret k e m fpm fpf mayinit mayuninit live LoansEnv loans_env bor_stk MP ns tk FMP
     (* The init and loans-flow analysis results *)
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
@@ -806,7 +819,7 @@ Inductive match_states: state -> RustIRspec.state -> Prop :=
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
     (LOANS_ST: LoansEnv!!pc = LoansEnv.State loans_env)
     (* Invariant for continuation *)
-    (CONT: match_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k tk (mk_cfg_kinfo next cont brk nret) bor_stk fpf FMP)
+    (CONT: match_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k tk (mk_cfg_kinfo next cont brk nret) fpf FMP)
     (* Invariant of the move checking *)
     (MCKINV: move_check_inv mayinit mayuninit universe fpm)
     (COHERENT: coherent_fpm ce fpm MP)
@@ -818,21 +831,22 @@ Inductive match_states: state -> RustIRspec.state -> Prop :=
     (* (WFENV: wf_env fpm ce m e) *)
     (* invariant of the own_env *)
     (* (WFOWN: wf_own_env e ce own), *)
-    match_states (State f s k e bor_stk m) (RustIRspec.State f s tk ns fpm)
-| match_dropstate: forall id co fp b ofs st m membs k fpf bor_stk MP fpm (p: place) FMP tk ns f
+    match_states (RustIRspec.State f s k ns fpm) (State f s tk e m)
+(** TODO: since we are proving RustIR simulates RustIRspec, drop semantics in RustIRspec is a big step, so there may be no need to relate dropstate? *)
+| match_dropstate: forall id co fp b ofs st m membs k fpf MP fpm (p: place) FMP tk ns f
     (CO: ce ! id = Some co)
     (RANGE: Ptrofs.unsigned ofs + co_sizeof co <= Ptrofs.max_unsigned)
     (* The location of the dropped place *)
     (GFP: get_owner_loc_footprint_map p fpm = Some (b, Ptrofs.unsigned ofs, fp))
     (* drop_member_footprint says that fp matches (co, st, membs) *)
     (DROPMEMB: drop_member_footprint id co fp st membs)
-    (MCONT: match_drop_cont f k tk bor_stk (fpf_func fpm fpf) FMP)
+    (MCONT: match_drop_cont f k tk (fpf_func fpm fpf) FMP)
     (* fpl1 is the locations that have been dropped *)
     (COHERENT: coherent_fpm ce fpm MP)
     (MPRED: m |= MP ** FMP),
     (* (ACC: rsw_acc w (rsw sg flat_fp m Hm)) *)
-    match_states (Dropstate id (Vptr b ofs) st membs k bor_stk m) (RustIRspec.State f (Sdrop p) tk ns fpm)
-| match_callstate: forall vf fd orgs org_rels tyargs tyres cconv m fpl args fpf k bor_stk MP1 MP2 MP3 out_fpl out_locs tk sargs sparams fun_id
+    match_states (RustIRspec.State f (Sdrop p) k ns fpm) (Dropstate id (Vptr b ofs) st membs tk m)
+| match_callstate: forall vf fd orgs org_rels tyargs tyres cconv m fpl args fpf k MP1 MP2 MP3 out_fpl out_locs tk sargs sparams fun_id
     (* TODO: show that fun_id also points to this function *)
     (FUNC: Genv.find_funct ge vf = Some fd)    
     (FUNTY: type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv)
@@ -844,39 +858,41 @@ Inductive match_states: state -> RustIRspec.state -> Prop :=
     (ANORM: val_casted_list args tyargs)
     (WTFP: list_forall2 (wt_footprint ce) (type_list_of_typelist tyargs) fpl)
     (MPRED: m |= MP1 ** MP2 ** MP3)
-    (STK: match_stacks k tk bor_stk fpf MP3)
+    (STK: match_stacks k tk fpf MP3)
     (** How to produce sargs and sparams *)
     (SARGS: map fp_to_sval fpl = sargs)
-    (REF_PARAMS: map fp_to_sval out_fpl = sparams),
+    (REF_PARAMS: map fp_to_sval out_fpl = map (fun '(_, _, sv) => sv) sparams),
     (** TODO: use fpl and out_fpl to define borrow check invariant *)
     (* also disjointness of fpl and fpf *)
-    match_states (Callstate vf args k bor_stk m) (RustIRspec.Callstate fun_id sargs sparams tk)
-| sound_returnstate: forall sg fpf m k retty rfp v bor_stk MP1 MP2 MP3 out_locs out_fpl tk sparams sv
+    match_states (RustIRspec.Callstate fun_id sargs sparams k) (Callstate vf args tk m)
+| sound_returnstate: forall sg fpf m k retty rfp v MP1 MP2 MP3 out_locs out_fpl tk sparams sv
     (* For now, all function must have return type *)
-    (RETY: typeof_cont_call (rs_sig_res sg) k = retty)
+    (RETY: typeof_cont_call (rs_sig_res sg) tk = retty)
     (WTVAL: sem_wt_val ce rfp v MP1)
     (** output memory locations are sem_wt_loc *)
     (WTLOC_LIST: sem_wt_loc_list ce out_locs out_fpl MP2)
     (CAST: val_casted v retty)
     (WTFP: wt_footprint ce retty rfp)
     (MPRED: m |= MP1 ** MP2 ** MP3)    
-    (STK: match_stacks k tk bor_stk fpf MP3)
+    (STK: match_stacks k tk fpf MP3)
     (** How to produce sargs and sparams *)
     (SRET: fp_to_sval rfp = sv)
     (REF_PARAMS: map fp_to_sval out_fpl = sparams),
     (** TODO: use fpl and out_fpl to define borrow check invariant *)
     (* (ACC: rsw_acc w (rsw sg flat_fp m Hm)), *)
-    match_states (Returnstate v k bor_stk m) (RustIRspec.Returnstate sv sparams tk)
+    match_states (RustIRspec.Returnstate sv sparams k) (Returnstate v tk m) 
 .
 
 
 End BORROW_CHECK.
 
 
+Notation li_rs_spec := (@li_rs_spec ae).
+
 (** TODO: the interface for the borrow checking *)
 Definition rs_spec : invariant li_rs_spec := inv_bot.
 
-Program Definition rs_bor : callconv li_rs_bor li_rs_spec := 
+Program Definition rs_bor : callconv li_rs_spec li_rs := 
 {|  ccworld := unit;
     match_senv w := eq;
     match_query w q1 q2 := True;
@@ -885,13 +901,6 @@ Program Definition rs_bor : callconv li_rs_bor li_rs_spec :=
 Solve All Obligations with
   cbn; intros; subst; try split; auto.
 
-
-Definition own2bor (I: invariant li_rs) : invariant li_rs_bor :=
-  {| inv_world := inv_world I;
-    symtbl_inv := symtbl_inv I;
-    query_inv w (q: query li_rs_bor) := (query_inv I w q);
-    reply_inv w (r: reply li_rs_bor) := (reply_inv I w r); |}.
-
 (* Given a RustIR module [M], if it passes the borrow checking, we
 have two results: the first is that the RustIRspec semantics of [M] is
 refined by the RustIRbor semantics of [M], so if [M]_RustIRspec is
@@ -899,10 +908,10 @@ safe then [M]_RustIRbor is safe; the second is that [M]_RustIRspec is
 almost safe, except that it may reach some error states that cannot be
 checked by the borrow checking, e.g., division-by-zero. The interface
 of the refinement is defined as [rs_bor]. *)
-Lemma borrow_check_refinement (P Q: invariant li_rs) (M M': RustIR.program) :
+Lemma borrow_check_refinement (P Q: invariant li_rs_spec) (M M': RustIR.program) :
   borrow_check_program M = OK M' ->
   (* It also shows that if RustIRspec is progress then RustIRbor is progress *)
-  forward_simulation_progress rs_bor rs_bor (RustIRbor.semantics M) (RustIRspec.semantics M).
+  forward_simulation rs_bor rs_bor (RustIRspec.semantics M) (RustIRsem.semantics M).
 Proof.
 Admitted.
 
