@@ -109,7 +109,7 @@ Definition loan_approx (svm: sv_map) (ln: loan) (ph: path) : Prop :=
 Definition alias_graph_approx_loans ce (live: RegionSet.t) (ls: LoanSet.t) (svm: sv_map) (vs: views) (ph: path) : Prop :=
   forall vph vs1,
     In vph vs ->
-    is_live_path live svm vph = true ->
+    is_live_path live (svm_to_tenv svm) vph = true ->
     mutable_path ce svm vph = true ->
     get_owner_path_sv_map vph svm = OK (ph, vs1) ->
     exists ln, 
@@ -120,7 +120,7 @@ Definition alias_graph_approx_loans ce (live: RegionSet.t) (ls: LoanSet.t) (svm:
 Definition sound_loan_analysis ce (live: RegionSet.t) (le: LOrgEnv.t) (svm: sv_map) : Prop :=
   forall rph ph vs mut ty ls r,
     get_owner_sval_map rph svm = OK (sv_ref mut ph vs) ->
-    wt_path ce svm rph = OK (Treference r mut ty) ->
+    wt_path ce (svm_to_tenv svm) rph = OK (Treference r mut ty) ->
     LOrgEnv.get r le = Live ls ->
     alias_graph_approx_loans ce live ls svm vs ph.
 
@@ -150,7 +150,7 @@ Definition alias_graph_views_sufficient ce (live: RegionSet.t) (svm: sv_map) : P
     cannot prove the premise of not In in the following conclusion. *)    
     forall ph1 vs1,
       get_owner_path_sv_map ph1 svm = OK (ph, vs1) ->
-      is_live_path live svm ph1 = true ->
+      is_live_path live (svm_to_tenv svm) ph1 = true ->
       mutable_path ce svm ph1 = true ->
       (* The views of ph1, i.e., vs1 does not contain reborrowed path
       of rph *)
@@ -161,19 +161,12 @@ Definition alias_graph_views_sufficient ce (live: RegionSet.t) (svm: sv_map) : P
 points to *)
 
 Definition svm_ref_inv ce (live: RegionSet.t) (svm: sv_map) : Prop :=
-  forall ph1 ph2 vs r mut ty1,
-    get_owner_sval_map ph1 svm = OK (sv_ref mut ph2 vs) ->
-    is_live_path live svm ph1 = true ->
-    wt_path ce svm ph1 = OK (Treference r mut ty1) ->
-    exists ty2, wt_path ce svm ph2 = OK ty2 /\ type_eq_except_origins ty1 ty2 = true.
-
-(* If a reference is live, then its value is the same as the location
-of the owner it points to *)
-Definition fpm_ref_inv (live: RegionSet.t) (fpm: fp_map) : Prop :=
-  forall ph1 b ofs ph2 mut vs,
-    get_owner_footprint_map ph1 fpm = Some (fp_ref mut b ofs ph2 vs) ->
-    is_live_path live (fpm_to_tenv fpm) ph1 = true ->
-    exists fp, get_owner_loc_footprint_map ph2 fpm = Some (b, ofs, fp). 
+  forall ph1 ph2 ph3 vs2 vs3 r mut ty1,
+    get_owner_path_sv_map ph1 svm = OK (ph2, vs2) ->
+    get_owner_sval_map ph2 svm = OK (sv_ref mut ph3 vs3) ->
+    is_live_path live (svm_to_tenv svm) ph1 = true ->
+    wt_path ce (svm_to_tenv svm) ph1 = OK (Treference r mut ty1) ->
+    exists ty2, wt_path ce (svm_to_tenv svm) ph2 = OK ty2 /\ type_eq_except_origins ty1 ty2 = true.
 
 
 (** Footprint can be seen as a rich form of structured value in
@@ -198,6 +191,15 @@ ty, ffp)) => (fid, (ty, fp_to_sval ffp))) exposed)
 Definition fpm_to_svm (fpm: fp_map) : sv_map :=
   PTree.map1 (fun '(_, r, ty, fp) => (r, ty, fp_to_sval fp)) fpm.
 
+(* If a reference is live, then its value is the same as the location
+of the owner it points to *)
+Definition fpm_ref_inv (live: RegionSet.t) (fpm: fp_map) : Prop :=
+  forall ph1 ph2 ph3 b0 ofs0 b ofs mut vs2 vs,
+    get_owner_path_sv_map ph1 (fpm_to_svm fpm) = OK (ph2, vs2) ->
+    get_owner_loc_footprint_map ph2 fpm = Some (b0, ofs0, fp_ref mut b ofs ph3 vs) ->
+    is_live_path live fpm ph1 = true ->
+    exists fp, get_owner_loc_footprint_map ph3 fpm = Some (b, ofs, fp).
+
 
 (* The invariant established and preserved by the borrow checking *)
 Record borrow_check_inv ce (live: RegionSet.t) (le: LOrgEnv.t) (svm: sv_map) (fpm: fp_map) : Prop :=
@@ -210,6 +212,7 @@ End ADT_ENV.
 
 Coercion fp_to_sval : footprint >-> sval.
 Coercion fpm_to_svm : fp_map >-> sv_map.
+
 
 (* Old version of the borrow check invariant which contains properties about stacked borrow
 

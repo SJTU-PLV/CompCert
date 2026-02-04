@@ -22,6 +22,34 @@ Require Import RustIRspec.
 Import ListNotations.
 Local Open Scope sep_scope.
 
+
+(* Useful tactic to destruct get_loc_footprint. *)
+
+Ltac destr_fp_box fp H :=
+  destruct fp; try congruence;
+  match type of H with
+  | (if ?not_fp_emp then _ else _) = _  =>      
+      destruct not_fp_emp eqn: ?NOTEMP in H; try congruence
+  end.
+
+
+Ltac destr_fp_enum fp H :=
+  destruct fp; try congruence;
+  destruct ident_eq in H; try congruence; subst.
+
+
+Ltac destr_fp_field fp H :=
+  let A1 := fresh "A" in
+  let A2 := fresh "A" in
+  let p := fresh "p" in
+  let FIND := fresh "FIND" in
+  destruct fp; try congruence;
+  destruct find_field as [p|] eqn: FIND; try congruence;
+  repeat destruct p; simpl in H;
+  exploit find_field_some; eauto; intros A2; subst.
+
+
+
 Definition spure := Separation.pure.
 
 Definition STrue := spure True.
@@ -291,7 +319,13 @@ Implicit Type fpm : fp_map.
 
 (* Definition fenv := PTree.t (block * Z * type). *)
 
-Definition fpm_to_tenv (fpm: fp_map) : typenv := PTree.map1 (fun '(_, _, _, ty, _) => ty) fpm.
+Definition fpm_to_env (fpm: fp_map) : env := 
+  PTree.map_filter1 (fun '(b, _, optr, ty, _) =>
+                       match optr with
+                       | Some r => None
+                       | None => Some (b, ty)
+                       end) fpm.
+
 
 (** Footprint map which records the footprint starting from stack
 blocks (denoted by variable names). It represents the ownership chain
@@ -455,33 +489,33 @@ Fixpoint get_owner_loc_footprint (phl: list projection) (fp: footprint) (b: bloc
 
 (* Why we need this? non-loc version: use it to get some internal
 footprint *)
-Fixpoint get_owner_footprint (phl: list projection) (fp: footprint) : option footprint :=
-  match phl with
-  | nil => Some fp
-  | ph :: l =>
-      match ph, fp with
-      | proj_deref, fp_box b fp1 =>
-          get_owner_footprint l fp1
-      | proj_field fid, fp_struct _ fpl =>
-          match find_field fid fpl with
-          | Some (fofs, fp1) =>
-              get_owner_footprint l fp1
-          | None => None
-          end
-      | proj_field fid, fp_object id obj fpl =>
-          match find_field fid fpl with
-          | Some (b, ofs, fp1) =>
-              get_owner_footprint l fp1
-          | None => None
-          end
-      | proj_downcast fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
-          if ident_eq fid1 fid2 then
-            get_owner_footprint l fp1
-          else
-            None
-      | _, _  => None
-      end
-  end.
+(* Fixpoint get_owner_footprint (phl: list projection) (fp: footprint) : option footprint := *)
+(*   match phl with *)
+(*   | nil => Some fp *)
+(*   | ph :: l => *)
+(*       match ph, fp with *)
+(*       | proj_deref, fp_box b fp1 => *)
+(*           get_owner_footprint l fp1 *)
+(*       | proj_field fid, fp_struct _ fpl => *)
+(*           match find_field fid fpl with *)
+(*           | Some (fofs, fp1) => *)
+(*               get_owner_footprint l fp1 *)
+(*           | None => None *)
+(*           end *)
+(*       | proj_field fid, fp_object id obj fpl => *)
+(*           match find_field fid fpl with *)
+(*           | Some (b, ofs, fp1) => *)
+(*               get_owner_footprint l fp1 *)
+(*           | None => None *)
+(*           end *)
+(*       | proj_downcast fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 => *)
+(*           if ident_eq fid1 fid2 then *)
+(*             get_owner_footprint l fp1 *)
+(*           else *)
+(*             None *)
+(*       | _, _  => None *)
+(*       end *)
+(*   end. *)
 
 Definition get_owner_loc_footprint_map (ps: path) (fpm: fp_map) : option (block * Z * footprint) :=
   let (id, phl) := ps in
@@ -491,11 +525,6 @@ Definition get_owner_loc_footprint_map (ps: path) (fpm: fp_map) : option (block 
   | _ => None
   end.
 
-Definition get_owner_footprint_map (ps: path) (fpm: fp_map) : option footprint :=
-  match get_owner_loc_footprint_map ps fpm with
-  | Some (_, _, fp) => Some fp
-  | None => None
-  end.
 
 (* In our setting, moving from a value is clearing its inner
 footprint. Like RustBelt, for some type [own τ], after moving from a
@@ -517,8 +546,8 @@ Fixpoint clear_footprint_rec (fp: footprint) : footprint :=
 
 
 Definition clear_footprint_map (ps: path) (fpm: fp_map) : option fp_map :=
-  match get_owner_footprint_map ps fpm with
-  | Some fp =>
+  match get_owner_loc_footprint_map ps fpm with
+  | Some (_, _, fp) =>
       set_footprint_map ps (clear_footprint_rec fp) fpm
   | None => None
   end.
@@ -572,31 +601,31 @@ Definition get_owner_path_map (ps: path) (fpm: fp_map) : option path :=
   end.
 
 
-Ltac destr_fp_box fp H :=
-  destruct fp; try congruence;
-  destruct not_fp_emp eqn: ?NOTEMP in H; try congruence.
-
-
-(* Useful tactic to destruct get_loc_footprint *)
-Ltac destr_fp_enum fp H :=
-  destruct fp; try congruence;
-  destruct ident_eq in H; try congruence; subst.
-
-(* Ltac destr_fp_enum_simpl fp := *)
+(* Ltac destr_fp_box fp H := *)
 (*   destruct fp; try congruence; *)
-(*   destruct ident_eq; try congruence; *)
-(*   destruct list_eq_dec; try congruence; *)
-(*   destruct ident_eq; try congruence; subst. *)
+(*   destruct not_fp_emp eqn: ?NOTEMP in H; try congruence. *)
 
-Ltac destr_fp_field fp H :=
-  let A1 := fresh "A" in
-  let A2 := fresh "A" in
-  let p := fresh "p" in
-  let FIND := fresh "FIND" in
-  destruct fp; try congruence;
-  destruct find_field as [p|] eqn: FIND; try congruence;
-  repeat destruct p; simpl in H;
-  exploit find_field_some; eauto; intros A2; subst.
+
+(* (* Useful tactic to destruct get_loc_footprint *) *)
+(* Ltac destr_fp_enum fp H := *)
+(*   destruct fp; try congruence; *)
+(*   destruct ident_eq in H; try congruence; subst. *)
+
+(* (* Ltac destr_fp_enum_simpl fp := *) *)
+(* (*   destruct fp; try congruence; *) *)
+(* (*   destruct ident_eq; try congruence; *) *)
+(* (*   destruct list_eq_dec; try congruence; *) *)
+(* (*   destruct ident_eq; try congruence; subst. *) *)
+
+(* Ltac destr_fp_field fp H := *)
+(*   let A1 := fresh "A" in *)
+(*   let A2 := fresh "A" in *)
+(*   let p := fresh "p" in *)
+(*   let FIND := fresh "FIND" in *)
+(*   destruct fp; try congruence; *)
+(*   destruct find_field as [p|] eqn: FIND; try congruence; *)
+(*   repeat destruct p; simpl in H; *)
+(*   exploit find_field_some; eauto; intros A2; subst. *)
 
 
 (**************** End of footprint functions ********************  *)
@@ -1197,8 +1226,8 @@ Admitted.
 
 (* use it to replace mmatch of the original proofs *)
 Definition move_check_inv (init uninit universe : PathsMap.t) (fpm: fp_map) : Prop :=
-  forall p fp,
-    get_owner_footprint_map (path_of_place p) fpm = Some fp ->
+  forall p b ofs fp,
+    get_owner_loc_footprint_map (path_of_place p) fpm = Some (b, ofs, fp) ->
     must_init init uninit universe p = true ->
     shallow_init fp = true 
     /\ (is_full universe p = true ->
@@ -1207,18 +1236,18 @@ Definition move_check_inv (init uninit universe : PathsMap.t) (fpm: fp_map) : Pr
 (** An important lemma: if a place pass [must_movable] then the
 footprint stored in the path of this place is deeply init. *)
 
-Lemma movable_place_deep_init: forall ce fp fpm p init uninit universe
+Lemma movable_place_deep_init: forall ce b ofs fp fpm p init uninit universe
     (INV: move_check_inv init uninit universe fpm)
     (POWN: must_movable ce init uninit universe p false = true)
-    (PFP: get_owner_footprint_map (path_of_place p) fpm = Some fp),
+    (PFP: get_owner_loc_footprint_map (path_of_place p) fpm = Some (b, ofs, fp)),
     deep_init fp = true.
 Admitted.
 
 (* May be combined with the above lemma *)
-Lemma movable_place_shallow_init: forall ce fp fpm p init uninit universe
+Lemma movable_place_shallow_init: forall ce b ofs fp fpm p init uninit universe
     (INV: move_check_inv init uninit universe fpm)
     (POWN: must_movable ce init uninit universe p true = true)
-    (PFP: get_owner_footprint_map (path_of_place p) fpm = Some fp),
+    (PFP: get_owner_loc_footprint_map (path_of_place p) fpm = Some (b, ofs, fp)),
     shallow_init fp = true.
 Admitted.
 
@@ -1519,16 +1548,14 @@ Admitted.
 (* Proof. *)
 (* Admitted. *)
 
-
-(* Lemma get_owner_loc_footprint_map_sem_wt_split ce: forall phl id b ofs fp mp fpm1 fpm2 *)
-(*       (GFP: get_owner_loc_footprint_map (id, phl) fpm1 = Some (b, ofs, fp)) *)
-(*       (CLR: clear_footprint_map ce (id, phl) fpm1 = Some fpm2) *)
-(*       (COH: coherent_fpm ce fpm1 mp), *)
-(*     exists mp1 mp2, coherent_fpm ce fpm2 mp2 *)
-(*                /\ sem_wt_fp ce fp mp1 *)
-(*                /\ massert_eqv mp (mp2 ** mp1). *)
-(* Proof. *)
-(* Admitted. *)
+(* Used to do memory read in fp *)
+Lemma get_owner_loc_footprint_map_sem_wt_split ce: forall phl id b ofs fp mp fpm1
+      (GFP: get_owner_loc_footprint_map (id, phl) fpm1 = Some (b, ofs, fp))
+      (COH: coherent_fpm ce fpm1 mp),
+    exists mp1 mp2, sem_wt_loc ce fp b ofs mp1
+               /\ massert_eqv mp (mp2 ** mp1).
+Proof.
+Admitted.
 
 
 (************* End of properties of get/set_footprint_map ******************  *)
@@ -2565,3 +2592,5 @@ Definition receive_return_footprint (fpm: fp_map) (l: list path) (retv: footprin
 *) 
 
 End ADT_ENV.
+
+Coercion fpm_to_env : fp_map >-> env.

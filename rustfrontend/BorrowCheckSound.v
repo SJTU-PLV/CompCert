@@ -18,7 +18,7 @@ Require Import RustIRspec RustIRsem.
 Require Import RegionLiveness BorrowCheckDomain.
 Require Import BorrowCheckPolonius BorrowCheck BorrowCheckInv.
 Require Import Wfsimpl.
-Require Import Separation.
+Require Import Separation Listmisc.
 (* use free_list related lemmas *)
 Require SimplLocalsproof.
 
@@ -49,7 +49,7 @@ Variable se: Genv.symtbl.
 Hypothesis VALIDSE: Genv.valid_for (erase_program prog) se.
 Let L := semantics prog se.
 Let ge := globalenv se prog.
-
+Let tge := RustIR.globalenv se prog.
 (* composite environment *)
 Let ce := ge.(genv_cenv).
 
@@ -783,18 +783,20 @@ with match_stacks : RustIRspec.cont -> cont -> fp_frame -> massert -> Prop :=
 different. Note that the drop operation in RustIRspec is a big step
 operation. *)
 Inductive match_drop_cont (f: function) : RustIRspec.cont -> cont -> fp_frame -> massert -> Prop :=
-| match_drop_Kcall: forall nret cfg pc contn brk k e stk maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit live loans_env LoansEnv tk MP
+| match_drop_Kcall: forall nret cfg pc contn brk k e stk maybeInit maybeUninit universe entry fpm fpf mayinit mayuninit live live_st loans_env LoansEnv tk MP
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
     (* The init set and loans environment of the current pc *)
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
     (LOANS_ST: LoansEnv!!pc = LoansEnv.State loans_env)
+    (* We use the liveness information before this pc instead of after this pc *)
+    (LIVE_ST: RegionLiveness.transfer f cfg (regset_fun f) pc (live !! pc) = live_st)
     (* Invariant for continuation *)
     (MCONT: match_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k tk (mk_cfg_kinfo pc contn brk nret) fpf MP)
     (** Invariant of the move checking. *)
     (MCKINV: move_check_inv mayinit mayuninit universe fpm)
     (* Invariant of the borrow checking *)
-    (BORCK_INV: borrow_check_inv ce (live!!pc) loans_env fpm stk),
+    (BORCK_INV: borrow_check_inv ce live_st loans_env fpm stk),
     match_drop_cont f k (Kcall None f e tk) (fpf_func fpm fpf) MP
 | match_Kdropcall: forall k fpf st co ofs b membs id ph fpm fp tk MP
     (CO: ce ! id = Some co)
@@ -808,7 +810,7 @@ Inductive match_drop_cont (f: function) : RustIRspec.cont -> cont -> fp_frame ->
 
 (** TODO: invariant for the borrow checking  *)
 Inductive match_states: RustIRspec.state -> state -> Prop :=
-| match_regular_state: forall f cfg entry maybeInit maybeUninit universe s ts pc next cont brk nret k e m fpm fpf mayinit mayuninit live LoansEnv loans_env bor_stk MP ns tk FMP
+| match_regular_state: forall f cfg entry maybeInit maybeUninit universe s ts pc next cont brk nret k m fpm fpf mayinit mayuninit live live_st LoansEnv loans_env bor_stk MP ns tk FMP
     (* The init and loans-flow analysis results *)
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
@@ -818,6 +820,8 @@ Inductive match_states: RustIRspec.state -> state -> Prop :=
     (* The init set and loans environment of the current pc *)
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
     (LOANS_ST: LoansEnv!!pc = LoansEnv.State loans_env)
+    (* We use the liveness information before this pc instead of after this pc *)
+    (LIVE_ST: RegionLiveness.transfer f cfg (regset_fun f) pc (live !! pc) = live_st)
     (* Invariant for continuation *)
     (CONT: match_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k tk (mk_cfg_kinfo next cont brk nret) fpf FMP)
     (* Invariant of the move checking *)
@@ -825,13 +829,13 @@ Inductive match_states: RustIRspec.state -> state -> Prop :=
     (COHERENT: coherent_fpm ce fpm MP)
     (MPRED: m |= MP ** FMP)            (** Coherent relation between fpm and memory *)
     (* Invariant of the borrow checking *)
-    (BORCK_INV: borrow_check_inv ce (live!!pc) loans_env fpm bor_stk),
+    (BORCK_INV: borrow_check_inv ce live_st loans_env fpm bor_stk),
     (* (ACC: rsw_acc w (rsw sg flat_fp m Hm)) *)
     (* we need to maintain the well-formed invariant of own_env *)
     (* (WFENV: wf_env fpm ce m e) *)
     (* invariant of the own_env *)
     (* (WFOWN: wf_own_env e ce own), *)
-    match_states (RustIRspec.State f s k ns fpm) (State f s tk e m)
+    match_states (RustIRspec.State f s k ns fpm) (State f s tk fpm m)
 (** TODO: since we are proving RustIR simulates RustIRspec, drop semantics in RustIRspec is a big step, so there may be no need to relate dropstate? *)
 | match_dropstate: forall id co fp b ofs st m membs k fpf MP fpm (p: place) FMP tk ns f
     (CO: ce ! id = Some co)
@@ -882,6 +886,202 @@ Inductive match_states: RustIRspec.state -> state -> Prop :=
     (* (ACC: rsw_acc w (rsw sg flat_fp m Hm)), *)
     match_states (RustIRspec.Returnstate sv sparams k) (Returnstate v tk m) 
 .
+
+
+Record wf_fpm (f: function) (externs: list ident) (fpm: fp_map) : Prop :=
+  { wf_fpm_local_vars: forall id ty, 
+      In (id, ty) (f.(fn_params) ++ f.(fn_vars)) ->
+      exists b fp, fpm ! id = Some (b, 0, None, ty, fp);
+
+    wf_fpm_external_vars: forall id,
+      In id externs ->      
+      exists b ofs r ty fp, fpm ! id = Some (b, ofs, Some r, ty, fp);
+
+    wf_fpm_disjoint_local_externs: forall id,
+      In id (field_idents (f.(fn_params) ++ f.(fn_vars))) ->
+      In id externs ->
+      False;
+
+ }.
+
+(** Properties of evaluating place and expressions  *)
+
+Notation get_owner_loc_footprint_map := (@get_owner_loc_footprint_map ame).
+
+Ltac destr_get_fpm fpm id :=
+  let GFP := fresh "GFP" in
+  destruct (fpm ! id) as [((((?b & ?ofs) & ?r) & ?ty) & ?fp)|] eqn: GFP;
+  match goal with
+  | [H : context G [fpm_to_svm fpm] |- _ ] =>
+      setoid_rewrite PTree.gmap1 in H;
+      rewrite GFP in H;
+      simpl in H
+  end.
+
+Ltac destr_path_of_place p :=
+  destruct (path_of_place p) as (?pid & ?phl) eqn: ?POP.
+
+
+Ltac destr_find_field H :=
+  destruct find_field as [?p|] eqn: FIND in H; try congruence.
+
+(* Graph properties of sv_map *)
+
+Lemma get_owner_loc_footprint_map_to_sval: forall ph fpm b ofs fp sv,
+    get_owner_loc_footprint_map ph fpm = Some (b, ofs, fp) ->
+    get_owner_sval_map ph fpm = OK sv ->
+    fp_to_sval fp = sv.
+Admitted.
+
+Lemma get_owner_path_sv_map_inv: forall id phl (svm: sv_map) ph vs,
+    get_owner_path_sv_map (id, phl) svm = OK (ph, vs) ->
+    exists r ty sv, 
+      svm ! id = Some (r, ty, sv)
+      /\ get_owner_path svm (id, nil) phl sv nil = OK (ph, vs).
+Admitted.
+
+
+Ltac inv_get_owner_path_svm H :=
+  let GPH := fresh "GPH" in
+  eapply get_owner_path_sv_map_inv in H as GPH;
+  destruct GPH as (?r & ?ty & ?sv & ?G1 & ?G2).
+
+(* If a path can be reached via (phl1 ++ phl2) then this reachable
+path can be divided into two parts: one is reached from phl1 and one
+is reach from phl2 *)
+Lemma get_owner_path_app_inv: forall phl1 phl2 ph1 ph3 sv1 vs1 vs3 (svm: sv_map),
+    get_owner_path svm ph1 (phl1 ++ phl2) sv1 vs1 = OK (ph3, vs3) ->
+    exists ph2 vs2 sv2,
+      get_owner_path svm ph1 phl1 sv1 vs1 = OK (ph2, vs2) 
+      /\ get_owner_sval_map ph2 svm = OK sv2 
+      /\ get_owner_path svm ph2 phl2 sv2 vs2 = OK (ph3, vs3).
+Admitted.
+
+Ltac inv_get_owner_path_app H :=
+  let GPH := fresh "GPH" in
+  let GPH1 := fresh "GPH1" in
+  let GVAL := fresh "GVAL" in
+  let GPH2 := fresh "GPH2" in
+  eapply get_owner_path_app_inv in H as GPH;
+  destruct GPH as (?ph & ?vs & ?sv & GPH1 & GVAL & GPH2).
+
+Lemma get_owner_sval_map_loc : forall phl id (fpm: fp_map) sv
+    (GET_PH: get_owner_sval_map (id, phl) fpm = OK sv),
+    exists b ofs fp, 
+      get_owner_loc_footprint_map (id, phl) fpm = Some (b, ofs, fp).
+Admitted.
+
+Lemma get_owner_path_sv_map_eval_place: forall (p: place) fpm vs ph m live MP f externs
+    (COH: coherent_fpm ce fpm MP)
+    (MPRED: m |= MP)
+    (FPM_INV: fpm_ref_inv live fpm)
+    (WTP: wt_place fpm ce p)
+    (WF_FPM: wf_fpm f externs fpm)
+    (** TODO: show that regions in p are live *)
+    (LIVE_PH: is_live_path live fpm p = true)
+    (GET_PH: get_owner_path_sv_map p fpm = OK (ph, vs)),
+    exists b ofs fp, 
+      get_owner_loc_footprint_map ph fpm = Some (b, ofs, fp)
+      /\ eval_place ce fpm m p b (Ptrofs.repr ofs).
+Proof.  
+  induction p; intros.
+  - simpl in *. destr_get_fpm fpm i; try congruence. inv GET_PH.
+    simpl. rewrite GFP. exists b, ofs, fp. split; auto.
+    inv WTP.
+    (** TODO: prove that i is a local variable *)
+    admit.
+  - simpl in GET_PH.
+    destr_path_of_place p.
+    inv_get_owner_path_svm GET_PH.
+    inv_get_owner_path_app G2.
+    inv WTP.
+    simpl in LIVE_PH. rewrite POP in LIVE_PH. 
+    exploit IHp. 1-6: eauto.
+    simpl. rewrite G1. eauto.
+    intros (b1 & ofs1 & fp1 & A1 & A2).
+    (* structure of sv0: how to prove that sv0 must not be opaque object? *)
+    simpl in GPH2. destruct sv0; try congruence.
+    destr_find_field GPH2. inv GPH2.
+    exploit get_owner_loc_footprint_map_to_sval; eauto. intros SVEQ.
+    destruct fp1; simpl in SVEQ; inv SVEQ.
+    (* remaining proof: get_owner_loc_footprint_map_app and getting
+    the field offset *)
+    admit.
+    (* We need to prove that p cannot access a field of an object *)
+    admit.
+  (* Pdefer *)
+  - simpl in GET_PH.
+    destr_path_of_place p.
+    inv_get_owner_path_svm GET_PH.
+    inv_get_owner_path_app G2.
+    inv WTP.
+    simpl in LIVE_PH. rewrite POP in LIVE_PH.     
+    exploit IHp; eauto.
+    simpl. rewrite G1. eauto.
+    intros (b1 & ofs1 & fp1 & A1 & A2).
+    (* structure of sv0 *)
+    simpl in GPH2. destruct sv0; try congruence. inv GPH2.
+    (* sv_box *)
+    + exploit get_owner_loc_footprint_map_to_sval; eauto. intros SVEQ.
+      destruct fp1; simpl in SVEQ; inv SVEQ.
+      destruct ph0 as (?id & ?ph).
+      exploit (@get_owner_loc_footprint_map_sem_wt_split ame); eauto.
+      intros (mp1 & mp2 & B1 & B2).
+      inv B1.
+      rewrite B2, EQV in MPRED.
+      exploit load_rule. eapply MPRED. intros (?v & C1 & C2). subst.
+      exists b, 0, fp1. split.
+      (** we should prove that fp1 is not emp. This properties should
+      be implied by dominators_owned *)
+      admit.
+      econstructor; eauto. 
+      (** TODO: prove by wt_footprint? *)
+      assert (PTY: typeof_place p = Tbox t) by admit.
+      rewrite PTY. econstructor. reflexivity.
+      simpl. rewrite Ptrofs.unsigned_repr. eauto. 
+      (* prove by hasvalue *)
+      admit.
+    (* sv_ref *)
+    + exploit get_owner_loc_footprint_map_to_sval; eauto. intros SVEQ.
+      destruct fp1; simpl in SVEQ; inv SVEQ.
+      monadInv GPH2.
+      destruct ph0 as (?id & ?ph).
+      exploit (@get_owner_loc_footprint_map_sem_wt_split ame); eauto.
+      intros (mp1 & mp2 & B1 & B2).
+      destruct ph as (?id & ?ph).
+      (* Use invariant for reference *)
+      exploit (FPM_INV (pid, phl)). simpl. rewrite G1. eauto. eauto.
+      (* live path *)
+      eauto.
+      intros (?fp & GREF).
+      exists b, ofs, fp. split; auto.
+      inv B1.
+      rewrite B2, EQV in MPRED.
+      exploit load_rule. eapply MPRED. intros (?v & C1 & C2). subst.
+      econstructor; eauto. 
+      (** TODO: prove by wt_footprint? *)
+      assert (PTY: exists org, typeof_place p = Treference org mut t) by admit.
+      destruct PTY as (org & PTY).
+      rewrite PTY. econstructor. reflexivity.
+      simpl. rewrite Ptrofs.unsigned_repr. eauto. 
+      admit.
+  (* Pdowncast *)
+  - admit.
+Admitted.
+
+Lemma step_simulation: forall s1 t s2 s1',
+    RustIRspec.step ge s1 t s2 ->
+    match_states s1 s1' ->
+    exists s2', plus RustIRsem.step tge s1' t s2' /\ match_states s2 s2'.
+Proof.
+  intros s1 t s2 s1' STEP MATCH. inv STEP.
+  (* Sassign *)
+  - inv MATCH. inv MCK_STMT. inv BORCK_STMT. inv BORCK_INV.
+    set (live_st := (RegionLiveness.transfer f cfg (regset_fun f) pc live !! pc)) in *.
+    (** how to show that the regions in [e] and [p] are live, so that
+    we can use the borrow check invariant *)
+    
+
 
 
 End BORROW_CHECK.

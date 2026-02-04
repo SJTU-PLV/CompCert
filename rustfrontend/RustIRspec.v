@@ -94,7 +94,7 @@ Inductive sval : Type :=
 
 Definition sv_map := PTree.t (option origin * type * sval).
 
-Coercion svm_to_tenv (svm: sv_map) : typenv := PTree.map1 (fun '(_, ty, _) => ty) svm.
+Definition svm_to_tenv (svm: sv_map) : typenv := PTree.map1 (fun '(_, ty, _) => ty) svm.
 
 (* Operations for sval *)
 
@@ -125,13 +125,21 @@ Inductive sval_casted_list : list sval -> typelist -> Prop :=
 
 (* Operations for the environment *)
 
+Definition sval_not_bot (sv: sval) : bool :=
+  match sv with
+  | sv_bot => false
+  | _ => true
+  end.
+
 Fixpoint get_owner_sval (phl: list projection) (sv: sval) : res sval :=
   match phl with
   | nil => OK sv
   | ph :: l =>
       match ph, sv with
       | proj_deref, sv_box sv1 =>
-          get_owner_sval l sv1
+          if sval_not_bot sv1 then
+            get_owner_sval l sv1
+          else Error nil
       | proj_field fid, sv_struct _ fpl =>
           match find_field fid fpl with
           | Some sv1 =>
@@ -236,9 +244,11 @@ Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval)
               get_owner_path e ph1 l sv1 alias1
           | None => Error nil
           end
-      | proj_downcast _, sv_enum _ _ sv1 =>
-          (* Should we add tag checking here? *)
-          get_owner_path e ph1 l sv1 alias1
+      | proj_downcast fid1, sv_enum _ fid2 sv1 =>
+          if ident_eq fid1 fid2 then
+            get_owner_path e ph1 l sv1 alias1
+          else
+            Error nil
       | proj_deref, sv_ref mut ph2 rebor =>
           do sv2 <- get_owner_sval_map ph2 e;
           (* dynamic computation of reborrow paths based on the
@@ -818,12 +828,12 @@ Section SMALLSTEP.
 Variable ge: genv.
 
 Inductive step : state -> trace -> state -> Prop :=
-| step_assign: forall f e (p: place) m1 m2 m3 ph v v1 ns k vs
-    (EVALP: get_owner_path_sv_map p m1 = OK (ph, vs))
-    (EVALE: eval_expr m1 e = OK (v, m2))
+| step_assign: forall f e (p: place) svm1 svm2 svm3 ph v v1 ns k vs
+    (EVALE: eval_expr svm1 e = OK (v, svm2))
+    (EVALP: get_owner_path_sv_map p svm2 = OK (ph, vs))
     (CAST: sem_cast v (typeof e) (typeof_place p) = OK v1)
-    (ASS: set_sval_map ph v1 m2 = OK m3),
-    step (State f (Sassign p e) k ns m1) E0 (State f Sskip k ns m3)
+    (ASS: set_sval_map ph v1 svm2 = OK svm3),
+    step (State f (Sassign p e) k ns svm1) E0 (State f Sskip k ns svm3)
 | step_assign_variant: forall f e (p: place) k m1 m2 m3 v v1 co fid enum_id orgs ph fty ns vs
     (EVALP: get_owner_path_sv_map p m1 = OK (ph, vs))
     (EVALE: eval_expr m1 e = OK (v, m2))

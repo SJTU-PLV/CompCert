@@ -82,16 +82,18 @@ Definition reg_assign_place (p: place) (rs: RegionSet.t) : RegionSet.t :=
   end.
 
 (* Transfer function *)
+
+Module RegionSetLat := LFSet(RegionSet).
      
 Definition transfer (f: function) (cfg: rustcfg) (generic_regions: RegionSet.t) (pc: node) (after: RegionSet.t) : RegionSet.t :=
   match cfg ! pc with
-  | None => generic_regions
+  | None => RegionSetLat.bot
   | Some (Inop _) => after
   | Some (Icond e _ _) => reg_expr_live e after
   | Some Iend => generic_regions
   | Some (Isel sel _) =>
           match select_stmt f.(fn_body) sel with
-          | None => generic_regions
+          | None => RegionSetLat.bot
           | Some s =>
               match s with
               | Sassign p e
@@ -111,7 +113,7 @@ Definition transfer (f: function) (cfg: rustcfg) (generic_regions: RegionSet.t) 
           end
   end.
 
-Module RegionSetLat := LFSet(RegionSet).
+
 Module DS := Backward_Dataflow_Solver(RegionSetLat)(NodeSetBackward).
 
 Fixpoint live_generic_regions (l: list origin) : RegionSet.t := 
