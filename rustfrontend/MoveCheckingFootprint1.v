@@ -1444,7 +1444,14 @@ Admitted.
 
 
 
-(* A generalization of sem_wt_loc_split *)
+(* A generalization of sem_wt_loc_split.
+
+Difference between this lemma and sem_wt_loc_split: in this lemma, we
+separate the location and its content from the footprint map (see
+sem_wt_loc ce fp2 b2 ofs2 mp2 in the conclusion). We need this because
+we may do memory copy operation for struct/enum. In sem_wt_loc_split,
+we just split the value footprint from the footprint map. This idea
+can be found in the "higher-order representation predicate" paper. *)
 Lemma get_owner_loc_footprint_sem_wt_split ce: forall phl b1 ofs1 b2 ofs2 fp1 fp2 mp
       (* Most of the time (b2,ofs2) is the location to be stored *)
       (GFP: get_owner_loc_footprint phl fp1 b1 ofs1 = Some (b2, ofs2, fp2))
@@ -1452,6 +1459,9 @@ Lemma get_owner_loc_footprint_sem_wt_split ce: forall phl b1 ofs1 b2 ofs2 fp1 fp
       out this location predicate *)      
       (WTLOC: sem_wt_loc ce fp1 b1 ofs1 mp),
     exists mp1 mp1' mp2 fp1', 
+      (* Why we set fp_emp here instead of (clear_footprint_rec fp2),
+      because we want to separate the whole location of (b2, ofs2)
+      instead of just separting its contained value. *)
       set_footprint phl fp_emp fp1 = Some fp1'
       /\ sem_wt_loc ce fp1' b1 ofs1 mp1
       (* separate mp2 from mp *)

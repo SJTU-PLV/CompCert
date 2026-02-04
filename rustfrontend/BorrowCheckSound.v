@@ -957,6 +957,11 @@ Lemma get_owner_path_app_inv: forall phl1 phl2 ph1 ph3 sv1 vs1 vs3 (svm: sv_map)
       /\ get_owner_path svm ph2 phl2 sv2 vs2 = OK (ph3, vs3).
 Admitted.
 
+Lemma get_owner_path_for_owner: forall svm ph sv,
+    get_owner_sval_map ph svm = OK sv ->
+    exists vs, @get_owner_path_sv_map ae ph svm = OK (ph, vs).
+Admitted.
+
 Ltac inv_get_owner_path_app H :=
   let GPH := fresh "GPH" in
   let GPH1 := fresh "GPH1" in
@@ -1068,6 +1073,110 @@ Proof.
   (* Pdowncast *)
   - admit.
 Admitted.
+
+(* Properties of evaluating expression *)
+
+Lemma eval_pexpr_match: forall (pe: pexpr) sv fpm m live MP f externs
+    (COH: coherent_fpm ce fpm MP)
+    (MPRED: m |= MP)
+    (FPM_INV: fpm_ref_inv live fpm)
+    (WF_FPM: wf_fpm f externs fpm)
+    (WTEXPR: wt_pexpr fpm ce pe)
+    (** TODO: show that regions in p are live *)
+    (EVAL: eval_pexpr fpm pe = OK sv),
+    exists v fp mp,
+      Rustlightown.eval_pexpr ce fpm m tge pe v
+      /\ @sem_wt_val ame ce fp v mp
+      /\ massert_eqv mp STrue
+      /\ fp_to_sval fp = sv.
+Proof.  
+Admitted.
+
+(* What is the difference between this lemma and sem_wt_loc_split? *)
+Lemma deref_loc_sem_wt_val: forall fp b ofs mp ty m
+    (WTLOC: sem_wt_loc ce fp b ofs mp)
+    (WTFP: wt_footprint ce ty fp)
+    (MPRED: m |= mp),
+    exists v mp1 mp2, 
+      deref_loc ty m b (Ptrofs.repr ofs) v
+      /\ sem_wt_loc ce (clear_footprint_rec fp) b ofs mp1
+      /\ @sem_wt_val ame ce fp v mp2
+      /\ massert_eqv mp (mp1 ** mp2).
+Admitted.
+
+(* We should write a more general lemma for it? *)
+Lemma clear_footprint_map_coherent: forall id phl fpm1 b ofs fp mp mp1 mp2,
+    get_owner_loc_footprint_map (id, phl) fpm1 = Some (b, ofs, fp) ->
+    coherent_fpm ce fpm1 mp ->
+    sem_wt_fp ce fp mp1 ->
+    massert_eqv mp (mp2 ** mp1) ->
+    exists fpm2, clear_footprint_map (id, phl) fpm1 = Some fpm2
+            /\ coherent_fpm ce fpm2 mp2.
+Admitted.
+
+Lemma eval_expr_match: forall (e: expr) sv fpm1 m live MP f externs svm
+    (COH: coherent_fpm ce fpm1 MP)
+    (MPRED: m |= MP)
+    (FPM_INV: fpm_ref_inv live fpm1)
+    (WF_FPM: wf_fpm f externs fpm1)
+    (WTEXPR: wt_expr fpm1 ce e)
+    (** TODO: show that regions in p are live *)
+    (EVAL: eval_expr fpm1 e = OK (sv, svm)),
+    exists v fp fpm2 mp1 mp2,
+      Rustlightown.eval_expr ce fpm1 m tge e v
+      /\ @sem_wt_val ame ce fp v mp1
+      /\ massert_eqv MP (mp1 ** mp2)
+      /\ coherent_fpm ce fpm2 mp2
+      /\ fpm_to_svm fpm2 = svm
+      /\ fp_to_sval fp = sv.
+Proof.  
+  destruct e; intros.
+  (* moveplace *)
+  - simpl in EVAL.
+    monadInv EVAL. inv WTEXPR.
+    exploit get_owner_path_for_owner; eauto. intros (vs & GPH).
+    exploit get_owner_path_sv_map_eval_place. 1-5: eauto.
+    (* p is live *)
+    admit.
+    eapply GPH.
+    intros (b & ofs & fp & A1 & A2).
+    destr_path_of_place p.
+    exploit (@get_owner_loc_footprint_map_sem_wt_split ame); eauto.
+    intros (mp1 & mp2 & B1 & B2).
+    (* exploit (@sem_wt_loc_split ame). 2: eauto. *)
+    (* we need to prove that fp is not opaque object, i.e., we cannot
+    move from an opaque object *)  
+    (* admit. *)
+    (* intros (mp3 & mp4 & S1 & S2 & S3). *)
+    rewrite B2 in MPRED.
+    exploit deref_loc_sem_wt_val; eauto. instantiate (1 := typeof_place p).
+    admit.
+    eapply MPRED.
+    intros (v & mp3 & mp4 & LOAD & WTLOC1 & WTVAL & MPEQ).
+    rewrite MPEQ in MPRED.
+    (** TODO: sem_wt_val should imply sem_wt_fp  *)
+    assert (SEMFP: sem_wt_fp ce fp mp4) by admit.
+    rewrite MPEQ in B2. rewrite <- sep_assoc in B2.
+    exploit clear_footprint_map_coherent. 1-2: eauto. eapply SEMFP. eapply B2.
+    intros (fpm2 & CLR & COH1).
+    exists v, fp, fpm2, mp4, (mp2 ** mp3).
+    do 3 (try apply conj); eauto.
+    + econstructor. econstructor.
+      eauto. eauto.
+    + rewrite B2. rewrite sep_assoc, <- sep_assoc, sep_comm. reflexivity.
+    + do 3 (try apply conj); eauto.
+      admit. admit.
+  - simpl in EVAL. monadInv EVAL.
+    inv WTEXPR.
+    exploit eval_pexpr_match; eauto.
+    intros (v & fp & mp & EVALP & WTVAL & MPEQ& FPEQ).
+    exists v, fp, fpm1, STrue, MP.
+    do 3 (try apply conj); eauto.
+    + econstructor. auto.
+    + eapply sem_wt_val_eqv. symmetry. eauto. auto.
+    + eapply massert_eqv_pure_l.
+Admitted.      
+
 
 Lemma step_simulation: forall s1 t s2 s1',
     RustIRspec.step ge s1 t s2 ->
