@@ -281,6 +281,48 @@ Check close_c.
 Check close_asm.
 Check closed_forward_simulation_cc_compcert. *)
 
+(*
+Lemma close_c_determinate : forall l,
+    determinate l -> Closed.determinate (close_c l).
+Proof.
+  intros. red in H.
+  generalize (H (Closed.symbolenv (close_c l))).
+  intro HD. inv HD.
+  constructor; intros; eauto.
+  - inv H0. inv H1. destruct H2. destruct H0.
+    assert (x = x0).
+    { inv H1. inv H0. congruence. }
+    subst x0. eauto.
+  - inv H0. destruct H1.
+    red. intros. intro. eapply sd_final_nostep.
+    eauto. eauto.
+  - inv H0. inv H1. destruct H0. destruct H2.
+    exploit sd_final_determ. apply H3. apply H1.
+    intro. subst. inv H2. inv H0.
+    congruence.
+Qed.
+*)
+
+Lemma close_asm_determinate : forall l,
+    determinate l -> Closed.determinate (close_asm l).
+Proof.
+  intros. red in H.
+  generalize (H (Closed.symbolenv (close_asm l))).
+  intro HD. inv HD.
+  constructor; intros; eauto.
+  - inv H0. inv H1. destruct H2. destruct H0.
+    assert (x = x0).
+    { inv H1. inv H0. congruence. }
+    subst x0. eauto.
+  - inv H0. destruct H1.
+    red. intros. intro. eapply sd_final_nostep.
+    eauto. eauto.
+  - inv H0. inv H1. destruct H0. destruct H2.
+    exploit sd_final_determ. apply H3. apply H1.
+    intro. subst. inv H2. inv H0.
+    congruence.
+Qed.
+
 Corollary transf_fsim_single : forall p tp,
     transf_clight_program p = OK tp ->
     Closed.forward_simulation (close_c (Clight.semantics1 p)) (close_asm (Asm.semantics tp)).

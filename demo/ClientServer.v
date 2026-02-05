@@ -158,6 +158,54 @@ Proof.
   eapply link2.
 Qed.
 
+
+Require Import SmallstepClosed  ClosedForward.
+
+Theorem closed_fsim_2: Closed.forward_simulation (close_c top_spec2) (close_asm (Asm.semantics tp2)).
+Proof.
+  eapply closed_forward_simulation_cc_compcert; eauto.
+  apply spec_sim_2.
+Qed.
+
+Theorem back_sim_2: backward_simulation cc_compcert cc_compcert top_spec2 (Asm.semantics tp2).
+Proof.
+  apply forward_to_backward_simulation. apply spec_sim_2.
+  - econstructor; intros. inv H0.
+    + exists s1. eauto.
+    + inv H.
+    + inv H.
+    + inv H.
+    + inv H.
+    + econstructor; eauto. inv H; simpl; eauto.
+  - eapply Asm.semantics_determinate.
+Qed.
+
+Theorem closed_bsim_2: Closed.backward_simulation (close_c top_spec2) (close_asm (Asm.semantics tp2)).
+Proof.
+  Locate forward_to_backward_simulation.
+  apply Closed.forward_to_backward_simulation.
+  apply closed_fsim_2.
+  - constructor; intros.
+    + inv H; inv H0.
+      -- eexists. econstructor; eauto.
+      -- eexists. econstructor; eauto.
+      -- eexists. econstructor; eauto.
+      -- eexists. econstructor; eauto.
+    + constructor. inv H; simpl; eauto.
+  - eapply close_asm_determinate. eapply Asm.semantics_determinate.
+Qed.
+
+Require Import Behaviors.
+
+Theorem BehRef_2: forall beh,
+      program_behaves (close_asm (Asm.semantics tp2)) beh ->
+      exists beh', program_behaves (close_c top_spec2) beh' /\ behavior_improves beh' beh.
+Proof.
+  eapply backward_simulation_behavior_improves; eauto.
+  eapply closed_bsim_2.
+Qed.
+
+
 End SPEC.
 
 
