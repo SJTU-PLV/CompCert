@@ -49,19 +49,8 @@ Definition transl_composite_def (* (union_map: PTree.t (ident * attr)) *) (co: c
   | Composite id Struct ms _ _ =>
       Some (Ctypes.Composite id Ctypes.Struct (map transl_composite_member ms) noattr, None)
   | Composite id TaggedUnion ms _ _ =>
-      (* generate a Struct with two fields, one for the tag field and
-      the other for the union *)
-      let '(union_id, tag_fid, union_fid) := create_union_idents id in
-      let tag_member := Ctypes.Member_plain tag_fid Ctypes.type_int32s in
-      (* check the inequality between tag_fid and union_fid *)
-      if ident_eq tag_fid union_fid then
-        None
-      else
-        (* generate the union *)
-        (** TODO: specify the attr  *)
-        let union := (Ctypes.Composite union_id Union (map transl_composite_member ms) noattr) in
-        let union_member := Ctypes.Member_plain union_fid (Tunion union_id noattr) in     
-        Some (Ctypes.Composite id Ctypes.Struct (tag_member :: union_member :: nil) noattr, Some union)
+      (* C union *)
+      Some (Ctypes.Composite id Ctypes.Union (map transl_composite_member ms) noattr, None)
   end.
 
 
@@ -515,6 +504,17 @@ Fixpoint place_to_cexpr (p: place): res Clight.expr :=
               do e <- place_to_cexpr p';
               OK (Efield e fid (to_ctype ty))
             | _ => Error [CTX id; MSG ": it is not a correct struct"]
+            end
+        | _ => Error [CTX id; MSG ": Cannot find its composite in Rust composite environment : place_to_cexpr"]
+        end
+      | Tvariant _ id =>
+        match ce!id with
+        | Some co =>
+            match co.(co_sv) with
+            | TaggedUnion =>
+              do e <- place_to_cexpr p';
+              OK (Efield e fid (to_ctype ty))
+            | _ => Error [CTX id; MSG ": it is not a correct union"]
             end
         | _ => Error [CTX id; MSG ": Cannot find its composite in Rust composite environment : place_to_cexpr"]
         end

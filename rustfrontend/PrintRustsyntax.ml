@@ -731,9 +731,9 @@ let rec print_value_with_inits ty p il =
             in
             loop false next tl
       in
-      let _consumed = loop true field_inits fields in
+      let remaining = loop true field_inits fields in
       fprintf p "@;<0 -2>}";
-      []
+      remaining
   | Rusttypes.Traw_pointer(_, elem_ty) ->
       (* 处理指针字段的地址常量初始化（如 char* 指向字符串常量） *)
       (match il with
@@ -1004,22 +1004,44 @@ let define_composite p (Composite(id, su, m, orgs, rels)) =
         (extern_atom id) (print_origins orgs) (origin_relations_string rels);
       List.iter (fun member -> fprintf p "@,%a" print_member member) m;
       fprintf p "@;<0 -2>}@]@ @ ";
-      if need_manual_default then begin
-        fprintf p "@[<v 2>impl Default for %s%s %s {@ "
-          (extern_atom id) (print_origins orgs) (origin_relations_string rels);
-        fprintf p "fn default() -> Self {@ ";
-        fprintf p "@[<v 2>Self {@ ";
-        List.iter
-          (fun (fname, fty) ->
-             let ty_name = name_rust_type fty in
-             let expr =
-               if String.length ty_name >= 13 && String.sub ty_name 0 13 = "extern \"C\" fn"
-               then Printf.sprintf "unsafe { std::mem::MaybeUninit::<%s>::zeroed().assume_init() }" ty_name
-               else default_expr_for_type fty
-             in
-             fprintf p "@,%s: %s," fname expr)
-          fields;
-        fprintf p "@;<0 -2>}@]@ ";
-        fprintf p "}@;<0 -2>}@]@ @ "
-      end
+      (match su with
+       | Rusttypes.Struct ->
+           if need_manual_default then begin
+             fprintf p "@[<v 2>impl Default for %s%s %s {@ "
+               (extern_atom id) (print_origins orgs) (origin_relations_string rels);
+             fprintf p "fn default() -> Self {@ ";
+             fprintf p "@[<v 2>Self {@ ";
+             List.iter
+               (fun (fname, fty) ->
+                  let ty_name = name_rust_type fty in
+                  let expr =
+                    if String.length ty_name >= 13 && String.sub ty_name 0 13 = "extern \"C\" fn"
+                    then Printf.sprintf "unsafe { std::mem::MaybeUninit::<%s>::zeroed().assume_init() }" ty_name
+                    else default_expr_for_type fty
+                  in
+                  fprintf p "@,%s: %s," fname expr)
+               fields;
+             fprintf p "@;<0 -2>}@]@ ";
+             fprintf p "}@;<0 -2>}@]@ @ "
+           end
+       | Rusttypes.TaggedUnion ->
+           (* Rust union 不支持 derive(Default)，但 C 代码里经常需要“有个初值”来满足
+              Rust 的 definite-init（随后立刻写入某个 union 字段）。这里统一为 union
+              生成一个 Default：选择第一个字段作为 active field，并用其零值初始化。 *)
+           (match m with
+            | Member_plain(fid, fty) :: _ ->
+                let field_name = extern_atom fid in
+                let expr =
+                  let ty_name = name_rust_type fty in
+                  if String.length ty_name >= 13 && String.sub ty_name 0 13 = "extern \"C\" fn"
+                  then Printf.sprintf "unsafe { std::mem::MaybeUninit::<%s>::zeroed().assume_init() }" ty_name
+                  else default_expr_for_type fty
+                in
+	                fprintf p "@[<v 2>impl Default for %s%s %s {@ "
+	                  (extern_atom id) (print_origins orgs) (origin_relations_string rels);
+	                fprintf p "fn default() -> Self {@ ";
+	                fprintf p "Self { %s: %s }" field_name expr;
+	                fprintf p "}@;<0 -2>}@]@ @ "
+	            | [] ->
+	                () ))
   | _ -> ()

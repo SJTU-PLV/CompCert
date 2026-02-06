@@ -247,8 +247,8 @@ Fixpoint to_ctype (ty: type) : Ctypes.type :=
   | Tlong si => Ctypes.Tlong si noattr
   | Tfloat fz => Ctypes.Tfloat fz noattr
   | Tstruct _ id  => Ctypes.Tstruct id noattr
-  (* variant = Struct {tag: .. ; f: union} *)
-  | Tvariant _ id => Ctypes.Tstruct id noattr
+  (* C union *)
+  | Tvariant _ id => Ctypes.Tunion id noattr
   | Treference _ _ ty
   | Traw_pointer _ ty
   | Tslice _ ty _

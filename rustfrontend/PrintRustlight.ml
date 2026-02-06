@@ -29,6 +29,11 @@ let is_ptr_like_type ty =
   | Rusttypes.Traw_pointer(_, _) -> true
   | _ -> false
 
+let is_function_type ty =
+  match ty with
+  | Rusttypes.Tfunction(_, _, _, _, _) -> true
+  | _ -> false
+
 let pointed_type ty =
   match ty with
   | Rusttypes.Tslice(_, elem_ty, _) -> Some elem_ty
@@ -97,11 +102,13 @@ let precedence' = function
   | Ebinop((Omul|Odiv|Omod), _, _, _) -> (13, LtoR)
   | Ebinop((Oadd|Osub), _, _, _) -> (12, LtoR)
   | Ebinop((Oshl|Oshr), _, _, _) -> (11, LtoR)
-  | Ebinop((Olt|Ogt|Ole|Oge), _, _, _) -> (10, LtoR)
-  | Ebinop((Oeq|Cop.One), _, _, _) -> (9, LtoR)
-  | Ebinop(Oand, _, _, _) -> (8, LtoR)
-  | Ebinop(Oxor, _, _, _) -> (7, LtoR)
-  | Ebinop(Oor, _, _, _) -> (6, LtoR)
+  (* Rust 的运算符优先级与 C 不同：位运算 (& ^ |) 高于比较运算 (== != < <= > >=)。
+     这里必须按 Rust 规则设置，否则会出现 `a != 18 & true` 这类被解析成
+     `a != (18 & true)` 的类型错误/语义错误。 *)
+  | Ebinop(Oand, _, _, _) -> (10, LtoR)
+  | Ebinop(Oxor, _, _, _) -> (9, LtoR)
+  | Ebinop(Oor, _, _, _) -> (8, LtoR)
+  | Ebinop((Olt|Ogt|Ole|Oge|Oeq|Cop.One), _, _, _) -> (7, LtoR)
   | Eplace(_, _) -> (16,NA)
   | Ecktag(_, _) -> (15, RtoL)
   | Eref(_, _, _, _) -> (15, RtoL)
@@ -455,6 +462,11 @@ and pexpr p (prec, e) =
              fprintf p "Ptr::null()"
            else
              fprintf p "%ld" (camlint_of_coqint n)
+       | Rusttypes.Tint(Ctypes.IBool, _) ->
+           if Int32.compare (camlint_of_coqint n) 0l = 0 then
+             fprintf p "false"
+           else
+             fprintf p "true"
        | Rusttypes.Tint(I32, Unsigned) ->
            fprintf p "%lu_u32" (camlint_of_coqint n)
        | _ ->
@@ -678,6 +690,8 @@ and pexpr p (prec, e) =
       in
       let ty_is_pointer = is_pointer_type ty in
       let ty_is_int = is_integer_type ty in
+      let ty_is_fn = is_function_type ty in
+      let ty_name = name_rust_type ty in
       if ty_is_slice && is_zero_pointer_literal pe then
         let elem_ty =
           match pointed_type ty with
@@ -693,7 +707,16 @@ and pexpr p (prec, e) =
         in
         fprintf p "Ptr::<%s>::null()" elem_ty
       else
+      (* 函数类型之间的转换，统一使用 Rust 的 `as`，避免调用 Ptr::cast *)
+      if (String.length ty_name >= 6 && String.sub ty_name 0 6 = "extern") then
+        fprintf p "(%a as %s)" pexpr (prec', pe) ty_name
+      else
       let pe_ty = type_of_pexpr pe in
+      let pe_is_fn = is_function_type pe_ty in
+      if ty_is_fn || pe_is_fn then
+        (* 函数类型之间的转换用 as，不要使用 Ptr::cast *)
+        fprintf p "(%a as %s)" pexpr (prec', pe) (name_rust_type ty)
+      else
       (match ty, pe_ty with
        | Rusttypes.Tslice(_, elem_ty, _), Rusttypes.Tslice(_, _, _) ->
            fprintf p "unsafe { (%a).cast::<%s>() }" pexpr (0, pe) (name_rust_type elem_ty)
@@ -902,25 +925,37 @@ let print_pointer_assignment_value place_ty p (expr: expr) =
       (match array_place_from_expr expr with
        | Some place ->
            fprintf p "Ptr::from_ref(&mut %a[..])" print_place place
-       | None ->
-           let expr_ty = type_of_expr expr in
+        | None ->
+            let expr_ty = type_of_expr expr in
+           let dest_ty_name = name_rust_type place_ty in
+           let dest_is_fn_name =
+             String.length dest_ty_name >= 6 && String.sub dest_ty_name 0 6 = "extern"
+           in
+           let dest_points_to_fn =
+             match pointed_type place_ty with
+             | Some elem_ty -> is_function_type elem_ty
+             | None -> false
+           in
            if is_pointer_type place_ty && is_pointer_type expr_ty then
-             (match pointed_type place_ty with
-              | Some elem_ty ->
-                  let needs_cast =
-                    match pointed_type expr_ty with
-                    | Some src_elem ->
-                        name_rust_type src_elem <> name_rust_type elem_ty
-                    | None -> true
-                  in
-                  if needs_cast then
-                    fprintf p "unsafe { (%a).cast::<%s>() }"
-                      print_expr expr
-                      (name_rust_type elem_ty)
-                  else
-                    print_expr p expr
-              | None ->
-                  print_expr p expr)
+             if dest_is_fn_name || dest_points_to_fn then
+               fprintf p "(%a as %s)" print_expr expr dest_ty_name
+             else
+               (match pointed_type place_ty with
+                | Some elem_ty ->
+                    let needs_cast =
+                      match pointed_type expr_ty with
+                      | Some src_elem ->
+                          name_rust_type src_elem <> name_rust_type elem_ty
+                      | None -> true
+                    in
+                    if needs_cast then
+                      fprintf p "unsafe { (%a).cast::<%s>() }"
+                        print_expr expr
+                        (name_rust_type elem_ty)
+                    else
+                      print_expr p expr
+                | None ->
+                    print_expr p expr)
            else
              print_expr p expr)
 
@@ -945,13 +980,13 @@ let rec print_expr_list_with_type p (first, exprs, param_tys, is_c_function) =
       (match ty with
        | Rusttypes.Tslice(_, target_elem, origin) ->
            let print_base fmt = print_ptr_argument fmt origin r in
-           (match target_elem with
-            | Rusttypes.Tvoid ->
-                fprintf p "unsafe { (%t).cast::<%s>() }" print_base (name_rust_type target_elem)
-            | _ ->
-                fprintf p "unsafe { (%t).cast::<%s>() }"
-                  print_base
-                  (name_rust_type target_elem))
+           if is_function_type target_elem then
+             (* 函数指针不是 Ptr<T>，不要打印 Ptr::cast；直接依赖 Rust 的函数项到函数指针强制转换 *)
+             fprintf p "%t" print_base
+           else
+             fprintf p "unsafe { (%t).cast::<%s>() }"
+               print_base
+               (name_rust_type target_elem)
        | _ ->
            (* Check if we MUST add .as_mut_ptr() for C FFI compatibility *)
            let needs_ptr_conversion = is_c_function && (
@@ -1568,7 +1603,22 @@ let rec print_stmt p (s: Rustlight.statement) =
              else
                print_malloc_assignment p v info
          | None ->
-             fprintf p "@[<hv 2>/* Error: could not parse malloc parameter */@]")
+             (* Fallback: treat argument as raw byte length, allocate u8 buffer and cast *)
+             let dest_ty = resolved_place_type v in
+             let dest_elem_ty_opt = pointed_type dest_ty in
+             let alloc_elem_name, cast_target_name =
+               match dest_elem_ty_opt with
+               | Some Rusttypes.Tvoid -> ("u8", "std::ffi::c_void")
+               | Some ty -> let nm = name_rust_type ty in (nm, nm)
+               | None -> ("u8", "u8")
+             in
+             fprintf p "@[<hv 2>%a =@ Ptr::<%s>::alloc((%a) as usize)" print_place v alloc_elem_name print_expr param;
+             (match dest_elem_ty_opt with
+              | Some ty when name_rust_type ty <> alloc_elem_name ->
+                  fprintf p ".cast::<%s>()" (name_rust_type ty)
+              | Some Rusttypes.Tvoid -> fprintf p ".cast::<%s>()" cast_target_name
+              | _ -> ());
+             fprintf p ";@]")
     | Some "malloc", _ ->
         fprintf p "@[<hv 2>/* 错误：malloc参数数量错误 */@]"
     | Some "free", arg :: _ ->
@@ -2133,8 +2183,8 @@ let print_program p (prog: Rustlight.program) =
   (* Don't print forward declarations - Rust doesn't support them *)
   (* List.iter (PrintRustsyntax.declare_composite p) prog.Rusttypes.prog_types; *)
   (* Add placeholder for commonly undefined system types *)
-  fprintf p "#[path = \"runtime/ptr.rs\"]@ mod ptr;@ use ptr::*;@ ";
-  fprintf p "#[path = \"runtime/callback.rs\"]@ mod callback;@ ";
+  fprintf p "#[path = \"/Users/yaodongdong/WorkPlace/project/Compcert/runtime/ptr.rs\"]@ mod ptr;@ use ptr::*;@ ";
+  fprintf p "#[path = \"/Users/yaodongdong/WorkPlace/project/Compcert/runtime/callback.rs\"]@ mod callback;@ ";
   fprintf p "pub struct __sFILEX;@ ";
   List.iter (PrintRustsyntax.define_composite p) prog.Rusttypes.prog_types;
   List.iter (print_globdecl p) prog.Rusttypes.prog_defs;
