@@ -80,7 +80,7 @@ checking *)
 
 Let LOANS_AN : Type := (PMap.t RegionSet.t * PMap.t LoansEnv.t).
 
-Let borrow_check_stmt (ae: LOANS_AN) regs f cfg s ts := match_stmt (get_borck_result regs f cfg) ae (borrow_check_stmt f) borrow_check_cond_expr f.(fn_body) cfg s ts.    
+Let borrow_check_stmt_rel (ae: LOANS_AN) regs f cfg s ts := match_stmt (get_borck_result regs f cfg) ae (borrow_check_stmt f) borrow_check_cond_expr f.(fn_body) cfg s ts.    
     
 
 (*********** Properties for the evaluation of place and expression ****************** *)
@@ -725,6 +725,23 @@ prove wt_path/footprint for the place in drop_place_state *)
 (************* End of Unused Dropplace/Kdropplace invariant *)
 
 
+Record wf_fpm (f: function) (externs: list ident) (fpm: fp_map) : Prop :=
+  { wf_fpm_local_vars: forall id ty, 
+      In (id, ty) (f.(fn_params) ++ f.(fn_vars)) ->
+      exists b fp, fpm ! id = Some (b, 0, None, ty, fp);
+
+    wf_fpm_external_vars: forall id,
+      In id externs ->      
+      exists b ofs r ty fp, fpm ! id = Some (b, ofs, Some r, ty, fp);
+
+    wf_fpm_disjoint_local_externs: forall id,
+      In id (field_idents (f.(fn_params) ++ f.(fn_vars))) ->
+      In id externs ->
+      False;
+
+ }.
+
+
 (* soundness of continuation: the execution of current function cannot
 modify the footprint maintained by the continuation *)
 
@@ -738,13 +755,13 @@ Inductive match_cont: INIT_AN -> LOANS_AN -> function -> rustcfg -> RustIRspec.c
     match_cont init_an loans_an f cfg RustIRspec.Kstop Kstop (mk_cfg_kinfo nret None None nret) fpf_emp STrue
 | match_Kseq: forall init_an loans_an f cfg s ts k pc next cont brk nret fpf tk MP
     (MCK_STMT: move_check_stmt init_an f.(fn_body) cfg s ts (mk_cfg_info pc next cont brk nret))
-    (BORCK_STMT: borrow_check_stmt loans_an (regset_fun f) f cfg s ts (mk_cfg_info pc next cont brk nret))
+    (BORCK_STMT: borrow_check_stmt_rel loans_an (regset_fun f) f cfg s ts (mk_cfg_info pc next cont brk nret))
     (MCONT: match_cont init_an loans_an f cfg k tk (mk_cfg_kinfo next cont brk nret) fpf MP),
     match_cont init_an loans_an f cfg (RustIRspec.Kseq s k) (Kseq s tk) (mk_cfg_kinfo pc cont brk nret) fpf MP
 | match_Kloop: forall init_an loans_an f cfg s ts k body_start loop_jump_node exit_loop nret contn brk fpf tk MP
     (START: cfg ! loop_jump_node = Some (Inop body_start))
     (MCK_STMT: move_check_stmt init_an f.(fn_body) cfg s ts (mk_cfg_info body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret))
-    (BORCK_STMT: borrow_check_stmt loans_an (regset_fun f) f cfg s ts (mk_cfg_info body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret))
+    (BORCK_STMT: borrow_check_stmt_rel loans_an (regset_fun f) f cfg s ts (mk_cfg_info body_start loop_jump_node (Some loop_jump_node) (Some exit_loop) nret))
     (MCONT: match_cont init_an loans_an f cfg k tk (mk_cfg_kinfo exit_loop contn brk nret) fpf MP),
     match_cont init_an loans_an f cfg (RustIRspec.Kloop s k) (Kloop s tk) (mk_cfg_kinfo loop_jump_node (Some loop_jump_node) (Some exit_loop) nret) fpf MP
 | match_Kcall: forall init_an loans_an f1 cfg k nret f2 e p fpf ns svm tk phl MP
@@ -810,16 +827,19 @@ Inductive match_drop_cont (f: function) : RustIRspec.cont -> cont -> fp_frame ->
 
 (** TODO: invariant for the borrow checking  *)
 Inductive match_states: RustIRspec.state -> state -> Prop :=
-| match_regular_state: forall f cfg entry maybeInit maybeUninit universe s ts pc next cont brk nret k m fpm fpf mayinit mayuninit live live_st LoansEnv loans_env bor_stk MP ns tk FMP
+| match_regular_state: forall f cfg entry maybeInit maybeUninit universe s ts pc next cont brk nret k m fpm fpf mayinit mayuninit live live_st LoansEnv loans_env loans_env1 MP ns tk FMP
     (* The init and loans-flow analysis results *)
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
     (* The result of move checking and borrow checking *)
     (MCK_STMT: move_check_stmt (maybeInit, maybeUninit, universe) f.(fn_body) cfg s ts (mk_cfg_info pc next cont brk nret))
-    (BORCK_STMT: borrow_check_stmt (live, LoansEnv) (regset_fun f) f cfg s ts (mk_cfg_info pc next cont brk nret))
+    (BORCK_STMT: borrow_check_stmt_rel (live, LoansEnv) (regset_fun f) f cfg s ts (mk_cfg_info pc next cont brk nret))
     (* The init set and loans environment of the current pc *)
     (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
     (LOANS_ST: LoansEnv!!pc = LoansEnv.State loans_env)
+    (* The invariant is defined on the a variant of loans_env whose
+    dead region has been removed *)
+    (KILL: loans_env1 = (LOrgEnv.apply_liveness live_st loans_env))
     (* We use the liveness information before this pc instead of after this pc *)
     (LIVE_ST: RegionLiveness.transfer f cfg (regset_fun f) pc (live !! pc) = live_st)
     (* Invariant for continuation *)
@@ -829,7 +849,8 @@ Inductive match_states: RustIRspec.state -> state -> Prop :=
     (COHERENT: coherent_fpm ce fpm MP)
     (MPRED: m |= MP ** FMP)            (** Coherent relation between fpm and memory *)
     (* Invariant of the borrow checking *)
-    (BORCK_INV: borrow_check_inv ce live_st loans_env fpm bor_stk),
+    (BORCK_INV: borrow_check_inv ce live_st loans_env1 fpm fpm)
+    (WFENV: wf_fpm f ns fpm),
     (* (ACC: rsw_acc w (rsw sg flat_fp m Hm)) *)
     (* we need to maintain the well-formed invariant of own_env *)
     (* (WFENV: wf_env fpm ce m e) *)
@@ -887,22 +908,6 @@ Inductive match_states: RustIRspec.state -> state -> Prop :=
     match_states (RustIRspec.Returnstate sv sparams k) (Returnstate v tk m) 
 .
 
-
-Record wf_fpm (f: function) (externs: list ident) (fpm: fp_map) : Prop :=
-  { wf_fpm_local_vars: forall id ty, 
-      In (id, ty) (f.(fn_params) ++ f.(fn_vars)) ->
-      exists b fp, fpm ! id = Some (b, 0, None, ty, fp);
-
-    wf_fpm_external_vars: forall id,
-      In id externs ->      
-      exists b ofs r ty fp, fpm ! id = Some (b, ofs, Some r, ty, fp);
-
-    wf_fpm_disjoint_local_externs: forall id,
-      In id (field_idents (f.(fn_params) ++ f.(fn_vars))) ->
-      In id externs ->
-      False;
-
- }.
 
 (** Properties of evaluating place and expressions  *)
 
@@ -979,7 +984,7 @@ Admitted.
 Lemma get_owner_path_sv_map_eval_place: forall (p: place) fpm vs ph m live MP f externs
     (COH: coherent_fpm ce fpm MP)
     (MPRED: m |= MP)
-    (FPM_INV: fpm_ref_inv live fpm)
+    (FPM_INV: fpm_ref_loc_inv live fpm)
     (WTP: wt_place fpm ce p)
     (WF_FPM: wf_fpm f externs fpm)
     (** TODO: show that regions in p are live *)
@@ -1058,7 +1063,7 @@ Proof.
       exploit (FPM_INV (pid, phl)). simpl. rewrite G1. eauto. eauto.
       (* live path *)
       eauto.
-      intros (?fp & GREF).
+      intros (?fp & GREF & DEEP_OWN).
       exists b, ofs, fp. split; auto.
       inv B1.
       rewrite B2, EQV in MPRED.
@@ -1079,7 +1084,7 @@ Admitted.
 Lemma eval_pexpr_match: forall (pe: pexpr) sv fpm m live MP f externs
     (COH: coherent_fpm ce fpm MP)
     (MPRED: m |= MP)
-    (FPM_INV: fpm_ref_inv live fpm)
+    (FPM_INV: fpm_ref_loc_inv live fpm)
     (WF_FPM: wf_fpm f externs fpm)
     (WTEXPR: wt_pexpr fpm ce pe)
     (** TODO: show that regions in p are live *)
@@ -1114,20 +1119,22 @@ Lemma clear_footprint_map_coherent: forall id phl fpm1 b ofs fp mp mp1 mp2,
             /\ coherent_fpm ce fpm2 mp2.
 Admitted.
 
-Lemma eval_expr_match: forall (e: expr) sv fpm1 m live MP f externs svm
+Lemma eval_expr_match: forall (e: expr) sv fpm1 m live MP f externs svm2
     (COH: coherent_fpm ce fpm1 MP)
     (MPRED: m |= MP)
-    (FPM_INV: fpm_ref_inv live fpm1)
+    (FPM_INV: fpm_ref_loc_inv live fpm1)
     (WF_FPM: wf_fpm f externs fpm1)
     (WTEXPR: wt_expr fpm1 ce e)
     (** TODO: show that regions in p are live *)
-    (EVAL: eval_expr fpm1 e = OK (sv, svm)),
+    (EVAL: eval_expr fpm1 e = OK sv)
+    (MOVEP: move_place_option fpm1 (moved_place e) = OK svm2),
     exists v fp fpm2 mp1 mp2,
       Rustlightown.eval_expr ce fpm1 m tge e v
+      /\ move_place_option_fpm fpm1 (moved_place e) = Some fpm2
       /\ @sem_wt_val ame ce fp v mp1
       /\ massert_eqv MP (mp1 ** mp2)
       /\ coherent_fpm ce fpm2 mp2
-      /\ fpm_to_svm fpm2 = svm
+      /\ fpm_to_svm fpm2 = svm2
       /\ fp_to_sval fp = sv.
 Proof.  
   destruct e; intros.
@@ -1160,22 +1167,39 @@ Proof.
     exploit clear_footprint_map_coherent. 1-2: eauto. eapply SEMFP. eapply B2.
     intros (fpm2 & CLR & COH1).
     exists v, fp, fpm2, mp4, (mp2 ** mp3).
-    do 3 (try apply conj); eauto.
+    do 4 (try apply conj); eauto.
     + econstructor. econstructor.
       eauto. eauto.
+    (** TODO: we should consider valid_owner in clear_footprint_map_coherent  *)
+    + simpl. admit.
     + rewrite B2. rewrite sep_assoc, <- sep_assoc, sep_comm. reflexivity.
     + do 3 (try apply conj); eauto.
       admit. admit.
   - simpl in EVAL. monadInv EVAL.
-    inv WTEXPR.
+    inv WTEXPR. inv MOVEP.
     exploit eval_pexpr_match; eauto.
     intros (v & fp & mp & EVALP & WTVAL & MPEQ& FPEQ).
     exists v, fp, fpm1, STrue, MP.
-    do 3 (try apply conj); eauto.
+    do 4 (try apply conj); eauto.
     + econstructor. auto.
     + eapply sem_wt_val_eqv. symmetry. eauto. auto.
     + eapply massert_eqv_pure_l.
 Admitted.      
+
+(* moving from a place preserves the borrow checking invariant
+under the successful checking. But what is the effect of checking
+for pure expr? *)
+Lemma eval_expr_preserve_borchk_inv: forall fpm1 fpm2 e live le
+    (MOVE_FPM: move_place_option_fpm fpm1 (moved_place e) = Some fpm2)
+    (BORCHK_INV: @borrow_check_inv ame ce live le fpm1 fpm1)
+    (CHECK: check_expr le e = OK tt),
+    @borrow_check_inv ame ce live le fpm2 fpm2.
+Admitted.
+
+Ltac simpl_getIM IM :=
+  generalize IM as IM1; intros;
+  inversion IM1 as [? | ? | ? ? GETINIT GETUNINIT]; subst;
+  try rewrite <- GETINIT in *; try rewrite <- GETUNINIT in *.
 
 
 Lemma step_simulation: forall s1 t s2 s1',
@@ -1185,12 +1209,47 @@ Lemma step_simulation: forall s1 t s2 s1',
 Proof.
   intros s1 t s2 s1' STEP MATCH. inv STEP.
   (* Sassign *)
-  - inv MATCH. inv MCK_STMT. inv BORCK_STMT. inv BORCK_INV.
+  - inv MATCH. inv MCK_STMT. inv BORCK_STMT.
+    (* unfold move check and borrow check result. TODO: write ltac for these *)
+    simpl in TR. simpl_getIM IM.
+    destruct (move_check_expr ce mayinit mayuninit universe e) eqn: MOVE1; try congruence.
+    unfold move_check_expr in MOVE1.
+    destruct (move_check_expr' ce mayinit mayuninit universe e) eqn: MOVECKE; try congruence.
+    destruct p0 as (mayinit' & mayuninit').
+    destruct (move_check_assign mayinit' mayuninit' universe p) eqn: MOVE2; try congruence.
+    inv TR.
+    simpl in TR0. rewrite LOANS_ST in TR0. 
+    unfold borrow_check_stmt, borrow_check_stmt_aux, check_assignment in TR0.
+    monadInv TR0. monadInv EQ.
+    rename EQ0 into BORCK_EXPR. rename EQ1 into BORCKP.
+    (* end of unfold *)
     set (live_st := (RegionLiveness.transfer f cfg (regset_fun f) pc live !! pc)) in *.
+    set (loans_env1 := (LOrgEnv.apply_liveness live_st loans_env)) in *.
+    assert (LIVE_EQ: live_st = reg_expr_live e (reg_assign_place p (live!!pc))).
+    { unfold live_st. unfold RegionLiveness.transfer. rewrite SEL.
+      rewrite STMT. reflexivity. }
     (** how to show that the regions in [e] and [p] are live, so that
     we can use the borrow check invariant *)
+    (* evaluate expr *)
+    exploit eval_expr_match. eauto. eapply MPRED. 
+    eapply BORCK_INV. all: eauto. admit.
+    intros (tv & tfp & fpm2 & mp1 & mp2 & TEVAL & FPMEQ & WTVAL & MEQ1 & COH1 & A1 & A2).
+    (* evaluate assignee place: before that, we need to prove moving a
+    place in the evaluation of expression preserve the borrow check
+    invariant for the sv_map and fp_map *)
+
+        
+        
+
+    
     
 
+
+    rewrite MEQ1 in MPRED.
+    
+
+    exploit get_owner_path_sv_map_eval_place. eauto. eapply MPRED. 
+    
 
 
 End BORROW_CHECK.

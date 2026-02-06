@@ -96,6 +96,38 @@ Definition sv_map := PTree.t (option origin * type * sval).
 
 Definition svm_to_tenv (svm: sv_map) : typenv := PTree.map1 (fun '(_, ty, _) => ty) svm.
 
+(* Properties of sval *)
+
+
+Definition sval_not_bot (sv: sval) : bool :=
+  match sv with
+  | sv_bot => false
+  | _ => true
+  end.
+
+(* Fixpoint shallow_owned (sv: sval) : bool := *)
+(*   match sv with *)
+(*   | sv_bot => false *)
+(*   | sv_struct _ svl => *)
+(*       forallb (fun '(_, fsv) => shallow_owned fsv) svl *)
+(*   | sv_enum _ _ fsv => *)
+(*       shallow_owned fsv *)
+(*   | _ => true *)
+(*   end. *)
+
+(* (* All level sval are not sv_bot *) *)
+(* Fixpoint deep_owned (sv: sval) : bool := *)
+(*   match sv with *)
+(*   | sv_bot => false *)
+(*   | sv_struct _ svl => *)
+(*       forallb (fun '(_, fsv) => deep_owned fsv) svl *)
+(*   | sv_enum _ _ fsv => *)
+(*       deep_owned fsv *)
+(*   | sv_box sv1 => *)
+(*       deep_owned sv1 *)
+(*   | _ => true *)
+(*   end. *)
+
 (* Operations for sval *)
 
 Definition sem_cast (sv : sval) (t1 t2 : type) : res sval :=
@@ -125,11 +157,6 @@ Inductive sval_casted_list : list sval -> typelist -> Prop :=
 
 (* Operations for the environment *)
 
-Definition sval_not_bot (sv: sval) : bool :=
-  match sv with
-  | sv_bot => false
-  | _ => true
-  end.
 
 Fixpoint get_owner_sval (phl: list projection) (sv: sval) : res sval :=
   match phl with
@@ -316,11 +343,24 @@ Definition set_sval_map (ph: path) (v: sval) (e: sv_map) : res sv_map :=
   end.
 
 
+Fixpoint clear_sval_rec (sv: sval) : sval :=
+  match sv with
+  | sv_box _ => sv_box sv_bot
+  | sv_enum id fid sv1 =>
+      sv_enum id fid (clear_sval_rec sv1)
+  | sv_struct id svl =>
+      sv_struct id (map (fun '(fid, fsv) => (fid, clear_sval_rec fsv)) svl)
+  | _ => sv
+  end.
+
 (* Different from the footprint in the simulation, we set sv_bot to
 the location of the original value that is to be cleared *)
 Definition clear_sval_map (ph: path) (e: sv_map) : res sv_map :=
   do sv <- get_owner_sval_map ph e;
-  set_sval_map ph sv_bot e.
+  (* We do not set sv_bot directly because we want the footprint map
+  can be translated to sv_map instead of defining a relation where the
+  setted sv_bot corresponds to some footprint. *)
+  set_sval_map ph (clear_sval_rec sv) e.
 
 (* Operations for the function call and return *)
 
@@ -704,25 +744,41 @@ Fixpoint eval_pexpr (e: sv_map) (pe: pexpr) : res sval :=
   | _ => Error nil
   end.
       
-Definition eval_expr (e: sv_map) (a: expr) : res (sval * sv_map) :=
+Definition eval_expr (e: sv_map) (a: expr) : res sval :=
   match a with
   | Emoveplace p _ =>
       do v <- get_owner_sval_map p e;
-      do e1 <- clear_sval_map p e;
-      OK (v, e1)
+      OK v
   | Epure pe =>
       do v <- eval_pexpr e pe;
-      OK (v, e)
+      OK v
   end.
 
-Fixpoint eval_exprlist (m: sv_map) (al: list expr) (tyl: typelist) : res (list sval * sv_map) :=
+Definition move_place_option (svm: sv_map) (p: option place) : res sv_map :=
+  match p with
+  | Some p =>
+      clear_sval_map p svm
+  | None =>
+      OK svm
+  end.
+
+Fixpoint move_place_list (svm: sv_map) (l: list place) : res sv_map :=
+  match l with
+  | nil => OK svm
+  | p :: l' =>
+      do svm1 <- clear_sval_map p svm;
+      move_place_list svm1 l'
+  end.
+
+Fixpoint eval_exprlist (svm: sv_map) (al: list expr) (tyl: typelist) : res (list sval * sv_map) :=
   match al, tyl with
-  | nil, Tnil => OK (nil, m)
+  | nil, Tnil => OK (nil, svm)
   | a :: al1, Tcons ty tyl1 =>
-      do (v1, m1) <- eval_expr m a;
+      do v1 <- eval_expr svm a;
+      do svm1 <- move_place_option svm (moved_place a);
       do v1' <- sem_cast v1 (typeof a) ty;
-      do (vl, m2) <- eval_exprlist m1 al1 tyl1;
-      OK (v1' :: vl, m2)
+      do (vl, svm2) <- eval_exprlist svm1 al1 tyl1;
+      OK (v1' :: vl, svm2)
   | _, _ => Error nil
   end.
 
@@ -829,28 +885,31 @@ Variable ge: genv.
 
 Inductive step : state -> trace -> state -> Prop :=
 | step_assign: forall f e (p: place) svm1 svm2 svm3 ph v v1 ns k vs
-    (EVALE: eval_expr svm1 e = OK (v, svm2))
+    (EVALE: eval_expr svm1 e = OK v)
+    (MOVE_EXPR: move_place_option svm1 (moved_place e) = OK svm2)
     (EVALP: get_owner_path_sv_map p svm2 = OK (ph, vs))
     (CAST: sem_cast v (typeof e) (typeof_place p) = OK v1)
     (ASS: set_sval_map ph v1 svm2 = OK svm3),
     step (State f (Sassign p e) k ns svm1) E0 (State f Sskip k ns svm3)
-| step_assign_variant: forall f e (p: place) k m1 m2 m3 v v1 co fid enum_id orgs ph fty ns vs
-    (EVALP: get_owner_path_sv_map p m1 = OK (ph, vs))
-    (EVALE: eval_expr m1 e = OK (v, m2))
+| step_assign_variant: forall f e (p: place) k svm1 svm2 svm3 v v1 co fid enum_id orgs ph fty ns vs
+    (EVALE: eval_expr svm1 e = OK v)
+    (MOVE_EXPR: move_place_option svm1 (moved_place e) = OK svm2)
+    (EVALP: get_owner_path_sv_map p svm2 = OK (ph, vs))
     (* necessary for clightgen simulation *)
     (TYP: typeof_place p = Tvariant orgs enum_id)
     (CO: ge.(genv_cenv) ! enum_id = Some co)
     (FTY: field_type fid co.(co_members) = OK fty)
     (CAST: sem_cast v (typeof e) fty = OK v1)
-    (ASS: set_sval_map ph (sv_enum enum_id fid v1) m2 = OK m3),
-    step (State f (Sassign_variant p enum_id fid e) k ns m1) E0 (State f Sskip k ns m3)
-| step_box: forall f e (p: place) k ty m1 m2 m3 v v1 ph ns vs
-    (EVALP: get_owner_path_sv_map p m1 = OK (ph, vs))
-    (EVALE: eval_expr m1 e = OK (v, m2))
+    (ASS: set_sval_map ph (sv_enum enum_id fid v1) svm2 = OK svm3),
+    step (State f (Sassign_variant p enum_id fid e) k ns svm1) E0 (State f Sskip k ns svm3)
+| step_box: forall f e (p: place) k ty svm1 svm2 svm3 v v1 ph ns vs
+    (EVALE: eval_expr svm1 e = OK v)
+    (MOVE_EXPR: move_place_option svm1 (moved_place e) = OK svm2)
+    (EVALP: get_owner_path_sv_map p svm2 = OK (ph, vs))
     (TYP: typeof_place p = Tbox ty)
     (CAST: sem_cast v (typeof e) ty = OK v1)
-    (ASS: set_sval_map ph (sv_box v1) m2 = OK m3),
-    step (State f (Sbox p e) k ns m1) E0 (State f Sskip k ns m3)
+    (ASS: set_sval_map ph (sv_box v1) svm2 = OK svm3),
+    step (State f (Sbox p e) k ns svm1) E0 (State f Sskip k ns svm3)
 (** bigl-step drop semantics: just like a move operation *)
 | step_drop: forall m1 m2 k f (p: place) ph ns vs
     (EVALP: get_owner_path_sv_map p m1 = OK (ph, vs))

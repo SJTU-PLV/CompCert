@@ -45,6 +45,7 @@ Inductive statement : Type :=
 | Sbox: place -> expr -> statement       (**r [place = Box::new(expr)]  *)
 | Sstoragelive: ident -> statement       (**r id becomes avalible *)
 | Sstoragedead: ident -> statement       (**r id becomes un-avalible *)
+(** TODO: add drop_and_place for drop(deref p) where p has type such as &mut Box<i32> *)
 | Sdrop: place -> statement             (**r conditionally drop the place [p]. [p] must be an ownership pointer. *)
 | Scall: place -> expr -> list expr -> statement (**r function call, p = f(...). It is a abbr. of let p = f() in *)
 | Ssequence: statement -> statement -> statement  (**r sequence *)

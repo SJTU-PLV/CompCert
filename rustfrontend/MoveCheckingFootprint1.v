@@ -534,7 +534,7 @@ Fixpoint clear_footprint_rec (fp: footprint) : footprint :=
   match fp with
   | fp_scalar _ _
   (* What about moving a reference? *)
-  | fp_ref _ _ _ _ _
+| fp_ref _ _ _ _ _
   | fp_uninit _ _
   | fp_object _ _ _               (* impossible?*)
   | fp_emp => fp
@@ -551,6 +551,15 @@ Definition clear_footprint_map (ps: path) (fpm: fp_map) : option fp_map :=
       set_footprint_map ps (clear_footprint_rec fp) fpm
   | None => None
   end.
+
+Definition move_place_option_fpm (fpm: fp_map) (p: option place) : option fp_map :=
+  match p with
+  | Some p =>
+      clear_footprint_map p fpm
+  | None =>
+      Some fpm
+  end.
+
 
 (* Get location and footprint through paths which may contains
 dereference of reference *)

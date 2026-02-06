@@ -160,7 +160,7 @@ Definition alias_graph_views_sufficient ce (live: RegionSet.t) (svm: sv_map) : P
 (** Type invariants: the reference type must be equal to the type it
 points to *)
 
-Definition svm_ref_inv ce (live: RegionSet.t) (svm: sv_map) : Prop :=
+Definition svm_ref_type_inv ce (live: RegionSet.t) (svm: sv_map) : Prop :=
   forall ph1 ph2 ph3 vs2 vs3 r mut ty1,
     get_owner_path_sv_map ph1 svm = OK (ph2, vs2) ->
     get_owner_sval_map ph2 svm = OK (sv_ref mut ph3 vs3) ->
@@ -193,20 +193,23 @@ Definition fpm_to_svm (fpm: fp_map) : sv_map :=
 
 (* If a reference is live, then its value is the same as the location
 of the owner it points to *)
-Definition fpm_ref_inv (live: RegionSet.t) (fpm: fp_map) : Prop :=
+Definition fpm_ref_loc_inv (live: RegionSet.t) (fpm: fp_map) : Prop :=
   forall ph1 ph2 ph3 b0 ofs0 b ofs mut vs2 vs,
     get_owner_path_sv_map ph1 (fpm_to_svm fpm) = OK (ph2, vs2) ->
     get_owner_loc_footprint_map ph2 fpm = Some (b0, ofs0, fp_ref mut b ofs ph3 vs) ->
     is_live_path live fpm ph1 = true ->
-    exists fp, get_owner_loc_footprint_map ph3 fpm = Some (b, ofs, fp).
+    exists fp, get_owner_loc_footprint_map ph3 fpm = Some (b, ofs, fp)
+          (* Should we write it as an invariant on sval map instead of
+          on the footprint map? *)
+          /\ deep_owned fp = true.
 
 
 (* The invariant established and preserved by the borrow checking *)
 Record borrow_check_inv ce (live: RegionSet.t) (le: LOrgEnv.t) (svm: sv_map) (fpm: fp_map) : Prop :=
   { borrowck_approximation: sound_loan_analysis ce live le svm;
     borrowck_sufficient_views: alias_graph_views_sufficient ce live svm;
-    borrowck_svm_ref_inv: svm_ref_inv ce live svm;
-    borrowck_fpm_ref_inv: fpm_ref_inv live fpm; }.
+    borrowck_svm_ref_type_inv: svm_ref_type_inv ce live svm;
+    borrowck_fpm_ref_loc_inv: fpm_ref_loc_inv live fpm; }.
 
 End ADT_ENV.
 
