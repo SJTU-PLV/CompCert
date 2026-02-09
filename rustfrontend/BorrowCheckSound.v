@@ -1192,8 +1192,12 @@ for pure expr? *)
 Lemma eval_expr_preserve_borchk_inv: forall fpm1 fpm2 e live le
     (MOVE_FPM: move_place_option_fpm fpm1 (moved_place e) = Some fpm2)
     (BORCHK_INV: @borrow_check_inv ame ce live le fpm1 fpm1)
-    (CHECK: check_expr le e = OK tt),
-    @borrow_check_inv ame ce live le fpm2 fpm2.
+    (CHECK: check_expr le e = OK tt)
+    (EVAL: eval_expr fpm1 e = OK sv),
+   @borrow_check_inv ame ce live le fpm2 fpm2
+    (*  *)
+    /\ (typeof e) sv fpm2
+.
 Admitted.
 
 Ltac simpl_getIM IM :=
@@ -1237,7 +1241,7 @@ Proof.
     (* evaluate assignee place: before that, we need to prove moving a
     place in the evaluation of expression preserve the borrow check
     invariant for the sv_map and fp_map *)
-
+    
         
         
 

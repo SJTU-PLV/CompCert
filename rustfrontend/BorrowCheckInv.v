@@ -309,7 +309,6 @@ Definition fpm_ref_inv (live: RegionSet.t) (fpm: fp_map) : Prop :=
 (* The invariant established and preserved by the borrow checking *)
 Record borrow_check_inv ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) (stk_mem: bor_stacks) : Prop :=
   { borrowck_stkbor_ref: stkbor_ref_inv ce live le fpm stk_mem;
-    borrowck_stkbor_box: stkbor_box_inv live le fpm stk_mem;
     borrowck_fpm_ref: fpm_ref_inv live fpm }.
 
 *) 

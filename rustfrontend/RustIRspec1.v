@@ -14,8 +14,6 @@ Require Import Ctypes Rusttypes Rusttyping Rustlight.
 Require Import RustIR.
 Require Import LanguageInterface.
 Require Import InitDomain StkBorPermission.
-Require Import Memory.
-Require Import BorrowCheckDomain BorrowCheckPolonius.
 
 Import ListNotations.
 
@@ -31,7 +29,7 @@ Fixpoint wt_projections (ty: type) (phl: list projection) : res type :=
   | ph :: phl1 =>
       do ty1 <- 
            match ph with
-           | proj_deref _ => type_deref ty
+           | proj_deref => type_deref ty
            | proj_field fid => type_field ce ty fid
            | proj_downcast fid => type_downcast ce ty fid
            end;
@@ -72,6 +70,14 @@ Context {ae: adt_env}.
 (* Function environment *)
 
 Definition views := list path.
+
+Lemma path_views_eq: forall (x: path * views) (y: path * views),
+    {x = y} + {x <> y}.
+Proof.
+  intros. destruct x, y.
+  generalize path_eq (list_eq_dec path_eq). intros.
+  decide equality.
+Qed.
 
 (* Structured values. The structure is similar to the type of this
 value. *)
@@ -124,30 +130,30 @@ Definition sval_not_bot (sv: sval) : bool :=
 
 (* Operations for sval *)
 
-(* Definition sem_cast (sv : sval) (t1 t2 : type) : res sval := *)
-(*   match sv with *)
-(*   | sv_scalar v => *)
-(*       match sem_cast v t1 t2 with *)
-(*       | Some v1 => OK (sv_scalar v1) *)
-(*       | None => Error nil *)
-(*       end *)
-(*   (* We do not support casting for other kinds of value for now *) *)
-(*   | _ => OK sv *)
-(*   end. *)
+Definition sem_cast (sv : sval) (t1 t2 : type) : res sval :=
+  match sv with
+  | sv_scalar v =>
+      match sem_cast v t1 t2 with
+      | Some v1 => OK (sv_scalar v1)
+      | None => Error nil
+      end
+  (* We do not support casting for other kinds of value for now *)
+  | _ => OK sv
+  end.
 
-(* Definition sval_casted (sv: sval) (ty: type) : Prop := *)
-(*   match sv with *)
-(*   | sv_scalar v => *)
-(*       val_casted v ty *)
-(*   | _ => True *)
-(*   end. *)
+Definition sval_casted (sv: sval) (ty: type) : Prop :=
+  match sv with
+  | sv_scalar v =>
+      val_casted v ty
+  | _ => True
+  end.
 
 
-(* Inductive sval_casted_list : list sval -> typelist -> Prop := *)
-(*   | vcl_nil : sval_casted_list nil Tnil *)
-(*   | vcl_cons : forall (v1 : sval) (vl : list sval) (ty1 : type) (tyl : typelist), *)
-(*                sval_casted v1 ty1 -> *)
-(*                sval_casted_list vl tyl -> sval_casted_list (v1 :: vl) (Tcons ty1 tyl). *)
+Inductive sval_casted_list : list sval -> typelist -> Prop :=
+  | vcl_nil : sval_casted_list nil Tnil
+  | vcl_cons : forall (v1 : sval) (vl : list sval) (ty1 : type) (tyl : typelist),
+               sval_casted v1 ty1 ->
+               sval_casted_list vl tyl -> sval_casted_list (v1 :: vl) (Tcons ty1 tyl).
 
 (* Operations for the environment *)
 
@@ -157,7 +163,7 @@ Fixpoint get_owner_sval (phl: list projection) (sv: sval) : res sval :=
   | nil => OK sv
   | ph :: l =>
       match ph, sv with
-      | proj_deref _ , sv_box sv1 =>
+      | proj_deref, sv_box sv1 =>
           if sval_not_bot sv1 then
             get_owner_sval l sv1
           else Error nil
@@ -189,7 +195,7 @@ Fixpoint get_owner_sval_type ce (phl: list projection) (ty: type) (sv: sval) : r
   | nil => OK (ty, sv)
   | ph :: l =>
       match ph, sv with
-      | proj_deref _ , sv_box sv1 =>
+      | proj_deref, sv_box sv1 =>
           do ty1 <- type_deref ty;
           get_owner_sval_type ce l ty1 sv1
       | proj_field fid, sv_struct _ fpl =>
@@ -251,7 +257,7 @@ Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval)
       let ph1 := append_proj pj ph in
       let alias1 := map (append_proj pj) alias in
       match pj, sv with
-      | proj_deref Mutable , sv_box sv1 =>          
+      | proj_deref, sv_box sv1 =>
           get_owner_path e ph1 l sv1 alias1
       | proj_field fid, sv_struct _ fpl =>
           match find_field fid fpl with
@@ -270,20 +276,18 @@ Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval)
             get_owner_path e ph1 l sv1 alias1
           else
             Error nil
-      | proj_deref mut1 , sv_ref mut2 ph2 rebor =>
-          if mutkind_eq mut1 mut2 then
-            do sv2 <- get_owner_sval_map ph2 e;
-            (* dynamic computation of reborrow paths based on the
+      | proj_deref, sv_ref mut ph2 rebor =>
+          do sv2 <- get_owner_sval_map ph2 e;
+          (* dynamic computation of reborrow paths based on the
           supporting prefix technique of the borrow checker *)
-            let alias2 := match mut1 with
-                          | Mutable => (ph1 :: ph2 :: rebor ++ alias1)
-                          (* ph1 and alias1 cannot modify the content in
+          let alias2 := match mut with
+                        | Mutable => (ph1 :: ph2 :: rebor ++ alias1)
+                        (* ph1 and alias1 cannot modify the content in
                         ph2, so they are not added in the reborrow
                         paths *)
-                          | Immutable => (ph2 :: rebor)
-                          end in
-            get_owner_path e ph2 l sv2 alias2
-          else Error nil
+                        | Immutable => (ph2 :: rebor)
+                        end in
+          get_owner_path e ph2 l sv2 alias2
       | _, _  => Error nil
       end
   end.
@@ -303,7 +307,7 @@ Fixpoint set_sval (phl: list projection) (v: sval) (root: sval) : res sval :=
   | nil => OK v
   | ph :: l =>
       match ph, root with
-      | proj_deref _ , sv_box sv1 =>
+      | proj_deref, sv_box sv1 =>
           do sv2 <- set_sval l v sv1;
           OK (sv_box sv2)
       | proj_field fid, sv_struct id svl =>
@@ -349,7 +353,6 @@ Fixpoint clear_sval_rec (sv: sval) : sval :=
   | _ => sv
   end.
 
-
 (* Different from the footprint in the simulation, we set sv_bot to
 the location of the original value that is to be cleared *)
 Definition clear_sval_map (ph: path) (e: sv_map) : res sv_map :=
@@ -358,79 +361,6 @@ Definition clear_sval_map (ph: path) (e: sv_map) : res sv_map :=
   can be translated to sv_map instead of defining a relation where the
   setted sv_bot corresponds to some footprint. *)
   set_sval_map ph (clear_sval_rec sv) e.
-
-(* We dynamically check that if one sval is being overwritten, it
-should not denote some unreleased resource, otherwise if some
-reference pointed to this leak resource, but borrow check only check
-assignment as shallow write, then we cannot maintain the invariant *)
-Fixpoint sval_is_dropped (sv: sval) : bool :=
-  match sv with
-  | sv_box sv1 => sval_not_bot sv1
-  | sv_enum id fid sv1 =>
-      (sval_is_dropped sv1)
-  | sv_struct id svl =>
-      (forallb (fun '(fid, fsv) => sval_is_dropped fsv) svl) 
-  | _ => true
-  end.
-
-Definition check_path_is_dropped (svm: sv_map) (ph: path) : res bool :=
-  do sv <- get_owner_sval_map ph svm;
-  OK (sval_is_dropped sv).
-
-(** Borrow check operations *)
-
-(* We access ph1, to see whether ph2 in the views is conflict with ph1 *)
-Definition relevant_path (ph1: path) (am: access_mode_bor) (ph2: path) :=
-  match am with
-  | Ashallow => is_prefix_strict_path ph2 ph1 || is_shallow_prefix_path ph1 ph2
-  | Adeep => is_prefix_strict_path ph2 ph1 || is_support_prefix_path ph1 ph2
-  end.
-        
-(* access ph: note that access ph by write/read is irrelevant because
-all the path in views are mutable path *)
-Definition conflict_view (ph: path) (am : access_mode_bor) (vs: views) : bool :=
-  existsb (relevant_path ph am) vs.
-
-Fixpoint invalidate_conflict_ref (ph: path) (am : access_mode_bor) (sv: sval) : sval :=
-  match sv with
-  | sv_ref mut ph1 vs =>
-      if conflict_view ph am vs then
-        sv_bot
-      else
-        sv_ref mut ph1 vs
-  | sv_struct id svl =>
-      sv_struct id (map (fun '(fid, fsv) => (fid, invalidate_conflict_ref ph am fsv)) svl)
-  | sv_enum id fid sv1 =>
-      sv_enum id fid (invalidate_conflict_ref ph am sv1)
-  | sv_box sv1 =>
-      sv_box (invalidate_conflict_ref ph am sv1)
-  | _ => sv
-  end.
-
-Definition invalidate_conflict_ref_svm (ph: path) (am : access_mode_bor) (svm: sv_map) : sv_map :=
-  PTree.map1 (fun '(r, ty, sv) => (r, ty, invalidate_conflict_ref ph am sv)) svm.
-
-(** Kill loans *)
-
-Definition kill_paths (ph: path) (vs: views) : views :=
-  filter (fun ph1 => negb (is_prefix_path ph ph1)) vs.
-
-
-Fixpoint kill_paths_ref (ph: path) (sv: sval) : sval :=
-  match sv with
-  | sv_ref mut ph1 vs =>
-      sv_ref mut ph1 (kill_paths ph vs)
-  | sv_struct id svl =>
-      sv_struct id (map (fun '(fid, fsv) => (fid, kill_paths_ref ph fsv)) svl)
-  | sv_enum id fid sv1 =>
-      sv_enum id fid (kill_paths_ref ph sv1)
-  | sv_box sv1 =>
-      sv_box (kill_paths_ref ph sv1)
-  | _ => sv
-  end.
-
-Definition kill_paths_ref_svm (ph: path) (svm: sv_map) : sv_map :=
-  PTree.map1 (fun '(r, ty, sv) => (r, ty, kill_paths_ref ph sv)) svm.
 
 (* Operations for the function call and return *)
 
@@ -561,7 +491,7 @@ Fixpoint collect_sval_ref_paths_projections (pj: list projection) (sv: sval) : l
   | sv_enum _ fid fsv =>
       collect_sval_ref_paths_projections (pj ++ [proj_downcast fid]) fsv 
   | sv_box sv1 =>
-      collect_sval_ref_paths_projections (pj ++ [proj_deref Mutable]) sv1
+      collect_sval_ref_paths_projections (pj ++ [proj_deref]) sv1
   | sv_ref _ ph vs =>
       (ph, vs, pj) :: nil
   (* We assume that object cannot have referenece to the current environment *)
@@ -765,85 +695,69 @@ Definition globalenv (se: Genv.symtbl) (p: program) :=
 
 Section EXPR.
   
-(* We also do dynamic borrow checking *)
-Fixpoint eval_pexpr (svm: sv_map) (pe: pexpr) : res (sval * sv_map) :=
+Fixpoint eval_pexpr (e: sv_map) (pe: pexpr) : res sval :=
   match pe with
-  | Eunit => OK (sv_scalar (Vint Int.zero), svm)
-  | Econst_int i ty => OK (sv_scalar (Vint i), svm)
-  | Econst_float f ty => OK (sv_scalar (Vfloat f), svm)
-  | Econst_single f ty => OK (sv_scalar (Vsingle f), svm)
-  | Econst_long i ty => OK (sv_scalar (Vlong i), svm)
+  | Eunit => OK (sv_scalar (Vint Int.zero))
+  | Econst_int i ty => OK (sv_scalar (Vint i))
+  | Econst_float f ty => OK (sv_scalar (Vfloat f))
+  | Econst_single f ty => OK (sv_scalar (Vsingle f))
+  | Econst_long i ty => OK (sv_scalar (Vlong i))
   | Eunop op a t =>
-      do (v1, svm1) <- eval_pexpr svm a;
+      do v1 <- eval_pexpr e a;
       match v1 with
       | sv_scalar v2 =>
           match sem_unary_operation op v2 t with
           | Some v3 =>
-              OK (sv_scalar v3, svm1)
+              OK (sv_scalar v3)
           | None =>
               Error nil
           end
       | _ => Error nil
       end
   | Ebinop op a1 a2 t =>
-      do (v1, svm1) <- eval_pexpr svm a1;
-      do (v2, svm2) <- eval_pexpr svm1 a2;
+      do v1 <- eval_pexpr e a1;
+      do v2 <- eval_pexpr e a2;
       match v1, v2 with
       | sv_scalar v1', sv_scalar v2' =>
           match sem_binary_operation_rust op v1' (typeof_pexpr a1) v2' (typeof_pexpr a2) with
           | Some v =>
-              OK (sv_scalar v, svm2)
+              OK (sv_scalar v)
           | None =>
               Error nil
           end
       | _, _ => Error nil
       end
   | Eplace p ty =>
-      do (ph, _) <- get_owner_path_sv_map p svm;
-      do sv <- get_owner_sval_map ph svm;
-      OK (sv, invalidate_conflict_ref_svm p Adeep svm)
+      do (ph, _) <- get_owner_path_sv_map p e;
+      get_owner_sval_map ph e
   | Ecktag p fid =>
-      do (ph, _) <- get_owner_path_sv_map p svm;
-      do v <- get_owner_sval_map ph svm;
+      do (ph, _) <- get_owner_path_sv_map p e;
+      do v <- get_owner_sval_map ph e;
       match v with
       | sv_enum _ fid1 _ =>
-          (* Should we use Adeep or Ashallow? *)
-          OK (sv_scalar (Val.of_bool (ident_eq fid fid1)), invalidate_conflict_ref_svm p Ashallow svm)
+          OK (sv_scalar (Val.of_bool (ident_eq fid fid1)))
       | _ => Error nil
       end
   | Eref _ mut p _ =>
-      do (ph, vs) <- get_owner_path_sv_map p svm;
-      OK (sv_ref mut ph vs, invalidate_conflict_ref_svm p Adeep svm)
+      do (ph, vs) <- get_owner_path_sv_map p e;
+      OK (sv_ref mut ph vs)
   | _ => Error nil
   end.
       
-Definition eval_expr (svm: sv_map) (e: expr) : res (sval * sv_map) :=
-  match e with
+Definition eval_expr (e: sv_map) (a: expr) : res sval :=
+  match a with
   | Emoveplace p _ =>
-      do v <- get_owner_sval_map p svm;
-      (* We move from the value of this path. Should we move from (valid_owner p) *)
-      do svm1 <- set_sval_map p sv_bot svm;
-      OK (v, invalidate_conflict_ref_svm p Adeep svm1)
+      do v <- get_owner_sval_map p e;
+      OK v
   | Epure pe =>
-      eval_pexpr svm pe
+      do v <- eval_pexpr e pe;
+      OK v
   end.
-
-Definition fresh_PTree_ident {A: Type} (m: PTree.t A) : ident :=
-  let names := map fst (PTree.elements m) in
-  Pos.succ (Mem.find_max_pos names).
-
-(* To match the borrow checking, we use a fresh temporary variable to
-store the evaluated value. *)
-Definition eval_expr_svm (svm: sv_map) (e: expr) : res (ident * sv_map) :=
-  let fresh := fresh_PTree_ident svm in
-  do (sv, svm1) <- eval_expr svm e;
-  OK (fresh, PTree.set fresh (None, typeof e, sv) svm1).
 
 Definition move_place_option (svm: sv_map) (p: option place) : res sv_map :=
   match p with
   | Some p =>
-      (* We should assume that p can be only owner path *)
-      set_sval_map p sv_bot svm
+      clear_sval_map p svm
   | None =>
       OK svm
   end.
@@ -852,35 +766,21 @@ Fixpoint move_place_list (svm: sv_map) (l: list place) : res sv_map :=
   match l with
   | nil => OK svm
   | p :: l' =>
-      do svm1 <- set_sval_map p sv_bot svm;
+      do svm1 <- clear_sval_map p svm;
       move_place_list svm1 l'
   end.
-
-(* Fixpoint eval_exprlist (svm: sv_map) (al: list expr) (tyl: typelist) : res (list sval * sv_map) := *)
-(*   match al, tyl with *)
-(*   | nil, Tnil => OK (nil, svm) *)
-(*   | a :: al1, Tcons ty tyl1 => *)
-(*       do v1 <- eval_expr svm a; *)
-(*       do svm1 <- move_place_option svm (moved_place a); *)
-(*       do v1' <- sem_cast v1 (typeof a) ty; *)
-(*       do (vl, svm2) <- eval_exprlist svm1 al1 tyl1; *)
-(*       OK (v1' :: vl, svm2) *)
-(*   | _, _ => Error nil *)
-(*   end. *)
 
 Fixpoint eval_exprlist (svm: sv_map) (al: list expr) (tyl: typelist) : res (list sval * sv_map) :=
   match al, tyl with
   | nil, Tnil => OK (nil, svm)
   | a :: al1, Tcons ty tyl1 =>
-      do (v1, svm1) <- eval_expr svm a;
-      (** We do not support sem_cast for now to simplify the proof, may
-      be we need to do some restricted type checking *)
-      (* do v1' <- sem_cast v1 (typeof a) ty; *)
+      do v1 <- eval_expr svm a;
+      do svm1 <- move_place_option svm (moved_place a);
+      do v1' <- sem_cast v1 (typeof a) ty;
       do (vl, svm2) <- eval_exprlist svm1 al1 tyl1;
-      OK (v1 :: vl, svm2)
+      OK (v1' :: vl, svm2)
   | _, _ => Error nil
   end.
-
 
 End EXPR.
 
@@ -984,11 +884,12 @@ Section SMALLSTEP.
 Variable ge: genv.
 
 Inductive step : state -> trace -> state -> Prop :=
-| step_assign: forall f e (p: place) sv svm1 svm2 svm3 ph ns k vs
-    (EVALE: eval_expr svm1 e = OK (sv, svm2))
+| step_assign: forall f e (p: place) svm1 svm2 svm3 ph v v1 ns k vs
+    (EVALE: eval_expr svm1 e = OK v)
+    (MOVE_EXPR: move_place_option svm1 (moved_place e) = OK svm2)
     (EVALP: get_owner_path_sv_map p svm2 = OK (ph, vs))
-    (CKDROP: check_path_is_dropped svm2 ph = OK true)
-    (ASS: set_sval_map ph sv svm2 = OK svm3),
+    (CAST: sem_cast v (typeof e) (typeof_place p) = OK v1)
+    (ASS: set_sval_map ph v1 svm2 = OK svm3),
     step (State f (Sassign p e) k ns svm1) E0 (State f Sskip k ns svm3)
 | step_assign_variant: forall f e (p: place) k svm1 svm2 svm3 v v1 co fid enum_id orgs ph fty ns vs
     (EVALE: eval_expr svm1 e = OK v)
