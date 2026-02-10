@@ -219,7 +219,12 @@ Fixpoint support_parent_places (p: place) : list place :=
 
 (* Similar to ProjectElem in rustc *)
 Variant projection : Type :=
-  | proj_deref (mut: mutkind)
+  (* The only reason we need mutkind in deref is because we may want
+  to decide whether one path is the supporting prefix of the other
+  path. For now it is not required as all the paths in the views are
+  mutable path, i.e., if one path is a prefix of this path, than it
+  must be a supporting prefix. *)
+  | proj_deref (* (mut: mutkind) *)
   | proj_field (fid: ident)
   (* type of the variant here is used in valid_owner proof !! *)
   | proj_downcast (* (ty: type) *) (fid: ident) (* (fty: type) *)
@@ -255,7 +260,7 @@ Fixpoint path_of_place (p: place) : path :=
       (id, nil)
   | Pderef p1 ty =>
       let (id, phl) := path_of_place p1 in      
-      (id, phl ++ [proj_deref (mutkind_of_type ty)])
+      (id, phl ++ [proj_deref])
   | Pfield p1 fid _ =>
       let (id, phl) := path_of_place p1 in
       (id, phl ++ [proj_field fid])
@@ -290,7 +295,8 @@ Fixpoint projections_contain_strict (phl1 phl2: list projection) : bool :=
 
 
 Definition is_shallow_prefix_proj (phl: list projection) : bool :=
-  negb (in_dec projection_eq (proj_deref Mutable) phl) && negb (in_dec projection_eq (proj_deref Immutable) phl).
+  negb (in_dec projection_eq proj_deref phl).
+  (* negb (in_dec projection_eq (proj_deref Mutable) phl) && negb (in_dec projection_eq (proj_deref Immutable) phl). *)
 
 Fixpoint projections_shallow_contain (phl1 phl2: list projection) : bool :=
   match phl1, phl2 with
@@ -395,16 +401,15 @@ Proof.
   destruct l2; try congruence.
   destruct projection_eq; subst; try congruence; auto.
   unfold is_shallow_prefix_proj in *.
-  (* eapply negb_true_iff in H0. *)
-  (* destruct (in_dec projection_eq proj_deref (p :: l1)); simpl in *; try congruence. *)
-  (* eapply Decidable.not_or in n. destruct n. *)
-  (* destruct projection_eq; try congruence. *)
-  (* exploit (IHl1 l2).  auto. *)
-  (* eapply negb_true_iff. destruct (in_dec projection_eq proj_deref l1); simpl; try congruence; auto. *)
-  (* intros A. eapply negb_true_iff in A. *)
-  (* destruct (in_dec projection_eq proj_deref l2); simpl in *; try congruence; auto.- *)
-(* Qed. *)
-Admitted.
+  eapply negb_true_iff in H0.
+  destruct (in_dec projection_eq proj_deref (p :: l1)); simpl in *; try congruence.
+  eapply Decidable.not_or in n. destruct n.
+  destruct projection_eq; try congruence.
+  exploit (IHl1 l2).  auto.
+  eapply negb_true_iff. destruct (in_dec projection_eq proj_deref l1); simpl; try congruence; auto.
+  intros A. eapply negb_true_iff in A.
+  destruct (in_dec projection_eq proj_deref l2); simpl in *; try congruence; auto.
+Qed.
 
 Lemma projections_shallow_contain_trans: forall l1 l2 l3,
     projections_shallow_contain l1 l2 = true ->
@@ -889,28 +894,28 @@ Qed.
 (** shallow and support prefix path  *)
 
 (* The projected locaiton can be mutated *)
-Definition is_support_prefix_proj (phl: list projection) : bool :=
-  negb (in_dec projection_eq (proj_deref Immutable) phl).
+(* Definition is_support_prefix_proj (phl: list projection) : bool := *)
+(*   negb (in_dec projection_eq (proj_deref Immutable) phl). *)
 
-Fixpoint projections_support_contain (phl1 phl2: list projection) : bool :=
-  match phl1, phl2 with
-  | nil, _ => is_support_prefix_proj phl2
-  | ph1 :: phl1', ph2 :: phl2' =>
-      if projection_eq ph1 ph2 then
-        projections_support_contain phl1' phl2'
-      else false
-  | _, _ => false
-  end.
+(* Fixpoint projections_support_contain (phl1 phl2: list projection) : bool := *)
+(*   match phl1, phl2 with *)
+(*   | nil, _ => is_support_prefix_proj phl2 *)
+(*   | ph1 :: phl1', ph2 :: phl2' => *)
+(*       if projection_eq ph1 ph2 then *)
+(*         projections_support_contain phl1' phl2' *)
+(*       else false *)
+(*   | _, _ => false *)
+(*   end. *)
 
 Definition is_shallow_prefix_path (ph1 ph2: path) : bool := 
   let (id1, phl1) := ph1 in
   let (id2, phl2) := ph2 in
   ident_eq id1 id2 && projections_shallow_contain phl1 phl2.
 
-Definition is_support_prefix_path (ph1 ph2: path) : bool := 
-  let (id1, phl1) := ph1 in
-  let (id2, phl2) := ph2 in
-  ident_eq id1 id2 && projections_support_contain phl1 phl2.
+(* Definition is_support_prefix_path (ph1 ph2: path) : bool :=  *)
+(*   let (id1, phl1) := ph1 in *)
+(*   let (id2, phl2) := ph2 in *)
+(*   ident_eq id1 id2 && projections_support_contain phl1 phl2. *)
 
 
 (*

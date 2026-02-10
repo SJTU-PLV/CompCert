@@ -1196,13 +1196,13 @@ Proof.
     eapply app_inj_tail in H1 as (B1 & B2). inv B2.
 Qed.
 
-Lemma path_of_place_deref: forall p id l mut,
-    path_of_place p = (id, l ++ [proj_deref mut]) ->
+Lemma path_of_place_deref: forall p id l ,
+    path_of_place p = (id, l ++ [proj_deref]) ->
     exists p' ty,
       p = Pderef p' ty
       /\ path_of_place p' = (id, l).
 Proof.
-  induction p; intros id l mut A; simpl in *.
+  induction p; intros id l A; simpl in *.
   - inv A. exploit app_eq_nil. symmetry. eapply H1.
     intros (A1 & A2). inv A2.
   - destruct (path_of_place p) eqn: P. inv A.
