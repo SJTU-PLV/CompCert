@@ -509,11 +509,14 @@ Definition check_return (f: function) (oe1: LOrgEnv.t) (p: place) : res unit :=
     generic ones before checking dangling references. *)
     let generic_regions := regset_fun f in
     let oe3 := LOrgEnv.apply_liveness generic_regions oe2 in
-    (* check if there is reference to parameters that are stored in
-    the generic regions *)
-    do _ <- check_storagedead_list f.(fn_params) oe3;
-    (* kill the loans related to parameter *)
-    let oe4 := kill_loans_list oe3 f.(fn_params) in
+    (* check if there is reference to variables/parameters that are
+    stored in the generic regions. Since we cannot ensure that we
+    generate stroragedead for all the variables before function return
+    (e.g., we may return inside a scope of a local variables), we
+    should also check variables. *)
+    do _ <- check_storagedead_list (f.(fn_vars) ++ f.(fn_params)) oe3;
+    (* kill the loans related to variables/parameter *)
+    let oe4 := kill_loans_list oe3 (f.(fn_vars) ++ f.(fn_params)) in
     if check_dangling f oe4 then
       if check_generic_origins_relations f oe4 then
         OK tt

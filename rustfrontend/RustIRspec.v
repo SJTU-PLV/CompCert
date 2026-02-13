@@ -11,11 +11,12 @@ Require Import Smallstep SmallstepSafe.
 Require Import Listmisc.
 Require Import Cop RustOp.
 Require Import Ctypes Rusttypes Rusttyping Rustlight.
-Require Import RustIR.
+Require Import Rustlightown RustIR.
 Require Import LanguageInterface.
 Require Import InitDomain StkBorPermission.
 Require Import Memory.
 Require Import BorrowCheckDomain BorrowCheckPolonius.
+Require Import Separation.
 
 Import ListNotations.
 
@@ -31,7 +32,7 @@ Fixpoint wt_projections (ty: type) (phl: list projection) : res type :=
   | ph :: phl1 =>
       do ty1 <- 
            match ph with
-           | proj_deref _ => type_deref ty
+           | proj_deref => type_deref ty
            | proj_field fid => type_field ce ty fid
            | proj_downcast fid => type_downcast ce ty fid
            end;
@@ -49,23 +50,62 @@ Definition wt_path (te: typenv) (phs: path) : res type :=
 
 End WT_PATH.
 
+Definition alignof_comp ce (id: ident) :=
+  match ce ! id with
+  | Some co => co_alignof co
+  | None => 1
+  end.
+
+Definition sizeof_comp ce (id: ident) :=
+  match ce ! id with
+  | Some co => co_sizeof co
+  | None => 0
+  end.
+
+
 (* Definition of Adt *)
 
-Record Adt : Type := {
-    repr: Type;
-    repr_inv: repr -> Prop;         (* representation invariant. It may
-    not useful in RustIRspec *)
-    exposed_borrow: repr -> list ident; (* The exposed borrow indexes *)
+(** Define the semantic interpretation of abstract data type written
+in unsafe module *)
+
+Record massert_rel_functional (P: massert -> Prop) : Prop :=
+  { mass_rel_left_total: exists mp, P mp;
+    mass_rel_right_unique: forall mp1 mp2, P mp1 -> P mp2 -> massert_eqv mp1 mp2; }.
+
+(* Adt instrumented with information of memory locations *)
+Record Adt_mem : Type := {
+    mem_repr: Type;
+    repr_inv: mem_repr -> Prop;         (* representation invariant *)
+    mem_exposed_borrow: mem_repr -> list (ident * ((block * Z * Z) * type));
+    (* layout *)
+    adt_size : Z;
+    adt_align: Z;
+    
+    mem_pred: mem_repr -> block -> Z -> massert -> Prop; (* How it locates in the memory *)
+    
+    (* Propertis of mem_pred, e.g., it is total and deterministic *)
+    mem_pred_functional: forall r b ofs, massert_rel_functional (mem_pred r b ofs);
+    
+    (* mem_pred implies that the location is freeable if the exposed
+    borrowable subparts are also freeable, which is used in freeing
+    the block of this object *)
+    (* mem_pred_range: forall r b ofs MP, *)
+    (*   mem_pred r b ofs MP -> *)
+    (*   massert_imp (MP ** range_list (map (compose fst snd) (mem_exposed_borrow r))) (range b ofs (ofs + adt_size)); *)
+    
+    (* exposed_borrow_consistent: forall r, *)
+    (*   map fst (mem_exposed_borrow r) = exposed_borrow mem_pure_adt (mem_to_pure_repr r); *)
+
   }.
 
-Definition adt_env : Type := ident -> Adt.
+Definition adt_mem_env : Type := ident -> Adt_mem.
 
 Section SPEC.
 
 (* I think this environment is a premise for the whole borrow checking
 proof and the RustIRspec. When we want to use the borow checking
 proof, we must provide its instance. *)
-Context {ae: adt_env}.
+Context {ame: adt_mem_env}.
 
 (** RustIR functional specification. *)
 
@@ -73,309 +113,439 @@ Context {ae: adt_env}.
 
 Definition views := list path.
 
-(* Structured values. The structure is similar to the type of this
-value. *)
-Inductive sval : Type :=
-| sv_bot
-| sv_scalar (v: val)            (* scalar value: v cannot be Vptr *)
-| sv_box (sv: sval) 
-| sv_struct (id: ident) (svl: list (ident * sval))
-| sv_enum (id: ident) (fid: ident) (sv: sval)
-| sv_ref (mut: mutkind) (ph: path) (view: views) (* reference to an owner at
-  [phs]. We also record the reborrowed paths of ph *)
-| sv_object (id: ident) (obj: repr (ae id)) (exposed: list (ident * (type * sval)))
+(* A tree structured footprint (maybe similar to some separation logic
+algebra). *)
+Inductive footprint : Type :=
+| fp_emp  (* empty footprint. It is required because we want moved out
+  the whole location and then set fp_emp to the original location *)
+| fp_uninit (sz al: Z) (*  Uninitialized footprint. We need to record its size and align *)
+| fp_scalar (chunk: memory_chunk) (v: val)  (* scalar type. *)
+| fp_box (b: block) (* (sz: Z) *) (fp: footprint) (* A heap block storing values that occupy footprint fp. We do not record size here because if fp is fp_emp the size is meaningless and wt_footprint cannot be defined for Box(Adt) *)
+(* (field ident, field type, field offset,field footprint) *)
+| fp_struct (id: ident) (fpl: list (ident * ((Z * Z) * footprint)))
+(* orgs are not used for now but it is used to relate to the type *)
+| fp_enum (id: ident) (tagz: Z) (fid: ident) (fofs: Z) (ffp: footprint)
+| fp_ref (mut: mutkind) (b: block) (ofs: Z) (ph: option path) (vs: views) (* reference to an owner at [phs]. We also record the reborrowed paths
+  of ph. If this fp_ref (Some ph) has been converted to fp_ref None,
+  it means that it has been invalidated by the dynamic borrow check or
+  it has been moved from. The dynamic borrow check should maintian an
+  invariant that if some sv_ref is valid, then the path it points to
+  must also valid. The main reason we do not convert fp_ref to
+  fp_uninit like move operation does is because if we convert it to
+  fp_uninit, then some deep_init footprint would become not
+  deep_init. *)
+| fp_object (id: ident) (obj: (mem_repr (ame id))) (exposed: list (ident * ((block * Z) * type * footprint)))
 .
 
-Definition sv_map := PTree.t (option origin * type * sval).
+(* It is used to define the invariant for the dynamic borrow check *)
+Definition fp_graph := PTree.t footprint.
 
-Definition svm_to_tenv (svm: sv_map) : typenv := PTree.map1 (fun '(_, ty, _) => ty) svm.
+(* The [option origin] is used to indicate that this "variable" is
+local var/param (None) or a name for some locations passed by
+reference (Some org where org is the generic region of this location) *)
+Definition fp_map := PTree.t (block * Z * option origin * type * footprint).
 
-(* Properties of sval *)
 
+Implicit Type fpm : fp_map.
 
-Definition sval_not_bot (sv: sval) : bool :=
-  match sv with
-  | sv_bot => false
+Definition fpm_to_env (fpm: fp_map) : env := 
+  PTree.map_filter1 (fun '(b, _, optr, ty, _) =>
+                       match optr with
+                       | Some r => None
+                       | None => Some (b, ty)
+                       end) fpm.
+
+Coercion fpm_to_fpg (fpm: fp_map) : fp_graph :=
+  PTree.map1 snd fpm.
+
+(** Shallow init and Deep init which should be statically checked by
+the move checking *)
+
+Fixpoint shallow_init (fp: footprint) : bool :=
+  match fp with
+  | fp_emp
+  (* Here is the difference *)
+  | fp_uninit _ _ => false
+  | fp_struct _ fpl =>
+      forallb (fun '(_, (_, ffp)) => shallow_init ffp) fpl
+  | fp_enum _ _ _ _ ffp =>
+      shallow_init ffp
+  (* We cannot simply say that fp1 is not fp_emp because when we pass
+  some field of fp1 to caller, its original footprint would be set to
+  fp_emp, but we cannot owns the whole block anymore. *)
   | _ => true
   end.
 
-(* Fixpoint shallow_owned (sv: sval) : bool := *)
-(*   match sv with *)
-(*   | sv_bot => false *)
-(*   | sv_struct _ svl => *)
-(*       forallb (fun '(_, fsv) => shallow_owned fsv) svl *)
-(*   | sv_enum _ _ fsv => *)
-(*       shallow_owned fsv *)
-(*   | _ => true *)
-(*   end. *)
+(* All level footprint are not fp_emp *)
+Fixpoint deep_init (fp: footprint) : bool :=
+  match fp with
+  | fp_emp
+  (* Here is the difference *)
+  | fp_uninit _ _ => false
+  | fp_struct _ fpl =>
+      forallb (fun '(_, (_, ffp)) => deep_init ffp) fpl
+  | fp_enum _ _ _ _ ffp =>
+      deep_init ffp
+  | fp_box _ fp1 =>
+      deep_init fp1
+  | _ => true
+  end.
 
-(* (* All level sval are not sv_bot *) *)
-(* Fixpoint deep_owned (sv: sval) : bool := *)
-(*   match sv with *)
-(*   | sv_bot => false *)
-(*   | sv_struct _ svl => *)
-(*       forallb (fun '(_, fsv) => deep_owned fsv) svl *)
-(*   | sv_enum _ _ fsv => *)
-(*       deep_owned fsv *)
-(*   | sv_box sv1 => *)
-(*       deep_owned sv1 *)
-(*   | _ => true *)
-(*   end. *)
+(** Functions for getting and updating the footprint map. *)
 
-(* Operations for sval *)
+Definition sizeof_footprint ce (fp: footprint) : Z :=
+  match fp with
+  | fp_emp => 0
+  | fp_uninit sz _ => sz
+  | fp_scalar chunk _ => size_chunk chunk
+  | fp_box _ _ => size_chunk Mptr
+  | fp_enum id _ _ _ _ => sizeof_comp ce id
+  | fp_struct id _ => sizeof_comp ce id
+  | fp_ref _ _ _ _ _ => size_chunk Mptr
+  | fp_object id _ _ => adt_size (ame id)
+  end.
 
-(* Definition sem_cast (sv : sval) (t1 t2 : type) : res sval := *)
-(*   match sv with *)
-(*   | sv_scalar v => *)
-(*       match sem_cast v t1 t2 with *)
-(*       | Some v1 => OK (sv_scalar v1) *)
-(*       | None => Error nil *)
-(*       end *)
-(*   (* We do not support casting for other kinds of value for now *) *)
-(*   | _ => OK sv *)
-(*   end. *)
-
-(* Definition sval_casted (sv: sval) (ty: type) : Prop := *)
-(*   match sv with *)
-(*   | sv_scalar v => *)
-(*       val_casted v ty *)
-(*   | _ => True *)
-(*   end. *)
+Definition alignof_footprint ce (fp: footprint) : Z :=
+  match fp with
+  | fp_emp => 0
+  | fp_uninit _ al => al
+  | fp_scalar chunk _ => align_chunk chunk
+  | fp_box _ _ => align_chunk Mptr
+  | fp_enum id _ _ _ _ => alignof_comp ce id
+  | fp_struct id _ => alignof_comp ce id
+  | fp_ref _ _ _ _ _ => align_chunk Mptr
+  | fp_object id _ _ => adt_align (ame id)
+  end.
 
 
-(* Inductive sval_casted_list : list sval -> typelist -> Prop := *)
-(*   | vcl_nil : sval_casted_list nil Tnil *)
-(*   | vcl_cons : forall (v1 : sval) (vl : list sval) (ty1 : type) (tyl : typelist), *)
-(*                sval_casted v1 ty1 -> *)
-(*                sval_casted_list vl tyl -> sval_casted_list (v1 :: vl) (Tcons ty1 tyl). *)
+(* Operations for the footprint environment *)
 
-(* Operations for the environment *)
+(* [set_footprint] and [set_footprint_map] set some footprint [fp] to
+the path (id, phl); [get_footprint] gets footprint from a footprint
+with a path and [get_loc_footprint_map] gets footprint and the
+location storing this footprint; [clear_footprint(_map)] set the
+footprint at the path [phl] to fp_emp; We also need to distinguish
+getting footprint through owner path and arbitary path (i.e., paths
+containing dereference reference), so we define [get_footprint(_map)
+to get the footprint from arbitary path which uses a function
+[get_owner_loc_footprint_(map)]] which gets footprint from only owner
+paths. This distinguishment may not be needed for set functions as we
+can ensure that we only set owner paths?  *)
 
+Definition set_field_fp {L: Type} (fid: ident) (vfp: footprint) (fpl: list (ident * (L * footprint))) : list (ident * (L * footprint)) :=
+  set_field fid (fun '(l, ffp) => (l, vfp)) fpl.
 
-Fixpoint get_owner_sval (phl: list projection) (sv: sval) : res sval :=
+(* set footprint [v] in the path [ph] of footprint [fp] *)
+Fixpoint set_footprint (phl: list projection) (v: footprint) (fp: footprint) : res footprint :=
   match phl with
-  | nil => OK sv
+  | nil => OK v
   | ph :: l =>
-      match ph, sv with
-      | proj_deref _ , sv_box sv1 =>
-          if sval_not_bot sv1 then
-            get_owner_sval l sv1
+      match ph, fp with
+      | proj_deref, fp_box b fp1 =>
+          do fp2 <- set_footprint l v fp1;
+          OK (fp_box b fp2)
+      | proj_field fid, fp_struct id fpl =>
+          match find_field fid fpl with
+          | Some (fofs, ffp) =>
+              do ffp1 <- set_footprint l v ffp;
+              OK (fp_struct id (set_field_fp fid ffp1 fpl)) 
+          | None => Error nil
+          end
+      | proj_field fid, fp_object id obj exposed =>
+          match find_field fid exposed with
+          | Some ((b, ofs), ffp) =>
+              do ffp1 <- set_footprint l v ffp;
+              OK (fp_object id obj (set_field_fp fid ffp1 exposed))
+          | None => Error nil
+          end                  
+      | proj_downcast fid, fp_enum id tagz fid1 fofs1 fp1 =>
+          (** Type safe checking *)
+          if ident_eq fid fid1 then
+            do fp2 <- set_footprint l v fp1;
+            OK (fp_enum id tagz fid1 fofs1 fp2)
           else Error nil
-      | proj_field fid, sv_struct _ fpl =>
-          match find_field fid fpl with
-          | Some sv1 =>
-              get_owner_sval l sv1
-          | None => Error nil
-          end
-      (* Get the object's exposed borrowable value *)
-      | proj_field fid, sv_object _ _ vl =>
-          match find_field fid vl with
-          | Some (fty1, sv1) =>
-              get_owner_sval l sv1
-          | None => Error nil
-          end
-      | proj_downcast fid1, sv_enum _ fid2 sv1 =>
-          if ident_eq fid1 fid2 then
-            get_owner_sval l sv1
-          else
-            Error nil
-      | _, _  => Error nil
+      | _, _ => Error nil
       end
   end.
 
-(* To also extract the type, use this function *)
-Fixpoint get_owner_sval_type ce (phl: list projection) (ty: type) (sv: sval) : res (type * sval) :=
+Definition set_footprint_map (ps: path) (v: footprint) (fpm: fp_map) : res fp_map :=
+  let (id, phl) := ps in
+  match fpm!id with
+  | Some (a, fp1) =>
+      do fp2 <- set_footprint phl v fp1;
+      OK (PTree.set id (a, fp2) fpm)
+  | None => Error nil
+  end.
+
+(* Definition not_fp_emp (fp: footprint) : bool := *)
+(*   match fp with *)
+(*   | fp_emp => false *)
+(*   | _ => true *)
+(*   end. *)
+
+Fixpoint get_owner_loc_footprint (phl: list projection) (fp: footprint) (b: block) (ofs: Z) : res (block * Z * footprint) :=
   match phl with
-  | nil => OK (ty, sv)
+  | nil => OK (b, ofs, fp)
   | ph :: l =>
-      match ph, sv with
-      | proj_deref _ , sv_box sv1 =>
-          do ty1 <- type_deref ty;
-          get_owner_sval_type ce l ty1 sv1
-      | proj_field fid, sv_struct _ fpl =>
+      match ph, fp with
+      | proj_deref, fp_box b fp1 =>
+          (* if not_fp_emp fp1 then *)
+            (* We can only deference box pointer that is not moved from *)
+          get_owner_loc_footprint l fp1 b 0
+          (* else *)
+          (*   (* The location pointed by this pointer may not be valid *) *)
+          (*   Error nil *)
+      | proj_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
-          | Some sv1 =>
-              do fty <- type_field ce ty fid;
-              get_owner_sval_type ce l fty sv1
+          | Some ((base, fofs), fp1) =>
+              get_owner_loc_footprint l fp1 b (ofs + fofs)
           | None => Error nil
           end
-      (* Get the object's exposed borrowable value *)
-      | proj_field fid, sv_object _ _ vl =>
-          match find_field fid vl with
-          | Some (fty1, sv1) =>
-              get_owner_sval_type ce l fty1 sv1
+      | proj_field fid, fp_object id obj fpl =>
+          match find_field fid fpl with
+          | Some (b, ofs, ty, fp1) =>
+              get_owner_loc_footprint l fp1 b ofs
           | None => Error nil
           end
-      | proj_downcast fid1, sv_enum _ fid2 sv1 =>
+      | proj_downcast fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
+          if ident_eq fid1 fid2  then
+            get_owner_loc_footprint l fp1 b (ofs + fofs)
+          else Error nil
+      | _, _  => Error nil
+      end
+  end.
+
+(* Why we need this? Because in the definition of invariant, we need
+to ignore the memory locations information *)
+Fixpoint get_owner_footprint (phl: list projection) (fp: footprint) : res footprint :=
+  match phl with
+  | nil => OK fp
+  | ph :: l =>
+      match ph, fp with
+      | proj_deref, fp_box b fp1 =>
+          get_owner_footprint l fp1
+      | proj_field fid, fp_struct _ fpl =>
+          match find_field fid fpl with
+          | Some (fofs, fp1) =>
+              get_owner_footprint l fp1
+          | None => Error nil
+          end
+      | proj_field fid, fp_object id obj fpl =>
+          match find_field fid fpl with
+          | Some (b, ofs, fp1) =>
+              get_owner_footprint l fp1
+          | None => Error nil
+          end
+      | proj_downcast fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
           if ident_eq fid1 fid2 then
-              do fty <- type_field ce ty fid1;
-            get_owner_sval_type ce l fty sv1
+            get_owner_footprint l fp1
           else
             Error nil
       | _, _  => Error nil
       end
   end.
 
-
-Definition get_owner_sval_map (ph: path) (e: sv_map) : res sval :=
-  let (id, pj) := ph in
-  match e ! id with
-  | Some (_, _, sv) =>
-      get_owner_sval pj sv
-  | None =>
-      Error nil
+Definition get_owner_loc_footprint_map (ps: path) (fpm: fp_map) : res (block * Z * footprint) :=
+  let (id, phl) := ps in
+  match fpm!id with
+  | Some (b, ofs, ty, _, fp) =>
+      get_owner_loc_footprint phl fp b ofs
+  | _ => Error nil
   end.
 
-Definition get_owner_sval_type_map ce (ph: path) (e: sv_map) : res (type * sval) :=
-  let (id, pj) := ph in
-  match e ! id with
-  | Some (_, ty, sv) =>
-      get_owner_sval_type ce pj ty sv
-  | None =>
-      Error nil
+
+Definition get_owner_footprint_map (ps: path) (fpg: fp_graph) : res footprint :=
+  let (id, phl) := ps in
+  match fpg!id with
+  | Some fp =>
+      get_owner_footprint phl fp
+  | _ => Error nil
+  end
+.
+
+
+(* In our setting, moving from a value is clearing its inner
+footprint. Like RustBelt, for some type [own τ], after moving from a
+value of this type produce, the original location of this type becomes
+[own ⊥]. *)
+Definition clear_footprint_rec ce (fp: footprint) : footprint :=
+  fp_uninit (sizeof_footprint ce fp) (alignof_footprint ce fp).
+  (* match fp with *)
+  (* | fp_scalar _ _ *)
+  (* (* What about moving a reference? *) *)
+  (* | fp_uninit _ _ *)
+  (* | fp_object _ _ _               (* impossible?*) *)
+  (* | fp_emp => fp *)
+  (* | fp_box b fp1 => fp_box b fp_emp *)
+  (* | fp_ref mut b ofs _ vs => *)
+  (*     (* Move from a reference would disallow its usage *) *)
+  (*     fp_ref mut b ofs None vs *)
+  (* | fp_enum id tagz fid fofs ffp => fp_enum id tagz fid fofs (clear_footprint_rec ffp) *)
+  (* | fp_struct id fpl => *)
+  (*     fp_struct id (map (fun '(fid, (fofs, ffp)) => (fid, (fofs, clear_footprint_rec ffp))) fpl) *)
+  (* end. *)
+
+
+Definition clear_footprint_map (ce: composite_env) (ps: path) (fpm: fp_map) : res fp_map :=
+  do (_, fp) <- get_owner_loc_footprint_map ps fpm;
+  set_footprint_map ps (clear_footprint_rec ce fp) fpm.
+  
+Fixpoint clear_footprint_map_list (ce: composite_env) (l: list path) (fpm: fp_map) : res fp_map :=
+  match l with
+  | nil => OK fpm
+  | ph :: l1 =>
+      do fpm1 <- clear_footprint_map ce ph fpm;
+      clear_footprint_map_list ce l1 fpm1
   end.
 
+
+(* Get location and footprint through paths which may contains
+dereference of reference *)
 
 Definition append_proj (pj: projection) (ph: path) :=
   (fst ph, snd ph ++ [pj]).
 
 (* To get the location of arbitary path, we divide it into two steps:
 first we use [get_owner_path] to obtain the path of these projections
-in the tree and second we use [get_owner_sval] to obtain its sval. We
-also collect all aliased paths of this owner path to do dynamic alias
-analysis. *)
-Fixpoint get_owner_path (e: sv_map) (ph: path) (phl: list projection) (sv: sval) (alias: list path) : res (path * views) :=
+in the tree and second we use [get_owner_loc_footprint] to obtain the
+actual memory address and its footprint. *)
+Fixpoint get_owner_path (fpg: fp_graph) (ph: path) (phl: list projection) (fp: footprint) (alias: list path) : res (path * views) :=
   match phl with
-  | nil => OK (ph, alias)
+  | nil => OK (ph, ph :: alias)
   | pj :: l =>
       let ph1 := append_proj pj ph in
       let alias1 := map (append_proj pj) alias in
-      match pj, sv with
-      | proj_deref Mutable , sv_box sv1 =>          
-          get_owner_path e ph1 l sv1 alias1
-      | proj_field fid, sv_struct _ fpl =>
+      match pj, fp with
+      | proj_deref , fp_box _ fp1 =>          
+          get_owner_path fpg ph1 l fp1 alias1
+      | proj_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
-          | Some sv1 =>
-              get_owner_path e ph1 l sv1 alias1
+          | Some (_, ffp) =>
+              get_owner_path fpg ph1 l ffp alias1
           | None => Error nil
           end
-      | proj_field fid, sv_object _ _ fpl =>
+      | proj_field fid, fp_object _ _ fpl =>
           match find_field fid fpl with
-          | Some (_, sv1) =>
-              get_owner_path e ph1 l sv1 alias1
+          | Some (_, ffp) =>
+              get_owner_path fpg ph1 l ffp alias1
           | None => Error nil
           end
-      | proj_downcast fid1, sv_enum _ fid2 sv1 =>
+      | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
           if ident_eq fid1 fid2 then
-            get_owner_path e ph1 l sv1 alias1
+            get_owner_path fpg ph1 l fp1 alias1
           else
             Error nil
-      | proj_deref mut1 , sv_ref mut2 ph2 rebor =>
-          if mutkind_eq mut1 mut2 then
-            do sv2 <- get_owner_sval_map ph2 e;
-            (* dynamic computation of reborrow paths based on the
+      | proj_deref, fp_ref mut _ _ (Some ph2) rebor =>
+          do fp2 <- get_owner_footprint_map ph2 fpg;
+          (* dynamic computation of reborrow paths based on the
           supporting prefix technique of the borrow checker *)
-            let alias2 := match mut1 with
-                          | Mutable => (ph1 :: ph2 :: rebor ++ alias1)
-                          (* ph1 and alias1 cannot modify the content in
+          let alias2 := match mut with
+                        | Mutable => (ph1 :: rebor ++ alias1)
+                        (* ph1 and alias1 cannot modify the content in
                         ph2, so they are not added in the reborrow
                         paths *)
-                          | Immutable => (ph2 :: rebor)
-                          end in
-            get_owner_path e ph2 l sv2 alias2
-          else Error nil
+                        | Immutable => rebor
+                        end in
+          get_owner_path fpg ph2 l fp2 alias2
       | _, _  => Error nil
       end
   end.
 
 (* This actually can be used to define "reachability" *)
-Definition get_owner_path_sv_map (ps: path) (e: sv_map) : res (path * views) :=
+Definition get_owner_path_map (ps: path) (fpg: fp_graph) : res (path * views) :=
   let (id, phl) := ps in
-  match e!id with
-  | Some (_, _, sv) =>
-      get_owner_path e (id, nil) phl sv nil
+  match fpg!id with
+  | Some fp =>
+      get_owner_path fpg (id, nil) phl fp nil
   | _ => Error nil
   end.
 
 
-Fixpoint set_sval (phl: list projection) (v: sval) (root: sval) : res sval :=
+(* To also extract the type, use this function *)
+Fixpoint get_owner_footprint_type ce (phl: list projection) (ty: type) (fp: footprint) : res (type * footprint) :=
   match phl with
-  | nil => OK v
+  | nil => OK (ty, fp)
   | ph :: l =>
-      match ph, root with
-      | proj_deref _ , sv_box sv1 =>
-          do sv2 <- set_sval l v sv1;
-          OK (sv_box sv2)
-      | proj_field fid, sv_struct id svl =>
-          match find_field fid svl with
-          | Some fsv =>
-              do fsv1 <- set_sval l v fsv;
-              OK (sv_struct id (set_field fid (fun _ => fsv1) svl)) 
+      match ph, fp with
+      | proj_deref , fp_box _ fp1 =>
+          do ty1 <- type_deref ty;
+          get_owner_footprint_type ce l ty1 fp1
+      | proj_field fid, fp_struct _ fpl =>
+          match find_field fid fpl with
+          | Some (_, fp1) =>
+              do fty <- type_field ce ty fid;
+              get_owner_footprint_type ce l fty fp1
           | None => Error nil
           end
-      | proj_field fid, sv_object id obj svl =>
-          match find_field fid svl with
-          | Some (fty, fsv) =>
-              do fsv1 <- set_sval l v fsv;
-              OK (sv_object id obj (set_field fid (fun _ => (fty, fsv1)) svl)) 
+      (* Get the object's exposed borrowable value *)
+      | proj_field fid, fp_object _ _ fpl =>
+          match find_field fid fpl with
+          | Some (_, fty1, fp1) =>
+              get_owner_footprint_type ce l fty1 fp1
           | None => Error nil
           end
-      | proj_downcast fid, sv_enum id fid1 sv1 =>
-          if ident_eq fid fid1 then
-            do sv2 <- set_sval l v sv1;
-            OK (sv_enum id fid1 sv2)
-          else Error nil
-      | _, _ => Error nil
+      | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
+          if ident_eq fid1 fid2 then
+              do fty <- type_field ce ty fid1;
+            get_owner_footprint_type ce l fty fp1
+          else
+            Error nil
+      | _, _  => Error nil
       end
   end.
 
-Definition set_sval_map (ph: path) (v: sval) (e: sv_map) : res sv_map :=
-  let (id, phl) := ph in
-  match e!id with
-  | Some (ty, r, sv) =>
-      do sv1 <- set_sval phl v sv;
-      OK (PTree.set id (ty, r, sv1) e)
-  | None => Error nil
+
+Definition get_owner_footprint_type_map ce (ph: path) (fpm: fp_map) : res (type * footprint) :=
+  let (id, pj) := ph in
+  match fpm ! id with
+  | Some (_, _, _, ty, fp) =>
+      get_owner_footprint_type ce pj ty fp
+  | None =>
+      Error nil
   end.
 
 
-Fixpoint clear_sval_rec (sv: sval) : sval :=
-  match sv with
-  | sv_box _ => sv_box sv_bot
-  | sv_enum id fid sv1 =>
-      sv_enum id fid (clear_sval_rec sv1)
-  | sv_struct id svl =>
-      sv_struct id (map (fun '(fid, fsv) => (fid, clear_sval_rec fsv)) svl)
-  | _ => sv
-  end.
-
-
-(* Different from the footprint in the simulation, we set sv_bot to
-the location of the original value that is to be cleared *)
-Definition clear_sval_map (ph: path) (e: sv_map) : res sv_map :=
-  do sv <- get_owner_sval_map ph e;
-  (* We do not set sv_bot directly because we want the footprint map
-  can be translated to sv_map instead of defining a relation where the
-  setted sv_bot corresponds to some footprint. *)
-  set_sval_map ph (clear_sval_rec sv) e.
-
-(* We dynamically check that if one sval is being overwritten, it
+(* We dynamically check that if one footprint is being overwritten, it
 should not denote some unreleased resource, otherwise if some
 reference pointed to this leak resource, but borrow check only check
 assignment as shallow write, then we cannot maintain the invariant *)
-Fixpoint sval_is_dropped (sv: sval) : bool :=
-  match sv with
-  | sv_box sv1 => sval_not_bot sv1
-  | sv_enum id fid sv1 =>
-      (sval_is_dropped sv1)
-  | sv_struct id svl =>
-      (forallb (fun '(fid, fsv) => sval_is_dropped fsv) svl) 
+Fixpoint fp_is_dropped (fp: footprint) : bool :=
+  match fp with
+  | fp_box _ _ => false
+  | fp_enum id _ fid _ fp1 =>
+      (fp_is_dropped fp1)
+  | fp_struct id fpl =>
+      (forallb (fun '(fid, (_, ffp)) => fp_is_dropped ffp) fpl) 
   | _ => true
   end.
 
-Definition check_path_is_dropped (svm: sv_map) (ph: path) : res bool :=
-  do sv <- get_owner_sval_map ph svm;
-  OK (sval_is_dropped sv).
+(* Fixpoint fp_is_dropped (fp: footprint) : bool := *)
+(*   match fp with *)
+(*   | fp_box _  => negb (not_fp_emp fp1) *)
+(*   | fp_enum id _ fid _ fp1 => *)
+(*       (fp_is_dropped fp1) *)
+(*   | fp_struct id fpl => *)
+(*       (forallb (fun '(fid, (_, ffp)) => fp_is_dropped ffp) fpl)  *)
+(*   | _ => true *)
+(*   end. *)
+
+Definition check_path_is_dropped (fpm: fp_map) (ph: path) : res bool :=
+  do fp <- get_owner_footprint_map ph fpm;
+  OK (fp_is_dropped fp).
+
+Definition check_path_is_deeply_init (fpm: fp_map) (ph: path) : res bool :=
+  do fp <- get_owner_footprint_map ph fpm;
+  OK (deep_init fp).
+
+Fixpoint check_path_is_dropped_list (fpm: fp_map) (l: list path) : res bool :=
+  match l with
+  | nil => OK true
+  | ph :: l1 =>
+      do fg1 <- check_path_is_dropped fpm ph;
+      do fg2 <- check_path_is_dropped_list fpm l1;
+      OK (fg1 && fg2)
+  end.
+
 
 (** Borrow check operations *)
 
@@ -383,7 +553,10 @@ Definition check_path_is_dropped (svm: sv_map) (ph: path) : res bool :=
 Definition relevant_path (ph1: path) (am: access_mode_bor) (ph2: path) :=
   match am with
   | Ashallow => is_prefix_strict_path ph2 ph1 || is_shallow_prefix_path ph1 ph2
-  | Adeep => is_prefix_strict_path ph2 ph1 || is_support_prefix_path ph1 ph2
+  (* Note that all the path [ph2] in the views are mutable path, so if
+  ph1 is a prefix of ph2 than ph1 must be the supporting prefix of
+  ph2 *)
+  | Adeep => is_prefix_strict_path ph2 ph1 || is_prefix_path ph1 ph2
   end.
         
 (* access ph: note that access ph by write/read is irrelevant because
@@ -391,46 +564,65 @@ all the path in views are mutable path *)
 Definition conflict_view (ph: path) (am : access_mode_bor) (vs: views) : bool :=
   existsb (relevant_path ph am) vs.
 
-Fixpoint invalidate_conflict_ref (ph: path) (am : access_mode_bor) (sv: sval) : sval :=
-  match sv with
-  | sv_ref mut ph1 vs =>
+Fixpoint invalidate_conflict_ref (ph: path) (am : access_mode_bor) (fp: footprint) : footprint :=
+  match fp with
+  | fp_ref mut b ofs (Some ph1) vs =>
       if conflict_view ph am vs then
-        sv_bot
+        fp_ref mut b ofs None vs
       else
-        sv_ref mut ph1 vs
-  | sv_struct id svl =>
-      sv_struct id (map (fun '(fid, fsv) => (fid, invalidate_conflict_ref ph am fsv)) svl)
-  | sv_enum id fid sv1 =>
-      sv_enum id fid (invalidate_conflict_ref ph am sv1)
-  | sv_box sv1 =>
-      sv_box (invalidate_conflict_ref ph am sv1)
-  | _ => sv
+        fp_ref mut b ofs (Some ph1) vs
+  | fp_struct id fpl =>
+      fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, invalidate_conflict_ref ph am ffp))) fpl)
+  | fp_enum id tag fid fofs fp1 =>
+      fp_enum id tag fid fofs (invalidate_conflict_ref ph am fp1)
+  | fp_box b fp1 =>
+      fp_box b (invalidate_conflict_ref ph am fp1)
+  | _ => fp
   end.
 
-Definition invalidate_conflict_ref_svm (ph: path) (am : access_mode_bor) (svm: sv_map) : sv_map :=
-  PTree.map1 (fun '(r, ty, sv) => (r, ty, invalidate_conflict_ref ph am sv)) svm.
+Definition invalidate_conflict_ref_fpm (ph: path) (am : access_mode_bor) (fpm: fp_map) : fp_map :=
+  PTree.map1 (fun '(b, ofs, r, ty, fp) => (b, ofs, r, ty, invalidate_conflict_ref ph am fp)) fpm.
+
+Fixpoint invalidate_conflict_ref_fpm_list (l: list path) (am : access_mode_bor) (fpm: fp_map) : fp_map :=
+  match l with
+  | nil => fpm
+
+  | ph :: l1 =>
+      invalidate_conflict_ref_fpm_list l1 am (invalidate_conflict_ref_fpm ph am fpm)
+  end.
 
 (** Kill loans *)
 
-Definition kill_paths (ph: path) (vs: views) : views :=
-  filter (fun ph1 => negb (is_prefix_path ph ph1)) vs.
+(* We need to remove set of paths, i.e., views from the current views
+because overwrite a path would kill all the views of this path. *)
+Definition kill_paths (kill: views) (vs: views) : views :=
+  filter (fun ph1 => negb (existsb (fun ph => is_prefix_path ph ph1) kill)) vs.
 
 
-Fixpoint kill_paths_ref (ph: path) (sv: sval) : sval :=
-  match sv with
-  | sv_ref mut ph1 vs =>
-      sv_ref mut ph1 (kill_paths ph vs)
-  | sv_struct id svl =>
-      sv_struct id (map (fun '(fid, fsv) => (fid, kill_paths_ref ph fsv)) svl)
-  | sv_enum id fid sv1 =>
-      sv_enum id fid (kill_paths_ref ph sv1)
-  | sv_box sv1 =>
-      sv_box (kill_paths_ref ph sv1)
-  | _ => sv
+Fixpoint kill_paths_ref (kill: views) (fp: footprint) : footprint :=
+  match fp with
+  | fp_ref mut b ofs ph1 vs =>
+      fp_ref mut b ofs ph1 (kill_paths kill vs)
+  | fp_struct id fpl =>
+      fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, kill_paths_ref kill ffp))) fpl)
+  | fp_enum id tag fid fofs fp1 =>
+      fp_enum id tag fid fofs (kill_paths_ref kill fp1)
+  | fp_box b fp1 =>
+      fp_box b (kill_paths_ref kill fp1)
+  | _ => fp
   end.
 
-Definition kill_paths_ref_svm (ph: path) (svm: sv_map) : sv_map :=
-  PTree.map1 (fun '(r, ty, sv) => (r, ty, kill_paths_ref ph sv)) svm.
+Definition kill_paths_ref_fpm (kill: views) (fpm: fp_map) : fp_map :=
+  PTree.map1 (fun '(b, ofs, r, ty, fp) => (b, ofs, r, ty, kill_paths_ref kill fp)) fpm.
+
+(* Only used in function return, to kill the loans reborrowed from
+local variables/parameters *)
+Fixpoint kill_vars_ref_fpm (l: list ident) (fpm: fp_map) : fp_map :=
+  match l with
+  | nil => fpm
+  | id :: l1 =>
+      kill_vars_ref_fpm l1 (kill_paths_ref_fpm ((id, nil) :: nil) fpm)
+  end.
 
 (* Operations for the function call and return *)
 
@@ -535,39 +727,45 @@ Definition recover_ref_path (l: list path) (ph: path) : res path :=
 
 (** Implementation dependent operations *)
 
-(* collect the owner paths stored in the leaf nodes that are
-sv_ref. *)
-Fixpoint collect_sval_ref_paths (sv: sval) : list path :=
-  match sv with
-  | sv_struct _ svl =>
-      flat_map  (fun '(fid, fsv) => collect_sval_ref_paths fsv) svl
-  | sv_enum _ fid fsv =>
-      collect_sval_ref_paths fsv 
-  | sv_box sv1 =>
-      collect_sval_ref_paths sv1
-  | sv_ref _ ph vs =>
+
+(* collect the owner paths stored in the leaf nodes that are fp_ref *)
+Fixpoint collect_footprint_ref_paths (fp: footprint) : list path :=
+  match fp with
+  | fp_struct _ fpl =>
+      flat_map  (fun '(_, (_, ffp)) => collect_footprint_ref_paths ffp) fpl
+  | fp_enum _ _ _ _ ffp =>
+      collect_footprint_ref_paths ffp
+  | fp_box _ fp1 =>
+      collect_footprint_ref_paths fp1
+  | fp_ref _ _ _ (Some ph) _  =>
       ph :: nil
-  (* We assume that object cannot have referenece to the current environment *)
-  (* | sv_object *)
   | _ => nil
   end.
 
 (* Similar to collect_sval_ref_paths, we also return the projections
 of the reference path. It is only used in collect_sval_ref_paths_types *)
-Fixpoint collect_sval_ref_paths_projections (pj: list projection) (sv: sval) : list (path * views * list projection) :=
-  match sv with
-  | sv_struct _ svl =>
-      flat_map  (fun '(fid, fsv) => collect_sval_ref_paths_projections (pj ++ [proj_field fid]) fsv) svl
-  | sv_enum _ fid fsv =>
-      collect_sval_ref_paths_projections (pj ++ [proj_downcast fid]) fsv 
-  | sv_box sv1 =>
-      collect_sval_ref_paths_projections (pj ++ [proj_deref Mutable]) sv1
-  | sv_ref _ ph vs =>
+Fixpoint collect_footprint_ref_paths_projections (pj: list projection) (fp: footprint) : list (path * views * list projection) :=
+  match fp with
+  | fp_struct _ fpl =>
+      flat_map  (fun '(fid, (_, ffp)) => collect_footprint_ref_paths_projections (pj ++ [proj_field fid]) ffp) fpl
+  | fp_enum _ _ fid _ ffp =>
+      collect_footprint_ref_paths_projections (pj ++ [proj_downcast fid]) ffp 
+  | fp_box _ fp1 =>
+      collect_footprint_ref_paths_projections (pj ++ [proj_deref]) fp1
+  | fp_ref _ _ _ (Some ph) vs =>
       (ph, vs, pj) :: nil
   (* We assume that object cannot have referenece to the current environment *)
   (* | sv_object *)
   | _ => nil
   end.
+
+(* collect all the unvisited owner path *)
+Definition collect_fpm_ref_paths (fpm: fp_map) : list path :=
+  let fpl := map (fun '(_, (_, _, _, _, fp)) => fp) (PTree.elements fpm) in
+  flat_map collect_footprint_ref_paths fpl.
+
+
+
 
 Definition collect_ref_type_region ce (ty: type) (pj: list projection) : res (origin * type) :=
     do ty1 <- wt_projections ce ty pj;
@@ -579,84 +777,82 @@ Definition collect_ref_type_region ce (ty: type) (pj: list projection) : res (or
 
 (** TODO: there may be no need to compute the type when collecting the
 inout parameters path. We can build a substitution function to
-substitute the type computed from get_owner_sval_type at the inout
-parameter path. *)
-Definition collect_sval_ref_paths_types ce (ty_sv: type * sval) : res (list (path * (views * origin * type))) :=
-  let (ty, sv) := ty_sv in
-  let l := collect_sval_ref_paths_projections nil sv in
+substitute the type computed from get_owner_footprint_type at the
+inout parameter path. *)
+Definition collect_footprint_ref_paths_types ce (ty_fp: type * footprint) : res (list (path * (views * origin * type))) :=
+  let (ty, fp) := ty_fp in
+  let l := collect_footprint_ref_paths_projections nil fp in
   mmap (fun '(ph, vs, pj) => do (r, ty1) <- collect_ref_type_region ce ty pj;
                           OK (ph, (vs, r, ty1))) l.
 
-(* collect all the unvisited owner path *)
-Definition collect_svm_ref_paths (svm: sv_map) : list path :=
-  let svl := map (fun '(_, (_, _, sv)) => sv) (PTree.elements svm) in
-  flat_map (collect_sval_ref_paths) svl.
+Definition get_owner_footprint_map_ref_paths ce (fpm: fp_map) (ph: path) ty : res (list (path * (views * origin * type))) :=
+  do fp <- get_owner_footprint_map ph fpm;
+  collect_footprint_ref_paths_types ce (ty, fp).
 
-(* [ty] should be computed from the function arguments types *)
-Definition get_owner_sval_map_ref_paths ce (svm: sv_map) (ph: path) (ty: type) : res (list (path * (views * origin * type))) :=
-  do sv <- get_owner_sval_map ph svm;
-  (collect_sval_ref_paths_types ce (ty, sv)).
 
 (* We need to ensure that all the returned paths are disjoint, its
 located note contain deep_init sval, and form a closure. The types of
 the argument come from function signature, meaning that they contain
 generic regions. *)
-Definition collect_svm_args_ref_paths ce (svm: sv_map) (args: list (type * sval)) : res (list (path * (views * origin * type))) :=
-  let not_visited := collect_svm_ref_paths svm in
-  do l <- mmap (collect_sval_ref_paths_types ce) args;  
+Definition collect_fpm_args_ref_paths ce (fpm: fp_map) (args: list (type * footprint)) : res (list (path * (views * origin * type))) :=
+  let not_visited := collect_fpm_ref_paths fpm in
+  do l <- mmap (collect_footprint_ref_paths_types ce) args;
   let to_visit := concat l in
-  collect_ref_paths_generic (get_owner_sval_map_ref_paths ce svm) nil to_visit not_visited (lex_ord_lt_acc_intro _ _).
+  collect_ref_paths_generic (get_owner_footprint_map_ref_paths ce fpm) nil to_visit not_visited (lex_ord_lt_acc_intro _ _).
 
 
-Fixpoint generate_new_suffix_path_sval (process_views: path -> views -> views) (l: list path) (sv: sval) : res sval :=
-  match sv with
-  | sv_ref mut ph vs =>
+Fixpoint generate_new_suffix_path_footprint (process_views: path -> views -> views) (l: list path) (fp: footprint) : res footprint :=
+  match fp with
+  | fp_ref mut b ofs (Some ph) vs =>
       do ph1 <- generate_new_suffix_path l ph;
       (* We can directly use ph1 as the abstract view for callee? *)
-      OK (sv_ref mut ph1 (process_views ph1 vs))
-  | sv_box sv1 =>
-      do sv1' <- generate_new_suffix_path_sval process_views l sv1;
-      OK (sv_box sv1')
-  | sv_struct id svl =>
-      do svl1 <- (mmap (fun '(fid, fsv) => 
-                            do fsv1 <- generate_new_suffix_path_sval process_views l fsv;
-                            OK (fid, fsv1)) svl);
-      OK (sv_struct id svl1)
-  | sv_enum id fid fsv =>
-      do fsv1 <- generate_new_suffix_path_sval process_views l fsv;
-      OK (sv_enum id fid fsv1)
-  | sv_object id obj svl =>
-      do svl1 <- (mmap (fun '(fid, (fty, fsv)) => 
-                            do fsv1 <- generate_new_suffix_path_sval process_views l fsv;
-                            OK (fid, (fty, fsv1))) svl);
-      OK (sv_object id obj svl1)
-  | _ => OK sv
+      OK (fp_ref mut b ofs (Some ph1) (process_views ph1 vs))
+  | fp_box b fp1 =>
+      do fp1' <- generate_new_suffix_path_footprint process_views l fp1;
+      OK (fp_box b fp1')
+  | fp_struct id fpl =>
+      do fpl1 <- (mmap (fun '(fid, (r, ffp)) => 
+                            do ffp1 <- generate_new_suffix_path_footprint process_views l ffp;
+                            OK (fid, (r, ffp1))) fpl);
+      OK (fp_struct id fpl1)
+  | fp_enum id tag fid fofs ffp =>
+      do ffp1 <- generate_new_suffix_path_footprint process_views l ffp;
+      OK (fp_enum id tag fid fofs ffp1)
+  | fp_object id obj fpl =>
+      do fpl1 <- (mmap (fun '(fid, (r, ffp)) => 
+                            do ffp1 <- generate_new_suffix_path_footprint process_views l ffp;
+                            OK (fid, (r, ffp1))) fpl);
+      OK (fp_object id obj fpl1)
+  | _ => OK fp
   end.
 
 
 (* Collect the svals that are passed via reference to the environment *)
-Definition collect_svm_passed_ref_sval (process_views: path -> views -> views) (svm: sv_map) (l: list path) : res (list sval) :=
-  mmap (fun ph => do sv <- get_owner_sval_map ph svm;
-               generate_new_suffix_path_sval process_views l sv) l.
+Definition collect_fpm_passed_ref_footprint (process_views: path -> views -> views) (fpm: fp_map) (l: list path) : res (list (block * Z * footprint)) :=
+  mmap (fun ph => do (bofs, fp) <- get_owner_loc_footprint_map ph fpm;
+               do fp1 <- generate_new_suffix_path_footprint process_views l fp;
+               OK (bofs, fp1)) l.
 
 (* set sv_bot to the location that passed via reference *)
-Fixpoint clear_svm_passed_ref_sval (svm: sv_map) (l: list path) : res sv_map :=
+Fixpoint clear_fpm_passed_ref_sval (fpm: fp_map) (l: list path) : res fp_map :=
   match l with
-  | nil => OK svm
+  | nil => OK fpm
   | ph :: phl =>
-      do svm1 <- set_sval_map ph sv_bot svm;
-      clear_svm_passed_ref_sval svm1 phl
+      
+      do fpm1 <- set_footprint_map ph fp_emp fpm;
+      clear_fpm_passed_ref_sval fpm1 phl
   end.
+
 
 (* The output parameters contain two parts: one for the normal
 arguments and the others are the memory locations passed via
 reference *)
-Definition generate_call_parameters ce (svm: sv_map) (args: list (type * sval)) : res (list sval * list (origin * type * sval) * list (path * (views * origin * type))) :=
-  do extern_paths <- collect_svm_args_ref_paths ce svm args;  
-  do args1 <- mmap (generate_new_suffix_path_sval (fun ph _ => ph :: nil) (map fst extern_paths)) (map snd args);
-  do inout_svals <- collect_svm_passed_ref_sval (fun ph _ => ph :: nil) svm (map fst extern_paths);
+Definition generate_call_parameters ce (fpm: fp_map) (args: list (type * footprint)) : res (list footprint * list (block * Z * origin * type * footprint) * list (path * (views * origin * type))) :=
+  do extern_paths <- collect_fpm_args_ref_paths ce fpm args;  
+  do args1 <- mmap (generate_new_suffix_path_footprint (fun ph _ => ph :: nil) (map fst extern_paths)) (map snd args);
+  do inout_loc_footprints <- collect_fpm_passed_ref_footprint (fun ph _ => ph :: nil) fpm (map fst extern_paths);
   (* collect (origin, type) for the inout arguments *)
-  let inout_params := combine (map (fun '(_, (_, r, ty)) => (r, ty)) extern_paths) inout_svals in
+  let inout_params := map (fun '(r, ty, (b, ofs, fp)) => (b, ofs, r, ty, fp)) (combine (map (fun '(_, (_, r, ty)) => (r, ty)) extern_paths) inout_loc_footprints) in
   OK (args1, inout_params, extern_paths).
 
 Definition normalize_returned_views (phs: list path) (_: path) (vs: views) : views :=
@@ -671,10 +867,10 @@ Definition normalize_returned_views (phs: list path) (_: path) (vs: views) : vie
 reference location to its normalized forms (i.e., the ordinal in the
 list passed by caller). We can reuse the generate_new_suffix_path_sval
 to do this work. *)
-Definition generate_return_parameters (svm: sv_map) (retv: sval) (ns: list ident) : res (sval * list sval) :=
+Definition generate_return_parameters (fpm: fp_map) (retv: footprint) (ns: list ident) : res (footprint * list (block * Z * footprint)) :=
   let phs := map (fun id => (id, nil)) ns in
-  do retv1 <- generate_new_suffix_path_sval (normalize_returned_views phs) phs retv;
-  do out_params <- collect_svm_passed_ref_sval (normalize_returned_views phs) svm phs;
+  do retv1 <- generate_new_suffix_path_footprint (normalize_returned_views phs) phs retv;
+  do out_params <- collect_fpm_passed_ref_footprint (normalize_returned_views phs) fpm phs;
   OK (retv1, out_params).
 
 
@@ -683,32 +879,32 @@ current function should recover the normalized names that are passed
 to environment (or generate new names to avoid name conflict with the
 current variable names at function entry). These two kinds of
 operations can be done using recover_sval_ref_paths. *)
-Fixpoint recover_sval_ref_paths (process_views: views -> views) (l: list path) (sv: sval)  : res sval :=
-  match sv with
-  | sv_ref mut ph vs =>
+Fixpoint recover_footprint_ref_paths (process_views: views -> views) (l: list path) (fp: footprint)  : res footprint :=
+  match fp with
+  | fp_ref mut b ofs (Some ph) vs =>
       (* There may be view from the callee local paths (e.g., by
       returning a reborrowed path), which should be ignored when
       recovering the concrete views. *)
-      do ph1 <- recover_ref_path l ph; 
-      OK (sv_ref mut ph1 (process_views vs))
-  | sv_box sv1 =>
-      do sv1' <- recover_sval_ref_paths process_views l sv1;
-      OK (sv_box sv1')
-  | sv_struct id svl =>
-      do svl1 <- mmap (fun '(fid, fsv) => 
-                        do fsv1 <- recover_sval_ref_paths process_views l fsv;
-                        OK (fid, fsv1)) svl;
-      OK (sv_struct id svl1)
-  | sv_enum id fid fsv =>
-      do fsv1 <- recover_sval_ref_paths process_views l fsv;
-      OK (sv_enum id fid fsv1)
-  | sv_object id obj svl =>
-      do svl1 <- mmap (fun '(fid, (fty, fsv)) => 
-                        do fsv1 <- recover_sval_ref_paths process_views l fsv;
-                        OK (fid, (fty, fsv1))) svl;
-      OK (sv_object id obj svl1)
+      do ph1 <- recover_ref_path l ph;
+      OK (fp_ref mut b ofs (Some ph1) (process_views vs))
+  | fp_box b fp1 =>
+      do fp1' <- recover_footprint_ref_paths process_views l fp1;
+      OK (fp_box b fp1')
+  | fp_struct id fpl =>
+      do fpl1 <- mmap (fun '(fid, (r, ffp)) => 
+                        do ffp1 <- recover_footprint_ref_paths process_views l ffp;
+                        OK (fid, (r, ffp1))) fpl;
+      OK (fp_struct id fpl1)
+  | fp_enum id tag fid fofs ffp =>
+      do ffp1 <- recover_footprint_ref_paths process_views l ffp;
+      OK (fp_enum id tag fid fofs ffp1)
+  | fp_object id obj fpl =>
+      do fpl1 <- mmap (fun '(fid, (r, ffp)) => 
+                        do ffp1 <- recover_footprint_ref_paths process_views l ffp;
+                        OK (fid, (r, ffp1))) fpl;
+      OK (fp_object id obj fpl1)
   | _ =>
-      OK sv
+      OK fp
   end.
 
 (* The id in ph is the index of the views *)
@@ -727,14 +923,14 @@ reference-passed sval list, it updates their reference paths and
 then putback to the svm. The caller should guarantee that the external
 svals are normalized into the form same as those passed by the
 caller *)
-Definition receive_return_sval (svm: sv_map) (l: list (path * views)) (retv: sval) (externs: list sval) : res (sval * sv_map) :=
+Definition receive_return_footprint (fpm: fp_map) (l: list (path * views)) (retv: footprint) (externs: list footprint) : res (footprint * fp_map) :=
   let phl := map fst l in
   let vsl := map snd l in
-  do retv1 <- recover_sval_ref_paths (recover_views vsl) phl retv;
-  do externs1 <- mmap (recover_sval_ref_paths (recover_views vsl) phl) externs;
+  do retv1 <- recover_footprint_ref_paths (recover_views vsl) phl retv;
+  do externs1 <- mmap (recover_footprint_ref_paths (recover_views vsl) phl) externs;
   let phs_externs := combine phl externs1 in
-  do svm1 <- mfold_left (fun acc '(ph, sv) => set_sval_map ph sv acc) phs_externs svm;
-  OK (retv1, svm1).
+  do fpm1 <- mfold_left (fun acc '(ph, fp) => set_footprint_map ph fp acc) phs_externs fpm;
+  OK (retv1, fpm1).
 
 Definition rename_views (l: list path) (phl: list path) : views :=
   flat_map (fun ph1 => match recover_ref_path l ph1 with
@@ -742,11 +938,11 @@ Definition rename_views (l: list path) (phl: list path) : views :=
                     | _ => nil
                     end) phl.
 
-Definition receive_incoming_params (fresh_paths: list path) (args: list sval) (inout_params: list (origin * type * sval)) : res (list sval * list (origin * type * sval)) :=
-  do args1 <- mmap (recover_sval_ref_paths (rename_views fresh_paths) fresh_paths) args;
-  do inout_params1 <- mmap (fun '(r, ty, sv) => 
-                          do sv1 <- recover_sval_ref_paths (rename_views fresh_paths) fresh_paths sv;
-                          OK (r, ty, sv1)) inout_params;
+Definition receive_incoming_params (fresh_paths: list path) (args: list footprint) (inout_params: list (block * Z * origin * type * footprint)) : res (list footprint * list (block * Z * origin * type * footprint)) :=
+  do args1 <- mmap (recover_footprint_ref_paths (rename_views fresh_paths) fresh_paths) args;
+  do inout_params1 <- mmap (fun '(b, ofs, r, ty, fp) => 
+                          do fp1 <- recover_footprint_ref_paths (rename_views fresh_paths) fresh_paths fp;
+                          OK (b, ofs, r, ty, fp1)) inout_params;
   OK (args1, inout_params1).
   
 
@@ -765,96 +961,93 @@ Definition globalenv (se: Genv.symtbl) (p: program) :=
 
 Section EXPR.
   
+Definition access_mode_chunk (ty: type) : res memory_chunk :=
+  match access_mode ty with
+  | By_value chunk => OK chunk
+  | _ => Error nil
+  end.
+
 (* We also do dynamic borrow checking *)
-Fixpoint eval_pexpr (svm: sv_map) (pe: pexpr) : res (sval * sv_map) :=
+Fixpoint eval_pexpr (fpm: fp_map) (pe: pexpr) : res (footprint * fp_map) :=
   match pe with
-  | Eunit => OK (sv_scalar (Vint Int.zero), svm)
-  | Econst_int i ty => OK (sv_scalar (Vint i), svm)
-  | Econst_float f ty => OK (sv_scalar (Vfloat f), svm)
-  | Econst_single f ty => OK (sv_scalar (Vsingle f), svm)
-  | Econst_long i ty => OK (sv_scalar (Vlong i), svm)
+  | Eunit => OK (fp_scalar Mint32 (Vint Int.zero), fpm)               
+  | Econst_int i ty => 
+      do chunk <- access_mode_chunk ty;
+      OK (fp_scalar chunk (Vint i), fpm)
+  | Econst_float f ty => 
+      do chunk <- access_mode_chunk ty;
+      OK (fp_scalar chunk (Vfloat f), fpm)
+  | Econst_single f ty => 
+      do chunk <- access_mode_chunk ty;
+      OK (fp_scalar chunk (Vsingle f), fpm)
+  | Econst_long i ty => 
+      do chunk <- access_mode_chunk ty;
+      OK (fp_scalar chunk (Vlong i), fpm)
   | Eunop op a t =>
-      do (v1, svm1) <- eval_pexpr svm a;
+      do (v1, fpm1) <- eval_pexpr fpm a;
       match v1 with
-      | sv_scalar v2 =>
+      | fp_scalar _ v2 =>
           match sem_unary_operation op v2 t with
           | Some v3 =>
-              OK (sv_scalar v3, svm1)
+              do chunk <- access_mode_chunk t;
+              OK (fp_scalar chunk v3, fpm1)
           | None =>
               Error nil
           end
       | _ => Error nil
       end
   | Ebinop op a1 a2 t =>
-      do (v1, svm1) <- eval_pexpr svm a1;
-      do (v2, svm2) <- eval_pexpr svm1 a2;
+      do (v1, fpm1) <- eval_pexpr fpm a1;
+      do (v2, fpm2) <- eval_pexpr fpm1 a2;
       match v1, v2 with
-      | sv_scalar v1', sv_scalar v2' =>
+      | fp_scalar _ v1', fp_scalar _ v2' =>
           match sem_binary_operation_rust op v1' (typeof_pexpr a1) v2' (typeof_pexpr a2) with
           | Some v =>
-              OK (sv_scalar v, svm2)
+              do chunk <- access_mode_chunk t;
+              OK (fp_scalar chunk v, fpm2)
           | None =>
               Error nil
           end
       | _, _ => Error nil
       end
   | Eplace p ty =>
-      do (ph, _) <- get_owner_path_sv_map p svm;
-      do sv <- get_owner_sval_map ph svm;
-      OK (sv, invalidate_conflict_ref_svm p Adeep svm)
+      do (ph, _) <- get_owner_path_map p fpm;
+      do (_, fp) <- get_owner_loc_footprint_map ph fpm;
+      OK (fp, invalidate_conflict_ref_fpm p Adeep fpm)
   | Ecktag p fid =>
-      do (ph, _) <- get_owner_path_sv_map p svm;
-      do v <- get_owner_sval_map ph svm;
-      match v with
-      | sv_enum _ fid1 _ =>
+      do (ph, _) <- get_owner_path_map p fpm;
+      do (_, fp) <- get_owner_loc_footprint_map ph fpm;
+      match fp with
+      | fp_enum _ _ fid1 _ _ =>
           (* Should we use Adeep or Ashallow? *)
-          OK (sv_scalar (Val.of_bool (ident_eq fid fid1)), invalidate_conflict_ref_svm p Ashallow svm)
+          OK (fp_scalar Mint8unsigned (Val.of_bool (ident_eq fid fid1)), invalidate_conflict_ref_fpm p Ashallow fpm)
       | _ => Error nil
       end
   | Eref _ mut p _ =>
-      do (ph, vs) <- get_owner_path_sv_map p svm;
-      OK (sv_ref mut ph vs, invalidate_conflict_ref_svm p Adeep svm)
+      do (ph, vs) <- get_owner_path_map p fpm;
+      do (bofs, _) <- get_owner_loc_footprint_map ph fpm;
+      let (b, ofs) := bofs in
+      OK (fp_ref mut b ofs (Some ph) vs, invalidate_conflict_ref_fpm p Adeep fpm)
   | _ => Error nil
   end.
-      
-Definition eval_expr (svm: sv_map) (e: expr) : res (sval * sv_map) :=
+
+
+Definition eval_expr (ce: composite_env) (fpm: fp_map) (e: expr) : res (footprint * fp_map) :=
   match e with
   | Emoveplace p _ =>
-      do v <- get_owner_sval_map p svm;
-      (* We move from the value of this path. Should we move from (valid_owner p) *)
-      do svm1 <- set_sval_map p sv_bot svm;
-      OK (v, invalidate_conflict_ref_svm p Adeep svm1)
+      do (_, fp) <- get_owner_loc_footprint_map p fpm;
+      do fpm1 <- clear_footprint_map ce p fpm;
+      OK (fp, invalidate_conflict_ref_fpm p Adeep fpm1)
   | Epure pe =>
-      eval_pexpr svm pe
+      eval_pexpr fpm pe
   end.
 
+(* May be useful in the proof to store the evaluated value in a fresh
+temp *)
 Definition fresh_PTree_ident {A: Type} (m: PTree.t A) : ident :=
   let names := map fst (PTree.elements m) in
   Pos.succ (Mem.find_max_pos names).
 
-(* To match the borrow checking, we use a fresh temporary variable to
-store the evaluated value. *)
-Definition eval_expr_svm (svm: sv_map) (e: expr) : res (ident * sv_map) :=
-  let fresh := fresh_PTree_ident svm in
-  do (sv, svm1) <- eval_expr svm e;
-  OK (fresh, PTree.set fresh (None, typeof e, sv) svm1).
-
-Definition move_place_option (svm: sv_map) (p: option place) : res sv_map :=
-  match p with
-  | Some p =>
-      (* We should assume that p can be only owner path *)
-      set_sval_map p sv_bot svm
-  | None =>
-      OK svm
-  end.
-
-Fixpoint move_place_list (svm: sv_map) (l: list place) : res sv_map :=
-  match l with
-  | nil => OK svm
-  | p :: l' =>
-      do svm1 <- set_sval_map p sv_bot svm;
-      move_place_list svm1 l'
-  end.
 
 (* Fixpoint eval_exprlist (svm: sv_map) (al: list expr) (tyl: typelist) : res (list sval * sv_map) := *)
 (*   match al, tyl with *)
@@ -868,17 +1061,17 @@ Fixpoint move_place_list (svm: sv_map) (l: list place) : res sv_map :=
 (*   | _, _ => Error nil *)
 (*   end. *)
 
-Fixpoint eval_exprlist (svm: sv_map) (al: list expr) (tyl: typelist) : res (list sval * sv_map) :=
-  match al, tyl with
-  | nil, Tnil => OK (nil, svm)
-  | a :: al1, Tcons ty tyl1 =>
-      do (v1, svm1) <- eval_expr svm a;
+Fixpoint eval_exprlist ce (fpm: fp_map) (al: list expr) (* (tyl: typelist) *) : res (list footprint * fp_map) :=
+  match al with
+  | nil => OK (nil, fpm)
+  | a :: al1 =>
+      do (fp1, fpm1) <- eval_expr ce fpm a;
       (** We do not support sem_cast for now to simplify the proof, may
       be we need to do some restricted type checking *)
       (* do v1' <- sem_cast v1 (typeof a) ty; *)
-      do (vl, svm2) <- eval_exprlist svm1 al1 tyl1;
-      OK (v1 :: vl, svm2)
-  | _, _ => Error nil
+      do (fpl, fpm2) <- eval_exprlist ce fpm1 al1;
+      OK (fp1 :: fpl, fpm2)
+  (* | _ => Error nil *)
   end.
 
 
@@ -890,7 +1083,7 @@ Inductive cont : Type :=
 | Kstop: cont
 | Kseq: statement -> cont -> cont
 | Kloop: statement -> cont -> cont
-| Kcall: place -> function -> list (path * (views * origin * type)) -> list ident -> sv_map -> cont -> cont
+| Kcall: place -> function -> list (path * (views * origin * type)) -> list ident -> fp_map -> cont -> cont
 .
 
 
@@ -916,15 +1109,18 @@ Inductive state: Type :=
     (s: statement)
     (k: cont)
     (inout: list ident)         (* used to record the new idents for the in-out parameters *)
-    (e: sv_map): state
+    (fpm: fp_map)
+    (sup: Mem.sup) : state
 | Callstate
     (fun_id: ident)
-    (args: list sval)
-    (inout: list (origin * type * sval))
+    (args: list footprint)
+    (inout: list (block * Z * origin * type * footprint))
+    (sup: Mem.sup)
     (k: cont): state
 | Returnstate
-    (res: sval)
-    (inout: list sval)
+    (res: footprint)
+    (inout: list (block * Z * footprint))
+    (sup: Mem.sup)
     (k: cont): state.
 
 
@@ -945,163 +1141,210 @@ Fixpoint npos (n: nat) (p: positive) : list positive :=
       p :: (npos n' (Pos.succ p))
   end.
 
-Fixpoint bind_params (m: sv_map) (l: list (ident * type)) (vl: list (option origin * sval)) : res sv_map :=
+Fixpoint alloc_vars ce (fpm: fp_map) (l: list (ident * type)) (sup: Mem.sup) : (fp_map * Mem.sup) :=
+  match l with
+  | nil => (fpm, sup)
+  | (id, ty) :: l1 =>
+      let b := Mem.fresh_block sup in
+      alloc_vars ce (PTree.set id (b, 0, None, ty, fp_uninit (sizeof ce ty) (alignof ce ty)) fpm) l1 (Mem.sup_incr sup)
+  end.
+
+Fixpoint bind_params (fpm: fp_map) (l: list (ident * type)) (vl: list footprint) : res fp_map :=
   match l, vl with
-  | nil, nil => OK m
-  | (id, ty) :: l1, (r, v) :: vl1 =>
-      let m1 := PTree.set id (r, ty, v) m in
-      bind_params m1 l1 vl1
+  | nil, nil => OK fpm
+  | (id, ty) :: l1, v :: vl1 =>
+      do fpm1 <- set_footprint_map (id, nil) v fpm;
+      bind_params fpm1 l1 vl1
   | _, _ => Error nil
   end.
 
-Fixpoint bind_inout_params (m: sv_map) (l: list ident) (vl: list (origin * type * sval)) : res sv_map :=
+Fixpoint bind_inout_params (fpm: fp_map) (l: list ident) (vl: list (block * Z * origin * type * footprint)) : res fp_map :=
   match l, vl with
-  | nil, nil => OK m
-  | id :: l1, (r, ty, v) :: vl1 =>
-      let m1 := PTree.set id (Some r, ty, v) m in
-      bind_inout_params m1 l1 vl1
+  | nil, nil => OK fpm
+  | id :: l1, (b, ofs, r, ty, v) :: vl1 =>
+      let fpm1 := PTree.set id (b, ofs, Some r, ty, v) fpm in
+      bind_inout_params fpm1 l1 vl1
   | _, _ => Error nil
   end.
-
 
 (* We should assume that the types in inout_params contain generic
 regions instead of the local regions from the caller. *)
-Definition function_entry (f: function) (args: list sval) (inout_params: list (origin * type * sval)) : res (list ident * sv_map) :=
+Definition function_entry ce (f: function) (args: list footprint) (inout_params: list (block * Z * origin * type * footprint)) (sup: Mem.sup) : res (list ident * fp_map * Mem.sup) :=
   let names := field_idents (fn_params f ++ fn_vars f) in
   let fresh_var := Pos.succ (find_max_pos names) in
   let fresh_vars := npos (length inout_params) fresh_var in
   (* Substitute the old name in args and in_params with the fresh names *)
   let fresh_paths : list path := map (fun id => (id, nil)) fresh_vars in
   do (args1, inout_params1) <- receive_incoming_params fresh_paths args inout_params;
+  (* allocate the variables and paramters *)
+  let (fpm1, sup1) := alloc_vars ce (PTree.empty _) (f.(fn_params) ++ f.(fn_vars)) sup in
   (* set the value to the map *)
-  do m1 <- bind_params (PTree.empty (option origin * type * sval)) (fn_params f) (map (fun v => (None, v)) args1);
-  do m2 <- bind_inout_params m1 fresh_vars inout_params1;
-  do m3 <- bind_params m2 (fn_vars f) (repeat (None, sv_bot) (length (fn_vars f)));
-  OK (fresh_vars, m3).
+  do fpm2 <- bind_params fpm1 (fn_params f) args1;
+  do fpm3 <- bind_inout_params fpm2 fresh_vars inout_params1;
+  OK (fresh_vars, fpm3, sup1).
+
+Definition var_to_path (v: ident * type) : path := (fst v, nil).
+
+Definition vars_to_paths (l: list (ident * type)) : list path :=
+  map var_to_path l.
 
 Section SMALLSTEP.
 
 Variable ge: genv.
 
+Definition before_write_place (fpm1: fp_map) (p: place) : res (path * views * fp_map) :=
+  do (ph, vs) <- get_owner_path_map p fpm1;
+  let fpm2 := invalidate_conflict_ref_fpm p Ashallow fpm1 in
+  (* This property should be guaranteed by the correct insertion of
+    drop. Since we have no way to express this guarantee provided by
+    RustIRgen/Drop Elaboration, we must encode it into the
+    semantics. *)
+  if check_path_is_dropped fpm2 ph then
+    (* Before overwrite the target location, we should first set it to
+    fp_uninit so that the original fp_ref in this location is removed
+    and we can establish invariant before overwriting a new value *)
+    do fpm3 <- clear_footprint_map ge ph fpm2;
+    (* To make the views at each reference precise. Note that we
+    should also kill the loans in the evaluated value (e.g., consider
+    x = &mut *x *)
+    OK (ph, vs, kill_paths_ref_fpm vs fpm3)
+  else Error nil.
+
+Definition eval_assign (fpm1: fp_map) (p: place) (e: expr) : res (path * footprint * fp_map) :=
+  do (vfp, fpm2) <- eval_expr ge fpm1 e;
+  do (ph_vs, fpm3) <- before_write_place fpm2 p;
+  let (ph, vs) := ph_vs in
+  OK (ph, (kill_paths_ref vs vfp), fpm3).
+
+
 Inductive step : state -> trace -> state -> Prop :=
-| step_assign: forall f e (p: place) sv svm1 svm2 svm3 ph ns k vs
-    (EVALE: eval_expr svm1 e = OK (sv, svm2))
-    (EVALP: get_owner_path_sv_map p svm2 = OK (ph, vs))
-    (CKDROP: check_path_is_dropped svm2 ph = OK true)
-    (ASS: set_sval_map ph sv svm2 = OK svm3),
-    step (State f (Sassign p e) k ns svm1) E0 (State f Sskip k ns svm3)
-| step_assign_variant: forall f e (p: place) k svm1 svm2 svm3 v v1 co fid enum_id orgs ph fty ns vs
-    (EVALE: eval_expr svm1 e = OK v)
-    (MOVE_EXPR: move_place_option svm1 (moved_place e) = OK svm2)
-    (EVALP: get_owner_path_sv_map p svm2 = OK (ph, vs))
+| step_assign: forall f e (p: place) vfp fpm1 fpm2 fpm3 ph ns k sup
+    (EVAL: eval_assign fpm1 p e = OK (ph, vfp, fpm2))    
+    (ASS: set_footprint_map ph vfp fpm2 = OK fpm3),
+    step (State f (Sassign p e) k ns fpm1 sup) E0 (State f Sskip k ns fpm3
+ sup)
+| step_assign_variant: forall f e (p: place) k fpm1 fpm2 fpm3 vfp co fid enum_id orgs ph fty ns sup fofs tag
+    (EVAL: eval_assign fpm1 p e = OK (ph, vfp, fpm2))
     (* necessary for clightgen simulation *)
     (TYP: typeof_place p = Tvariant orgs enum_id)
     (CO: ge.(genv_cenv) ! enum_id = Some co)
     (FTY: field_type fid co.(co_members) = OK fty)
-    (CAST: sem_cast v (typeof e) fty = OK v1)
-    (ASS: set_sval_map ph (sv_enum enum_id fid v1) svm2 = OK svm3),
-    step (State f (Sassign_variant p enum_id fid e) k ns svm1) E0 (State f Sskip k ns svm3)
-| step_box: forall f e (p: place) k ty svm1 svm2 svm3 v v1 ph ns vs
-    (EVALE: eval_expr svm1 e = OK v)
-    (MOVE_EXPR: move_place_option svm1 (moved_place e) = OK svm2)
-    (EVALP: get_owner_path_sv_map p svm2 = OK (ph, vs))
+    (TAG: field_tag fid co.(co_members) = Some tag)
+    (FOFS: variant_field_offset ge fid co.(co_members) = OK fofs)
+    (* (CAST: sem_cast v (typeof e) fty = OK v1) *)
+    (ASS: set_footprint_map ph (fp_enum enum_id tag fid fofs vfp) fpm2 = OK fpm3),
+    step (State f (Sassign_variant p enum_id fid e) k ns fpm1 sup) E0 (State f Sskip k ns fpm3 sup)
+| step_box: forall f e (p: place) k ty fpm1 fpm2 fpm3 vfp ph ns sup
+    (EVAL: eval_assign fpm1 p e = OK (ph, vfp, fpm2))
     (TYP: typeof_place p = Tbox ty)
-    (CAST: sem_cast v (typeof e) ty = OK v1)
-    (ASS: set_sval_map ph (sv_box v1) svm2 = OK svm3),
-    step (State f (Sbox p e) k ns svm1) E0 (State f Sskip k ns svm3)
-(** bigl-step drop semantics: just like a move operation *)
-| step_drop: forall m1 m2 k f (p: place) ph ns vs
-    (EVALP: get_owner_path_sv_map p m1 = OK (ph, vs))
-    (DROP: clear_sval_map ph m1 = OK m2),
-    step (State f (Sdrop p) k ns m1) E0 (State f Sskip k ns m2)
-| step_storagelive: forall f k ns m id,
-    step (State f (Sstoragelive id) k ns m) E0 (State f Sskip k ns m)
-| step_storagedead: forall f k ns m id,
-    step (State f (Sstoragedead id) k ns m) E0 (State f Sskip k ns m)
-| step_call: forall f ty al k tyargs fd cconv tyres p orgs org_rels fun_id m1 m2 args args1 inout_params ns phl
+    (* (CAST: sem_cast v (typeof e) ty = OK v1) *)
+    (ASS: set_footprint_map ph (fp_box (Mem.fresh_block sup) vfp) fpm2 = OK fpm3),
+    step (State f (Sbox p e) k ns fpm1 sup) E0 (State f Sskip k ns fpm3 (Mem.sup_incr sup))
+(* big-step drop semantics: just like a move operation. But we need to
+check that the footprint in the dropped place is deeply owned, which
+encodes the guarantee provided by the Drop elaboration, i.e., it only
+keeps the drop statement for the place that is init. *)
+| step_drop: forall fpm1 fpm2 fpm3 k f (p: place) ph ns vs sup
+    (EVALP: get_owner_path_map p fpm1 = OK (ph, vs))
+    (INVP: invalidate_conflict_ref_fpm p Adeep fpm1 = fpm2)
+    (* Properties ensured by Drop elaboration, which we encode into
+    the semantics *)
+    (DEEP_INIT: check_path_is_deeply_init fpm2 ph = OK true)
+    (DROP: clear_footprint_map ge ph fpm2 = OK fpm3),
+    step (State f (Sdrop p) k ns fpm1 sup) E0 (State f Sskip k ns fpm3 sup)
+| step_storagelive: forall f k ns fpm id sup,
+    step (State f (Sstoragelive id) k ns fpm sup) E0 (State f Sskip k ns fpm sup)
+| step_storagedead: forall f k ns fpm1 fpm2 id sup
+    (* The insertion of drop should ensure that before storagedead,
+    the resource of variable is released. But why do we need this? Is
+    it necessary to the proof? Or is it because we will set it to
+    uninit and kill the loans related to this variable so there should
+    not be memory leak? *)
+    (CKDROP: check_path_is_dropped fpm1 (id, nil) = OK true)
+    (* To maintain the invariant, we need to clear all the dead
+    sv_ref, so we set it to sv_bot. *)
+    (CLR: clear_footprint_map ge (id, nil) fpm1 = OK fpm2),
+    step (State f (Sstoragedead id) k ns fpm1 sup) E0 (State f Sskip k ns fpm2 sup)
+| step_call: forall f ty al k tyargs fd cconv tyres p orgs org_rels fun_id fpm1 fpm2 args args1 inout_params ns phl sup
     (CASE: classify_fun ty = fun_case_f tyargs tyres cconv)
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun fd))
     (TYF: type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv)
-    (EVAL: eval_exprlist m1 al tyargs = OK (args, m2))
+    (EVAL: eval_exprlist ge fpm1 al = OK (args, fpm2))
     (NOT_DROP: function_not_drop_glue fd)
     (* Collect the footprint that is passed via reference *)
-    (REF_OUT: generate_call_parameters ge m2 (combine (type_list_of_typelist tyargs) args) = OK (args1, inout_params, phl)),
-    step (State f (Scall p (Eglobal fun_id ty) al) k ns m1) E0 (Callstate fun_id args1 inout_params (Kcall p f phl ns m2 k))
-| step_internal_function: forall fun_id vargs inout_params k m f ns
+    (REF_OUT: generate_call_parameters ge fpm2 (combine (type_list_of_typelist tyargs) args) = OK (args1, inout_params, phl)),
+    step (State f (Scall p (Eglobal fun_id ty) al) k ns fpm1 sup) E0 (Callstate fun_id args1 inout_params sup (Kcall p f phl ns fpm2 k))
+| step_internal_function: forall fun_id vargs inout_params k fpm1 f ns sup1 sup2
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun (Internal f)))
     (NORMAL: f.(fn_drop_glue) = None)
-    (ENTRY: function_entry f vargs inout_params = OK (ns, m)),
-    step (Callstate fun_id vargs inout_params k) E0 (State f f.(fn_body) k ns m)
+    (ENTRY: function_entry ge f vargs inout_params sup1 = OK (ns, fpm1, sup2)),
+    step (Callstate fun_id vargs inout_params sup1 k) E0 (State f f.(fn_body) k ns fpm1 sup2)
 
-(** We do not support axiomatic external call *)
-(* | step_external_function: forall vf vargs k m m' cc ty typs ef v t orgs org_rels *)
-(*     (FIND: Genv.find_funct ge vf = Some (External orgs org_rels ef typs ty cc)) *)
-(*     (NORMAL: ef <> EF_malloc /\ ef <> EF_free), *)
-(*     external_call ef ge vargs m t v m' -> *)
-(*     step (Callstate vf vargs k m) t (Returnstate v k m') *)
-   
-(** Return cases *)
-(* | step_return_0: forall e lb m1 m2 f k, *)
-(*     (forall id b t, e ! id = Some (b, t) -> complete_type ge t = true) -> *)
-(*     blocks_of_env ge e = lb -> *)
-(*     (* drop the stack blocks *) *)
-(*     Mem.free_list m1 lb = Some m2 -> *)
-(*     (* return unit or Vundef? *) *)
-(*     step (State f (Sreturn None) k e m1) E0 (Returnstate Vundef (call_cont k) m2) *)
-| step_return_1: forall p v v1 v2 m1 f k ck ns out_params
+| step_return_1: forall p vfp vfp1 vfp2 fpm1 fpm2 fpm3 fpm4 f k ck ns out_params sup
     (CONT: call_cont k = Some ck)
-    (EVAL: eval_pexpr m1 (Eplace p (typeof_place p)) = OK v)
-    (CAST: sem_cast v (typeof_place p) f.(fn_return) = OK v1)
-    (** Rename the external footprint to match the use of the names passed
-    in this function *)
-    (NORMALIZE: generate_return_parameters m1 v1 ns = OK (v2, out_params)),
-    step (State f (Sreturn p) k ns m1) E0 (Returnstate v2 out_params ck)
-(* no return statement but reach the end of the function *)
-(* | step_skip_call: forall e lb m1 m2 f k, *)
-(*     is_call_cont k -> *)
-(*     (forall id b t, e ! id = Some (b, t) -> complete_type ge t = true) -> *)
-(*     blocks_of_env ge e = lb -> *)
-(*     Mem.free_list m1 lb = Some m2 -> *)
-(*     step (State f Sskip k e m1) E0 (Returnstate Vundef (call_cont k) m2) *)
-         
-| step_returnstate: forall (p: place) v v1 m1 m2 m3 f k out_params phl ph ns vs
+    (* Should we move out the return varibales so that the borrow
+    check can tell that the inout params cannot point to this return
+    variable's reachable locations? *)
+    (EVAL: eval_expr ge fpm1 (Emoveplace p (typeof_place p)) = OK (vfp, fpm2))
+    (* perform shallow write for variables/parameters *)
+    (FREE: invalidate_conflict_ref_fpm_list (map (fun '(id, _) => (id,nil)) (f.(fn_vars) ++ f.(fn_params))) Ashallow fpm1 = fpm2)
+    (* kill loans reborrowed from variables/parameters *)
+    (KILL: kill_paths_ref_fpm (vars_to_paths (f.(fn_vars) ++ f.(fn_params))) fpm2 = fpm3)
+    (* set all the variables/parameters to fp_uninit to align with the
+    operation of kill loans *)
+    (CLR: clear_footprint_map_list ge (vars_to_paths (f.(fn_vars) ++ f.(fn_params))) fpm3 = OK fpm4)
+    (* (CAST: sem_cast v (typeof_place p) f.(fn_return) = OK v1) *)
+    (* Rename the external footprint to match the use of the names
+    passed in this function. How to ensure that all the above
+    operation is not related to vfp? We need to kill all the loans
+    created from reborrowing the variables/parameters in the return
+    value (e.g., consider [return &mut *x] where x points to an in-out
+    parameters *)
+    (RETV: (kill_paths_ref (vars_to_paths (f.(fn_vars) ++ f.(fn_params))) vfp) = vfp1)
+    (NORMALIZE: generate_return_parameters fpm4 vfp1 ns = OK (vfp2, out_params)),
+    (** How to know in advance that all the reference in out
+    parameters are not fp_uninit? It is ensured by check_dangle? *)
+    step (State f (Sreturn p) k ns fpm1 sup) E0 (Returnstate vfp2 out_params sup ck)
+
+| step_returnstate: forall (p: place) v v1 fpm1 fpm2 fpm3 fpm4 f k out_params phl ph ns vs sup
     (* We need to first putback the ref-passed location and the do the
     assignment because p may locate in those ref-passed locations *)
-    (PUTBACK: receive_return_sval m1 (map (fun '(ph, (vs, _, _)) => (ph, vs)) phl) v out_params = OK (v1, m2))
-    (EVALP: get_owner_path_sv_map p m1 = OK (ph, vs))
-    (CASTED: sval_casted v1 (typeof_place p))
-    (ASS: set_sval_map ph v1 m2 = OK m3),
-    step (Returnstate v out_params (Kcall p f phl ns m1 k)) E0 (State f Sskip k ns m2)
+    (PUTBACK: receive_return_footprint fpm1 (map (fun '(ph, (vs, _, _)) => (ph, vs)) phl) v (map snd out_params) = OK (v1, fpm2))
+    (EVALP: before_write_place fpm2 p = OK (ph, vs, fpm3))    
+    (* (CASTED: sval_casted v1 (typeof_place p)) *)
+    (ASS: set_footprint_map ph (kill_paths_ref vs v1) fpm3 = OK fpm4),
+    step (Returnstate v out_params sup (Kcall p f phl ns fpm1 k)) E0 (State f Sskip k ns fpm4 sup)
 
 (* Control flow statements *)
-| step_seq:  forall f s1 s2 k e m,
-    step (State f (Ssequence s1 s2) k e m)
-      E0 (State f s1 (Kseq s2 k) e m)
-| step_skip_seq: forall f s k e m,
-    step (State f Sskip (Kseq s k) e m)
-      E0 (State f s k e m)
-| step_continue_seq: forall f s k e m,
-    step (State f Scontinue (Kseq s k) e m)
-      E0 (State f Scontinue k e m)
-| step_break_seq: forall f s k e m,
-    step (State f Sbreak (Kseq s k) e m)
-      E0 (State f Sbreak k e m)
-| step_ifthenelse:  forall f a s1 s2 k e m v1 b
-    (* there is no receiver for the moved place, so it must be None *)
-    (EVAL: eval_pexpr m a = OK (sv_scalar v1)),
+| step_seq:  forall f s1 s2 k e m sup,
+    step (State f (Ssequence s1 s2) k e m sup)
+      E0 (State f s1 (Kseq s2 k) e m sup)
+| step_skip_seq: forall f s k e m sup,
+    step (State f Sskip (Kseq s k) e m sup)
+      E0 (State f s k e m sup)
+| step_continue_seq: forall f s k e m sup,
+    step (State f Scontinue (Kseq s k) e m sup)
+      E0 (State f Scontinue k e m sup)
+| step_break_seq: forall f s k e m sup,
+    step (State f Sbreak (Kseq s k) e m sup)
+      E0 (State f Sbreak k e m sup)
+| step_ifthenelse:  forall f a s1 s2 k e m m1 v1 b sup
+    (* there is no receiver for the moved place, so it must be a pure
+    expression *)
+    (EVAL: eval_pexpr m a = OK (fp_scalar Mint8unsigned v1, m1)),
     bool_val v1 (typeof a) = Some b ->
-    step (State f (Sifthenelse (Epure a) s1 s2) k e m)
-      E0 (State f (if b then s1 else s2) k e m)
-| step_loop: forall f s k e m,
-    step (State f (Sloop s) k e m)
-      E0 (State f s (Kloop s k) e m)
-| step_skip_or_continue_loop:  forall f s k e m x,
+    step (State f (Sifthenelse (Epure a) s1 s2) k e m sup)
+      E0 (State f (if b then s1 else s2) k e m1 sup)
+| step_loop: forall f s k e m sup,
+    step (State f (Sloop s) k e m sup)
+      E0 (State f s (Kloop s k) e m sup)
+| step_skip_or_continue_loop:  forall f s k e m x sup,
     x = Sskip \/ x = Scontinue ->
-    step (State f x (Kloop s k) e m)
-      E0 (State f s (Kloop s k) e m)
-| step_break_loop:  forall f s k e m,
-    step (State f Sbreak (Kloop s k) e m)
-      E0 (State f Sskip k e m)
+    step (State f x (Kloop s k) e m sup)
+      E0 (State f s (Kloop s k) e m sup)
+| step_break_loop:  forall f s k e m sup,
+    step (State f Sbreak (Kloop s k) e m sup)
+      E0 (State f Sskip k e m sup)
 .
 
 (** Language interfaces for the RustIR specification *)
@@ -1110,14 +1353,16 @@ Record rust_spec_query :=
   rspec_q {
     rspec_fid: ident;
     rspec_sg: rust_signature;
-    rspec_args: list sval;
-    rspec_inout_params: list (origin * type * sval);
+    rspec_args: list footprint;
+    rspec_inout_params: list (block * Z * origin * type * footprint);
+    rspec_q_sup: Mem.sup;
   }.
 
 Record rust_spec_reply :=
   rspec_r {
-    rspec_retval: sval;
-    rspec_out_params: list sval;
+    rspec_retval: footprint;
+    rspec_out_params: list (block * Z * footprint);
+    rspec_r_sup: Mem.sup;
   }.
 
 Definition li_rs_spec : language_interface :=
@@ -1131,33 +1376,33 @@ Definition li_rs_spec : language_interface :=
 (** Open semantics *)
 
 Inductive initial_state: (query li_rs_spec) -> state -> Prop :=
-| initial_state_intro: forall f targs tres tcc vargs orgs org_rels fun_id inout_params
+| initial_state_intro: forall f targs tres tcc vargs orgs org_rels fun_id inout_params sup
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun (Internal f)))
     (TYF: type_of_function f = Tfunction orgs org_rels targs tres tcc)
     (* This function must not be drop glue *)
-    (NOTDROP: f.(fn_drop_glue) = None)
-    (* how to use it? *)
-    (CAST: sval_casted_list vargs targs),
+    (NOTDROP: f.(fn_drop_glue) = None),
+    (* how to prove it? *)
+    (* (CAST: sval_casted_list vargs targs), *)
     (* Mem.sup_include (Genv.genv_sup ge) (Mem.support m) -> *)
-    initial_state (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs inout_params)
-      (Callstate fun_id vargs inout_params Kstop).
+    initial_state (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs inout_params sup)
+      (Callstate fun_id vargs inout_params sup Kstop).
 
 
 Inductive at_external: state -> (query li_rs_spec) -> Prop :=
-| at_external_intro: forall fun_id name args k targs tres cconv orgs org_rels in_params
+| at_external_intro: forall fun_id name args k targs tres cconv orgs org_rels in_params sup
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun (External orgs org_rels (EF_external name (signature_of_type targs tres cconv)) targs tres cconv))),
-    at_external (Callstate fun_id args in_params k) (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres cconv ge) args in_params).
+    at_external (Callstate fun_id args in_params sup k) (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres cconv ge) args in_params sup).
 
 Inductive after_external: state -> (reply li_rs_spec) -> state -> Prop:=
-| after_external_intro: forall fun_id args k in_params out_params v,
+| after_external_intro: forall fun_id args k in_params out_params v sup1 sup2,
     after_external
-      (Callstate fun_id args in_params k)
-      (rspec_r v out_params)
-      (Returnstate v out_params k).
+      (Callstate fun_id args in_params sup1 k)
+      (rspec_r v out_params sup2)
+      (Returnstate v out_params sup2 k).
 
 Inductive final_state: state -> (reply li_rs_spec) -> Prop:=
-| final_state_intro: forall v out_params,
-    final_state (Returnstate v out_params Kstop) (rspec_r v out_params).
+| final_state_intro: forall v out_params sup,
+    final_state (Returnstate v out_params sup Kstop) (rspec_r v out_params sup).
 
 End SMALLSTEP.
 
