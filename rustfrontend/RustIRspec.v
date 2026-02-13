@@ -218,6 +218,70 @@ Definition alignof_footprint ce (fp: footprint) : Z :=
   end.
 
 
+(** Initialize a footprint with fp_uninit based on the type of this footprint *)
+
+(* pattern (fid, ((base, fofs), ffp): base is the end of the last
+field's offset (it is 0 if this field is the first field). The
+interval [base, fofs) is used to align this field but we need to
+specify its permission, for which we record it in the footprint. *)
+Definition ffpty : Type := ident * ((Z * Z) * footprint).
+
+
+Section COMP_ENV.
+
+Variable ce: composite_env.
+
+(** Move it to Rusttypes.v  *)
+
+(* We define a new field_offset which returns the starting offset of a
+field that does not consider the alignment. *)
+
+Fixpoint field_noalign_offset_rec (env: composite_env) (id: ident) (ms: members) (pos: Z)
+                          {struct ms} : res (Z * Z) :=
+  match ms with
+  | nil => Error (MSG "Unknown field " :: CTX id :: nil)
+  | m :: ms =>
+      if ident_eq id (name_member m)
+      then do fofs <- layout_field env pos m;
+           OK (pos, fofs)
+      else field_noalign_offset_rec env id ms (next_field env pos m)
+  end.
+
+Definition field_noalign_offset (env: composite_env) (id: ident) (ms: members) : res (Z * Z) :=
+  field_noalign_offset_rec env id ms 0.
+
+End COMP_ENV.
+
+Definition members_to_fields_fp_uninit ce (ms: members) (f: type -> footprint): list ffpty :=
+  map (fun '(Member_plain fid fty) =>
+         match field_noalign_offset ce fid ms with
+         | OK (base, fofs) =>
+             (fid, ((base, fofs), f fty))
+         | Error _ => (* we can prove that it is impossible *)
+             (fid, ((0, 0), (fp_uninit 0 0)))
+         end) ms.
+
+Fixpoint type_to_uninit_footprint_rec (ce: composite_env) (rank: nat) (ty: type) : footprint :=
+  match rank with
+  | O => fp_uninit (sizeof ce ty) (alignof ce ty)
+  | S r =>
+      match ty with
+      | Tstruct _ id =>
+          match ce ! id with
+          | Some co =>
+              let fields := members_to_fields_fp_uninit ce (co_members co) (type_to_uninit_footprint_rec ce r) in
+              fp_struct id fields
+          (* impossible *)
+          | None => fp_uninit 0 0
+          end
+      | _ => fp_uninit (sizeof ce ty) (alignof ce ty)
+      end
+  end.
+
+Definition type_to_uninit_footprint (ce: composite_env) (ty: type) : footprint :=
+  type_to_uninit_footprint_rec ce (rank_type ce ty) ty.
+
+
 (* Operations for the footprint environment *)
 
 (* [set_footprint] and [set_footprint_map] set some footprint [fp] to
@@ -368,8 +432,12 @@ Definition get_owner_footprint_map (ps: path) (fpg: fp_graph) : res footprint :=
 footprint. Like RustBelt, for some type [own τ], after moving from a
 value of this type produce, the original location of this type becomes
 [own ⊥]. *)
-Definition clear_footprint_rec ce (fp: footprint) : footprint :=
-  fp_uninit (sizeof_footprint ce fp) (alignof_footprint ce fp).
+Fixpoint clear_footprint_rec (ce: composite_env) (fp: footprint) : footprint :=
+  match fp with
+  | fp_struct id fpl =>
+      fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, clear_footprint_rec ce ffp))) fpl)
+  | _ => fp_uninit (sizeof_footprint ce fp) (alignof_footprint ce fp)
+  end.
   (* match fp with *)
   (* | fp_scalar _ _ *)
   (* (* What about moving a reference? *) *)
@@ -1146,7 +1214,7 @@ Fixpoint alloc_vars ce (fpm: fp_map) (l: list (ident * type)) (sup: Mem.sup) : (
   | nil => (fpm, sup)
   | (id, ty) :: l1 =>
       let b := Mem.fresh_block sup in
-      alloc_vars ce (PTree.set id (b, 0, None, ty, fp_uninit (sizeof ce ty) (alignof ce ty)) fpm) l1 (Mem.sup_incr sup)
+      alloc_vars ce (PTree.set id (b, 0, None, ty, type_to_uninit_footprint ce ty) fpm) l1 (Mem.sup_incr sup)
   end.
 
 Fixpoint bind_params (fpm: fp_map) (l: list (ident * type)) (vl: list footprint) : res fp_map :=
