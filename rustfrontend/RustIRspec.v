@@ -901,6 +901,17 @@ Definition collect_fpm_passed_ref_footprint (process_views: path -> views -> vie
                do fp1 <- generate_new_suffix_path_footprint process_views l fp;
                OK (bofs, fp1)) l.
 
+Definition collect_fpm_return_ref_footprint (process_views: path -> views -> views) (fpm: fp_map) (l: list ident) : res (list (block * Z * origin * type * footprint)) :=
+  let phs := map (fun id => (id, nil)) l in
+  mmap (fun id => 
+          match fpm ! id with
+          | Some (b, ofs, Some r, ty, fp) =>
+               do fp1 <- generate_new_suffix_path_footprint process_views phs fp;               
+               OK (b, ofs, r, ty, fp1)
+          | _ => Error nil
+          end) l.
+
+
 (* set sv_bot to the location that passed via reference *)
 Fixpoint clear_fpm_passed_ref_sval (fpm: fp_map) (l: list path) : res fp_map :=
   match l with
@@ -935,10 +946,10 @@ Definition normalize_returned_views (phs: list path) (_: path) (vs: views) : vie
 reference location to its normalized forms (i.e., the ordinal in the
 list passed by caller). We can reuse the generate_new_suffix_path_sval
 to do this work. *)
-Definition generate_return_parameters (fpm: fp_map) (retv: footprint) (ns: list ident) : res (footprint * list (block * Z * footprint)) :=
+Definition generate_return_parameters (fpm: fp_map) (retv: footprint) (ns: list ident) : res (footprint * list (block * Z * origin * type * footprint)) :=
   let phs := map (fun id => (id, nil)) ns in
   do retv1 <- generate_new_suffix_path_footprint (normalize_returned_views phs) phs retv;
-  do out_params <- collect_fpm_passed_ref_footprint (normalize_returned_views phs) fpm phs;
+  do out_params <- collect_fpm_return_ref_footprint (normalize_returned_views phs) fpm ns;
   OK (retv1, out_params).
 
 
@@ -1013,6 +1024,13 @@ Definition receive_incoming_params (fresh_paths: list path) (args: list footprin
                           OK (b, ofs, r, ty, fp1)) inout_params;
   OK (args1, inout_params1).
   
+Fixpoint clear_fpm_passed_ref_footprint (fpm: fp_map) (l: list path) : res fp_map :=
+  match l with
+  | nil => OK fpm
+  | ph :: phl =>
+     do fpm1 <- set_footprint_map ph fp_emp fpm;
+     clear_fpm_passed_ref_footprint fpm1 phl
+  end.
 
 Section SEMANTICS.
 
@@ -1187,7 +1205,7 @@ Inductive state: Type :=
     (k: cont): state
 | Returnstate
     (res: footprint)
-    (inout: list (block * Z * footprint))
+    (inout: list (block * Z * origin * type * footprint))
     (sup: Mem.sup)
     (k: cont): state.
 
@@ -1429,7 +1447,7 @@ Record rust_spec_query :=
 Record rust_spec_reply :=
   rspec_r {
     rspec_retval: footprint;
-    rspec_out_params: list (block * Z * footprint);
+    rspec_out_params: list (block * Z * origin * type * footprint);
     rspec_r_sup: Mem.sup;
   }.
 

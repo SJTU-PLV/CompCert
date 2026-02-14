@@ -358,9 +358,6 @@ Definition collect_move_check_result ce f cfg analysis_res :=
 
 (** Check the consistency of composite environment *)
 
-Definition name_members (membs: members) : list ident :=
-  map name_member membs.
-
 Definition check_composite (id: ident) (co: composite) : bool :=
   Z.leb (co_sizeof co) Integers.Ptrofs.max_unsigned
   && Z.leb (list_length_z (co_members co)) Int.max_unsigned

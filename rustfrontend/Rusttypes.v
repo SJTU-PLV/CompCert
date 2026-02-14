@@ -356,6 +356,9 @@ Definition name_member (m: member) : ident :=
   | Member_plain id _ => id
   end.
 
+Definition name_members (membs: members) : list ident :=
+  map name_member membs.
+
 Definition type_member (m: member) : type :=
   match m with
   | Member_plain _ t => t
