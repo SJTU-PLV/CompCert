@@ -22,8 +22,8 @@ Require Import Coqlib.
 Require Import Events.
 Require Import Globalenvs.
 Require Import Integers.
-Require Import LanguageInterface.
 Require Import Smallstep.
+Require Import SmallstepClosed.
 
 Set Implicit Arguments.
 Set Asymmetric Patterns.
@@ -121,10 +121,11 @@ Proof.
 Qed.
 
 (** Associating behaviors to programs. *)
+Import Closed.
 
 Section PROGRAM_BEHAVIORS.
 
-Variable L: closed_sem.
+Variable L: semantics.
 
 Inductive state_behaves (s: state L): program_behavior -> Prop :=
   | state_terminates: forall t s' r,
@@ -284,8 +285,8 @@ End PROGRAM_BEHAVIORS.
 
 Section FORWARD_SIMULATIONS.
 
-Context (L1 L2: closed_sem).
-Context index order match_states (S: fsim_properties cc_id eq L1 L2 index order match_states).
+Context (L1 L2: semantics).
+Context index order match_states (S: fsim_properties L1 L2 index order match_states).
 
 Lemma forward_simulation_state_behaves:
   forall i s1 s2 beh1,
@@ -296,8 +297,7 @@ Proof.
 - (* termination *)
   exploit @simulation_star; eauto. intros [i' [s2' [A B]]].
   exists (Terminates t r); split.
-  edestruct @fsim_match_final_states as (r2 & Hr2 & Hr); eauto. subst r2.
-  econstructor; eauto.
+  econstructor; eauto. eapply fsim_match_final_states; eauto.
   apply behavior_improves_refl.
 - (* silent divergence *)
   exploit @simulation_star; eauto. intros [i' [s2' [A B]]].
@@ -321,11 +321,11 @@ Qed.
 End FORWARD_SIMULATIONS.
 
 Theorem forward_simulation_behavior_improves:
-  forall L1 L2, closed_fsim L1 L2 ->
+  forall L1 L2, forward_simulation L1 L2 ->
   forall beh1, program_behaves L1 beh1 ->
   exists beh2, program_behaves L2 beh2 /\ behavior_improves beh1 beh2.
 Proof.
-  intros L1 L2 FS. destruct FS as [[init order match_states S] pub]. intros. inv H.
+  intros L1 L2 FS. destruct FS as [init order match_states S]. intros. inv H.
 - (* initial state defined *)
   exploit (fsim_match_initial_states S); eauto. intros [i [s' [INIT MATCH]]].
   exploit forward_simulation_state_behaves; eauto. intros [beh2 [A B]].
@@ -342,7 +342,7 @@ Proof.
 Qed.
 
 Corollary forward_simulation_same_safe_behavior:
-  forall L1 L2, closed_fsim L1 L2 ->
+  forall L1 L2, forward_simulation L1 L2 ->
   forall beh,
   program_behaves L1 beh -> not_wrong beh ->
   program_behaves L2 beh.
@@ -357,8 +357,8 @@ Qed.
 
 Section BACKWARD_SIMULATIONS.
 
-Context (L1 L2: closed_sem).
-Context index order match_states (S: bsim_properties cc_id eq L1 L2 index order match_states).
+Context (L1 L2: semantics).
+Context index order match_states (S: bsim_properties L1 L2 index order match_states).
 
 Definition safe_along_behavior (s: state L1) (b: program_behavior) : Prop :=
   forall t1 s' b2, Star L1 s t1 s' -> b = behavior_app t1 b2 ->
@@ -464,8 +464,8 @@ Proof.
   exploit backward_simulation_star; eauto.
   intros [i' [s1' [A B]]].
   exploit (bsim_match_final_states S); eauto.
-    eapply safe_along_safe. eapply star_safe_along; eauto.
-  intros (s1'' & r2 & C & D & Hr). subst r2.
+  eapply safe_along_safe. eapply star_safe_along; eauto.
+  intros (s1'' & C & D).
   econstructor. eapply star_trans; eauto. traceEq. auto.
 + (* silent divergence *)
   assert (Diverges t = behavior_app t (Diverges E0)).
@@ -484,9 +484,8 @@ Proof.
   exploit backward_simulation_star; eauto.
   intros [i' [s1' [A B]]].
   exploit (bsim_progress S); eauto. eapply safe_along_safe. eapply star_safe_along; eauto.
-  intros [[r FIN] | [[q EXT] | [t' [s2' STEP2]]]].
+   intros [[r FIN] | [t' [s2' STEP2]]].
   elim (H4 _ FIN).
-  elim q.
   elim (H3 _ _ STEP2).
 
 - (* 2. Not safe along *)
@@ -500,16 +499,15 @@ Qed.
 End BACKWARD_SIMULATIONS.
 
 Theorem backward_simulation_behavior_improves:
-  forall L1 L2, closed_bsim L1 L2 ->
+  forall L1 L2, backward_simulation L1 L2 ->
   forall beh2, program_behaves L2 beh2 ->
-  exists beh1, program_behaves L1 beh1 /\ behavior_improves beh1 beh2.
+          exists beh1, program_behaves L1 beh1 /\ behavior_improves beh1 beh2.
 Proof.
-  intros L1 L2 S beh2 H. destruct S as [[index order match_states S] pub]. inv H.
+  intros L1 L2 S beh2 H. destruct S as [index order match_states S]. inv H.
 - (* L2's initial state is defined. *)
   destruct (classic (exists s1, initial_state L1 s1)) as [[s1 INIT] | NOINIT].
 + (* L1's initial state is defined too. *)
-  destruct (bsim_match_initial_states S) as [He Hm].
-  exploit Hm; eauto. intros [s1' [INIT1' [i MATCH]]].
+  exploit (bsim_match_initial_states S); eauto. intros [i [s1' [INIT1' MATCH]]].
   exploit backward_simulation_state_behaves; eauto. intros [beh1 [A B]].
   exists beh1; split; auto. econstructor; eauto.
 + (* L1 has no initial state *)
@@ -521,14 +519,13 @@ Proof.
   exists (Goes_wrong E0); split.
   apply program_goes_initially_wrong.
   intros; red; intros.
-  destruct (bsim_match_initial_states S) as [He Hm].
-  exploit He; eauto. intros [s2 INIT2].
+  exploit (bsim_initial_states_exist S); eauto. intros [s2 INIT2].
   elim (H0 s2); auto.
   apply behavior_improves_refl.
 Qed.
 
 Corollary backward_simulation_same_safe_behavior:
-  forall L1 L2, closed_bsim L1 L2 ->
+  forall L1 L2, backward_simulation L1 L2 ->
   (forall beh, program_behaves L1 beh -> not_wrong beh) ->
   (forall beh, program_behaves L2 beh -> program_behaves L1 beh).
 Proof.
@@ -542,7 +539,7 @@ Qed.
 
 Section ATOMIC.
 
-Variable L: closed_sem.
+Variable L: semantics.
 Hypothesis Lwb: well_behaved_traces L.
 
 Remark atomic_finish: forall s t, output_trace t -> Star (atomic L) (t, s) t (E0, s).
@@ -569,15 +566,13 @@ Proof.
   apply plus_star. eapply step_atomic_plus; eauto. eauto. auto.
 Qed.
 
-Lemma atomic_forward_simulation: closed_fsim L (atomic L).
+Lemma atomic_forward_simulation: forward_simulation L (atomic L).
 Proof.
-  split; auto.
-  set (ms := fun (s: state L) (ts: state (atomic L)) => ts = (E0,s)).
+    set (ms := fun (s: state L) (ts: state (atomic L)) => ts = (E0,s)).
   apply forward_simulation_plus with ms; intros.
   auto.
   exists (E0,s1); split. simpl; auto. red; auto.
-  red in H. subst s2. exists r1. unfold atomic. simpl; auto.
-  contradiction.
+  red in H. subst s2. simpl; auto.
   red in H0. subst s2. exists (E0,s1'); split.
   apply step_atomic_plus; auto. red; auto.
 Qed.
@@ -833,7 +828,7 @@ Set Implicit Arguments.
 Section BIGSTEP_BEHAVIORS.
 
 Variable B: bigstep_semantics.
-Variable L: closed_sem.
+Variable L: semantics.
 Hypothesis sound: bigstep_sound B L.
 
 Lemma behavior_bigstep_terminates:

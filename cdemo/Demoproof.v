@@ -1,5 +1,5 @@
 Require Import Coqlib Errors.
-Require Import AST Linking Smallstep SmallstepClosed Invariant CallconvAlgebra.
+Require Import AST Linking Smallstep SmallstepClosed Behaviors Invariant CallconvAlgebra.
 
 Require Import Conventions Mach.
 Require Import Locations.
@@ -261,10 +261,19 @@ Section LINKING.
 
   Theorem thread_linking_back :
     Closed.backward_simulation (Concur_sem_c c_spec) (Concur_sem_asm (Asm.semantics asm_prog)).
+  Proof.
     apply BSIM; eauto. eapply module_linking_back.
     apply c_spec_determinate_big.
     apply c_spec_receptive_after_external.
     apply c_spec_receptive_initial_state.
   Qed.     
 
+  Theorem thread_bahavior_improves:
+    forall beh2, program_behaves (Concur_sem_asm (Asm.semantics asm_prog)) beh2 ->
+    exists beh1, program_behaves (Concur_sem_c c_spec) beh1 /\ behavior_improves beh1 beh2.
+  Proof.
+    apply backward_simulation_behavior_improves.
+    apply thread_linking_back.
+  Qed.
+  
 End LINKING.
