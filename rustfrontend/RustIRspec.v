@@ -138,13 +138,14 @@ Inductive footprint : Type :=
 .
 
 (* It is used to define the invariant for the dynamic borrow check *)
-Definition fp_graph := PTree.t footprint.
+Definition fp_graph := PTree.t (type * footprint).
 
 (* The [option origin] is used to indicate that this "variable" is
 local var/param (None) or a name for some locations passed by
 reference (Some org where org is the generic region of this location) *)
 Definition fp_map := PTree.t (block * Z * option origin * type * footprint).
 
+Definition empty_fpm := PTree.empty (block * Z * option origin * type * footprint).
 
 Implicit Type fpm : fp_map.
 
@@ -156,7 +157,11 @@ Definition fpm_to_env (fpm: fp_map) : env :=
                        end) fpm.
 
 Coercion fpm_to_fpg (fpm: fp_map) : fp_graph :=
-  PTree.map1 snd fpm.
+  PTree.map1 (fun '(_, _, _, ty, fp) => (ty, fp)) fpm.
+
+Definition fpg_to_tenv (fpg: fp_graph) : typenv := 
+  PTree.map1 (fun '(ty, _) => ty) fpg.
+
 
 (** Shallow init and Deep init which should be statically checked by
 the move checking *)
@@ -421,7 +426,7 @@ Definition get_owner_loc_footprint_map (ps: path) (fpm: fp_map) : res (block * Z
 Definition get_owner_footprint_map (ps: path) (fpg: fp_graph) : res footprint :=
   let (id, phl) := ps in
   match fpg!id with
-  | Some fp =>
+  | Some (ty, fp) =>
       get_owner_footprint phl fp
   | _ => Error nil
   end
@@ -523,7 +528,7 @@ Fixpoint get_owner_path (fpg: fp_graph) (ph: path) (phl: list projection) (fp: f
 Definition get_owner_path_map (ps: path) (fpg: fp_graph) : res (path * views) :=
   let (id, phl) := ps in
   match fpg!id with
-  | Some fp =>
+  | Some (ty, fp) =>
       get_owner_path fpg (id, nil) phl fp nil
   | _ => Error nil
   end.
@@ -767,30 +772,37 @@ Definition suffix_projections (phl1 phl2: list projection) : list projection :=
 (* We do not return (option path) to simplify the semantics. Note that
 our final goal is to prove no UB in this semantics, so we need to
 ensure that None case is impossible *)
-Definition generate_new_suffix_path (l: list path) (ph: path) : res path :=
-  match list_find (fun ph1 => is_prefix_path ph1 ph) l with
+Definition generate_new_suffix_path (l: list (ident * path)) (ph: path) : res path :=
+  match find (fun '(_, ph1) => is_prefix_path ph1 ph) l with
   | Some (idx, ph1) =>
-      (* We cannot convert zero *)
-      let new_id := Pos.of_nat (S idx) in
       let pj := suffix_projections (snd ph1) (snd ph) in
-      OK (new_id, pj)
+      OK (idx, pj)
   | None => Error nil
   end.
 
 (* The reverse operaiton of generate_new_suffix_path *)
 (* ph= (id, pj) is the returned path where id can be seen as the index
 of the l *)
-Definition recover_ref_path (l: list path) (ph: path) : res path :=
+Definition recover_ref_path (l: list (ident * path)) (ph: path) : res path :=
   let (id, pj) := ph in
-  match nth_error l (pred (Pos.to_nat id)) with
-  | Some ph1 =>
+  match find (fun '(id1, _) => ident_eq id id1) l with
+  | Some (id1, ph1) =>
       (* ph1 is the path in the caller's svm, the actual path of ph
       should be defined as appending the projecitons of ph into the
       projetions of ph1 *)
       OK ((fst ph1, snd ph1 ++ pj))
   | None =>
       Error nil
-  end.
+end.
+  (* match nth_error l (pred (Pos.to_nat id)) with *)
+  (* | Some ph1 => *)
+  (*     (* ph1 is the path in the caller's svm, the actual path of ph *)
+  (*     should be defined as appending the projecitons of ph into the *)
+  (*     projetions of ph1 *) *)
+  (*     OK ((fst ph1, snd ph1 ++ pj)) *)
+  (* | None => *)
+  (*     Error nil *)
+  (* end. *)
 
 
 (** Implementation dependent operations *)
@@ -862,14 +874,16 @@ Definition get_owner_footprint_map_ref_paths ce (fpm: fp_map) (ph: path) ty : re
 located note contain deep_init sval, and form a closure. The types of
 the argument come from function signature, meaning that they contain
 generic regions. *)
-Definition collect_fpm_args_ref_paths ce (fpm: fp_map) (args: list (type * footprint)) : res (list (path * (views * origin * type))) :=
+Definition collect_fpm_args_ref_paths ce (fpm: fp_map) (args: list (type * footprint)) : res (list (ident * (path * (views * origin * type)))) :=
   let not_visited := collect_fpm_ref_paths fpm in
   do l <- mmap (collect_footprint_ref_paths_types ce) args;
   let to_visit := concat l in
-  collect_ref_paths_generic (get_owner_footprint_map_ref_paths ce fpm) nil to_visit not_visited (lex_ord_lt_acc_intro _ _).
+  do collected_paths <- collect_ref_paths_generic (get_owner_footprint_map_ref_paths ce fpm) nil to_visit not_visited (lex_ord_lt_acc_intro _ _);
+  let idxl := map Pos.of_nat (seq O (length collected_paths)) in  
+  OK (combine idxl collected_paths).
+  
 
-
-Fixpoint generate_new_suffix_path_footprint (process_views: path -> views -> views) (l: list path) (fp: footprint) : res footprint :=
+Fixpoint generate_new_suffix_path_footprint (process_views: path -> views -> views) (l: list (ident * path)) (fp: footprint) : res footprint :=
   match fp with
   | fp_ref mut b ofs (Some ph) vs =>
       do ph1 <- generate_new_suffix_path l ph;
@@ -894,22 +908,96 @@ Fixpoint generate_new_suffix_path_footprint (process_views: path -> views -> vie
   | _ => OK fp
   end.
 
+Definition rename_path (substs: PTree.t ident) (ph: path) : res path :=
+  let (id, pjl) := ph in
+  match substs ! id with
+  | Some id1 => OK (id1, pjl)
+  | None => Error nil
+  end.
+
+Definition rename_views (substs: PTree.t ident) (vs: list path) : res views :=
+  mmap (rename_path substs) vs.
+  (* flat_map (fun ph1 => match recover_ref_path l ph1 with *)
+  (*                   | OK ph2 => ph2 :: nil *)
+  (*                   | _ => nil *)
+  (*                   end) phl. *)
+
+
+Fixpoint subst_list_idents (substs: PTree.t ident) (l: list ident) : res (list ident) :=
+  match l with
+  | nil => OK nil
+  | id :: l1 =>
+      match substs ! id with
+      | Some id1 =>
+          do l2 <- subst_list_idents substs l1;
+          OK (id1 :: l1)
+      | None =>
+          Error nil
+      end
+  end.
+  
+
+(* It has some similarity with generate_new_suffix_path_footprint but
+I do not know how to generalize it for now *)
+Fixpoint rename_path_footprint (substs: PTree.t ident) (fp: footprint) : res footprint :=
+  match fp with
+  | fp_ref mut b ofs (Some ph) vs =>
+      do ph1 <- rename_path substs ph;
+      do vs1 <- rename_views substs vs;
+      (* We can directly use ph1 as the abstract view for callee? *)
+      OK (fp_ref mut b ofs (Some ph1) vs1)
+  | fp_box b fp1 =>
+      do fp1' <- rename_path_footprint substs fp1;
+      OK (fp_box b fp1')
+  | fp_struct id fpl =>
+      do fpl1 <- (mmap (fun '(fid, (r, ffp)) => 
+                            do ffp1 <- rename_path_footprint substs ffp;
+                            OK (fid, (r, ffp1))) fpl);
+      OK (fp_struct id fpl1)
+  | fp_enum id tag fid fofs ffp =>
+      do ffp1 <- rename_path_footprint substs ffp;
+      OK (fp_enum id tag fid fofs ffp1)
+  | fp_object id obj fpl =>
+      do fpl1 <- (mmap (fun '(fid, (r, ffp)) => 
+                            do ffp1 <- rename_path_footprint substs ffp;
+                            OK (fid, (r, ffp1))) fpl);
+      OK (fp_object id obj fpl1)
+  | _ => OK fp
+  end.
+
+
 
 (* Collect the svals that are passed via reference to the environment *)
-Definition collect_fpm_passed_ref_footprint (process_views: path -> views -> views) (fpm: fp_map) (l: list path) : res (list (block * Z * footprint)) :=
-  mmap (fun ph => do (bofs, fp) <- get_owner_loc_footprint_map ph fpm;
-               do fp1 <- generate_new_suffix_path_footprint process_views l fp;
-               OK (bofs, fp1)) l.
+Definition collect_fpm_passed_ref_footprint (process_views: path -> views -> views) (fpm: fp_map) (l: list (ident * path)) : res (list (block * Z * footprint)) :=
+  mmap (fun '(id, ph) => do (bofs, fp) <- get_owner_loc_footprint_map ph fpm;
+                     do fp1 <- generate_new_suffix_path_footprint process_views l fp;
+                     OK (bofs, fp1)) l.
 
-Definition collect_fpm_return_ref_footprint (process_views: path -> views -> views) (fpm: fp_map) (l: list ident) : res (list (block * Z * origin * type * footprint)) :=
-  let phs := map (fun id => (id, nil)) l in
-  mmap (fun id => 
-          match fpm ! id with
-          | Some (b, ofs, Some r, ty, fp) =>
-               do fp1 <- generate_new_suffix_path_footprint process_views phs fp;               
-               OK (b, ofs, r, ty, fp1)
-          | _ => Error nil
-          end) l.
+Definition collect_fpm_return_ref_footprint (fpm: fp_map) (substs: PTree.t ident) : res fp_map :=
+  (* let phs := map (fun '(s, t) => (s, (t, nil))) substs in *)
+  let fpm1 := PTree.map_filter1 
+                (fun '(b, ofs, opt_r, ty, fp) =>
+                   match opt_r with
+                   | Some r =>
+                       match rename_path_footprint substs fp with
+                       | OK fp1 =>
+                           Some (b, ofs, Some r, ty, fp1)
+                       | _ => None
+                       end
+                   | None => None
+                   end) fpm in
+  let flat_fpm1 := PTree.elements fpm1 in
+  do rename_ids <- subst_list_idents substs (map fst flat_fpm1);
+  OK (PTree_Properties.of_list (combine rename_ids (map snd flat_fpm1))).
+    
+  (* mfold_left (fun m '(s, t) =>  *)
+  (*               match fpm ! s with *)
+  (*               | Some (b, ofs, Some r, ty, fp) => *)
+  (*                   do fp1 <- generate_new_suffix_path_footprint process_views phs fp; *)
+                    
+  (*                   OK (PTree.set t (b, ofs, Some r, ty, fp1) m) *)
+  (*               | _ => Error nil *)
+  (*               end) substs empty_fpm. *)
 
 
 (* set sv_bot to the location that passed via reference *)
@@ -926,31 +1014,43 @@ Fixpoint clear_fpm_passed_ref_sval (fpm: fp_map) (l: list path) : res fp_map :=
 (* The output parameters contain two parts: one for the normal
 arguments and the others are the memory locations passed via
 reference *)
-Definition generate_call_parameters ce (fpm: fp_map) (args: list (type * footprint)) : res (list footprint * list (block * Z * origin * type * footprint) * list (path * (views * origin * type))) :=
+Definition generate_call_parameters ce (fpm: fp_map) (args: list (type * footprint)) : res (list footprint * fp_map * list (ident * (path * (views * origin * type)))) :=
   do extern_paths <- collect_fpm_args_ref_paths ce fpm args;  
-  do args1 <- mmap (generate_new_suffix_path_footprint (fun ph _ => ph :: nil) (map fst extern_paths)) (map snd args);
-  do inout_loc_footprints <- collect_fpm_passed_ref_footprint (fun ph _ => ph :: nil) fpm (map fst extern_paths);
+  let collected_paths := (map (fun '(id, (ph, _)) => (id, ph)) extern_paths) in
+  do args1 <- mmap (generate_new_suffix_path_footprint (fun ph _ => ph :: nil) collected_paths) (map snd args);
+  do inout_loc_footprints <- collect_fpm_passed_ref_footprint (fun ph _ => ph :: nil) fpm collected_paths;
   (* collect (origin, type) for the inout arguments *)
-  let inout_params := map (fun '(r, ty, (b, ofs, fp)) => (b, ofs, r, ty, fp)) (combine (map (fun '(_, (_, r, ty)) => (r, ty)) extern_paths) inout_loc_footprints) in
-  OK (args1, inout_params, extern_paths).
+  let inout_params := map (fun '(r, ty, (b, ofs, fp)) => (b, ofs, Some r, ty, fp)) (combine (map (fun '(_, (_, (_, r, ty))) => (r, ty)) extern_paths) inout_loc_footprints) in
+  let inout_fpm := PTree_Properties.of_list (combine (map fst collected_paths) inout_params) in
+  OK (args1, inout_fpm, extern_paths).
 
-Definition normalize_returned_views (phs: list path) (_: path) (vs: views) : views :=
-  (* If we cannot find the path in phs, it means that it is a local
-  path of the callee and we can just ignore it. *)
-  flat_map (fun ph => match generate_new_suffix_path phs ph with
-                   | OK ph1 => ph1 :: nil
-                   | _ => nil
-                   end) vs.
+(* Definition normalize_returned_views (phs: list (ident * path)) (_: path) (vs: views) : views := *)
+(*   (* If we cannot find the path in phs, it means that it is a local *)
+(*   path of the callee and we can just ignore it. *) *)
+(*   flat_map (fun ph => match generate_new_suffix_path phs ph with *)
+(*                    | OK ph1 => ph1 :: nil *)
+(*                    | _ => nil *)
+(*                    end) vs. *)
 
 (* For funciton return, we need to reset the path name of the external
 reference location to its normalized forms (i.e., the ordinal in the
 list passed by caller). We can reuse the generate_new_suffix_path_sval
 to do this work. *)
-Definition generate_return_parameters (fpm: fp_map) (retv: footprint) (ns: list ident) : res (footprint * list (block * Z * origin * type * footprint)) :=
-  let phs := map (fun id => (id, nil)) ns in
-  do retv1 <- generate_new_suffix_path_footprint (normalize_returned_views phs) phs retv;
-  do out_params <- collect_fpm_return_ref_footprint (normalize_returned_views phs) fpm ns;
-  OK (retv1, out_params).
+Definition generate_return_parameters (fpm: fp_map) (retv: footprint) (substs: PTree.t ident) : res (footprint * fp_map) :=
+  do retv1 <- rename_path_footprint substs retv;
+  do inout_fpm <- collect_fpm_return_ref_footprint  fpm substs;
+  OK (retv1, inout_fpm).
+
+
+  (* let phs := map (fun '(s, t) => (s, (t, nil))) substs in *)
+  (* do retv1 <- generate_new_suffix_path_footprint (normalize_returned_views phs) phs retv; *)
+  (* do inout_fpm <- collect_fpm_return_ref_footprint (normalize_returned_views phs) fpm substs; *)
+  (* OK (retv1, inout_fpm). *)
+
+  (* let phs := map (fun id => (id, nil)) ns in *)
+  (* do retv1 <- generate_new_suffix_path_footprint (normalize_returned_views phs) phs retv; *)
+  (* do out_params <- collect_fpm_return_ref_footprint (normalize_returned_views phs) fpm ns; *)
+  (* OK (retv1, out_params). *)
 
 
 (* When receive return value/input arguments from environment, the
@@ -958,7 +1058,7 @@ current function should recover the normalized names that are passed
 to environment (or generate new names to avoid name conflict with the
 current variable names at function entry). These two kinds of
 operations can be done using recover_sval_ref_paths. *)
-Fixpoint recover_footprint_ref_paths (process_views: views -> views) (l: list path) (fp: footprint)  : res footprint :=
+Fixpoint recover_footprint_ref_paths (process_views: views -> views) (l: list (ident * path)) (fp: footprint)  : res footprint :=
   match fp with
   | fp_ref mut b ofs (Some ph) vs =>
       (* There may be view from the callee local paths (e.g., by
@@ -1002,28 +1102,26 @@ reference-passed sval list, it updates their reference paths and
 then putback to the svm. The caller should guarantee that the external
 svals are normalized into the form same as those passed by the
 caller *)
-Definition receive_return_footprint (fpm: fp_map) (l: list (path * views)) (retv: footprint) (externs: list footprint) : res (footprint * fp_map) :=
+Definition receive_return_footprint (fpm: fp_map) (l: list (ident * path * views)) (retv: footprint) (inout_fpm: fp_map) : res (footprint * fp_map) :=
   let phl := map fst l in
   let vsl := map snd l in
   do retv1 <- recover_footprint_ref_paths (recover_views vsl) phl retv;
-  do externs1 <- mmap (recover_footprint_ref_paths (recover_views vsl) phl) externs;
-  let phs_externs := combine phl externs1 in
-  do fpm1 <- mfold_left (fun acc '(ph, fp) => set_footprint_map ph fp acc) phs_externs fpm;
+  do fpm1 <- mfold_left (fun acc '(id, ph) => 
+                          match inout_fpm ! id with
+                          | Some (b, ofs, r, ty, fp) =>
+                              do fp1 <- recover_footprint_ref_paths (recover_views vsl) phl fp;
+                              set_footprint_map ph fp1 acc
+                          | _ => Error nil
+                          end) phl fpm;
+(* set_footprint_map ph fp acc) phs_externs fpm; *)
   OK (retv1, fpm1).
 
-Definition rename_views (l: list path) (phl: list path) : views :=
-  flat_map (fun ph1 => match recover_ref_path l ph1 with
-                    | OK ph2 => ph2 :: nil
-                    | _ => nil
-                    end) phl.
-
-Definition receive_incoming_params (fresh_paths: list path) (args: list footprint) (inout_params: list (block * Z * origin * type * footprint)) : res (list footprint * list (block * Z * origin * type * footprint)) :=
-  do args1 <- mmap (recover_footprint_ref_paths (rename_views fresh_paths) fresh_paths) args;
-  do inout_params1 <- mmap (fun '(b, ofs, r, ty, fp) => 
-                          do fp1 <- recover_footprint_ref_paths (rename_views fresh_paths) fresh_paths fp;
-                          OK (b, ofs, r, ty, fp1)) inout_params;
-  OK (args1, inout_params1).
-  
+ 
+Definition receive_incoming_params (substs: PTree.t ident) (args: list footprint) (inout_fpm: fp_map) : res (list footprint * fp_map) :=
+  do args1 <- mmap (rename_path_footprint substs) args;
+  do inout_fpm1 <- collect_fpm_return_ref_footprint inout_fpm substs;
+  OK (args1, inout_fpm1).
+ 
 Fixpoint clear_fpm_passed_ref_footprint (fpm: fp_map) (l: list path) : res fp_map :=
   match l with
   | nil => OK fpm
@@ -1169,7 +1267,7 @@ Inductive cont : Type :=
 | Kstop: cont
 | Kseq: statement -> cont -> cont
 | Kloop: statement -> cont -> cont
-| Kcall: place -> function -> list (path * (views * origin * type)) -> list ident -> fp_map -> cont -> cont
+| Kcall: place -> function -> list (ident * (path * (views * origin * type))) -> PTree.t ident -> fp_map -> cont -> cont
 .
 
 
@@ -1194,18 +1292,20 @@ Inductive state: Type :=
     (f: function)
     (s: statement)
     (k: cont)
-    (inout: list ident)         (* used to record the new idents for the in-out parameters *)
+    (alpha: PTree.t ident)         (* used to record the new idents for the in-out parameters *)
     (fpm: fp_map)
     (sup: Mem.sup) : state
 | Callstate
     (fun_id: ident)
     (args: list footprint)
-    (inout: list (block * Z * origin * type * footprint))
+    (* (inout: list (block * Z * origin * type * footprint)) *)
+    (inout: fp_map)
     (sup: Mem.sup)
     (k: cont): state
 | Returnstate
     (res: footprint)
-    (inout: list (block * Z * origin * type * footprint))
+    (* (inout: list (block * Z * origin * type * footprint)) *)
+    (inout: fp_map)
     (sup: Mem.sup)
     (k: cont): state.
 
@@ -1255,19 +1355,22 @@ Fixpoint bind_inout_params (fpm: fp_map) (l: list ident) (vl: list (block * Z * 
 
 (* We should assume that the types in inout_params contain generic
 regions instead of the local regions from the caller. *)
-Definition function_entry ce (f: function) (args: list footprint) (inout_params: list (block * Z * origin * type * footprint)) (sup: Mem.sup) : res (list ident * fp_map * Mem.sup) :=
+Definition function_entry ce (f: function) (args: list footprint) (inout_fpm: fp_map) (sup: Mem.sup) : res (PTree.t ident * fp_map * Mem.sup) :=
   let names := field_idents (fn_params f ++ fn_vars f) in
   let fresh_var := Pos.succ (find_max_pos names) in
+  let inout_params := PTree.elements inout_fpm in
   let fresh_vars := npos (length inout_params) fresh_var in
+  let substs1 := PTree_Properties.of_list (combine fresh_vars (map fst inout_params)) in
+  let substs2 := PTree_Properties.of_list (combine (map fst inout_params) fresh_vars) in
   (* Substitute the old name in args and in_params with the fresh names *)
-  let fresh_paths : list path := map (fun id => (id, nil)) fresh_vars in
-  do (args1, inout_params1) <- receive_incoming_params fresh_paths args inout_params;
+  (* let fresh_paths := map (fun id => (id, (id, nil))) fresh_vars in *)
+  do (args1, inout_fpm1) <- receive_incoming_params substs2 args inout_fpm;
   (* allocate the variables and paramters *)
-  let (fpm1, sup1) := alloc_vars ce (PTree.empty _) (f.(fn_params) ++ f.(fn_vars)) sup in
+  let (fpm1, sup1) := alloc_vars ce inout_fpm1 (f.(fn_params) ++ f.(fn_vars)) sup in
   (* set the value to the map *)
   do fpm2 <- bind_params fpm1 (fn_params f) args1;
-  do fpm3 <- bind_inout_params fpm2 fresh_vars inout_params1;
-  OK (fresh_vars, fpm3, sup1).
+  (* do fpm3 <- bind_inout_params fpm2 fresh_vars inout_params1; *)
+  OK (substs1, fpm2, sup1).
 
 Definition var_to_path (v: ident * type) : path := (fst v, nil).
 
@@ -1392,14 +1495,14 @@ keeps the drop statement for the place that is init. *)
     parameters are not fp_uninit? It is ensured by check_dangle? *)
     step (State f (Sreturn p) k ns fpm1 sup) E0 (Returnstate vfp2 out_params sup ck)
 
-| step_returnstate: forall (p: place) v v1 fpm1 fpm2 fpm3 fpm4 f k out_params phl ph ns vs sup
+| step_returnstate: forall (p: place) v v1 fpm1 fpm2 fpm3 fpm4 f k inout_fpm phl ph ns vs sup
     (* We need to first putback the ref-passed location and the do the
     assignment because p may locate in those ref-passed locations *)
-    (PUTBACK: receive_return_footprint fpm1 (map (fun '(ph, (vs, _, _)) => (ph, vs)) phl) v (map snd out_params) = OK (v1, fpm2))
+    (PUTBACK: receive_return_footprint fpm1 (map (fun '(id, (ph, (vs, _, _))) => (id, ph, vs)) phl) v inout_fpm = OK (v1, fpm2))
     (EVALP: before_write_place fpm2 p = OK (ph, vs, fpm3))    
     (* (CASTED: sval_casted v1 (typeof_place p)) *)
     (ASS: set_footprint_map ph (kill_paths_ref vs v1) fpm3 = OK fpm4),
-    step (Returnstate v out_params sup (Kcall p f phl ns fpm1 k)) E0 (State f Sskip k ns fpm4 sup)
+    step (Returnstate v inout_fpm sup (Kcall p f phl ns fpm1 k)) E0 (State f Sskip k ns fpm4 sup)
 
 (* Control flow statements *)
 | step_seq:  forall f s1 s2 k e m sup,
@@ -1440,14 +1543,14 @@ Record rust_spec_query :=
     rspec_fid: ident;
     rspec_sg: rust_signature;
     rspec_args: list footprint;
-    rspec_inout_params: list (block * Z * origin * type * footprint);
+    rspec_in_fpm: fp_map;
     rspec_q_sup: Mem.sup;
   }.
 
 Record rust_spec_reply :=
   rspec_r {
     rspec_retval: footprint;
-    rspec_out_params: list (block * Z * origin * type * footprint);
+    rspec_out_fpm: fp_map;
     rspec_r_sup: Mem.sup;
   }.
 
@@ -1462,7 +1565,7 @@ Definition li_rs_spec : language_interface :=
 (** Open semantics *)
 
 Inductive initial_state: (query li_rs_spec) -> state -> Prop :=
-| initial_state_intro: forall f targs tres tcc vargs orgs org_rels fun_id inout_params sup
+| initial_state_intro: forall f targs tres tcc vargs orgs org_rels fun_id inout_fpm sup
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun (Internal f)))
     (TYF: type_of_function f = Tfunction orgs org_rels targs tres tcc)
     (* This function must not be drop glue *)
@@ -1470,8 +1573,8 @@ Inductive initial_state: (query li_rs_spec) -> state -> Prop :=
     (* how to prove it? *)
     (* (CAST: sval_casted_list vargs targs), *)
     (* Mem.sup_include (Genv.genv_sup ge) (Mem.support m) -> *)
-    initial_state (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs inout_params sup)
-      (Callstate fun_id vargs inout_params sup Kstop).
+    initial_state (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs inout_fpm sup)
+      (Callstate fun_id vargs inout_fpm sup Kstop).
 
 
 Inductive at_external: state -> (query li_rs_spec) -> Prop :=
