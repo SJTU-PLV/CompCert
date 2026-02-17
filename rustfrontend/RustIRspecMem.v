@@ -25,11 +25,11 @@ Local Open Scope sep_scope.
 (* Useful tactic to destruct get_loc_footprint. *)
 
 Ltac destr_fp_box fp H :=
-  destruct fp; try congruence;
-  match type of H with
-  | (if ?not_fp_emp then _ else _) = _  =>      
-      destruct not_fp_emp eqn: ?NOTEMP in H; try congruence
-  end.
+  destruct fp; try congruence.
+  (* match type of H with *)
+  (* | (if ?not_fp_emp then _ else _) = _  =>       *)
+  (*     destruct not_fp_emp eqn: ?NOTEMP in H; try congruence *)
+  (* end. *)
 
 
 Ltac destr_fp_enum fp H :=
@@ -506,10 +506,13 @@ Qed.
 
 (** ** Typing of the footprint: used to make sure the footprint is well-formed *)
 
+Definition fpm_to_tenv (fpm: fp_map) : typenv :=
+  PTree.map1 (fun '(b, ofs, r, ty, fp) => ty) fpm.
+
 Section COMP_ENV.
 
 Variable ce: composite_env.
-
+Variable fpm: fp_map.
 (** Move it to Rusttypes.v  *)
 
 (* We define a new field_offset which returns the starting offset of a
@@ -567,9 +570,16 @@ Inductive wt_footprint : type -> footprint -> Prop :=
     (* It is used to make sure that dropping any location within a
     block does not cause overflow *)
     wt_footprint (Tbox ty) (fp_box b fp)
-| wt_fp_ref: forall ty b ofs phs org mut vs,
-    (** Do we need to prove that phs is well-typed path? *)
-    wt_footprint (Treference org mut ty) (fp_ref mut b ofs phs vs)
+| wt_fp_ref_some: forall ty b ofs ph org mut vs fp pty
+    (** [ty] is equal to the type in [ph] *)
+    (WTPH: wt_path ce (fpm_to_tenv fpm) ph = OK pty)
+    (TYEQ: type_eq_except_origins ty pty = true)
+    (** The memory location stored in this reference is equal to the
+    location of [ph] *)
+    (LOCEQ: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp)),    
+    wt_footprint (Treference org mut ty) (fp_ref mut b ofs (Some ph) vs)
+| wt_fp_ref_none: forall ty b ofs org mut vs,
+    wt_footprint (Treference org mut ty) (fp_ref mut b ofs None vs)
 | wt_fp_object: forall id obj exposed
     (WF: Forall2 (obj_exposed_wf wt_footprint) (mem_exposed_borrow (ame id) obj) exposed)
     (* The object always satisfies the representation invariant (this
@@ -583,6 +593,12 @@ Definition wt_footprint_list tyl fpl :=
   list_forall2 wt_footprint tyl fpl.
 
 End COMP_ENV.
+
+Definition wt_fpm ce (fpm: fp_map) : Prop :=
+  forall id b ofs r ty fp,
+    fpm ! id = Some (b, ofs, r, ty, fp) ->
+    wt_footprint ce fpm ty fp.
+
 
 (* Properties of fields_sep *)
 
@@ -803,7 +819,7 @@ Qed.
 
 (********* End of properties of the separation predicate ********************  *)
 
-(* TODO: broken proof about memory operation
+ (* TODO: broken proof about memory operation *)
 
 (* Properties of get/set footprint map w.r.t. sem_wt_loc *)
 
@@ -820,7 +836,7 @@ we just split the value footprint from the footprint map. This idea
 can be found in the "higher-order representation predicate" paper. *)
 Lemma get_owner_loc_footprint_sem_wt_split ce: forall phl b1 ofs1 b2 ofs2 fp1 fp2 mp
       (* Most of the time (b2,ofs2) is the location to be stored *)
-      (GFP: get_owner_loc_footprint phl fp1 b1 ofs1 = Some (b2, ofs2, fp2))
+      (GFP: get_owner_loc_footprint phl fp1 b1 ofs1 = OK (b2, ofs2, fp2))
       (* setting fp_emp to this location is equivalent to splitting
       out this location predicate *)      
       (WTLOC: sem_wt_loc ce fp1 b1 ofs1 mp),
@@ -828,7 +844,7 @@ Lemma get_owner_loc_footprint_sem_wt_split ce: forall phl b1 ofs1 b2 ofs2 fp1 fp
       (* Why we set fp_emp here instead of (clear_footprint_rec fp2),
       because we want to separate the whole location of (b2, ofs2)
       instead of just separting its contained value. *)
-      set_footprint phl fp_emp fp1 = Some fp1'
+      set_footprint phl fp_emp fp1 = OK fp1'
       /\ sem_wt_loc ce fp1' b1 ofs1 mp1
       (* separate mp2 from mp *)
       /\ sem_wt_loc ce fp2 b2 ofs2 mp2
@@ -837,11 +853,12 @@ Lemma get_owner_loc_footprint_sem_wt_split ce: forall phl b1 ofs1 b2 ofs2 fp1 fp
       /\ massert_eqv mp (mp1 ** mp1' ** mp2)
       (* setting a new footprint into this location *)
       /\ (forall fp3 mp3, 
-            (* We cannot set fp_emp as it would eliminate some predicate *)
-            not_fp_emp fp3 = true ->
+            (* We cannot set fp_emp as it would eliminate some
+            predicate *)
+            (* not_fp_emp fp3 = true -> *)
             sem_wt_loc ce fp3 b2 ofs2 mp3 ->
             exists mp' fp1'', 
-              set_footprint phl fp3 fp1 = Some fp1''
+              set_footprint phl fp3 fp1 = OK fp1''
               /\ sem_wt_loc ce fp1'' b1 ofs1 mp'
               /\ massert_eqv mp' (mp1 ** mp1' ** mp3)).
 Proof.
@@ -864,7 +881,7 @@ Proof.
     + destr_fp_box fp1 GFP.
       inv WTLOC.
       exploit IHphl; eauto. intros (mp1 & mp1' & mp2 & fp1' & A1 & A2 & A3 & A4 & A5).
-      destruct (not_fp_emp fp1') eqn: NOTEMP1.
+      (* destruct (not_fp_emp fp1') eqn: NOTEMP1. *)
     (*   * exists (hasvalue Mptr b1 ofs1 (Vptr b Ptrofs.zero) ** box_pred fp1' b sz mp1).  *)
     (*     exists mp1'. *)
     (*     exists mp2, (fp_box b sz fp1'). *)
@@ -926,7 +943,7 @@ Admitted.
 
 (* Used to do memory read in fp *)
 Lemma get_owner_loc_footprint_map_sem_wt_split ce: forall phl id b ofs fp mp fpm1
-      (GFP: get_owner_loc_footprint_map (id, phl) fpm1 = Some (b, ofs, fp))
+      (GFP: get_owner_loc_footprint_map (id, phl) fpm1 = OK (b, ofs, fp))
       (COH: coherent_fpm ce fpm1 mp),
     exists mp1 mp2, sem_wt_loc ce fp b ofs mp1
                /\ massert_eqv mp (mp2 ** mp1).
@@ -936,18 +953,18 @@ Admitted.
 
 (************* End of properties of get/set_footprint_map ******************  *)
 
-Lemma wt_footprint_size_eq ce : forall ty fp,
-    wt_footprint ce ty fp ->
+Lemma wt_footprint_size_eq ce : forall ty fp fpm,
+    wt_footprint ce fpm ty fp ->
     sizeof ce ty = sizeof_footprint ce fp.
 Admitted.
 
-Lemma wt_footprint_align_eq ce : forall ty fp,
-    wt_footprint ce ty fp ->
+Lemma wt_footprint_align_eq ce : forall ty fp fpm,
+    wt_footprint ce fpm ty fp ->
     alignof ce ty = alignof_footprint ce fp.
 Admitted.
 
 
-Definition fp_match_chunk fp chunk : Prop :=
+Definition fp_match_chunk (fp: footprint) chunk : Prop :=
   match fp with
   | fp_uninit sz al =>
       sz = size_chunk chunk /\ al = align_chunk chunk
@@ -1020,19 +1037,21 @@ Proof.
   destruct fp; intros; simpl in *; try contradiction; econstructor.
 Qed.
 
-Lemma fp_match_chunk_shallow_owned: forall fp chunk,
-    fp_match_chunk fp chunk ->
-    shallow_owned fp = true.
-Proof.
-  destruct fp; intros; simpl in *; try contradiction; try reflexivity.
-Qed.
+(* Lemma fp_match_chunk_shallow_owned: forall fp chunk, *)
+(*     fp_match_chunk fp chunk -> *)
+(*     shallow_owned fp = true. *)
+(* Proof. *)
+(*   destruct fp; intros; simpl in *; try contradiction; try reflexivity. *)
+(* Qed. *)
 
-Lemma fp_match_chunk_not_emp: forall fp chunk,
-    fp_match_chunk fp chunk ->
-    not_fp_emp fp = true.
-Proof.
-  destruct fp; intros; simpl in *; try contradiction; try reflexivity.
-Qed.
+(* Lemma fp_match_chunk_not_emp: forall fp chunk, *)
+(*     fp_match_chunk fp chunk -> *)
+(*     not_fp_emp fp = true. *)
+(* Proof. *)
+(*   destruct fp; intros; simpl in *; try contradiction; try reflexivity. *)
+(* Qed. *)
+
+(* Broken proof
 
 Lemma fields_loc_sep_range_perm ce: forall fpl b ofs mp1 mp2 mp id
     (IH: forall (fid : ident) (base fofs : Z) (ffp : footprint),

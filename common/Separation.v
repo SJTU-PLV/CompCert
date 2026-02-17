@@ -413,6 +413,7 @@ Qed.
 
 (** A memory area that contains a value sastifying a given predicate *)
 
+(* TODO: may be ofs <= max_unsigned is not enough as we may need ofs + size_chunk chunk < max_unsigned*)
 Program Definition contains (chunk: memory_chunk) (b: block) (ofs: Z) (spec: val -> Prop) : massert := {|
   m_pred := fun m =>
        0 <= ofs <= Ptrofs.max_unsigned

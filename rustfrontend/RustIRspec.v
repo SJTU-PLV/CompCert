@@ -138,7 +138,7 @@ Inductive footprint : Type :=
 .
 
 (* It is used to define the invariant for the dynamic borrow check *)
-Definition fp_graph := PTree.t (type * footprint).
+Definition fp_graph := PTree.t footprint.
 
 (* The [option origin] is used to indicate that this "variable" is
 local var/param (None) or a name for some locations passed by
@@ -157,10 +157,7 @@ Definition fpm_to_env (fpm: fp_map) : env :=
                        end) fpm.
 
 Coercion fpm_to_fpg (fpm: fp_map) : fp_graph :=
-  PTree.map1 (fun '(_, _, _, ty, fp) => (ty, fp)) fpm.
-
-Definition fpg_to_tenv (fpg: fp_graph) : typenv := 
-  PTree.map1 (fun '(ty, _) => ty) fpg.
+  PTree.map1 snd fpm.
 
 
 (** Shallow init and Deep init which should be statically checked by
@@ -426,7 +423,7 @@ Definition get_owner_loc_footprint_map (ps: path) (fpm: fp_map) : res (block * Z
 Definition get_owner_footprint_map (ps: path) (fpg: fp_graph) : res footprint :=
   let (id, phl) := ps in
   match fpg!id with
-  | Some (ty, fp) =>
+  | Some fp =>
       get_owner_footprint phl fp
   | _ => Error nil
   end
@@ -528,7 +525,7 @@ Fixpoint get_owner_path (fpg: fp_graph) (ph: path) (phl: list projection) (fp: f
 Definition get_owner_path_map (ps: path) (fpg: fp_graph) : res (path * views) :=
   let (id, phl) := ps in
   match fpg!id with
-  | Some (ty, fp) =>
+  | Some fp =>
       get_owner_path fpg (id, nil) phl fp nil
   | _ => Error nil
   end.
