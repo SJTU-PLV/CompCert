@@ -203,9 +203,25 @@ the expression and fpm to compute the address.  *)
 
 
 (* The invariant established and preserved by the borrow checking *)
-Record borrow_check_inv (fpm: fp_map) : Prop :=
-  { borrowck_views_inv: borrow_check_views_inv fpm; }.
+Record borrow_check_inv (fpg: fp_graph) : Prop :=
+  { borrowck_views_inv: borrow_check_views_inv fpg; }.
     (* borrowck_fpg_ref_type_inv: fpg_ref_type_inv ce fpm; *)
     (* borrowck_fpm_ref_loc_inv: fpm_ref_loc_inv fpm fpm; }. *)
+
+
+(* Useful in the proof to store the evaluated value in a fresh temp *)
+Definition fresh_PTree_ident {A: Type} (m: PTree.t A) : ident :=
+  let names := map fst (PTree.elements m) in
+  Pos.succ (Mem.find_max_pos names).
+
+Definition fresh_PTree_idents {A: Type} (m: PTree.t A) (n: nat) : list ident :=
+  let fresh_id := fresh_PTree_ident m in
+  npos n fresh_id.
+
+Definition borrow_check_fpg_vals_inv (fpg: fp_graph) (vl: list footprint) : Prop :=
+  let idl := fresh_PTree_idents fpg (length vl) in
+  let fpg1 := PTree_Properties.of_list ((PTree.elements fpg) ++ (combine idl vl)) in
+  borrow_check_inv fpg.
+
 
 End ADT_ENV.

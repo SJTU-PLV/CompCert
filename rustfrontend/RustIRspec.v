@@ -1223,12 +1223,6 @@ Definition eval_expr (ce: composite_env) (fpm: fp_map) (e: expr) : res (footprin
       eval_pexpr fpm pe
   end.
 
-(* May be useful in the proof to store the evaluated value in a fresh
-temp *)
-Definition fresh_PTree_ident {A: Type} (m: PTree.t A) : ident :=
-  let names := map fst (PTree.elements m) in
-  Pos.succ (Mem.find_max_pos names).
-
 
 (* Fixpoint eval_exprlist (svm: sv_map) (al: list expr) (tyl: typelist) : res (list sval * sv_map) := *)
 (*   match al, tyl with *)
@@ -1430,13 +1424,19 @@ Inductive step : state -> trace -> state -> Prop :=
 check that the footprint in the dropped place is deeply owned, which
 encodes the guarantee provided by the Drop elaboration, i.e., it only
 keeps the drop statement for the place that is init. *)
-| step_drop: forall fpm1 fpm2 fpm3 k f (p: place) ph ns vs sup
-    (EVALP: get_owner_path_map p fpm1 = OK (ph, vs))
+| step_drop: forall fpm1 fpm2 fpm3 k f (p: place) ns sup
+    (* We must ensure that p is an owner, otherwise dropping [*p where
+    p:&mut Box<i32>] and then not reassigning a new value into [*p]
+    would break memory safety. Because [p] may be created from
+    reborrowing [q] and [q] can be used after dropping [*p] without
+    reassignment. We should use [drop_and_replace( *p, v)] to perform
+    drop on [*p]. *)
+    (* (EVALP: get_owner_loc p fpm1 = OK (ph, vs)) *)
     (INVP: invalidate_conflict_ref_fpm p Adeep fpm1 = fpm2)
     (* Properties ensured by Drop elaboration, which we encode into
     the semantics *)
-    (DEEP_INIT: check_path_is_deeply_init fpm2 ph = OK true)
-    (DROP: clear_footprint_map ge ph fpm2 = OK fpm3),
+    (DEEP_INIT: check_path_is_deeply_init fpm2 p = OK true)
+    (DROP: clear_footprint_map ge p fpm2 = OK fpm3),
     step (State f (Sdrop p) k ns fpm1 sup) E0 (State f Sskip k ns fpm3 sup)
 | step_storagelive: forall f k ns fpm id sup,
     step (State f (Sstoragelive id) k ns fpm sup) E0 (State f Sskip k ns fpm sup)

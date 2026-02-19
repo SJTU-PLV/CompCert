@@ -714,13 +714,14 @@ Ltac inv_get_owner_path_app H :=
 (*       get_owner_loc_footprint_map (id, phl) fpm = Some (b, ofs, fp). *)
 (* Admitted. *)
 
+
 Lemma get_owner_path_map_eval_place: forall (p: place) fpm vs ph m MP
     (COH: coherent_fpm ce fpm MP)
     (MPRED: m |= MP)
     (WT_FPM: wt_fpm ce fpm)
     (WTP: wt_place fpm ce p)
     (GET_PH: get_owner_path_map p fpm = OK (ph, vs)),
-    exists b ofs fp, 
+    exists b ofs fp,
       get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp)
       /\ eval_place ce fpm m p b (Ptrofs.repr ofs).
 Proof.  
@@ -811,73 +812,86 @@ Admitted.
 
 (* Properties of evaluating expression *)
 
-Lemma eval_pexpr_match: forall (pe: pexpr) sv fpm m live MP f externs
-    (COH: coherent_fpm ce fpm MP)
-    (MPRED: m |= MP)
-    (FPM_INV: fpm_ref_loc_inv live fpm)
-    (WF_FPM: wf_fpm f externs fpm)
-    (WTEXPR: wt_pexpr fpm ce pe)
-    (** TODO: show that regions in p are live *)
-    (EVAL: eval_pexpr fpm pe = OK sv),
-    exists v fp mp,
-      Rustlightown.eval_pexpr ce fpm m tge pe v
-      /\ @sem_wt_val ame ce fp v mp
-      /\ massert_eqv mp STrue
-      /\ fp_to_sval fp = sv.
-Proof.  
+(** We first need to define a relation for the snapshot of memory
+(fpm, list of fp). We should also separate what the simulation need
+(i.e., the separation predicate) and what is guaranteed by the dynamic
+borrow check (i.e., the wt_fpm and borrow_check_inv). We may need to
+add some invariant about "all path in the views are valid" in wt_fpm? *)
+
+Lemma eval_pexpr_match: forall (pe: pexpr) vfp (fpm1 fpm2: fp_map) m MP FMP
+    (COH: coherent_fpm ce fpm1 MP)
+    (MPRED: m |= MP ** FMP)
+    (WTPEXPR: wt_pexpr fpm1 ce pe)
+    (WTFPM: wt_fpm ce fpm1)
+    (EVAL: eval_pexpr fpm1 pe = OK (vfp, fpm2)),
+    exists v mp,
+      Rustlightown.eval_pexpr ce fpm1 m tge pe v
+      /\ sem_wt_val ce vfp v mp
+      /\ coherent_fpm ce fpm2 MP
+      /\ m |= mp ** MP ** FMP.
+Proof.
+Admitted.
+
+(* When we can successfully get the footprint from a path, then we can
+move out this footprint and obtain the new memory predicate *)
+Lemma get_owner_loc_footprint_map_clear_coherent: forall id phl fpm1 b ofs fp mp mp1 fpm2,
+    get_owner_loc_footprint_map (id, phl) fpm1 = OK (b, ofs, fp) ->
+    sem_wt_fp ce fp mp1 -> 
+    coherent_fpm ce fpm1 mp ->
+    clear_footprint_map ce (id, phl) fpm1 = OK fpm2 ->
+    exists mp2,             
+      coherent_fpm ce fpm2 mp2
+      (* Because clear_footprint would set the location to fp_uninit
+      which loses the information about the original value stored in
+      that location, we can only prove implication instead of
+      equivalence. *)
+      /\ massert_imp mp (mp1 ** mp2).
 Admitted.
 
 (* What is the difference between this lemma and sem_wt_loc_split? *)
-Lemma deref_loc_sem_wt_val: forall fp b ofs mp ty m
+Lemma deref_loc_sem_wt_val: forall (fp: footprint) b ofs mp ty m fpm
     (WTLOC: sem_wt_loc ce fp b ofs mp)
-    (WTFP: wt_footprint ce ty fp)
+    (* For now we only support by_value dereference *)
+    (BYVAL: access_by_value ty = true)
+    (WTFP: wt_footprint ce fpm ty fp)
     (MPRED: m |= mp),
-    exists v mp1 mp2, 
+    exists v mp1 mp2,
       deref_loc ty m b (Ptrofs.repr ofs) v
-      /\ sem_wt_loc ce (clear_footprint_rec fp) b ofs mp1
-      /\ @sem_wt_val ame ce fp v mp2
-      /\ massert_eqv mp (mp1 ** mp2).
+      /\ sem_wt_loc ce (clear_footprint_rec ce fp) b ofs mp1
+      /\ sem_wt_val ce fp v mp2
+      /\ massert_imp mp (mp1 ** mp2).
 Admitted.
 
-(* We should write a more general lemma for it? *)
-Lemma clear_footprint_map_coherent: forall id phl fpm1 b ofs fp mp mp1 mp2,
-    get_owner_loc_footprint_map (id, phl) fpm1 = Some (b, ofs, fp) ->
-    coherent_fpm ce fpm1 mp ->
-    sem_wt_fp ce fp mp1 ->
-    massert_eqv mp (mp2 ** mp1) ->
-    exists fpm2, clear_footprint_map (id, phl) fpm1 = Some fpm2
-            /\ coherent_fpm ce fpm2 mp2.
+Lemma invalidate_conflict_ref_fpm_coherent_unchanged: forall phl id (fpm: fp_map) am mp,
+    coherent_fpm ce fpm mp ->
+    coherent_fpm ce (invalidate_conflict_ref_fpm (id, phl) am fpm) mp.
 Admitted.
 
-Lemma eval_expr_match: forall (e: expr) sv fpm1 m live MP f externs svm2
-    (COH: coherent_fpm ce fpm1 MP)
-    (MPRED: m |= MP)
-    (FPM_INV: fpm_ref_loc_inv live fpm1)
-    (WF_FPM: wf_fpm f externs fpm1)
+Lemma eval_expr_match: forall (e: expr) vfp (fpm1 fpm2: fp_map) m MP1 FMP 
+    (COH: coherent_fpm ce fpm1 MP1)
+    (MPRED: m |= MP1 ** FMP)
     (WTEXPR: wt_expr fpm1 ce e)
-    (** TODO: show that regions in p are live *)
-    (EVAL: eval_expr fpm1 e = OK sv)
-    (MOVEP: move_place_option fpm1 (moved_place e) = OK svm2),
-    exists v fp fpm2 mp1 mp2,
+    (WTFPM: wt_fpm ce fpm1)
+    (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2)),
+    exists v mp MP2,
       Rustlightown.eval_expr ce fpm1 m tge e v
-      /\ move_place_option_fpm fpm1 (moved_place e) = Some fpm2
-      /\ @sem_wt_val ame ce fp v mp1
-      /\ massert_eqv MP (mp1 ** mp2)
-      /\ coherent_fpm ce fpm2 mp2
-      /\ fpm_to_svm fpm2 = svm2
-      /\ fp_to_sval fp = sv.
+      /\ sem_wt_val ce vfp v mp
+      /\ coherent_fpm ce fpm2 MP2
+      /\ m |= mp ** MP2 ** FMP.
 Proof.  
   destruct e; intros.
   (* moveplace *)
   - simpl in EVAL.
-    monadInv EVAL. inv WTEXPR.
-    exploit get_owner_path_for_owner; eauto. intros (vs & GPH).
-    exploit get_owner_path_sv_map_eval_place. 1-5: eauto.
-    (* p is live *)
-    admit.
-    eapply GPH.
-    intros (b & ofs & fp & A1 & A2).
+    monadInv EVAL. destruct x as (b & ofs).
+    inv WTEXPR.
+    exploit get_owner_path_for_owner; eauto. 
+    eapply get_owner_loc_footprint_map_eq; eauto. intros (vs & GPH).
+    exploit get_owner_path_map_eval_place; eauto. eapply MPRED.
+    intros (b1 & ofs1 & fp & A1 & A2).
+    rewrite A1 in EQ. inv EQ.
     destr_path_of_place p.
+    (* Because we need to read the contents in the location of p, we
+    use this lemma. *)
     exploit (@get_owner_loc_footprint_map_sem_wt_split ame); eauto.
     intros (mp1 & mp2 & B1 & B2).
     (* exploit (@sem_wt_loc_split ame). 2: eauto. *)
@@ -885,50 +899,50 @@ Proof.
     move from an opaque object *)  
     (* admit. *)
     (* intros (mp3 & mp4 & S1 & S2 & S3). *)
-    rewrite B2 in MPRED.
-    exploit deref_loc_sem_wt_val; eauto. instantiate (1 := typeof_place p).
+    exploit deref_loc_sem_wt_val; eauto.     
+    (** TODO; wt_footprint *)
     admit.
-    eapply MPRED.
-    intros (v & mp3 & mp4 & LOAD & WTLOC1 & WTVAL & MPEQ).
-    rewrite MPEQ in MPRED.
+    eapply B2. eapply MPRED.
+    intros (v & mp3 & mp4 & LOAD & WTLOC1 & WTVAL & MPIMP).
     (** TODO: sem_wt_val should imply sem_wt_fp  *)
-    assert (SEMFP: sem_wt_fp ce fp mp4) by admit.
-    rewrite MPEQ in B2. rewrite <- sep_assoc in B2.
-    exploit clear_footprint_map_coherent. 1-2: eauto. eapply SEMFP. eapply B2.
-    intros (fpm2 & CLR & COH1).
-    exists v, fp, fpm2, mp4, (mp2 ** mp3).
-    do 4 (try apply conj); eauto.
+    assert (SEMFP: sem_wt_fp ce vfp mp4) by admit.
+    (* rewrite MPIMP in B2. rewrite <- sep_assoc in B2. *)
+    exploit get_owner_loc_footprint_map_clear_coherent; eauto. 
+    intros (mp5 & COH1 & MPIMP1).
+    exists v, mp4, mp5.
+    do 3 (try apply conj); eauto.
     + econstructor. econstructor.
       eauto. eauto.
-    (** TODO: we should consider valid_owner in clear_footprint_map_coherent  *)
-    + simpl. admit.
-    + rewrite B2. rewrite sep_assoc, <- sep_assoc, sep_comm. reflexivity.
-    + do 3 (try apply conj); eauto.
-      admit. admit.
-  - simpl in EVAL. monadInv EVAL.
-    inv WTEXPR. inv MOVEP.
+    + eapply invalidate_conflict_ref_fpm_coherent_unchanged; eauto.
+    + rewrite MPIMP1 in MPRED. 
+      rewrite sep_assoc in MPRED.
+      eapply MPRED.
+  - simpl in EVAL. 
+    inv WTEXPR. 
     exploit eval_pexpr_match; eauto.
-    intros (v & fp & mp & EVALP & WTVAL & MPEQ& FPEQ).
-    exists v, fp, fpm1, STrue, MP.
-    do 4 (try apply conj); eauto.
+    intros (v & mp & EVALP & WTVAL & COH1 & MPRED1).
+    exists v, mp, MP1.
+    do 3 (try apply conj); eauto.
     + econstructor. auto.
-    + eapply sem_wt_val_eqv. symmetry. eauto. auto.
-    + eapply massert_eqv_pure_l.
 Admitted.      
 
 (* moving from a place preserves the borrow checking invariant
 under the successful checking. But what is the effect of checking
 for pure expr? *)
-Lemma eval_expr_preserve_borchk_inv: forall fpm1 fpm2 e live le
-    (MOVE_FPM: move_place_option_fpm fpm1 (moved_place e) = Some fpm2)
-    (BORCHK_INV: @borrow_check_inv ame ce live le fpm1 fpm1)
-    (CHECK: check_expr le e = OK tt)
-    (EVAL: eval_expr fpm1 e = OK sv),
-   @borrow_check_inv ame ce live le fpm2 fpm2
-    (*  *)
-    /\ (typeof e) sv fpm2
-.
-Admitted.
+Lemma eval_expr_preserve_borchk_inv: forall (fpm1 fpm2: fp_map) e vfp
+    (INV: borrow_check_inv fpm1)
+    (WTFPM: wt_fpm ce fpm1)
+    (WTEXPR: wt_expr fpm1 ce e)
+    (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2)),
+    borrow_check_fpg_vals_inv fpm2 [vfp]
+    /\ wt_fpm ce fpm2
+    /\ wt_footprint ce fpm2 (typeof e) vfp.
+Proof.
+  destruct e; intros.
+  (* moveplace *)
+  - simpl in EVAL.
+    monadInv EVAL. destruct x as (b & ofs).
+    inv WTEXPR. 
 
 Ltac simpl_getIM IM :=
   generalize IM as IM1; intros;

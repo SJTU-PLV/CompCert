@@ -270,6 +270,14 @@ Inductive wt_place : place -> Prop :=
     (WT5: co.(co_sv) = TaggedUnion),
     wt_place (Pdowncast p fid ty).
 
+(* We only support deref scalar/box/ref values for now and do not
+support memory copying the struct/enum. *)
+Definition access_by_value (ty: type) :=
+  match access_mode ty with
+  | By_value _ => true
+  | _ => false
+  end.
+
 Inductive wt_pexpr: pexpr -> Prop :=
 | wt_Eunit:
   wt_pexpr Eunit
@@ -283,7 +291,8 @@ Inductive wt_pexpr: pexpr -> Prop :=
     wt_pexpr (Econst_long n (Tlong si))
 | wt_Eplace: forall p
     (WTP1: wt_place p)
-    (COPY: is_copyable (typeof_place p) = true),
+    (COPY: is_copyable (typeof_place p) = true)
+    (BYVAL: access_by_value (typeof_place p) = true),
     wt_pexpr (Eplace p (typeof_place p))
 | wt_Ecktag: forall p fid orgs id
     (WTP1: typeof_place p = Tvariant orgs id)
@@ -303,10 +312,12 @@ Inductive wt_pexpr: pexpr -> Prop :=
     (WTP2: type_binop bop (typeof_pexpr pe1) (typeof_pexpr pe2) = OK ty),
     wt_pexpr (Ebinop bop pe1 pe2 ty).
     
+
 Inductive wt_expr: expr -> Prop :=
 | wt_move_place: forall p
     (WT1: wt_place p)
-    (MOVE: is_movable p = true),
+    (MOVE: is_movable p = true)
+    (BYVAL: access_by_value (typeof_place p) = true),
     wt_expr (Emoveplace p (typeof_place p))
 | wt_pure_expr: forall pe
     (SCALAR: scalar_type (typeof_pexpr pe) || is_reference (typeof_pexpr pe) = true)
@@ -316,7 +327,6 @@ Inductive wt_expr: expr -> Prop :=
 
 Definition wt_exprlist al : Prop :=
   Forall wt_expr al.
-
 
 (* We should ensure that in an assignment, when source and target
 types are reference/box/struct/enum, their types must have the same
@@ -789,7 +799,10 @@ Fixpoint type_check_pexpr (pe: pexpr) : res unit :=
       do _ <- type_check_place p;
       if is_copyable (typeof_place p) then
         if type_eq ty (typeof_place p) then
-          OK tt
+          if access_by_value (typeof_place p) then
+            OK tt
+          else
+            Error (msg "Eplace type is not accessed by value")
         else
           Error (msg "Eplace type error")
       else Error (msg "Eplace copying a non-copyable place")
@@ -835,7 +848,10 @@ Definition type_check_expr (e: expr) : res unit :=
       (* else *)
       if is_movable p then
         if type_eq ty (typeof_place p) then
-          OK tt
+          if access_by_value (typeof_place p) then
+            OK tt
+          else
+            Error (msg "Emoveplace type is not accessed by value")
         else 
           Error (msg "Emoveplace type error")
       else 
@@ -1024,9 +1040,10 @@ Proof.
   - monadInv H.
     destruct (is_copyable (typeof_place p)) eqn: COPY; try congruence. 
     destruct type_eq in EQ0; try congruence. subst.
+    destruct (access_by_value (typeof_place p)) eqn: BYVAL; try congruence.
     econstructor.
     destruct x.
-    eapply type_check_place_sound; eauto. auto.    
+    eapply type_check_place_sound; eauto. auto. auto.
   - destruct (typeof_place p) eqn: TYP; try congruence.
     econstructor; eauto.
     eapply type_check_place_sound; eauto.
@@ -1053,6 +1070,7 @@ Proof.
   - inv H. monadInv H1.    
     destruct is_movable eqn: TYP in EQ0; try congruence.
     destruct type_eq in EQ0; try congruence. subst.
+    destruct (access_by_value (typeof_place p)) eqn: BYVAL; try congruence.
     destruct x.
     econstructor; eauto.
     eapply type_check_place_sound; eauto.
