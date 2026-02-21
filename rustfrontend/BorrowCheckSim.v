@@ -867,6 +867,36 @@ Lemma invalidate_conflict_ref_fpm_coherent_unchanged: forall phl id (fpm: fp_map
     coherent_fpm ce (invalidate_conflict_ref_fpm (id, phl) am fpm) mp.
 Admitted.
 
+Lemma invalidate_conflict_ref_fpm_wt_fpm_unchanged: forall phl id (fpm: fp_map) am,
+    wt_fpm ce fpm ->
+    wt_fpm ce (invalidate_conflict_ref_fpm (id, phl) am fpm).
+Admitted.
+
+
+Lemma invalidate_conflict_ref_fpm_wt_footprint_unchanged: forall phl id (fpm: fp_map) am ty fp,
+    wt_footprint ce fpm ty fp ->
+    wt_footprint ce (invalidate_conflict_ref_fpm (id, phl) am fpm) ty fp.
+Admitted.
+
+
+Lemma invalidate_conflict_ref_fpm_wt_place_unchanged: forall phl id (fpm: fp_map) am p,
+    wt_place fpm ce p ->
+    wt_place (invalidate_conflict_ref_fpm (id, phl) am fpm) ce p.
+Admitted.
+
+
+Lemma invalidate_conflict_ref_fpm_env_eq: forall phl id (fpm: fp_map) am,
+    (fpm_to_env fpm) = (fpm_to_env (invalidate_conflict_ref_fpm (id, phl) am fpm)).
+Admitted.
+
+
+Hint Resolve 
+  invalidate_conflict_ref_fpm_wt_place_unchanged 
+  invalidate_conflict_ref_fpm_wt_footprint_unchanged
+  invalidate_conflict_ref_fpm_coherent_unchanged
+  invalidate_conflict_ref_fpm_wt_fpm_unchanged
+  invalidate_conflict_ref_fpm_env_eq: invalidate_fp_ref.
+
 Lemma eval_expr_match: forall (e: expr) vfp (fpm1 fpm2: fp_map) m MP1 FMP 
     (COH: coherent_fpm ce fpm1 MP1)
     (MPRED: m |= MP1 ** FMP)
@@ -884,12 +914,16 @@ Proof.
   - simpl in EVAL.
     monadInv EVAL. destruct x as (b & ofs).
     inv WTEXPR.
+    set (fpm1' := (invalidate_conflict_ref_fpm p BorrowCheckDomain.Adeep fpm1)) in *.
+    destr_path_of_place p.
+    eapply invalidate_conflict_ref_fpm_coherent_unchanged in COH as COH1.
     exploit get_owner_path_for_owner; eauto. 
     eapply get_owner_loc_footprint_map_eq; eauto. intros (vs & GPH).
-    exploit get_owner_path_map_eval_place; eauto. eapply MPRED.
-    intros (b1 & ofs1 & fp & A1 & A2).
-    rewrite A1 in EQ. inv EQ.
-    destr_path_of_place p.
+    exploit (get_owner_path_map_eval_place); eauto. eapply MPRED.
+    1-3: eauto with invalidate_fp_ref. rewrite POP. eapply GPH.    
+    intros (b1 & ofs1 & fp & A1 & A2).    
+    unfold fpm1' in *.
+    setoid_rewrite A1 in EQ. inv EQ.
     (* Because we need to read the contents in the location of p, we
     use this lemma. *)
     exploit (@get_owner_loc_footprint_map_sem_wt_split ame); eauto.
@@ -908,12 +942,12 @@ Proof.
     assert (SEMFP: sem_wt_fp ce vfp mp4) by admit.
     (* rewrite MPIMP in B2. rewrite <- sep_assoc in B2. *)
     exploit get_owner_loc_footprint_map_clear_coherent; eauto. 
-    intros (mp5 & COH1 & MPIMP1).
+    intros (mp5 & COH2 & MPIMP1).
     exists v, mp4, mp5.
     do 3 (try apply conj); eauto.
     + econstructor. econstructor.
-      eauto. eauto.
-    + eapply invalidate_conflict_ref_fpm_coherent_unchanged; eauto.
+      erewrite invalidate_conflict_ref_fpm_env_eq. eauto.
+      eauto. 
     + rewrite MPIMP1 in MPRED. 
       rewrite sep_assoc in MPRED.
       eapply MPRED.
@@ -943,6 +977,70 @@ Proof.
   - simpl in EVAL.
     monadInv EVAL. destruct x as (b & ofs).
     inv WTEXPR. 
+Admitted.
+
+Definition dummy_origin : ident := 1%positive.
+
+(* Deep access of a path, which creates a temporary reference. This
+reference can be seen as a normal reference, or it can be used to
+extract the point-to footprint to act as a move operation. *)
+Lemma borrow_check_inv_deep_access: forall (fpm1 fpm2: fp_map) fpl phl id mut ty tyl vs tgt b ofs fp,
+    borrow_check_fpg_vals_inv fpm1 fpl ->
+    wt_footprint_list ce fpm1 tyl fpl ->
+    wt_path ce (fpm_to_tenv fpm1) (id, phl) = OK ty ->
+    get_owner_path_map (id, phl) fpm1 = OK (tgt, vs) ->
+    get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp) ->
+    fpm2 = invalidate_conflict_ref_fpm (id, phl) BorrowCheckDomain.Adeep fpm1 ->
+    borrow_check_fpg_vals_inv fpm2 ((fp_ref mut b ofs (Some tgt) vs) :: fpl)
+    /\ wt_footprint_list ce fpm2 ((Treference dummy_origin mut ty) :: tyl) ((fp_ref mut b ofs (Some tgt) vs) :: fpl)
+    /\ wt_fpm ce fpm2.
+Admitted.
+
+(* Move out the footprint pointed by the fp_ref in the temporary
+values and then use this footprint to replace the fp_ref to simulate
+the move operation.  *)
+Lemma borrow_check_inv_move: forall (fpm1 fpm2: fp_map) fpl ty tyl vs tgt b ofs fp r,
+    borrow_check_fpg_vals_inv fpm1 ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) ->
+    wt_footprint_list ce fpm1 ((Treference r Mutable ty) :: tyl) ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) ->
+    get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp) ->
+    clear_footprint_map ce tgt fpm1 = OK fpm2 ->
+    borrow_check_fpg_vals_inv fpm2 (fp :: fpl)
+    /\ wt_footprint_list ce fpm2 (ty :: tyl) (fp :: fpl)
+    /\ wt_fpm ce fpm2.
+Admitted.
+
+(* The borrow check invariant preserves when we drop any of the
+temporary footprint value. *)
+Lemma borrow_check_inv_drop: forall n (fpm: fp_map) fpl tyl,
+    borrow_check_fpg_vals_inv fpm fpl ->
+    wt_footprint_list ce fpm tyl fpl ->
+    borrow_check_fpg_vals_inv fpm (list_delete n fpl)
+    /\ wt_footprint_list ce fpm (list_delete n tyl) (list_delete n fpl)
+    /\ wt_fpm ce fpm.
+Admitted.
+
+(* Why is it so complicated? When we do shallow write on a path, we
+should also simultaneously kill the loans related to this paths and
+set the footprint of this path to fp_uninit othewise the invariant may
+be broken? Because when we set fp_uninit to some path, we should
+either invalidate the path point to the reachable path of this to-set
+path or kill the loans related to those reachable path? *)
+Lemma borrow_check_inv_shallow_write: forall (fpm1 fpm2 fpm3 fpm4: fp_map) id phl fpl tyl vs tgt,
+    borrow_check_fpg_vals_inv fpm1 fpl ->
+    wt_footprint_list ce fpm1 tyl fpl ->
+    wt_fpm ce fpm1 ->
+    get_owner_path_map (id, phl) fpm1 = OK (tgt, vs) ->
+    check_path_is_dropped fpm1 tgt = OK true ->
+    fpm2 = invalidate_conflict_ref_fpm (id, phl) BorrowCheckDomain.Ashallow fpm1 ->
+    clear_footprint_map ce tgt fpm2 = OK fpm3 ->
+    fpm4 = kill_paths_ref_fpm vs fpm3 ->
+    borrow_check_fpg_vals_inv fpm4 fpl
+    /\ wt_footprint_list ce fpm4 tyl fpl
+    /\ wt_fpm ce fpm4.
+Admitted.
+
+
+
 
 Ltac simpl_getIM IM :=
   generalize IM as IM1; intros;

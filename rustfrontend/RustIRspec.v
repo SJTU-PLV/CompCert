@@ -1216,9 +1216,18 @@ Fixpoint eval_pexpr (fpm: fp_map) (pe: pexpr) : res (footprint * fp_map) :=
 Definition eval_expr (ce: composite_env) (fpm: fp_map) (e: expr) : res (footprint * fp_map) :=
   match e with
   | Emoveplace p _ =>
-      do (_, fp) <- get_owner_loc_footprint_map p fpm;
-      do fpm1 <- clear_footprint_map ce p fpm;
-      OK (fp, invalidate_conflict_ref_fpm p Adeep fpm1)
+      (* Should we do invalidation first and the clear the footprint
+      out? We first do the invalidation because it similates a deep
+      access which would invalidate all conflict reference and then we
+      do the actual move operation. But the difficulty may be the
+      proof of no invalid fp_ref in [fp]? Maybe in the static borrow
+      checking, we can show that all reachable path of [p] is live so
+      we cannot invalidate their fp_ref? No matter whether the fp_ref
+      is reachable from [p]? *)
+      let fpm1 := invalidate_conflict_ref_fpm p Adeep fpm in
+      do (_, fp) <- get_owner_loc_footprint_map p fpm1;
+      do fpm2 <- clear_footprint_map ce p fpm1;
+      OK (fp, fpm2)
   | Epure pe =>
       eval_pexpr fpm pe
   end.

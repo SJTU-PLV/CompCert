@@ -94,3 +94,13 @@ Proof.
     destruct H. destruct ident_eq; try congruence.
     f_equal. eauto.
 Qed.
+
+(* The operation delete i l removes the ith element of l and moves all
+consecutive elements one position ahead. In case i is out of bounds,
+the list is returned unchanged. *)
+
+Fixpoint list_delete {A} (i : nat) (l : list A) {struct l} : list A :=
+  match l with
+  | nil => nil
+  | x :: l => match i with O => l | S i => x :: list_delete i l end
+  end.
