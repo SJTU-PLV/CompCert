@@ -1051,62 +1051,61 @@ Qed.
 (*   destruct fp; intros; simpl in *; try contradiction; try reflexivity. *)
 (* Qed. *)
 
-(* Broken proof
-
-Lemma fields_loc_sep_range_perm ce: forall fpl b ofs mp1 mp2 mp id
-    (IH: forall (fid : ident) (base fofs : Z) (ffp : footprint),
-        In (fid, (base, fofs, ffp)) fpl ->
-        forall (mass : massert) (b : block) (ofs : Z),
-          shallow_owned ffp = true ->
-          fields_fp_well_formed ce ffp ->
-          sem_wt_loc ce ffp b ofs mass ->      
-            massert_imp mass (range b ofs (ofs + sizeof_footprint ce ffp)))
-     (FWT: Forall
-          (fp_field_in_range_aligned ce (sizeof_comp ce id) (alignof_comp ce id)
-             (fields_fp_well_formed ce)) fpl)
-     (COMPLETE: forall ofs1 : Z,
-             0 <= ofs1 < sizeof_comp ce id ->
-             (* It cannot be proved solely in induction case *)
-             (exists (fid : ident) (base fofs : Z) (ffp : footprint),
-               In (fid, (base, fofs, ffp)) fpl /\ base <= ofs1 < fofs + sizeof_footprint ce ffp)
-             (* Or we already know that mass implies the range of [ofs, ofs+1) *)
-             \/ massert_imp mp1 (range b (ofs + ofs1) (ofs + ofs1 + 1)))
-     (SHALLOW: forall fid base fofs ffp, In (fid, (base, fofs, ffp)) fpl ->
-                                    shallow_owned ffp = true)
-     (FSEP: fields_loc_sep b ofs (sem_wt_loc ce) fpl mp2)
-     (EQV: massert_eqv mp (mp1 ** mp2)),     
-       massert_imp mp (range b ofs (ofs + sizeof_comp ce id)).
-Proof.
-  induction fpl; intros.
-  - admit.
-  - inv FSEP. inv FWT.
-    exploit IH. simpl. left. reflexivity. 
-    eapply SHALLOW. simpl. left. reflexivity.
-    inv H1. auto.
-    eauto. intros (mass1' & IMP1).
-    rewrite <- sep_assoc in EQV0.
-    set (mp1' := range b (ofs + base) (ofs + fofs) ** mass1) in *.
-    assert (MP1RANG: massert_imp mp1' (range b (ofs + base) (ofs + fofs + sizeof_footprint ce ffp))) by admit.
-    (* We want to put mp1' to mp1 when using IHfpl *)
-    exploit (IHfpl b ofs (mp1 ** mp1') mass2 mp id). admit.
-    eauto. 
-    (** Most difficult part *)
-    { intros. exploit COMPLETE; eauto.
-      intros [(fid1 & base1 & fofs1 & ffp1 & A1 & A2) | IMP3].
-      - inv A1.
-        + inv H0. right. 
-          (* use MP1RANG and A2 *)
-          etransitivity. eapply massert_imp_proj2.
-          etransitivity. eapply MP1RANG.
-          admit.
-        + left. exists fid1, base1, fofs1, ffp1. split; auto.
-      - right.
-        etransitivity. eapply massert_imp_proj1. eauto. }
-    admit.
-    auto.
-    admit.
-    eauto.
-Admitted.
+(** TODO  *)
+(* Lemma fields_loc_sep_range_perm ce: forall fpl b ofs mp1 mp2 mp id *)
+(*     (IH: forall (fid : ident) (base fofs : Z) (ffp : footprint), *)
+(*         In (fid, (base, fofs, ffp)) fpl -> *)
+(*         forall (mass : massert) (b : block) (ofs : Z), *)
+(*           shallow_owned ffp = true -> *)
+(*           fields_fp_well_formed ce ffp -> *)
+(*           sem_wt_loc ce ffp b ofs mass ->       *)
+(*             massert_imp mass (range b ofs (ofs + sizeof_footprint ce ffp))) *)
+(*      (FWT: Forall *)
+(*           (fp_field_in_range_aligned ce (sizeof_comp ce id) (alignof_comp ce id) *)
+(*              (fields_fp_well_formed ce)) fpl) *)
+(*      (COMPLETE: forall ofs1 : Z, *)
+(*              0 <= ofs1 < sizeof_comp ce id -> *)
+(*              (* It cannot be proved solely in induction case *) *)
+(*              (exists (fid : ident) (base fofs : Z) (ffp : footprint), *)
+(*                In (fid, (base, fofs, ffp)) fpl /\ base <= ofs1 < fofs + sizeof_footprint ce ffp) *)
+(*              (* Or we already know that mass implies the range of [ofs, ofs+1) *) *)
+(*              \/ massert_imp mp1 (range b (ofs + ofs1) (ofs + ofs1 + 1))) *)
+(*      (SHALLOW: forall fid base fofs ffp, In (fid, (base, fofs, ffp)) fpl -> *)
+(*                                     shallow_owned ffp = true) *)
+(*      (FSEP: fields_loc_sep b ofs (sem_wt_loc ce) fpl mp2) *)
+(*      (EQV: massert_eqv mp (mp1 ** mp2)),      *)
+(*        massert_imp mp (range b ofs (ofs + sizeof_comp ce id)). *)
+(* Proof. *)
+(*   induction fpl; intros. *)
+(*   - admit. *)
+(*   - inv FSEP. inv FWT. *)
+(*     exploit IH. simpl. left. reflexivity.  *)
+(*     eapply SHALLOW. simpl. left. reflexivity. *)
+(*     inv H1. auto. *)
+(*     eauto. intros (mass1' & IMP1). *)
+(*     rewrite <- sep_assoc in EQV0. *)
+(*     set (mp1' := range b (ofs + base) (ofs + fofs) ** mass1) in *. *)
+(*     assert (MP1RANG: massert_imp mp1' (range b (ofs + base) (ofs + fofs + sizeof_footprint ce ffp))) by admit. *)
+(*     (* We want to put mp1' to mp1 when using IHfpl *) *)
+(*     exploit (IHfpl b ofs (mp1 ** mp1') mass2 mp id). admit. *)
+(*     eauto.  *)
+(*     (** Most difficult part *) *)
+(*     { intros. exploit COMPLETE; eauto. *)
+(*       intros [(fid1 & base1 & fofs1 & ffp1 & A1 & A2) | IMP3]. *)
+(*       - inv A1. *)
+(*         + inv H0. right.  *)
+(*           (* use MP1RANG and A2 *) *)
+(*           etransitivity. eapply massert_imp_proj2. *)
+(*           etransitivity. eapply MP1RANG. *)
+(*           admit. *)
+(*         + left. exists fid1, base1, fofs1, ffp1. split; auto. *)
+(*       - right. *)
+(*         etransitivity. eapply massert_imp_proj1. eauto. } *)
+(*     admit. *)
+(*     auto. *)
+(*     admit. *)
+(*     eauto. *)
+(* Admitted. *)
 
 (* We need to say that sem_wt_loc is readable/storable/freeable *)
 Lemma sem_wt_loc_range_perm ce: forall fp mass b ofs
@@ -1135,6 +1134,7 @@ Proof.
     (* eapply mem_pred_range. *)
     admit.
 Admitted.
+*) 
 
 Lemma sem_wt_loc_valid_access ce: forall fp b ofs mass m p chunk
     (WTLOC: sem_wt_loc ce fp b ofs mass)    

@@ -1383,12 +1383,13 @@ Variable ge: genv.
 
 Definition before_write_place (fpm1: fp_map) (p: place) : res (path * views * fp_map) :=
   do (ph, vs) <- get_owner_path_map p fpm1;
-  let fpm2 := invalidate_conflict_ref_fpm p Ashallow fpm1 in
   (* This property should be guaranteed by the correct insertion of
     drop. Since we have no way to express this guarantee provided by
     RustIRgen/Drop Elaboration, we must encode it into the
     semantics. *)
-  if check_path_is_dropped fpm2 ph then
+  do is_dropped <- check_path_is_dropped fpm1 ph;
+  if is_dropped then
+    let fpm2 := invalidate_conflict_ref_fpm p Ashallow fpm1 in  
     (* Before overwrite the target location, we should first set it to
     fp_uninit so that the original fp_ref in this location is removed
     and we can establish invariant before overwriting a new value *)
