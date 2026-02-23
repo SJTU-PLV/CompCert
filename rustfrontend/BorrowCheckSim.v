@@ -696,8 +696,10 @@ Admitted.
 
 Lemma get_owner_loc_footprint_map_wt: forall phl id fpm b ofs fp,
     get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, fp) ->
+    wt_fpm ce fpm ->
     exists ty, wt_path ce fpm (id, phl) = OK ty
-          /\ wt_footprint ce fpm ty fp.
+          /\ wt_footprint ce fpm ty fp
+          /\ (alignof ce ty | ofs).
 Admitted.
 
 Ltac inv_get_owner_path_app H :=
@@ -797,7 +799,7 @@ Proof.
       exploit load_rule. eapply MPRED. intros (?v & C1 & C2). subst.
       (* Use invariant for reference *)
       exploit get_owner_loc_footprint_map_wt; eauto.
-      intros (ty & WT3 & WT4). inv WT4.
+      intros (ty & WT3 & WT4& WT5). inv WT4.
       exists b, ofs, fp0. split; auto.
       econstructor; eauto. 
       (** TODO: may be difficult *)
@@ -1093,6 +1095,28 @@ Admitted.
 (*   inversion IM1 as [? | ? | ? ? GETINIT GETUNINIT]; subst; *)
 (*   try rewrite <- GETINIT in *; try rewrite <- GETUNINIT in *. *)
 
+Ltac unfold_eval_assign :=
+  match goal with
+  | [H : context G [eval_assign] |- _ ] =>
+      unfold eval_assign in H; monadInv H;
+      match goal with
+      | [H1 : context G [before_write_place _ _ _ = OK (?a, ?b)] |- _ ] =>
+          destruct a as ((?tgt_id & ?tgt_phl) & ?vs)
+      end
+  end.
+
+Ltac unfold_before_write_place :=
+  match goal with
+  | [H : context G [before_write_place] |- _ ] =>
+      unfold before_write_place in H; monadInv H;
+      match goal with
+      | [H1 : context G [check_path_is_dropped _ _ = OK ?b],
+            H2: context [(if ?b then _ else _) = OK _]    
+         |- _ ] =>              
+          destruct b; try monadInv H2
+      end
+  end.
+
 
 Lemma step_simulation: forall s1 t s2 s1',
     RustIRspec.step ge s1 t s2 ->
@@ -1102,27 +1126,7 @@ Proof.
   intros s1 t s2 s1' STEP MATCH. inv STEP.
   (* Sassign *)
   - inv MATCH. 
-    Ltac unfold_eval_assign :=
-      match goal with
-      | [H : context G [eval_assign] |- _ ] =>
-          unfold eval_assign in H; monadInv H;
-          match goal with
-          | [H1 : context G [before_write_place _ _ _ = OK (?a, ?b)] |- _ ] =>
-              destruct a as (?tgt & ?vs)
-          end
-      end.
     unfold_eval_assign. inv EQ2.
-    Ltac unfold_before_write_place :=
-      match goal with
-      | [H : context G [before_write_place] |- _ ] =>
-          unfold before_write_place in H; monadInv H;
-          match goal with
-          | [H1 : context G [check_path_is_dropped _ _ = OK ?b],
-                    H2: context [(if ?b then _ else _) = OK _]    
-             |- _ ] =>              
-              destruct b; try monadInv H2
-          end
-      end.
     unfold_before_write_place.        
     destr_path_of_place p.
     (* evaluate expr *)
@@ -1154,7 +1158,8 @@ Proof.
     exploit (kill_paths_ref_coherent_fpm x3 vs). eapply COH2. 
     intros COH3.
     (* derive the predicate for the value *)
-    exploit kill_paths_ref_sem_wt_val; eauto. intros WTVAL1.
+    exploit kill_paths_ref_sem_wt_val; eauto. 
+    instantiate (1 := vs). intros WTVAL1.
     (* evaluate the address of the assignee *)
     exploit (get_owner_path_map_eval_place p).
     eapply COH1. eapply MPRED1. eauto. 
@@ -1163,18 +1168,43 @@ Proof.
     intros (b & ofs & pfp & GPLOC & EVALP).
     (** TODO: prove that invalidate_fp_ref, kill_paths_ref_fpm and
     clear_footprint_map in [ph] does not change the location of [ph] *)
-    assert (GPLOC1: get_owner_loc_footprint_map ph (kill_paths_ref_fpm vs x3) = OK (b, ofs, clear_footprint_rec ce pfp)) by admit.
-    
-
-    
-    
-
-
-    rewrite MEQ1 in MPRED.
-    
-
-    exploit get_owner_path_sv_map_eval_place. eauto. eapply MPRED. 
-    
+    assert (GPLOC1: get_owner_loc_footprint_map  (tgt_id, tgt_phl)  (kill_paths_ref_fpm vs x3) = OK (b, ofs, clear_footprint_rec ce pfp)) by admit.
+    assert (MPRED3: m |= mp2' ** mp1 ** FMP) by admit.
+    (** Proved by type checking *)
+    assert (BYVAL: exists chunk, access_mode (typeof_place p) = Ctypes.By_value chunk) by admit.
+    destruct BYVAL as (chunk & BYVAL).    
+    inv WTFP2. inv H4.
+    (* assign_loc *)
+    exploit get_owner_loc_footprint_map_wt; eauto.
+    intros (ty & WTPH1 & WTFP4 & AL).
+    exploit (@assign_loc_by_value_coherent_fpm ame). eapply COH3.
+    eapply WTVAL1. eauto.
+    eapply GPLOC1. eauto. eauto.
+    (** lots of work need to be done to prove ty = typeof e = typeof p
+    where '=' represent type_eq_except_origins because the
+    get_owner_path_map p is performed on x0 instead of the fp_map
+    after invalidation and kill_paths and clear_footprint. *)
+    admit. instantiate (1 := chunk). admit.
+    intros (m1 & fpm2 & mp3 & ASSIGN & SET1 & COH4 & MPRED4).
+    rewrite ASS in SET1. inv SET1.
+    (** All operations on fpm do not change the local env *)
+    assert (ENVEQ1: fpm_to_env fpm1 = fpm_to_env x0) by admit.
+    assert (ENVEQ2: fpm_to_env fpm1 = fpm_to_env fpm2) by admit.
+    eexists. split.
+    + econstructor.      
+      econstructor. rewrite ENVEQ1. eauto. eauto.
+      (* sem_cast: We need to ignore it *)
+      instantiate (1 := tv). admit.
+      simpl.
+      (** Also the problem of ty = typeof e = typeof p where '='
+    represent type_eq_except_origins *)
+      replace (typeof_place p) with ty by admit.
+      eauto. eapply star_refl. auto.
+    + rewrite ENVEQ2. 
+      replace (Mem.support m) with (Mem.support m1) by admit.
+      econstructor; eauto.
+      
+  - 
 
 
 End BORROW_CHECK.

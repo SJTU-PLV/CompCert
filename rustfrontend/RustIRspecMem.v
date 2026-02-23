@@ -20,7 +20,7 @@ Require Import RustIRspec.
 
 Import ListNotations.
 Local Open Scope sep_scope.
-
+Local Open Scope error_monad_scope.
 
 (* Useful tactic to destruct get_loc_footprint. *)
 
@@ -534,8 +534,10 @@ Inductive obj_exposed_wf (P: type -> footprint -> Prop): (ident * (block * Z * Z
 (* Definition of wt_footprint (well-typed footprint). Intuitively, it
 says that the footprint is an abstract form of the syntactic type. *)
 Inductive wt_footprint : type -> footprint -> Prop :=
-| wt_fp_emp: forall ty,
-    wt_footprint ty fp_emp
+(* fp_emp can only appear when we pass inout parameters to the
+callee. In a well-formed footprint/fp_map, it should not appear. *)
+(* | wt_fp_emp: forall ty, *)
+(*     wt_footprint ty fp_emp *)
 | wt_fp_uninit: forall ty
     (* It means that the location with this type is not initialized or
         this location is scalar type. We require that [ty] is not
@@ -1108,83 +1110,100 @@ Qed.
 (* Admitted. *)
 
 (* We need to say that sem_wt_loc is readable/storable/freeable *)
-Lemma sem_wt_loc_range_perm ce: forall fp mass b ofs
-      (* This place is not moved out (or borrowed out to callee) *)
-      (SHALLOW: shallow_owned fp = true)
-      (FPWF: fields_fp_well_formed ce fp)
+Lemma sem_wt_loc_range_perm ce: forall fp mass b ofs ty fpm
+      (* This place is not moved out (or borrowed out to
+      callee). Maybe we should directly write wt_footprint here? *)
+      (* (SHALLOW: shallow_owned fp = true) *)
+      (* (FPWF: fields_fp_well_formed ce fp) *)
+      (WTFP: wt_footprint ce fpm ty fp)
       (WTLOC: sem_wt_loc ce fp b ofs mass),
   (* We cannot prove their equivalence as mass may contain the value *)
 (*   spec in this location which cannot be expressed by range. *)
-    massert_imp mass (range b ofs (ofs + sizeof_footprint ce fp)).
+    massert_imp mass (range b ofs (ofs + sizeof ce ty)).
 Proof.
-  induction fp using strong_footprint_ind; intros; inv WTLOC.
-  - inv SHALLOW.
-  - rewrite EQV. rewrite massert_imp_proj1. reflexivity.
-  - rewrite EQV. etransitivity. eapply contains_range.
-    reflexivity.
-  - rewrite EQV. setoid_rewrite contains_range. eapply massert_imp_proj1.
-  - inv FPWF. simpl in SHALLOW. erewrite forallb_forall in SHALLOW.
-    eapply fields_loc_sep_range_perm. eauto. auto. auto.
-    intros. eapply SHALLOW in H0. auto.
-    eauto. rewrite EQV. instantiate (1 := spure (alignof_comp ce id | ofs)).
-    rewrite sep_comm. reflexivity.
-  - admit.
-  - admit.
-  - subst_dep.
-    (* eapply mem_pred_range. *)
-    admit.
+(*   induction fp using strong_footprint_ind; intros; inv WTLOC. *)
+(*   - inv SHALLOW. *)
+(*   - rewrite EQV. rewrite massert_imp_proj1. reflexivity. *)
+(*   - rewrite EQV. etransitivity. eapply contains_range. *)
+(*     reflexivity. *)
+(*   - rewrite EQV. setoid_rewrite contains_range. eapply massert_imp_proj1. *)
+(*   - inv FPWF. simpl in SHALLOW. erewrite forallb_forall in SHALLOW. *)
+(*     eapply fields_loc_sep_range_perm. eauto. auto. auto. *)
+(*     intros. eapply SHALLOW in H0. auto. *)
+(*     eauto. rewrite EQV. instantiate (1 := spure (alignof_comp ce id | ofs)). *)
+(*     rewrite sep_comm. reflexivity. *)
+(*   - admit. *)
+(*   - admit. *)
+(*   - subst_dep. *)
+(*     (* eapply mem_pred_range. *) *)
+(*     admit. *)
+(* Admitted. *)
 Admitted.
-*) 
 
-Lemma sem_wt_loc_valid_access ce: forall fp b ofs mass m p chunk
+Lemma sem_wt_loc_align ce: forall fp b ofs mass m ty fpm
     (WTLOC: sem_wt_loc ce fp b ofs mass)    
     (MPRED: m |= mass)
-    (FPMAT: fp_match_chunk fp chunk),
-    Mem.valid_access m chunk b ofs p.
+    (WTFP: wt_footprint ce fpm ty fp),
+    (* (FPMAT: fp_match_chunk fp chunk), *)
+    (ofs | alignof ce ty).
 Proof.
-  induction fp using strong_footprint_ind; intros; red; inv WTLOC; simpl in FPMAT; try contradiction; rewrite EQV in *.
-  - destruct FPMAT. subst. split.
-    + red. intros. eapply MPRED. simpl. eauto.
-    + eapply MPRED.
-  - admit.
-  - admit.
-  - admit.   
 Admitted.
 
-(* Storing a semantically well-typed value into a location with
-   range permission can result in that this location becomes a
-   semantically well-typed location. *)
-Lemma store_sem_wt_val ce: forall fp mass MP chunk v b ofs m1
+(* Use sem_wt_loc_align to prove it? *)
+Lemma sem_wt_loc_valid_access ce: forall fp b ofs mass m p chunk ty fpm
+    (WTLOC: sem_wt_loc ce fp b ofs mass)    
+    (MPRED: m |= mass)
+    (WTFP: wt_footprint ce fpm ty fp)
+    (BYVAL: access_mode ty = Ctypes.By_value chunk),
+    (* (FPMAT: fp_match_chunk fp chunk), *)
+    Mem.valid_access m chunk b ofs p.
+Proof.
+  (* induction fp using strong_footprint_ind; intros; red; inv WTLOC; simpl in FPMAT; try contradiction; rewrite EQV in *. *)
+  (* - destruct FPMAT. subst. split. *)
+  (*   + red. intros. eapply MPRED. simpl. eauto. *)
+  (*   + eapply MPRED. *)
+  (* - admit. *)
+  (* - admit. *)
+  (* - admit.    *)
+Admitted.
+
+(* After storing a semantically well-typed value into a location with
+   range permissionm, this location becomes a semantically well-typed
+   location. *)
+Lemma store_sem_wt_val ce: forall fp mass MP chunk v b ofs m1 ty fpm
     (WTVAL: sem_wt_val ce fp v mass)
     (MPRED: m1 |= range b ofs (ofs + size_chunk chunk) ** mass ** MP)
     (AL: (align_chunk chunk | ofs))
-    (MATCH: fp_match_chunk fp chunk),
+    (* (MATCH: fp_match_chunk fp chunk), *)
+    (WTFP: wt_footprint ce fpm ty fp)
+    (BYVAL: access_mode ty = Ctypes.By_value chunk),    
     exists m2 mass', 
       Mem.store chunk m1 b ofs v = Some m2
       /\ sem_wt_loc ce fp b ofs mass'
       /\ m2 |= mass' ** MP. 
 Proof.
   intros.
-  destruct fp; inv WTVAL; inv MATCH.
-  - inv MP0. 
-    eapply store_range_rule with (spec:= (fun v' : val => v' = Val.load_result chunk v)) (v:= v) in MPRED; auto.
-    destruct MPRED as (m2 & STORE & MPRED). (* rewrite <- VEQ in *. *)
-    exists m2, (hasvalue chunk b ofs (Val.load_result chunk v)). split; auto.
-    split; auto.
-    econstructor. reflexivity. 
-    rewrite sep_swap in MPRED. eapply sep_proj2 in MPRED. 
-    auto. 
-  - admit.
-  - admit.
+  destruct fp; inv WTVAL; inv WTFP.
+  (* - inv MP0.  *)
+  (*   eapply store_range_rule with (spec:= (fun v' : val => v' = Val.load_result chunk v)) (v:= v) in MPRED; auto. *)
+  (*   destruct MPRED as (m2 & STORE & MPRED). (* rewrite <- VEQ in *. *) *)
+  (*   exists m2, (hasvalue chunk b ofs (Val.load_result chunk v)). split; auto. *)
+  (*   split; auto. *)
+  (*   econstructor. reflexivity.  *)
+  (*   rewrite sep_swap in MPRED. eapply sep_proj2 in MPRED.  *)
+  (*   auto.  *)
+  (* - admit. *)
+  (* - admit. *)
 Admitted.
 
-Lemma store_sem_wt_loc ce: forall fp vfp b ofs mass1 mass2 v m1 MP chunk
+Lemma store_sem_wt_loc ce: forall fp vfp b ofs mass1 mass2 v m1 MP chunk ty fpm
     (WTLOC: sem_wt_loc ce fp b ofs mass1)
     (WTVAL: sem_wt_val ce vfp v mass2)
     (AL: (align_chunk chunk | ofs))
     (MPRED: m1 |= mass1 ** mass2 ** MP)
-    (MAT1: fp_match_chunk fp chunk)
-    (MAT2: fp_match_chunk vfp chunk),
+    (WTFP1: wt_footprint ce fpm ty fp)
+    (WTFP2: wt_footprint ce fpm ty vfp)
+    (BYVAL: access_mode ty = Ctypes.By_value chunk),
     exists m2 mass3, 
       Mem.store chunk m1 b ofs v = Some m2      
       /\ sem_wt_loc ce vfp b ofs mass3
@@ -1193,28 +1212,32 @@ Proof.
   intros. eapply store_sem_wt_val; eauto.
   (* prove a lemma that extract the range from sem_wt_loc *)
   eapply sep_imp. eapply MPRED.
-  erewrite <- (fp_match_chunk_size ce fp); eauto. 
-  eapply sem_wt_loc_range_perm.
-  eapply fp_match_chunk_shallow_owned; eauto.
-  eapply fp_match_chunk_well_formed; eauto.
-  auto. reflexivity.
+  (* erewrite <- (fp_match_chunk_size ce fp); eauto.  *)
+  erewrite sizeof_by_value.
+  eapply sem_wt_loc_range_perm. eapply WTFP1. all: eauto.
+  (* eapply fp_match_chunk_shallow_owned; eauto. *)
+  (* eapply fp_match_chunk_well_formed; eauto. *)
+  (* auto. reflexivity. *)
 Qed.  
 
 
-Lemma store_coherent_var: forall phl m ce mass1 mass2 v vfp fp1 pfp chunk b1 ofs1 b2 ofs2 MP
+Lemma store_coherent_var: forall phl m ce mass1 mass2 v vfp fp1 pfp chunk b1 ofs1 b2 ofs2 MP ty fpm
     (WTLOC: sem_wt_loc ce fp1 b1 ofs1 mass1)
     (WTVAL: sem_wt_val ce vfp v mass2)
     (MPRED: m |= mass1 ** mass2 ** MP)
     (* id may denote an external owner? *)
-    (GFP: get_owner_loc_footprint phl fp1 b1 ofs1 = Some (b2, ofs2, pfp))
+    (GFP: get_owner_loc_footprint phl fp1 b1 ofs1 = OK (b2, ofs2, pfp))
     (* (SHALLOW: shallow_owned pfp = true) *)
     (* The following properties should be derived from wt_footprint *)
-    (AL: (align_chunk chunk | ofs2))
-    (MAT1: fp_match_chunk pfp chunk)
-    (MAT2: fp_match_chunk vfp chunk),
+    (AL: (alignof ce ty | ofs2))
+    (* (MAT1: fp_match_chunk pfp chunk) *)
+    (* (MAT2: fp_match_chunk vfp chunk), *)
+    (WTFP1: wt_footprint ce fpm ty pfp)
+    (WTFP2: wt_footprint ce fpm ty vfp)
+    (BYVAL: access_mode ty = Ctypes.By_value chunk),
     exists m1 fp2 mass3,
       Mem.store chunk m b2 ofs2 v = Some m1
-      /\ set_footprint phl vfp fp1 = Some fp2
+      /\ set_footprint phl vfp fp1 = OK fp2
       /\ sem_wt_loc ce fp2 b1 ofs1 mass3
       /\ m1 |= mass3 ** MP.
 Proof.
@@ -1224,9 +1247,10 @@ Proof.
   rewrite A4 in MPRED.
   assert (MPRED1: m|= mp2 ** mass2 ** (mp1 ** mp1' ** MP)) by admit.
   exploit store_sem_wt_loc. eapply A3. all: eauto.
+  eapply Z.divide_trans; try eapply alignof_by_value; eauto.
   intros (m2 & mass3 & B1 & B2 & B3).
   exploit A5.
-  eapply fp_match_chunk_not_emp; eauto.
+  (* eapply fp_match_chunk_not_emp; eauto. *)
   eapply B2. intros (mp' & fp1'' &  C1 & C2 & C3).
   exists m2, fp1'', mp'. do 3 (try apply conj); eauto.
   rewrite C3. admit.
@@ -1324,20 +1348,23 @@ Qed.
 
 
 (* We prove a strong version, i.e., the store operation can always succeed *)
-Lemma store_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs id MP
+Lemma store_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs id MP ty
     (COH: coherent_fpm ce fpm mass1)
     (WTVAL: sem_wt_val ce vfp v mass2)
     (MPRED: m |= mass1 ** mass2 ** MP)
     (* id may denote an external owner? We reduce all store for
     reference into store for their referred owner *)
-    (GFP: get_owner_loc_footprint_map (id, phl) fpm = Some (b, ofs, pfp))
+    (GFP: get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, pfp))
     (* The following properties should be derived from wt_footprint *)
-    (AL: (align_chunk chunk | ofs))
-    (MAT1: fp_match_chunk pfp chunk)
-    (MAT2: fp_match_chunk vfp chunk),    
+    (AL: (alignof ce ty | ofs))
+    (* (MAT1: fp_match_chunk pfp chunk) *)
+    (* (MAT2: fp_match_chunk vfp chunk),     *)
+    (WTFP1: wt_footprint ce fpm ty pfp)
+    (WTFP2: wt_footprint ce fpm ty vfp)
+    (BYVAL: access_mode ty = Ctypes.By_value chunk),
     exists m1 fpm1 mass3,
       Mem.store chunk m b ofs v = Some m1
-      /\ set_footprint_map (id, phl) vfp fpm = Some fpm1
+      /\ set_footprint_map (id, phl) vfp fpm = OK fpm1
       /\ coherent_fpm ce fpm1 mass3
       /\ m1 |= mass3 ** MP.
 Proof.
@@ -1351,11 +1378,11 @@ Proof.
   assert (MPRED1: m |= mpi ** mass2 ** (mp1 ** mp2 ** MP)) by admit.
   exploit store_coherent_var; eauto. 
   intros (m1 & fp2 & mp3 & B1 & B2 & B3 & B4).
-  rewrite B2. 
+  rewrite B2. simpl.
   do 3 eexists. do 3 (try eapply conj); eauto.
   - instantiate (1 := mp1 ** mp3 ** mp2).
     econstructor. 
-    assert (TODO: PTree.elements (PTree.set id0 (b0, ofs0, opt_reg, ty, fp2) fpm) = l1 ++ (id0, (b0, ofs0, opt_reg, ty, fp2)) :: l2) by admit.
+    assert (TODO: PTree.elements (PTree.set id0 (b0, ofs0, opt_reg, ty0, fp2) fpm) = l1 ++ (id0, (b0, ofs0, opt_reg, ty, fp2)) :: l2) by admit.
     rewrite TODO.
     eapply Forall_sep_app. exists mp1, (mp3 ** mp2). 
     split; eauto. split. econstructor; eauto.
@@ -1365,12 +1392,42 @@ Proof.
     eauto.
 Admitted.
 
-(* storebytes rules *)
 
+Lemma assign_loc_by_value_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs id MP ty
+    (COH: coherent_fpm ce fpm mass1)
+    (WTVAL: sem_wt_val ce vfp v mass2)
+    (MPRED: m |= mass1 ** mass2 ** MP)
+    (* id may denote an external owner? We reduce all store for
+    reference into store for their referred owner *)
+    (GFP: get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, pfp))
+    (* The following properties should be derived from wt_footprint *)
+    (AL: (alignof ce ty | ofs))
+    (* (MAT1: fp_match_chunk pfp chunk) *)
+    (* (MAT2: fp_match_chunk vfp chunk),     *)
+    (WTFP1: wt_footprint ce fpm ty pfp)
+    (WTFP2: wt_footprint ce fpm ty vfp)
+    (BYVAL: access_mode ty = Ctypes.By_value chunk),
+    exists m1 fpm1 mass3,
+      assign_loc ce ty m b (Ptrofs.repr ofs) v m1
+      /\ set_footprint_map (id, phl) vfp fpm = OK fpm1
+      /\ coherent_fpm ce fpm1 mass3
+      /\ m1 |= mass3 ** MP.
+Proof.
+  intros. 
+  exploit store_coherent_fpm; eauto.
+  intros (m1 & fpm1 & mass3 & A1 & A2 & A3 & A4).
+  do 4 eexists; eauto.
+  econstructor. eauto. simpl.
+  rewrite Ptrofs.unsigned_repr. auto.
+Admitted.
+
+
+(*
+(* storebytes rules *)
 
 Lemma sem_wt_loc_merge ce: forall fp mp1 mp2 b ofs
     (WTFP: sem_wt_fp ce fp mp1)
-    (WTLOC: sem_wt_loc ce (clear_footprint_rec fp) b ofs mp2),
+    (WTLOC: sem_wt_loc ce (clear_footprint_rec ce fp) b ofs mp2),
     sem_wt_loc ce fp b ofs (mp2 ** mp1).
 Proof.
   induction fp using strong_footprint_ind; intros; simpl in *; inv WTFP; inv WTLOC.
