@@ -11,7 +11,7 @@ Require Import Rusttypes Rustlight.
 Require Import RustOp RustIR Rusttyping.
 Require Import Errors.
 Require Import Listmisc.
-Require Import RustIRspec.
+Require Import Rustlightown RustIRspec.
 
 Import ListNotations.
 
@@ -222,6 +222,176 @@ Definition borrow_check_fpg_vals_inv (fpg: fp_graph) (vl: list footprint) : Prop
   let idl := fresh_PTree_idents fpg (length vl) in
   let fpg1 := PTree_Properties.of_list ((PTree.elements fpg) ++ (combine idl vl)) in
   borrow_check_inv fpg.
+
+
+
+(** ** Typing of the footprint: used to make sure the footprint is well-formed *)
+
+Definition fpm_to_tenv (fpm: fp_map) : typenv :=
+  PTree.map1 (fun '(b, ofs, r, ty, fp) => ty) fpm.
+
+Section COMP_ENV.
+
+Variable ce: composite_env.
+Variable fpm: fp_map.
+(** Move it to Rusttypes.v  *)
+
+(* We define a new field_offset which returns the starting offset of a
+field that does not consider the alignment. *)
+
+
+Inductive fp_match_field (co: composite) (P: type -> footprint -> Prop): ffpty -> member -> Prop :=
+| fp_match_field_intro: forall fid base fofs ffp fty
+    (FOFS: field_noalign_offset ce fid (co_members co) = OK (base, fofs))
+    (WTFP: P fty ffp),
+    fp_match_field co P (fid, ((base, fofs), ffp)) (Member_plain fid fty).
+
+Inductive obj_exposed_wf (P: type -> footprint -> Prop): (ident * (block * Z * Z * type)) -> (ident * (block * Z * type * footprint)) -> Prop :=
+| obj_exposed_wf_intro: forall fid b lo ty ffp
+    (WTFP: P ty ffp),
+    obj_exposed_wf P (fid, (b, lo, lo + sizeof ce ty, ty)) (fid, ((b, lo), ty, ffp)).
+
+
+(* Definition of wt_footprint (well-typed footprint). Intuitively, it
+says that the footprint is an abstract form of the syntactic type. *)
+Inductive wt_footprint : type -> footprint -> Prop :=
+(* fp_emp can only appear when we pass inout parameters to the
+callee. In a well-formed footprint/fp_map, it should not appear. *)
+(* | wt_fp_emp: forall ty, *)
+(*     wt_footprint ty fp_emp *)
+| wt_fp_uninit: forall ty
+    (* It means that the location with this type is not initialized or
+        this location is scalar type. We require that [ty] is not
+        structure because we do not want to dynamically unpack the
+        struct when setting footprint (e.g., by set_loc_footprint) to
+        some field of this struct. But to ensure this properties, we
+        need to carefully set fp_emp to place with structure type. *)
+    (WF: forall orgs id, ty <> Tstruct orgs id),
+    wt_footprint ty (fp_uninit (sizeof ce ty) (alignof ce ty))
+| wt_fp_scalar: forall ty v chunk
+    (WF: scalar_type ty = true)
+    (MODE: access_mode ty = Ctypes.By_value chunk),
+    wt_footprint ty (fp_scalar chunk v)
+| wt_fp_struct: forall orgs id fpl co
+    (CO: ce ! id = Some co)
+    (STRUCT: co_sv co = Struct)
+    (MATCH: Forall2 (fp_match_field co wt_footprint) fpl (co_members co))
+    (FLAT: field_idents fpl = name_members (co_members co)),
+    wt_footprint (Tstruct orgs id) (fp_struct id fpl)
+| wt_fp_enum: forall orgs id tagz fid fty fofs fp co
+    (CO: ce ! id = Some co)
+    (ENUM: co_sv co = TaggedUnion)
+    (TAG: list_nth_z co.(co_members) tagz = Some (Member_plain fid fty))
+    (* avoid some norepet properties *)
+    (FTY: place_field_type co fid orgs = OK fty)
+    (FOFS: variant_field_offset ce fid co.(co_members) = OK fofs)
+    (WT: wt_footprint fty fp),
+    wt_footprint (Tvariant orgs id) (fp_enum id tagz fid fofs fp)
+| wt_fp_box: forall ty b fp
+    (* this is ensured by bm_box *)
+    (WT: wt_footprint ty fp),
+    (* It is used to make sure that dropping any location within a
+    block does not cause overflow *)
+    wt_footprint (Tbox ty) (fp_box b fp)
+| wt_fp_ref_some: forall ty b ofs ph org mut vs fp pty
+    (** [ty] is equal to the type in [ph] *)
+    (WTPH: wt_path ce (fpm_to_tenv fpm) ph = OK pty)
+    (TYEQ: type_eq_except_origins ty pty = true)
+    (** The memory location stored in this reference is equal to the
+    location of [ph] *)
+    (LOCEQ: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp)),    
+    wt_footprint (Treference org mut ty) (fp_ref mut b ofs (Some ph) vs)
+| wt_fp_ref_none: forall ty b ofs org mut vs,
+    wt_footprint (Treference org mut ty) (fp_ref mut b ofs None vs)
+| wt_fp_object: forall id obj exposed
+    (WF: Forall2 (obj_exposed_wf wt_footprint) (mem_exposed_borrow (ame id) obj) exposed)
+    (* The object always satisfies the representation invariant (this
+    invariant should not depend on the properties of borrowable
+    subparts) *)
+    (REPR_INV: repr_inv (ame id) obj),
+    wt_footprint (Tadt id) (fp_object id obj exposed)
+.
+
+Definition wt_footprint_list tyl fpl :=
+  list_forall2 wt_footprint tyl fpl.
+
+End COMP_ENV.
+
+Definition wt_fpm ce (fpm: fp_map) : Prop :=
+  forall id b ofs r ty fp,
+    fpm ! id = Some (b, ofs, r, ty, fp) ->
+    wt_footprint ce fpm ty fp.
+
+
+(** Proof of the preservation of borrow check invariant *)
+
+Section BORROWCK_INV.
+
+Variable prog: program.
+(* Variable w: rs_own_world. *)
+Variable se: Genv.symtbl.
+Variable sg: rust_signature.
+Hypothesis VALIDSE: Genv.valid_for (erase_program prog) se.
+(* Let L := semantics prog se. *)
+Let ge := globalenv se prog.
+(* composite environment *)
+Let ce := ge.(genv_cenv).
+
+Let wt_state := @wt_state ame prog se sg.
+
+Inductive borrowck_inv_cont: cont -> Prop :=
+| borrowck_inv_cont_Kstop: borrowck_inv_cont Kstop
+| borrowck_inv_cont_Kseq: forall s k
+    (CONT: borrowck_inv_cont k),
+    borrowck_inv_cont (Kseq s k)
+| borrowck_inv_cont_Kloop: forall s k
+    (CONT: borrowck_inv_cont k),
+    borrowck_inv_cont (Kloop s k)
+| borrowck_inv_cont_Kcall: forall k fpm inout_paths substs p f
+    (CONT: borrowck_inv_cont k)
+    (WTFPM: wt_fpm ce fpm)
+    (* We may require some invariant about that all views in
+    inout_paths must cover all reachable path of the inout_path in
+    fpm?  *)
+    (BOR_INV: borrow_check_inv fpm),
+    borrowck_inv_cont (Kcall p f inout_paths substs fpm k).
+
+
+Inductive borrowck_inv : state -> Prop :=
+| borrowck_inv_regular_states: forall f s k substs fpm sup
+    (WTFPM: wt_fpm ce fpm)
+    (BOR_INV: borrow_check_inv fpm)
+    (CONT: borrowck_inv_cont k),
+    borrowck_inv (State f s k substs fpm sup)
+| borrowck_inv_callstates: forall fid fpl inout_fpm sup k fd orgs org_rels tyargs tyres cconv
+    (FINDF: ge.(genv_defmap) ! fid = Some (Gfun fd))
+    (TYF: type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv)
+    (WTFPM: wt_fpm ce inout_fpm)
+    (BOR_INV: borrow_check_fpg_vals_inv inout_fpm fpl)
+    (CONT: borrowck_inv_cont k)
+    (WTFP: list_forall2 (wt_footprint ce inout_fpm) (type_list_of_typelist tyargs) fpl),
+    borrowck_inv (Callstate fid fpl inout_fpm sup k)
+| borrowck_inv_returnstates: forall rfp inout_fpm sup k rety
+    (* The regions in the return type computed from cont are different
+    from those in rety but it is not related to proving the invariant
+    preservation. It is only related to proving the
+    over-approximation? *)
+    (RETY: typeof_cont_call (rs_sig_res sg) k = rety)
+    (WTFP: wt_footprint ce inout_fpm rety rfp)
+    (WTFPM: wt_fpm ce inout_fpm)
+    (BOR_INV: borrow_check_fpg_vals_inv inout_fpm [rfp])
+    (CONT: borrowck_inv_cont k),
+    borrowck_inv (Returnstate rfp inout_fpm sup k).
+
+(* step preservation *)
+
+Lemma step_preservation: forall s1 t s2,
+    RustIRspec.step ge s1 t s2 ->
+    borrowck_inv s1 ->
+    wt_state s1 ->
+    borrowck_inv s2 /\ wt_state s2.
+Proof.
+
 
 
 End ADT_ENV.

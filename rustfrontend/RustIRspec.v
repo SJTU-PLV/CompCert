@@ -1287,6 +1287,16 @@ Definition is_call_cont (k: cont) : Prop :=
   | _ => False
   end.
 
+
+Fixpoint typeof_cont_call (ttop: type) (k: cont) : type :=
+  match k with
+  | Kcall p _ _ _ _ _ =>
+      typeof_place p
+  | Kstop => ttop
+  | Kseq _ k
+  | Kloop _ k => typeof_cont_call ttop k
+  end.
+
 Inductive state: Type :=
 | State
     (f: function)
@@ -1303,7 +1313,10 @@ Inductive state: Type :=
     (sup: Mem.sup)
     (k: cont): state
 | Returnstate
-    (res: footprint)
+    (retv: footprint)
+    (* (rety: type)   *)
+    (* The return type may contain generic regions of the returned
+    function *)
     (* (inout: list (block * Z * origin * type * footprint)) *)
     (inout: fp_map)
     (sup: Mem.sup)
@@ -1557,6 +1570,7 @@ Record rust_spec_query :=
 Record rust_spec_reply :=
   rspec_r {
     rspec_retval: footprint;
+    (* rspec_rety: type; *)
     rspec_out_fpm: fp_map;
     rspec_r_sup: Mem.sup;
   }.
@@ -1608,3 +1622,178 @@ Definition semantics (p: program) :=
   Semantics_gen step initial_state at_external (fun _ => after_external) (fun _ => final_state) globalenv p.
 
 End SPEC.
+
+
+(* Define here just for simplicity *)
+Section TYPE_PRESERVATION.
+
+Context {ame: adt_mem_env}.
+
+Notation footprint := (@footprint ame).
+Notation fp_map := (@fp_map ame).
+
+
+Variable prog: program.
+Hypothesis WTPROG: wt_program prog.
+Variable se: Genv.symtbl.
+Let ge := globalenv se prog.
+Let L := @semantics ame prog se.
+
+Variable sg: rust_signature.
+(* Well-typed continuation and state *)
+
+Inductive wt_cont : typenv -> function -> cont -> Prop :=
+| wt_Kstop: forall f te
+    (WT1: wt_call_cont Kstop f.(fn_return)),
+    wt_cont te f Kstop
+| wt_Kseq: forall s k f te
+    (WT1: wt_stmt te ge s)
+    (WT2: wt_cont te f k),
+    wt_cont te f (Kseq s k)
+| wt_Kloop: forall s k te f
+    (WT1: wt_stmt te ge s)
+    (WT2: wt_cont te f k),
+    wt_cont te f (Kloop s k)
+| wt_Kcall: forall k p f f' fpm te substs inout_paths
+    (WT1: wt_call_cont (Kcall p f' inout_paths substs fpm k) f.(fn_return)),
+    wt_cont te f (Kcall p f' inout_paths substs fpm k)
+
+with wt_call_cont : cont -> type -> Prop :=
+| wt_call_Kstop:
+  wt_call_cont Kstop (rs_sig_res sg)
+| wt_call_Kcall: forall p f (fpm: fp_map) substs inout_paths k rty
+    (WT1: wt_cont (fpm_to_env fpm) f k)
+    (WT2: wt_place (fpm_to_env fpm) ge p)
+    (WT3: type_eq_except_origins rty (typeof_place p) = true),
+    (* For simplicity, we do not consider casting in function call *)
+  wt_call_cont (Kcall p f inout_paths substs fpm k) rty
+.
+
+
+Inductive wt_state : state -> Prop :=
+| wt_regular_state: forall f s k substs fpm sup
+    (WT1: wt_stmt (fpm_to_env fpm) ge s)
+    (WT2: wt_cont (fpm_to_env fpm) f k),
+    wt_state (State f s k substs fpm sup)
+| wt_callstate: forall fid fd orgs rels tyl rty cc k fpl inout_fpm sup
+    (FINDF: ge.(genv_defmap) ! fid = Some (Gfun fd))
+    (FTY: type_of_fundef fd = Tfunction orgs rels tyl rty cc)
+    (WT1: wt_call_cont k rty),
+    wt_state (Callstate fid fpl inout_fpm sup k)
+| wt_returnstate: forall k rety inout_fpm sup v
+    (WT1: wt_call_cont k rety),
+    wt_state (Returnstate v inout_fpm sup k)
+.
+
+(* Hint Constructors wt_cont wt_stmt wt_state: spec_ty. *)
+
+(* Lemma wt_call_cont_type_eq: forall k ty1, *)
+(*     wt_call_cont k ty1 -> *)
+(*     type_eq_except_origins ty1 (typeof_cont_call (rs_sig_res sg) k) = true. *)
+(* Proof. *)
+(*   induction 1; intros; simpl in *; auto. *)
+(*   eapply type_eq_except_origins_refl. *)
+(* Qed. *)
+
+(* Lemma is_wt_call_cont: *)
+(*   forall te f k, *)
+(*     is_call_cont k -> wt_cont te f k -> wt_call_cont k f.(fn_return). *)
+(* Proof. *)
+(*   intros. inv H0; simpl in H; try contradiction; auto. *)
+(* Qed. *)
+
+(* Lemma wt_cont_call_cont: forall k le f ck, *)
+(*     wt_cont le f k -> *)
+(*     call_cont k = Some ck -> *)
+(*     wt_cont le f ck. *)
+(* Proof. *)
+(*   induction 1; intros CC; simpl in *; auto; try (inv CC; econstructor; eauto). *)
+(* Qed. *)
+
+(* Lemma call_cont_wt_call_cont: *)
+(*   forall te f k ck, *)
+(*     call_cont k = Some ck -> *)
+(*     wt_cont te f k -> wt_call_cont ck f.(fn_return). *)
+(* Proof. *)
+(*   intros. eapply (is_wt_call_cont te). *)
+(*   eapply call_cont_correct. eauto. *)
+(*   eapply wt_cont_call_cont; eauto. *)
+(* Qed. *)
+
+(* (* The function found in the globalenv is well-typed *) *)
+
+(* Lemma find_funct_wt: forall vf fd, *)
+(*     Genv.find_funct ge vf = Some fd -> *)
+(*     wt_fundef ge fd. *)
+(* Proof. *)
+(*   intros. simpl in *. inv WTPROG. *)
+(*   eapply Genv.find_funct_prop; eauto. *)
+(*   intros. eapply H0; eauto. *)
+(* Qed.   *)
+
+Lemma wt_initial_state: forall s q,
+    rspec_sg q = sg ->
+    initial_state ge q s ->
+    wt_state s.
+Proof.
+(*   intros s q SGEQ INIT. *)
+(*   inv INIT. *)
+(*   exploit find_funct_wt; eauto. *)
+(*   intros WTF. inv WTF. *)
+(*   econstructor; eauto. *)
+(*   assert (RTY: tres = (rs_sig_res sg)). *)
+(*   { simpl in SGEQ. destruct sg. simpl. inv SGEQ. auto. } *)
+(*   subst. econstructor. *)
+(* Qed. *)
+Admitted.
+
+Lemma wt_state_step_preservation: forall s1 t s2,
+    wt_state s1 ->
+    Step L s1 t s2 ->
+    wt_state s2.
+Proof.
+  intros s1 t s2 WTST STEP; inv STEP; inv WTST.
+  all: try eauto with ty.
+(*   - inv SDROP; eauto with ty. *)
+(*   - inv SDROP; eauto with ty; inv WT1; eauto with ty. *)
+(*   - inv WT1. simpl in *. inv H. *)
+(*     econstructor; eauto. *)
+(*     econstructor; eauto. *)
+(*   - exploit find_funct_wt; eauto. *)
+(*     intros WTF. simpl in *. *)
+(*     unfold ge in FIND0. rewrite FIND in FIND0. inv FIND0. *)
+(*     inv WTF. inv H0. *)
+(*     inv ENTRY. exploit alloc_variables_bind_vars_eq; eauto. *)
+(*     intros BINDEQ. rewrite bind_vars_app in *. *)
+(*     econstructor; eauto. *)
+(*     rewrite <- BINDEQ. eauto.     *)
+(*     inv WT1. *)
+(*     econstructor. destruct f. simpl in *. inv FTY. econstructor. *)
+(*     econstructor. destruct f. simpl in *. inv FTY. econstructor; eauto. *)
+(*   - inv WT1. econstructor. *)
+(*     eapply call_cont_wt_call_cont; eauto. *)
+(*   - inv WT1. econstructor; eauto. econstructor. *)
+(*   - inv WT1; eauto with ty.     *)
+(*   - inv WT2; eauto with ty. *)
+(*   - inv WT2; eauto with ty. *)
+(*   - inv WT2; eauto with ty. *)
+(*   - inv WT1; eauto with ty. *)
+(*     destruct b; eauto with ty. *)
+(*   - inv WT1; eauto with ty. *)
+(*   - inv WT2; eauto with ty. *)
+(*   - inv WT2; eauto with ty. *)
+(* Qed. *)
+Admitted.
+
+Lemma wt_state_external_preservation: forall s1 q,
+    wt_state s1 ->
+    at_external ge s1 q ->
+    forall r s2, after_external s1 r s2 ->
+            wt_state s2.
+Proof.
+  intros. inv H0. inv H. inv H1.
+  econstructor; eauto.
+Qed.
+
+    
+End TYPE_PRESERVATION.

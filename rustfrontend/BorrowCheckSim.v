@@ -42,7 +42,7 @@ Variable prog: program.
 (* Variable w: rs_own_world. *)
 Variable se: Genv.symtbl.
 Hypothesis VALIDSE: Genv.valid_for (erase_program prog) se.
-Let L := semantics prog se.
+(* Let L := RustIRspec.semantics prog se. *)
 Let ge := globalenv se prog.
 Let tge := RustIR.globalenv se prog.
 (* composite environment *)

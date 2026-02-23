@@ -16,7 +16,7 @@ Require Import InitDomain InitAnalysis.
 Require Import RustIRown.
 Require Import Wfsimpl.
 Require Import Separation.
-Require Import RustIRspec.
+Require Import RustIRspec BorrowCheckInv.
 
 Import ListNotations.
 Local Open Scope sep_scope.
@@ -502,104 +502,6 @@ Lemma sem_wt_val_unique ce: forall fp mp1 mp2 v
 Proof.
   destruct fp; intros; inv WTVAL1; inv WTVAL2; subst; try (rewrite EQV; rewrite EQV0; reflexivity); try eapply sem_wt_fp_unique; eauto.
 Qed.
-
-
-(** ** Typing of the footprint: used to make sure the footprint is well-formed *)
-
-Definition fpm_to_tenv (fpm: fp_map) : typenv :=
-  PTree.map1 (fun '(b, ofs, r, ty, fp) => ty) fpm.
-
-Section COMP_ENV.
-
-Variable ce: composite_env.
-Variable fpm: fp_map.
-(** Move it to Rusttypes.v  *)
-
-(* We define a new field_offset which returns the starting offset of a
-field that does not consider the alignment. *)
-
-
-Inductive fp_match_field (co: composite) (P: type -> footprint -> Prop): ffpty -> member -> Prop :=
-| fp_match_field_intro: forall fid base fofs ffp fty
-    (FOFS: field_noalign_offset ce fid (co_members co) = OK (base, fofs))
-    (WTFP: P fty ffp),
-    fp_match_field co P (fid, ((base, fofs), ffp)) (Member_plain fid fty).
-
-Inductive obj_exposed_wf (P: type -> footprint -> Prop): (ident * (block * Z * Z * type)) -> (ident * (block * Z * type * footprint)) -> Prop :=
-| obj_exposed_wf_intro: forall fid b lo ty ffp
-    (WTFP: P ty ffp),
-    obj_exposed_wf P (fid, (b, lo, lo + sizeof ce ty, ty)) (fid, ((b, lo), ty, ffp)).
-
-
-(* Definition of wt_footprint (well-typed footprint). Intuitively, it
-says that the footprint is an abstract form of the syntactic type. *)
-Inductive wt_footprint : type -> footprint -> Prop :=
-(* fp_emp can only appear when we pass inout parameters to the
-callee. In a well-formed footprint/fp_map, it should not appear. *)
-(* | wt_fp_emp: forall ty, *)
-(*     wt_footprint ty fp_emp *)
-| wt_fp_uninit: forall ty
-    (* It means that the location with this type is not initialized or
-        this location is scalar type. We require that [ty] is not
-        structure because we do not want to dynamically unpack the
-        struct when setting footprint (e.g., by set_loc_footprint) to
-        some field of this struct. But to ensure this properties, we
-        need to carefully set fp_emp to place with structure type. *)
-    (WF: forall orgs id, ty <> Tstruct orgs id),
-    wt_footprint ty (fp_uninit (sizeof ce ty) (alignof ce ty))
-| wt_fp_scalar: forall ty v chunk
-    (WF: scalar_type ty = true)
-    (MODE: access_mode ty = Ctypes.By_value chunk),
-    wt_footprint ty (fp_scalar chunk v)
-| wt_fp_struct: forall orgs id fpl co
-    (CO: ce ! id = Some co)
-    (STRUCT: co_sv co = Struct)
-    (MATCH: Forall2 (fp_match_field co wt_footprint) fpl (co_members co))
-    (FLAT: field_idents fpl = name_members (co_members co)),
-    wt_footprint (Tstruct orgs id) (fp_struct id fpl)
-| wt_fp_enum: forall orgs id tagz fid fty fofs fp co
-    (CO: ce ! id = Some co)
-    (ENUM: co_sv co = TaggedUnion)
-    (TAG: list_nth_z co.(co_members) tagz = Some (Member_plain fid fty))
-    (* avoid some norepet properties *)
-    (FTY: place_field_type co fid orgs = OK fty)
-    (FOFS: variant_field_offset ce fid co.(co_members) = OK fofs)
-    (WT: wt_footprint fty fp),
-    wt_footprint (Tvariant orgs id) (fp_enum id tagz fid fofs fp)
-| wt_fp_box: forall ty b fp
-    (* this is ensured by bm_box *)
-    (WT: wt_footprint ty fp),
-    (* It is used to make sure that dropping any location within a
-    block does not cause overflow *)
-    wt_footprint (Tbox ty) (fp_box b fp)
-| wt_fp_ref_some: forall ty b ofs ph org mut vs fp pty
-    (** [ty] is equal to the type in [ph] *)
-    (WTPH: wt_path ce (fpm_to_tenv fpm) ph = OK pty)
-    (TYEQ: type_eq_except_origins ty pty = true)
-    (** The memory location stored in this reference is equal to the
-    location of [ph] *)
-    (LOCEQ: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp)),    
-    wt_footprint (Treference org mut ty) (fp_ref mut b ofs (Some ph) vs)
-| wt_fp_ref_none: forall ty b ofs org mut vs,
-    wt_footprint (Treference org mut ty) (fp_ref mut b ofs None vs)
-| wt_fp_object: forall id obj exposed
-    (WF: Forall2 (obj_exposed_wf wt_footprint) (mem_exposed_borrow (ame id) obj) exposed)
-    (* The object always satisfies the representation invariant (this
-    invariant should not depend on the properties of borrowable
-    subparts) *)
-    (REPR_INV: repr_inv (ame id) obj),
-    wt_footprint (Tadt id) (fp_object id obj exposed)
-.
-
-Definition wt_footprint_list tyl fpl :=
-  list_forall2 wt_footprint tyl fpl.
-
-End COMP_ENV.
-
-Definition wt_fpm ce (fpm: fp_map) : Prop :=
-  forall id b ofs r ty fp,
-    fpm ! id = Some (b, ofs, r, ty, fp) ->
-    wt_footprint ce fpm ty fp.
 
 
 (* Properties of fields_sep *)
