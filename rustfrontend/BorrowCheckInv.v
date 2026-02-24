@@ -328,6 +328,7 @@ Definition wt_fpm ce (fpm: fp_map) : Prop :=
 Section BORROWCK_INV.
 
 Variable prog: program.
+Hypothesis WTPROG: wt_program prog.
 (* Variable w: rs_own_world. *)
 Variable se: Genv.symtbl.
 Variable sg: rust_signature.
@@ -383,15 +384,183 @@ Inductive borrowck_inv : state -> Prop :=
     (CONT: borrowck_inv_cont k),
     borrowck_inv (Returnstate rfp inout_fpm sup k).
 
+Ltac unfold_eval_assign :=
+  match goal with
+  | [H : context G [eval_assign] |- _ ] =>
+      unfold eval_assign in H; monadInv H;
+      match goal with
+      | [H1 : context G [before_write_place _ _ _ = OK (?a, ?b)] |- _ ] =>
+          destruct a as ((?tgt_id & ?tgt_phl) & ?vs)
+      end
+  end.
+
+Ltac unfold_before_write_place :=
+  match goal with
+  | [H : context G [before_write_place] |- _ ] =>
+      unfold before_write_place in H; monadInv H;
+      match goal with
+      | [H1 : context G [check_path_is_dropped _ _ = OK ?b],
+            H2: context [(if ?b then _ else _) = OK _]    
+         |- _ ] =>              
+          destruct b; try monadInv H2
+      end
+  end.
+
+Ltac destr_path_of_place p :=
+  destruct (path_of_place p) as (?pid & ?phl) eqn: ?POP.
+
+
+(** The smallest operations that preserve the borrow check invariant  *)
+
+Definition dummy_origin : ident := 1%positive.
+
+(* Deep access of a path, which creates a temporary reference. This
+reference can be seen as a normal reference, or it can be used to
+extract the point-to footprint to act as a move operation. *)
+Lemma borrow_check_inv_deep_access: forall (fpm1 fpm2: fp_map) fpl phl id mut ty tyl vs tgt b ofs fp,
+    borrow_check_fpg_vals_inv fpm1 fpl ->
+    wt_footprint_list ce fpm1 tyl fpl ->
+    wt_path ce (fpm_to_tenv fpm1) (id, phl) = OK ty ->
+    get_owner_path_map (id, phl) fpm1 = OK (tgt, vs) ->
+    get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp) ->
+    fpm2 = invalidate_conflict_ref_fpm (id, phl) BorrowCheckDomain.Adeep fpm1 ->
+    borrow_check_fpg_vals_inv fpm2 ((fp_ref mut b ofs (Some tgt) vs) :: fpl)
+    /\ wt_footprint_list ce fpm2 ((Treference dummy_origin mut ty) :: tyl) ((fp_ref mut b ofs (Some tgt) vs) :: fpl)
+    /\ wt_fpm ce fpm2.
+Admitted.
+
+(* Move out the footprint pointed by the fp_ref in the temporary
+values and then use this footprint to replace the fp_ref to simulate
+the move operation.  *)
+Lemma borrow_check_inv_move: forall (fpm1 fpm2: fp_map) fpl ty tyl vs tgt b ofs fp r,
+    borrow_check_fpg_vals_inv fpm1 ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) ->
+    wt_footprint_list ce fpm1 ((Treference r Mutable ty) :: tyl) ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) ->
+    get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp) ->
+    clear_footprint_map ce tgt fpm1 = OK fpm2 ->
+    borrow_check_fpg_vals_inv fpm2 (fp :: fpl)
+    /\ wt_footprint_list ce fpm2 (ty :: tyl) (fp :: fpl)
+    /\ wt_fpm ce fpm2.
+Admitted.
+
+(* The borrow check invariant preserves when we drop any of the
+temporary footprint value. *)
+Lemma borrow_check_inv_drop: forall n (fpm: fp_map) fpl tyl,
+    borrow_check_fpg_vals_inv fpm fpl ->
+    wt_footprint_list ce fpm tyl fpl ->
+    borrow_check_fpg_vals_inv fpm (list_delete n fpl)
+    /\ wt_footprint_list ce fpm (list_delete n tyl) (list_delete n fpl)
+    /\ wt_fpm ce fpm.
+Admitted.
+
+(* Why is it so complicated? When we do shallow write on a path, we
+should also simultaneously kill the loans related to this paths and
+set the footprint of this path to fp_uninit othewise the invariant may
+be broken? Because when we set fp_uninit to some path, we should
+either invalidate the path point to the reachable path of this to-set
+path or kill the loans related to those reachable path? *)
+Lemma borrow_check_inv_shallow_write: forall (fpm1 fpm2 fpm3 fpm4: fp_map) id phl fpl tyl vs tgt,
+    borrow_check_fpg_vals_inv fpm1 fpl ->
+    wt_footprint_list ce fpm1 tyl fpl ->
+    wt_fpm ce fpm1 ->
+    get_owner_path_map (id, phl) fpm1 = OK (tgt, vs) ->
+    check_path_is_dropped fpm1 tgt = OK true ->
+    fpm2 = invalidate_conflict_ref_fpm (id, phl) BorrowCheckDomain.Ashallow fpm1 ->
+    clear_footprint_map ce tgt fpm2 = OK fpm3 ->
+    fpm4 = kill_paths_ref_fpm vs fpm3 ->
+    borrow_check_fpg_vals_inv fpm4 (map (kill_paths_ref vs) fpl)
+    /\ wt_footprint_list ce fpm4 tyl (map (kill_paths_ref vs) fpl)
+    /\ wt_fpm ce fpm4.
+Admitted.
+
+(* We can move the footprint from temporary variables to a path whose
+footprint is fp_emp or has been cleared by clear_footprint_map, and
+the invariant preserves. *)
+Lemma borrow_check_inv_set_fp: forall (fpm1 fpm2: fp_map) fpl ty tyl tgt fp,
+    borrow_check_fpg_vals_inv fpm1 (fp :: fpl) ->
+    wt_footprint_list ce fpm1 (ty :: tyl) (fp :: fpl) ->
+    check_path_is_dropped fpm1 tgt = OK true ->
+    set_footprint_map tgt fp fpm1 = OK fpm2 ->
+    wt_path ce (fpm_to_tenv fpm1) tgt = OK ty ->
+    borrow_check_fpg_vals_inv fpm2 fpl
+    /\ wt_footprint_list ce fpm2 tyl fpl
+    /\ wt_fpm ce fpm2.
+Admitted.
+
+(* moving from a place preserves the borrow checking invariant
+under the successful checking. But what is the effect of checking
+for pure expr? *)
+Lemma eval_expr_preserve_borchk_inv: forall (fpm1 fpm2: fp_map) e vfp
+    (INV: borrow_check_inv fpm1)
+    (WTFPM: wt_fpm ce fpm1)
+    (WTEXPR: wt_expr (fpm_to_env fpm1) ce e)
+    (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2)),
+    borrow_check_fpg_vals_inv fpm2 [vfp]
+    /\ wt_fpm ce fpm2
+    /\ wt_footprint ce fpm2 (typeof e) vfp.
+Proof.
+  destruct e; intros.
+  (* moveplace *)
+  - simpl in EVAL.
+    monadInv EVAL. destruct x as (b & ofs).
+    inv WTEXPR. 
+Admitted.
+
+(** Misc (TODO: we should categorize these lemmas to structure the
+proof better) *)
+
+Lemma clear_footprint_map_is_dropped: forall phl id (fpm1 fpm2: fp_map),
+    clear_footprint_map ce (id, phl) fpm1 = OK fpm2 ->
+    check_path_is_dropped fpm2 (id, phl) = OK true.
+Admitted.
+
+Lemma kill_paths_ref_fpm_preserve_is_dropped: forall phl id (fpm: fp_map) vs,
+    check_path_is_dropped fpm (id, phl) = OK true ->
+    check_path_is_dropped (kill_paths_ref_fpm vs fpm) (id, phl) = OK true.
+Admitted.
+
+
 (* step preservation *)
 
-Lemma step_preservation: forall s1 t s2,
-    RustIRspec.step ge s1 t s2 ->
-    borrowck_inv s1 ->
-    wt_state s1 ->
-    borrowck_inv s2 /\ wt_state s2.
-Proof.
+(* It is not very usefule because we need to prove the preservation of
+borrowck_inv in the simulation proof between RustIRspec and
+RustIRown *)
 
+(* Lemma step_preservation: forall s1 t s2, *)
+(*     RustIRspec.step ge s1 t s2 -> *)
+(*     borrowck_inv s1 -> *)
+(*     wt_state s1 -> *)
+(*     borrowck_inv s2 /\ wt_state s2. *)
+(* Proof. *)
+(*   intros s1 t s2 STEP INV WTST.  *)
+(*   exploit (@wt_state_step_preservation ame); eauto. intros WTST1. *)
+(*   split; auto. *)
+(*   inv STEP; inv INV; inv WTST. *)
+(*   (* Sassign *) *)
+(*   - inv WT1. *)
+(*     unfold_eval_assign. inv EQ2. *)
+(*     unfold_before_write_place.       *)
+(*     destr_path_of_place p. *)
+(*     (* evaluate expr preserves borrow check invariant. We should write *)
+(*     it in a separated lemma *) *)
+(*     exploit eval_expr_preserve_borchk_inv; eauto. *)
+(*     intros (BORCK_INV1 & WTFPM1 & WTFP1). *)
+(*     (* shallow write preserves borrow check invariant *) *)
+(*     exploit borrow_check_inv_shallow_write; eauto. *)
+(*     econstructor. eauto. econstructor. *)
+(*     intros (BORCK_INV2 & WTFP2 & WTFPM2). *)
+(*     (* set footprint to the assginee preserves the invariant *) *)
+(*     (* assert (WTPH1: wt_path *) *)
+(*     exploit borrow_check_inv_set_fp; eauto. *)
+(*     eapply kill_paths_ref_fpm_preserve_is_dropped. *)
+(*     eapply clear_footprint_map_is_dropped; eauto.     *)
+(*     admit.  (* We cannot prove that the type of the tgt path is *)
+(*     (typeof e) but we can prove that its type is equal to (typeof e) *)
+(*     modulo the regions. *) *)
+(*     intros (BORCK_INV3 & WTFP3 & WTFPM3). *)
+(*     econstructor; eauto. *)
+(* Admitted. *)
+   
 
+End BORROWCK_INV.
 
 End ADT_ENV.

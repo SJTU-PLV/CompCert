@@ -857,15 +857,15 @@ Admitted.
 
 (************* End of properties of get/set_footprint_map ******************  *)
 
-Lemma wt_footprint_size_eq ce : forall ty fp fpm,
-    wt_footprint ce fpm ty fp ->
-    sizeof ce ty = sizeof_footprint ce fp.
-Admitted.
+(* Lemma wt_footprint_size_eq ce : forall ty fp fpm, *)
+(*     wt_footprint ce fpm ty fp -> *)
+(*     sizeof ce ty = sizeof_footprint ce fp. *)
+(* Admitted. *)
 
-Lemma wt_footprint_align_eq ce : forall ty fp fpm,
-    wt_footprint ce fpm ty fp ->
-    alignof ce ty = alignof_footprint ce fp.
-Admitted.
+(* Lemma wt_footprint_align_eq ce : forall ty fp fpm, *)
+(*     wt_footprint ce fpm ty fp -> *)
+(*     alignof ce ty = alignof_footprint ce fp. *)
+(* Admitted. *)
 
 
 Definition fp_match_chunk (fp: footprint) chunk : Prop :=
