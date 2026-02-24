@@ -399,6 +399,21 @@ and print_place out (p: place) =
 
 and print_pointer_operand out pe =
   match pe with
+  | Ederef (Ebinop (Oadd, base, index, _), _) ->
+      (* When dereferencing a pointer-to-array, the result is an array lvalue in C,
+         which decays to a pointer to its first element in pointer arithmetic.
+         Printing it as `base.load(index)` copies the whole row and then taking
+         `.offset(...)` would operate on the copy (writes won't reach the caller).
+         Use `Ptr<[T;N]>::row` to get a pointer into the real row. *)
+      let base_ty = type_of_pexpr base in
+      if is_declared_ptr_type base_ty then
+        (match pointed_type base_ty with
+         | Some arr_ty when is_array_type arr_ty ->
+             fprintf out "%a.row((%a) as usize)" pexpr (0, base) pexpr (0, index)
+         | _ ->
+             pexpr out (0, pe))
+      else
+        pexpr out (0, pe)
   | Eplace (ParrayIndex (base_place, index_id, _), _) ->
       let base_ty = resolved_place_type base_place in
       if is_declared_ptr_type base_ty then
@@ -729,7 +744,12 @@ and pexpr p (prec, e) =
       let rec is_bool_valued_expr pe = 
         match pe with
         | Ebinop((Oeq | One | Olt | Ogt | Ole | Oge), _, _, _) -> true
-        | Ebinop((Oand | Oor), _, _, _) -> true  (* logical and/or also return bool *)
+        | Ebinop((Oand | Oor), _, _, ty) ->
+            (* In CompCert, Oand/Oor are bitwise ops. Treat them as bool-valued
+               only if the IR result type is already bool. *)
+            (match ty with
+             | Rusttypes.Tint(Ctypes.IBool, _) -> true
+             | _ -> false)
         | Eplace(Pparenthesize(_, _, inner_pe), _) -> is_bool_valued_expr inner_pe
         | Eas(inner_pe, inner_ty) ->
             (* Check if inner cast is to bool *)
@@ -1105,6 +1125,33 @@ let parse_malloc_param param =
   | _ ->
       None
 
+let rec sizeof_type_from_pexpr pe =
+  match pe with
+  | Esizeof (ty, _) -> Some ty
+  | Eas (inner, _) -> sizeof_type_from_pexpr inner
+  | _ -> None
+
+let parse_calloc_params nmemb size =
+  match nmemb, size with
+  | Epure nmemb_pe, Epure size_pe ->
+      (match sizeof_type_from_pexpr size_pe with
+       | Some ty -> Some { malloc_elem_ty = ty; malloc_count = Some nmemb_pe }
+       | None -> None)
+  | _ -> None
+
+let rec type_contains_declared_ptr ty =
+  match ty with
+  | Rusttypes.Tslice _ -> true
+  | Rusttypes.Tarray(_, elem, _) -> type_contains_declared_ptr elem
+  | Rusttypes.Treference(_, _, elem) -> type_contains_declared_ptr elem
+  | Rusttypes.Tstruct(_, struct_id) ->
+      let struct_name = extern_atom struct_id in
+      (try
+         let fields = Hashtbl.find struct_field_table struct_name in
+         List.exists (fun (_, fty) -> type_contains_declared_ptr fty) fields
+       with Not_found -> false)
+  | _ -> false
+
 let get_callee_name (e: expr) : string option =
   match e with
   | Epure (Eplace(Plocal(id, _), _)) -> Some (String.lowercase_ascii (lookup_ident_name id))
@@ -1115,7 +1162,12 @@ let get_callee_name (e: expr) : string option =
 let rec is_comparison_pexpr pe =
   match pe with
   | Ebinop((Oeq | One | Olt | Ogt | Ole | Oge), _, _, _) -> true
-  | Ebinop((Oand | Oor), _, _, _) -> true  (* Logical ops also return bool *)
+  | Ebinop((Oand | Oor), _, _, ty) ->
+      (* Oand/Oor are bitwise ops. They are only bool-producing if the IR
+         explicitly assigns them a bool type. *)
+      (match ty with
+       | Rusttypes.Tint(Ctypes.IBool, _) -> true
+       | _ -> false)
   | Eplace(p, _) -> 
       (* Check if the place contains a comparison expression *)
       (match p with
@@ -1180,6 +1232,29 @@ let print_malloc_assignment p dest info =
       fprintf p "@[<hv 2>%a = %t;@]"
         print_place dest
         (fun fmt -> print_alloc fmt (fun fmt -> fprintf fmt "1"))
+
+let print_malloc_value_for_ty dest_ty p info =
+  let type_name = name_rust_type info.malloc_elem_ty in
+  let dest_cast_target =
+    match pointed_type dest_ty with
+    | Some elem_ty ->
+        let dest_name = name_rust_type elem_ty in
+        if dest_name <> type_name then Some dest_name else None
+    | None -> None
+  in
+  let print_alloc fmt count_printer =
+    match dest_cast_target with
+    | Some target ->
+        fprintf fmt "unsafe { Ptr::<%s>::alloc(%t).cast::<%s>() }"
+          type_name count_printer target
+    | None ->
+        fprintf fmt "Ptr::<%s>::alloc(%t)" type_name count_printer
+  in
+  match info.malloc_count with
+  | Some count_expr ->
+      print_alloc p (fun fmt -> fprintf fmt "(%a) as usize" pexpr (0, count_expr))
+  | None ->
+      print_alloc p (fun fmt -> fprintf fmt "1")
 
 (* Helper to create a printer for expression with auto bool->int conversion if needed *)
 let make_expr_printer_with_conversion place_ty e =
@@ -1444,12 +1519,26 @@ let rec print_stmt p (s: Rustlight.statement) =
             fprintf p "@[<v 2>{@ ";
             fprintf p "let mut __tmp = (%a.load(0));@ " print_place ptr_base;
             if is_declared_ptr_type field_ty then begin
-              if is_null_ptr_expr e || is_zero_integer_expr e then
-                fprintf p "__tmp.%s = Ptr::null();@ " (extern_atom fid)
-              else
-                fprintf p "__tmp.%s = %a;@ "
-                  (extern_atom fid)
-                  (print_pointer_assignment_value field_ty) e
+              let handled_alloc =
+                match temp_name_from_expr e with
+                | Some temp_name ->
+                    (match take_malloc_temp temp_name with
+                     | Some info ->
+                         fprintf p "__tmp.%s = %a;@ "
+                           (extern_atom fid)
+                           (print_malloc_value_for_ty field_ty) info;
+                         true
+                     | None -> false)
+                | None -> false
+              in
+              if not handled_alloc then begin
+                if is_null_ptr_expr e || is_zero_integer_expr e then
+                  fprintf p "__tmp.%s = Ptr::null();@ " (extern_atom fid)
+                else
+                  fprintf p "__tmp.%s = %a;@ "
+                    (extern_atom fid)
+                    (print_pointer_assignment_value field_ty) e
+              end
             end else
               fprintf p "__tmp.%s = %a;@ "
                 (extern_atom fid)
@@ -1621,6 +1710,135 @@ let rec print_stmt p (s: Rustlight.statement) =
              fprintf p ";@]")
     | Some "malloc", _ ->
         fprintf p "@[<hv 2>/* 错误：malloc参数数量错误 */@]"
+    | Some "calloc", [nmemb; size] ->
+        (match parse_calloc_params nmemb size with
+         | Some info ->
+             if is_void_pointer_place v && register_malloc_temp v info then
+               ()
+             else
+               print_malloc_assignment p v info
+         | None ->
+             fprintf p "@[<hv 2>%a = %a@,(@[<hov 0>%a@]);@]"
+               print_place v
+               print_function_call_name e1
+               print_expr_list_with_type (true, el, [], true))
+    | Some "calloc", _ ->
+        fprintf p "@[<hv 2>/* 错误：calloc参数数量错误 */@]"
+    | Some "realloc", [old_ptr; new_size] ->
+        (* `Ptr<T>::alloc` uses Rust allocation; calling libc `realloc` on such
+           memory is UB and has caused crashes (allocator mismatch).  Instead,
+           model `realloc` by allocating a fresh `Ptr` and copying elements. *)
+        let dest_ty = resolved_place_type v in
+        let elem_ty, print_new_count =
+          match parse_malloc_param new_size with
+          | Some info ->
+              let ty = info.malloc_elem_ty in
+              let printer fmt =
+                match info.malloc_count with
+                | Some pe -> fprintf fmt "(%a) as usize" pexpr (0, pe)
+                | None -> fprintf fmt "1"
+              in
+              (ty, printer)
+          | None ->
+              (match pointed_type dest_ty with
+               | Some elem when elem <> Rusttypes.Tvoid ->
+                   let elem_name = name_rust_type elem in
+                   let printer fmt =
+                     fprintf fmt
+                       "(((%a) as usize) + (std::mem::size_of::<%s>() - 1)) / std::mem::size_of::<%s>()"
+                       print_expr new_size
+                       elem_name
+                       elem_name
+                   in
+                   (elem, printer)
+               | _ ->
+                   let ty = Rusttypes.Tint(Ctypes.I8, Ctypes.Unsigned) in
+                   let printer fmt =
+                     fprintf fmt "(%a) as usize" print_expr new_size
+                   in
+                   (ty, printer))
+        in
+        let elem_name = name_rust_type elem_ty in
+        let old_ptr_ty = type_of_expr old_ptr in
+        let needs_old_cast =
+          match pointed_type old_ptr_ty with
+          | Some e -> e <> elem_ty
+          | None -> true
+        in
+        let print_old_as_elem fmt =
+          if needs_old_cast then
+            fprintf fmt "unsafe { (%a).cast::<%s>() }" print_expr old_ptr elem_name
+          else
+            fprintf fmt "%a" print_expr old_ptr
+        in
+        let dest_cast_target =
+          match pointed_type dest_ty with
+          | Some de when de <> elem_ty -> Some (name_rust_type de)
+          | _ -> None
+        in
+        fprintf p "@[<v 2>{@ ";
+        fprintf p "let __old : Ptr<%s> = %t;@ " elem_name print_old_as_elem;
+        fprintf p "let __new_len : usize = %t;@ " print_new_count;
+        fprintf p "let __new : Ptr<%s> = Ptr::<%s>::alloc(__new_len);@ "
+          elem_name elem_name;
+        fprintf p
+          "let __copy_len : usize = std::cmp::min(__old.len().unwrap_or(0), __new_len);@ ";
+        fprintf p "let mut __i : usize = 0;@ ";
+        fprintf p "while __i < __copy_len {@ ";
+        fprintf p "  __new.store(__i, __old.load(__i));@ ";
+        fprintf p "  __i += 1;@ ";
+        fprintf p "}@ ";
+        (match dest_cast_target with
+         | Some target ->
+             fprintf p "%a = unsafe { __new.cast::<%s>() };@ " print_place v target
+         | None ->
+             fprintf p "%a = __new;@ " print_place v);
+        fprintf p "@;<0 -2>}@]"
+    | Some "realloc", _ ->
+        fprintf p "@[<hv 2>/* 错误：realloc参数数量错误 */@]"
+    | Some "memcpy", [dst; src; nbytes] ->
+        (match nbytes with
+         | Epure n_pe ->
+             (match sizeof_type_from_pexpr n_pe with
+              | Some ty when type_contains_declared_ptr ty ->
+                  let ty_name = name_rust_type ty in
+                  fprintf p "@[<v 2>{@ ";
+                  fprintf p "let __tmp = unsafe { (%a).cast::<%s>() }.load(0);@ "
+                    print_expr src ty_name;
+                  fprintf p "unsafe { (%a).cast::<%s>() }.store(0, __tmp);@ "
+                    print_expr dst ty_name;
+                  (match place_ty with
+                   | Rusttypes.Tunit -> ()
+                   | _ ->
+                       fprintf p "%a = %a;@ " print_place v print_expr dst);
+                  fprintf p "@;<0 -2>}@]"
+              | _ ->
+                  (* Fallback to the normal wrapper call. *)
+                  let fun_ty = type_of_expr e1 in
+                  let param_tys =
+                    match fun_ty with
+                    | Rusttypes.Tfunction(_, _, args, _, _) -> typelist_to_list args
+                    | _ -> List.map (fun _ -> Rusttypes.Tunit) el
+                  in
+                  let is_c_function = true in
+                  let is_ignored_return =
+                    match place_ty with Rusttypes.Tunit -> true | _ -> false
+                  in
+                  if is_ignored_return then
+                    fprintf p "@[<hv 2>%a@,(@[<hov 0>%a@]);@]"
+                      print_function_call_name e1
+                      print_expr_list_with_type (true, el, param_tys, is_c_function)
+                  else
+                    fprintf p "@[<hv 2>%a =@ %a@,(@[<hov 0>%a@]);@]"
+                      print_place v
+                      print_function_call_name e1
+                      print_expr_list_with_type (true, el, param_tys, is_c_function))
+         | _ ->
+             fprintf p "@[<hv 2>%a@,(@[<hov 0>%a@]);@]"
+               print_function_call_name e1
+               print_expr_list_with_type (true, el, [], true))
+    | Some "memcpy", _ ->
+        fprintf p "@[<hv 2>/* 错误：memcpy参数数量错误 */@]"
     | Some "free", arg :: _ ->
         (match place_from_ptr_arg arg with
          | Some place ->
