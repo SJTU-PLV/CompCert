@@ -17,6 +17,7 @@ Import ListNotations.
 
 Local Open Scope error_monad_scope.
 
+
 Section ADT_ENV.
 
 Context {ame: adt_mem_env}.
@@ -223,7 +224,10 @@ Definition borrow_check_fpg_vals_inv (fpg: fp_graph) (vl: list footprint) : Prop
   let fpg1 := PTree_Properties.of_list ((PTree.elements fpg) ++ (combine idl vl)) in
   borrow_check_inv fpg.
 
-
+Lemma borrow_check_fpg_vals_inv_empty: forall fpm,
+    borrow_check_fpg_vals_inv fpm nil ->
+    borrow_check_inv fpm.
+Admitted.
 
 (** ** Typing of the footprint: used to make sure the footprint is well-formed *)
 
@@ -323,6 +327,61 @@ Definition wt_fpm ce (fpm: fp_map) : Prop :=
     wt_footprint ce fpm ty fp.
 
 
+(** Properties of get/set footprint map  *)
+Lemma get_owner_loc_footprint_map_wt ce: forall phl id fpm b ofs fp,
+    get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, fp) ->
+    wt_fpm ce fpm ->
+    exists ty, wt_path ce (fpm_to_tenv fpm) (id, phl) = OK ty
+          /\ wt_footprint ce fpm ty fp
+          /\ (alignof ce ty | ofs).
+Admitted.
+
+
+
+Lemma get_owner_path_map_inv: forall id phl (fpg: fp_graph) ph vs,
+    get_owner_path_map (id, phl) fpg = OK (ph, vs) ->
+    exists (fp: footprint),
+      fpg ! id = Some fp
+      /\ get_owner_path fpg (id, nil) phl fp nil = OK (ph, vs).
+Admitted.
+
+(* If a path can be reached via (phl1 ++ phl2) then this reachable
+path can be divided into two parts: one is reached from phl1 and one
+is reach from phl2 *)
+Lemma get_owner_path_app_inv: forall phl1 phl2 ph1 ph3 sv1 vs1 vs3 (fpm: fp_map),
+    get_owner_path fpm ph1 (phl1 ++ phl2) sv1 vs1 = OK (ph3, vs3) ->
+    exists ph2 vs2 sv2,
+      get_owner_path fpm ph1 phl1 sv1 vs1 = OK (ph2, vs2) 
+      /\ get_owner_footprint_map ph2 fpm = OK sv2 
+      /\ get_owner_path fpm ph2 phl2 sv2 vs2 = OK (ph3, vs3).
+Admitted.
+
+Lemma get_owner_path_for_owner: forall (fpm: fp_map) ph fp,
+    get_owner_footprint_map ph fpm = OK fp ->
+    (* Since ph is an owner path, vs must only contain [ph] itself *)
+    get_owner_path_map ph fpm = OK (ph, ph :: nil).
+Admitted.
+
+Lemma get_owner_loc_footprint_map_eq: forall (fpm: fp_map) ph b ofs fp,
+    get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp) ->
+    get_owner_footprint_map ph fpm = OK fp.
+Admitted.
+
+Lemma get_owner_loc_footprint_map_app: forall id phl1 phl2 b1 ofs1 fp1 b2 ofs2 fp2 (fpm: fp_map),
+    get_owner_loc_footprint_map (id, phl1) fpm = OK (b1, ofs1, fp1) ->
+    get_owner_loc_footprint phl2 fp1 b1 ofs1 = OK (b2, ofs2, fp2) ->         
+    get_owner_loc_footprint_map (id, phl1 ++ phl2) fpm = OK (b2, ofs2, fp2).
+Admitted.
+
+(** Misc for invalidate_conflict_ref and kill_paths *)
+
+Lemma get_owner_loc_footprint_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 am b ofs fp,
+    get_owner_loc_footprint_map ph1 (invalidate_conflict_ref_fpm ph2 am fpm) = OK (b, ofs, fp) ->
+    exists fp', get_owner_loc_footprint_map ph1 fpm = OK (b, ofs, fp')
+           /\ invalidate_conflict_ref ph2 am fp' = fp.
+Admitted.
+
+
 (** Proof of the preservation of borrow check invariant *)
 
 Section BORROWCK_INV.
@@ -419,6 +478,7 @@ reference can be seen as a normal reference, or it can be used to
 extract the point-to footprint to act as a move operation. *)
 Lemma borrow_check_inv_deep_access: forall (fpm1 fpm2: fp_map) fpl phl id mut ty tyl vs tgt b ofs fp,
     borrow_check_fpg_vals_inv fpm1 fpl ->
+    wt_fpm ce fpm1 ->
     wt_footprint_list ce fpm1 tyl fpl ->
     wt_path ce (fpm_to_tenv fpm1) (id, phl) = OK ty ->
     get_owner_path_map (id, phl) fpm1 = OK (tgt, vs) ->
@@ -432,8 +492,9 @@ Admitted.
 (* Move out the footprint pointed by the fp_ref in the temporary
 values and then use this footprint to replace the fp_ref to simulate
 the move operation.  *)
-Lemma borrow_check_inv_move: forall (fpm1 fpm2: fp_map) fpl ty tyl vs tgt b ofs fp r,
+Lemma borrow_check_inv_replace_move: forall (fpm1 fpm2: fp_map) fpl ty tyl vs tgt b ofs fp r,
     borrow_check_fpg_vals_inv fpm1 ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) ->
+    wt_fpm ce fpm1 ->
     wt_footprint_list ce fpm1 ((Treference r Mutable ty) :: tyl) ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) ->
     get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp) ->
     clear_footprint_map ce tgt fpm1 = OK fpm2 ->
@@ -446,11 +507,47 @@ Admitted.
 temporary footprint value. *)
 Lemma borrow_check_inv_drop: forall n (fpm: fp_map) fpl tyl,
     borrow_check_fpg_vals_inv fpm fpl ->
+    wt_fpm ce fpm ->
     wt_footprint_list ce fpm tyl fpl ->
     borrow_check_fpg_vals_inv fpm (list_delete n fpl)
     /\ wt_footprint_list ce fpm (list_delete n tyl) (list_delete n fpl)
     /\ wt_fpm ce fpm.
 Admitted.
+
+(* Moving out a footprint: proved by borrow_check_inv_deep_access and
+borrow_check_inv_replace_move *)
+Lemma borrow_check_inv_move: forall (fpm1 fpm2 fpm3: fp_map) fpl ty tyl tgt b ofs fp,
+    borrow_check_fpg_vals_inv fpm1 fpl ->
+    wt_fpm ce fpm1 ->
+    wt_footprint_list ce fpm1 tyl fpl ->
+    wt_path ce (fpm_to_tenv fpm1) tgt = OK ty ->
+    (* In a move operastion, we first do deep access (simulate
+    creating a reference) and then move out the footprint after the
+    invalidation process. But note that in
+    borrow_check_inv_deep_access, we first get the owner path and then
+    do the invalidation. It does not matter because getting the owner
+    path of an owner is irrelevant to the invalidation procee. *)
+    fpm2 = invalidate_conflict_ref_fpm tgt BorrowCheckDomain.Adeep fpm1 ->
+    get_owner_loc_footprint_map tgt fpm2 = OK (b, ofs, fp) ->
+    clear_footprint_map ce tgt fpm2 = OK fpm3 ->
+    borrow_check_fpg_vals_inv fpm3 (fp :: fpl)
+    /\ wt_footprint_list ce fpm3 (ty :: tyl) (fp :: fpl)
+    /\ wt_fpm ce fpm3.
+Proof.
+  intros. subst.
+  destruct tgt as (tid & tphl).
+  (* The location gotten before invalidation is the same *)
+  exploit get_owner_loc_footprint_map_after_invalidate_ref. eauto.
+  intros (fp' & A1 & A2).
+  exploit get_owner_path_for_owner.
+  eapply get_owner_loc_footprint_map_eq. eauto.
+  intros GPH.
+  exploit borrow_check_inv_deep_access; eauto.
+  instantiate (1 := Mutable).
+  intros (B1 & B2 & B3).  
+  eapply borrow_check_inv_replace_move; eauto. 
+Qed.  
+  
 
 (* Why is it so complicated? When we do shallow write on a path, we
 should also simultaneously kill the loans related to this paths and
@@ -477,6 +574,7 @@ footprint is fp_emp or has been cleared by clear_footprint_map, and
 the invariant preserves. *)
 Lemma borrow_check_inv_set_fp: forall (fpm1 fpm2: fp_map) fpl ty tyl tgt fp,
     borrow_check_fpg_vals_inv fpm1 (fp :: fpl) ->
+    wt_fpm ce fpm1 ->    
     wt_footprint_list ce fpm1 (ty :: tyl) (fp :: fpl) ->
     check_path_is_dropped fpm1 tgt = OK true ->
     set_footprint_map tgt fp fpm1 = OK fpm2 ->

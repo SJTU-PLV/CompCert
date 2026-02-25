@@ -603,9 +603,22 @@ Definition check_path_is_dropped (fpm: fp_map) (ph: path) : res bool :=
   do fp <- get_owner_footprint_map ph fpm;
   OK (fp_is_dropped fp).
 
-Definition check_path_is_deeply_init (fpm: fp_map) (ph: path) : res bool :=
+(* Note that for example we split drop( p where p: Box<Box<i32>>) into
+drop( *p) and drop(p) in the drop elaboration pass, so for fp_box to
+be dropped we should ensure that its point-to footprint has been
+dropped. *)
+Definition check_path_is_droppable (fpm: fp_map) (ph: path) : res bool :=
   do fp <- get_owner_footprint_map ph fpm;
-  OK (deep_init fp).
+  match fp with
+  | fp_box _ fp1 =>
+      (* There is no need to check that fp1 has beed dropped or not
+      since we do not guarantee no memory leak *)
+      OK true
+  | fp_struct _ _
+  | fp_enum _ _ _ _ _ =>
+      OK (deep_init fp)
+  | _ => OK false
+  end.
 
 Fixpoint check_path_is_dropped_list (fpm: fp_map) (l: list path) : res bool :=
   match l with
@@ -1216,15 +1229,19 @@ Fixpoint eval_pexpr (fpm: fp_map) (pe: pexpr) : res (footprint * fp_map) :=
 Definition eval_expr (ce: composite_env) (fpm: fp_map) (e: expr) : res (footprint * fp_map) :=
   match e with
   | Emoveplace p _ =>
-      (* Should we do invalidation first and the clear the footprint
-      out? We first do the invalidation because it similates a deep
-      access which would invalidate all conflict reference and then we
-      do the actual move operation. But the difficulty may be the
-      proof of no invalid fp_ref in [fp]? Maybe in the static borrow
-      checking, we can show that all reachable path of [p] is live so
-      we cannot invalidate their fp_ref? No matter whether the fp_ref
-      is reachable from [p]? *)
+      (* The main reason we first do invalidation and then get the
+      location is because we do not want to do invalidation on the
+      footprint we get from the owner. The invalidation is used to
+      simulate the deep access like creating a reference of this path.
+      But the difficulty may be the proof of no invalid fp_ref in
+      [fp]? Maybe in the static borrow checking, we can show that all
+      reachable path of [p] is live so we cannot invalidate their
+      fp_ref? No matter whether the fp_ref is reachable from [p]? *)
       let fpm1 := invalidate_conflict_ref_fpm p Adeep fpm in
+      (* Why do we get the location after invalidation? It does not
+      matter? The only difference is the fp_ref in fp may be
+      invalidated but the static borrow check should rule out this
+      case? *)
       do (_, fp) <- get_owner_loc_footprint_map p fpm1;
       do fpm2 <- clear_footprint_map ce p fpm1;
       OK (fp, fpm2)
@@ -1458,7 +1475,7 @@ keeps the drop statement for the place that is init. *)
     (INVP: invalidate_conflict_ref_fpm p Adeep fpm1 = fpm2)
     (* Properties ensured by Drop elaboration, which we encode into
     the semantics *)
-    (DEEP_INIT: check_path_is_deeply_init fpm2 p = OK true)
+    (DEEP_INIT: check_path_is_droppable fpm2 p = OK true)
     (DROP: clear_footprint_map ge p fpm2 = OK fpm3),
     step (State f (Sdrop p) k ns fpm1 sup) E0 (State f Sskip k ns fpm3 sup)
 | step_storagelive: forall f k ns fpm id sup,

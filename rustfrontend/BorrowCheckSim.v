@@ -598,40 +598,21 @@ Inductive match_states: state_spec -> state -> Prop :=
     (MCONT: match_cont k tk FMP)
     (MPRED: m |= MP ** FMP),
     match_states (RustIRspec.State f s k ns fpm (Mem.support m)) (State f s tk fpm m)
-| match_callstate: forall vf fd orgs org_rels tyargs tyres cconv m fpl args k MP1 MP2 MP3 inout_fpm tk fun_id
+| match_callstate: forall vf fd m fpl args k MP1 MP2 MP3 inout_fpm tk fun_id
     (* TODO: show that fun_id also points to this function *)
     (FUNC: Genv.find_funct ge vf = Some fd)    
-    (FUNTY: type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv)
     (* arguments are semantics well typed *)
     (WTVAL_LIST: sem_wt_val_list ce fpl args MP1)
-    (** output memory locations are sem_wt_loc *)
-    (* (INOUTLOCS: map (fun '(b, ofs, _, _, _) => (b, ofs)) inout_params = inout_locs) *)
-    (* (INOUTFPL: map snd inout_params = inout_fpl) *)
-    (* (WTLOC_LIST: sem_wt_loc_list ce inout_locs inout_fpl MP2) *)
     (INOUT_FPM: coherent_fpm ce inout_fpm MP2)
     (* (ANORM: val_casted_list args tyargs) *)
-    (WTFP: list_forall2 (wt_footprint ce inout_fpm) (type_list_of_typelist tyargs) fpl)
-    (* (INOUT_TYL: map (fun '(_, _, ty, _) => ty) inout_params = tyl) *)
-    (** TODO: move this property to borrow check invariant *)
-    (WT_INOUTFPM: wt_fpm ce inout_fpm)
     (MPRED: m |= MP1 ** MP2 ** MP3)
     (STK: match_stacks k tk MP3),
     (* also disjointness of fpl and fpf *)
     match_states (RustIRspec.Callstate fun_id fpl inout_fpm (Mem.support m) k) (Callstate vf args tk m)
-| match_returnstate: forall sg m k retty vfp v MP1 MP2 MP3 tk inout_fpm
-    (* For now, all function must have return type *)
-    (RETY: typeof_cont_call (rs_sig_res sg) tk = retty)
+| match_returnstate: forall m k vfp v MP1 MP2 MP3 tk inout_fpm
     (WTVAL: sem_wt_val ce vfp v MP1)
     (** inout memory locations are sem_wt_loc *)
-    (* (INOUTLOCS: map (fun '(b, ofs, _, _, _) => (b, ofs)) inout_params = inout_locs) *)
-    (* (INOUTFPL: map snd inout_params = inout_fpl) *)
-    (* (INOUT_TYL: map (fun '(_, _, ty, _) => ty) inout_params = inout_tyl) *)
-    (* (WTLOC_LIST: sem_wt_loc_list ce inout_locs inout_fpl MP2) *)
     (INOUT_FPM: coherent_fpm ce inout_fpm MP2)
-    (* (CAST: val_casted v retty) *)
-    (WTFP: wt_footprint ce inout_fpm retty vfp)
-    (* (WT_INOUTFP: list_forall2 (wt_footprint ce) inout_tyl inout_fpl) *)
-    (WT_INOUTFPM: wt_fpm ce inout_fpm)
     (MPRED: m |= MP1 ** MP2 ** MP3)    
     (STK: match_stacks k tk MP3),
     match_states (RustIRspec.Returnstate vfp inout_fpm (Mem.support m) k) (Returnstate v tk m).
@@ -660,55 +641,6 @@ Ltac destr_find_field H :=
 
 (* Graph properties of sv_map *)
 
-
-Lemma get_owner_path_map_inv: forall id phl (fpg: fp_graph) ph vs,
-    get_owner_path_map (id, phl) fpg = OK (ph, vs) ->
-    exists (fp: footprint),
-      fpg ! id = Some fp
-      /\ get_owner_path fpg (id, nil) phl fp nil = OK (ph, vs).
-Admitted.
-
-
-Ltac inv_get_owner_path_fpm H :=
-  let GPH := fresh "GPH" in
-  eapply get_owner_path_map_inv in H as GPH;
-  destruct GPH as (?fp & ?G1 & ?G2).
-
-(* If a path can be reached via (phl1 ++ phl2) then this reachable
-path can be divided into two parts: one is reached from phl1 and one
-is reach from phl2 *)
-Lemma get_owner_path_app_inv: forall phl1 phl2 ph1 ph3 sv1 vs1 vs3 (fpm: fp_map),
-    get_owner_path fpm ph1 (phl1 ++ phl2) sv1 vs1 = OK (ph3, vs3) ->
-    exists ph2 vs2 sv2,
-      get_owner_path fpm ph1 phl1 sv1 vs1 = OK (ph2, vs2) 
-      /\ get_owner_footprint_map ph2 fpm = OK sv2 
-      /\ get_owner_path fpm ph2 phl2 sv2 vs2 = OK (ph3, vs3).
-Admitted.
-
-Lemma get_owner_path_for_owner: forall (fpm: fp_map) ph fp,
-    get_owner_footprint_map ph fpm = OK fp ->
-    exists vs, get_owner_path_map ph fpm = OK (ph, vs).
-Admitted.
-
-Lemma get_owner_loc_footprint_map_eq: forall (fpm: fp_map) ph b ofs fp,
-    get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp) ->
-    get_owner_footprint_map ph fpm = OK fp.
-Admitted.
-
-Lemma get_owner_loc_footprint_map_app: forall id phl1 phl2 b1 ofs1 fp1 b2 ofs2 fp2 fpm,
-    get_owner_loc_footprint_map (id, phl1) fpm = OK (b1, ofs1, fp1) ->
-    get_owner_loc_footprint phl2 fp1 b1 ofs1 = OK (b2, ofs2, fp2) ->         
-    get_owner_loc_footprint_map (id, phl1 ++ phl2) fpm = OK (b2, ofs2, fp2).
-Admitted.
-
-Lemma get_owner_loc_footprint_map_wt: forall phl id fpm b ofs fp,
-    get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, fp) ->
-    wt_fpm ce fpm ->
-    exists ty, wt_path ce fpm (id, phl) = OK ty
-          /\ wt_footprint ce fpm ty fp
-          /\ (alignof ce ty | ofs).
-Admitted.
-
 Ltac inv_get_owner_path_app H :=
   let GPH := fresh "GPH" in
   let GPH1 := fresh "GPH1" in
@@ -717,11 +649,17 @@ Ltac inv_get_owner_path_app H :=
   eapply get_owner_path_app_inv in H as GPH;
   destruct GPH as (?ph & ?vs & ?fp & GPH1 & GVAL & GPH2).
 
-(* Lemma get_owner_sval_map_loc : forall phl id (fpm: fp_map) fp *)
-(*     (GET_PH: get_owner_footprint_map (id, phl) fpm = OK fp), *)
-(*     exists b ofs fp,  *)
-(*       get_owner_loc_footprint_map (id, phl) fpm = Some (b, ofs, fp). *)
-(* Admitted. *)
+Ltac inv_get_owner_path_fpm H :=
+  let GPH := fresh "GPH" in
+  eapply get_owner_path_map_inv in H as GPH;
+  destruct GPH as (?fp & ?G1 & ?G2).
+
+
+Lemma get_owner_footprint_map_loc : forall phl id (fpm: fp_map) fp
+    (GET_PH: get_owner_footprint_map (id, phl) fpm = OK fp),
+    exists b ofs,
+      get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, fp).
+Admitted.
 
 
 Lemma get_owner_path_map_eval_place: forall (p: place) fpm vs ph m MP
@@ -753,7 +691,7 @@ Proof.
     object? *)
     simpl in GPH2. destruct fp0; try congruence.
     destr_find_field GPH2. inv GPH2.    
-    exploit get_owner_loc_footprint_map_eq. eauto. intros A3.
+    exploit (@get_owner_loc_footprint_map_eq ame). eauto. intros A3.
     rewrite A3 in GVAL. inv GVAL.
     (* remaining proof: get_owner_loc_footprint_map_app and getting
     the field offset *)
@@ -773,7 +711,7 @@ Proof.
     simpl in GPH2. destruct fp0; try congruence.
     (* fp_box *)
     + inv GPH2.
-      exploit get_owner_loc_footprint_map_eq; eauto. intros A3.
+      exploit (@get_owner_loc_footprint_map_eq ame); eauto. intros A3.
       rewrite A3 in GVAL. inv GVAL.
       (** TODO: we need some theorem like
       get_owner_loc_footprint_map_sem_wt_split *)
@@ -795,7 +733,7 @@ Proof.
     (* fp_ref *)
     + destruct ph1 as [?ph1|]; try congruence.
       monadInv GPH2.
-      exploit get_owner_loc_footprint_map_eq; eauto. intros A3.
+      exploit (@get_owner_loc_footprint_map_eq ame); eauto. intros A3.
       rewrite A3 in GVAL. inv GVAL.
       destruct ph0 as (?id & ?ph).
       exploit (@get_owner_loc_footprint_map_sem_wt_split ame); eauto.
@@ -805,7 +743,7 @@ Proof.
       rewrite B2, EQV in MPRED.
       exploit load_rule. eapply MPRED. intros (?v & C1 & C2). subst.
       (* Use invariant for reference *)
-      exploit get_owner_loc_footprint_map_wt; eauto.
+      exploit (@get_owner_loc_footprint_map_wt ame); eauto.
       intros (ty & WT3 & WT4& WT5). inv WT4.
       exists b, ofs, fp0. split; auto.
       econstructor; eauto. 
@@ -953,8 +891,8 @@ Proof.
     set (fpm1' := (invalidate_conflict_ref_fpm p BorrowCheckDomain.Adeep fpm1)) in *.
     destr_path_of_place p.
     eapply invalidate_conflict_ref_fpm_coherent_unchanged in COH as COH1.
-    exploit get_owner_path_for_owner; eauto. 
-    eapply get_owner_loc_footprint_map_eq; eauto. intros (vs & GPH).
+    exploit (@get_owner_path_for_owner ame); eauto. 
+    eapply get_owner_loc_footprint_map_eq; eauto. intros GPH.
     exploit (get_owner_path_map_eval_place); eauto. eapply MPRED.
     1-3: eauto with invalidate_fp_ref. rewrite POP. eapply GPH.    
     intros (b1 & ofs1 & fp & A1 & A2).    
@@ -1097,7 +1035,7 @@ Proof.
     destruct BYVAL as (chunk & BYVAL).    
     inv WTFP2. inv H4.
     (* assign_loc *)
-    exploit get_owner_loc_footprint_map_wt; eauto.
+    exploit (@get_owner_loc_footprint_map_wt ame); eauto.
     intros (ty & WTPH1 & WTFP4 & AL).
     exploit (@assign_loc_by_value_coherent_fpm ame). eapply COH3.
     eapply WTVAL1. eauto.
@@ -1112,7 +1050,7 @@ Proof.
     (** All operations on fpm do not change the local env *)
     assert (ENVEQ1: fpm_to_env fpm1 = fpm_to_env x0) by admit.
     assert (ENVEQ2: fpm_to_env fpm1 = fpm_to_env fpm2) by admit.
-    eexists. split.
+    eexists. do 3 (try apply conj).
     + econstructor.      
       econstructor. rewrite ENVEQ1. eauto. eauto.
       (* sem_cast: We need to ignore it *)
@@ -1125,9 +1063,27 @@ Proof.
     + rewrite ENVEQ2. 
       replace (Mem.support m) with (Mem.support m1) by admit.
       econstructor; eauto.
+    + econstructor; eauto.
       
-  - 
-
+  - admit.
+  - admit.
+  (* Sdrop *)
+  - inv WT1.
+    destr_path_of_place p.
+    unfold check_path_is_droppable in DEEP_INIT.
+    monadInv DEEP_INIT.
+    (* preserve borrow check invariant *)
+    exploit get_owner_footprint_map_loc; eauto.
+    intros (b & ofs & GLOC).
+    exploit (@borrow_check_inv_move ame); eauto.
+    econstructor. instantiate (1 := typeof p). admit. (* wt_place
+    implies wt_path *)
+    intros (BOR_INV1 & WTFP1 & WTFPM1).
+    exploit (@borrow_check_inv_drop ame); eauto.
+    instantiate (1 := O). simpl.
+    intros (BOR_INV2 & WTFP2 & WTFPM2).
+    eapply borrow_check_fpg_vals_inv_empty in BOR_INV2.
+    
 
 End BORROW_CHECK.
 
