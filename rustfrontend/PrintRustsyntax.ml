@@ -837,8 +837,25 @@ let print_globvardecl p id v =
   if linkage = "extern" && v.gvar_init = [] then
     (* Rust extern variables must be in extern "C" block and use 'static' keyword *)
     let mutability = if v.gvar_readonly then "" else "mut " in
-    (* Add 'static lifetime for slice/reference types in extern *)
-    let type_str = name_rust_type v.gvar_info in
+    (* FFI-safe extern variable types.
+       Extern pointer globals (e.g., stdout/stderr pointers) are raw pointers in C.
+       Declaring them as our `Ptr<T>` wrapper would be ABI-incompatible and can
+       cause runtime crashes when passed to libc. *)
+    let type_str =
+      match v.gvar_info with
+      | Rusttypes.Tslice(mutk, elem_ty, _) ->
+          let elem_str = name_rust_type elem_ty in
+          (match mutk with
+           | Rusttypes.Mutable -> "*mut " ^ elem_str
+           | Rusttypes.Immutable -> "*const " ^ elem_str)
+      | Rusttypes.Traw_pointer(mutk, elem_ty) ->
+          let elem_str = name_rust_type elem_ty in
+          (match mutk with
+           | Rusttypes.Coq_mutable -> "*mut " ^ elem_str
+           | Rusttypes.Coq_const -> "*const " ^ elem_str)
+      | _ ->
+          name_rust_type v.gvar_info
+    in
     fprintf p "extern \"C\" { static %s%s : %s; }@ @ " 
       mutability
       name

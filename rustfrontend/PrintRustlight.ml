@@ -123,6 +123,10 @@ let precedence = function
 module StringSet = Set.Make(String)
 
 let global_var_names : StringSet.t ref = ref StringSet.empty
+(* Extern globals whose declared type is a C pointer.
+   These must be printed with FFI-safe raw pointer types in `PrintRustsyntax`,
+   and uses must wrap them into our `Ptr<T>` runtime representation. *)
+let extern_pointer_globals : StringSet.t ref = ref StringSet.empty
 let current_name_map = Hashtbl.create 97
 let used_local_names : StringSet.t ref = ref StringSet.empty
 
@@ -455,7 +459,23 @@ and pexpr p (prec, e) =
            fprintf p "(%a.load(0)).%s" print_place ptr_base (extern_atom fid)
        | None ->
            let ty = type_of_place place in
-           if is_slice_type ty then
+           let is_extern_ptr_global =
+             match place with
+             | Plocal(id, pty) ->
+                 let nm = lookup_ident_name id in
+                 StringSet.mem nm !extern_pointer_globals && is_pointer_type pty
+             | _ -> false
+           in
+           if is_extern_ptr_global then
+             (match pointed_type ty with
+              | Some elem_ty ->
+                  fprintf p "unsafe { Ptr::from_raw_parts((%a) as *mut %s, usize::MAX) }"
+                    print_place place
+                    (name_rust_type elem_ty)
+              | None ->
+                  (* Shouldn't happen for pointer-typed globals, but keep a fallback. *)
+                  fprintf p "%a" print_place place)
+           else if is_slice_type ty then
              fprintf p "(%a.clone())" print_place place
            else
              fprintf p "%a" print_place place)
@@ -1372,7 +1392,7 @@ let unsafe_c_functions = [
   "printf";
   "fprintf"; "sprintf"; "snprintf"; "vprintf"; "vfprintf"; "vsprintf"; "vsnprintf";
   "scanf"; "fscanf"; "sscanf"; "vscanf"; "vfscanf"; "vsscanf";
-  "puts"; "fputs"; "gets"; "fgets"; "putchar"; "fputc"; "getchar"; "fgetc"; "ungetc";
+  "puts"; "fputs"; "gets"; "fgets"; "putchar"; "putc"; "fputc"; "getchar"; "fgetc"; "ungetc";
   "fopen"; "fclose"; "fread"; "fwrite"; "fseek"; "ftell"; "rewind"; "feof"; "ferror";
   
   (* Memory functions *)
@@ -2371,6 +2391,21 @@ let collect_global_var_names defs =
        | _ -> acc)
     StringSet.empty defs
 
+let collect_extern_pointer_globals defs =
+  List.fold_left
+    (fun acc (id, gd) ->
+       match gd with
+       | AST.Gvar v ->
+           if (not (C2C.atom_is_static id))
+              && v.AST.gvar_init = []
+              && is_pointer_type v.AST.gvar_info
+           then
+             StringSet.add (sanitize_rust_identifier (extern_atom id)) acc
+           else
+             acc
+       | _ -> acc)
+    StringSet.empty defs
+
 let print_program p (prog: Rustlight.program) =
   (* Check if there are any mutable static variables *)
   let has_static_mut = 
@@ -2387,6 +2422,7 @@ let print_program p (prog: Rustlight.program) =
     ) prog.Rusttypes.prog_defs
   in
   global_var_names := collect_global_var_names prog.Rusttypes.prog_defs;
+  extern_pointer_globals := collect_extern_pointer_globals prog.Rusttypes.prog_defs;
   (* Pre-collect globals whose initializers contain pointers so that we
      can both (1) avoid non-const pointer operations in their static
      initializers and (2) generate a runtime __init_globals() that
