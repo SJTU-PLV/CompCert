@@ -667,6 +667,7 @@ Lemma get_owner_path_map_eval_place: forall (p: place) fpm vs ph m MP
     (MPRED: m |= MP)
     (WT_FPM: wt_fpm ce fpm)
     (WTP: wt_place fpm ce p)
+    (REF_WF: fp_ref_loc_wf_fpm fpm)
     (GET_PH: get_owner_path_map p fpm = OK (ph, vs)),
     exists b ofs fp,
       get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp)
@@ -744,7 +745,9 @@ Proof.
       exploit load_rule. eapply MPRED. intros (?v & C1 & C2). subst.
       (* Use invariant for reference *)
       exploit (@get_owner_loc_footprint_map_wt ame); eauto.
-      intros (ty & WT3 & WT4& WT5). inv WT4.
+      intros (ty & WT3 & WT4& WT5). 
+      exploit (@get_owner_loc_footprint_map_fp_ref_wf ame); eauto.
+      intros FP_REF_WF. inv FP_REF_WF.
       exists b, ofs, fp0. split; auto.
       econstructor; eauto. 
       (** TODO: may be difficult *)
@@ -819,10 +822,15 @@ Lemma invalidate_conflict_ref_fpm_wt_fpm_unchanged: forall phl id (fpm: fp_map) 
     wt_fpm ce (invalidate_conflict_ref_fpm (id, phl) am fpm).
 Admitted.
 
+Lemma invalidate_conflict_ref_fpm_fp_ref_wf_unchanged: forall phl id (fpm: fp_map) am,
+    fp_ref_loc_wf_fpm fpm ->
+    fp_ref_loc_wf_fpm (invalidate_conflict_ref_fpm (id, phl) am fpm).
+Admitted.
 
-Lemma invalidate_conflict_ref_fpm_wt_footprint_unchanged: forall phl id (fpm: fp_map) am ty fp,
-    wt_footprint ce fpm ty fp ->
-    wt_footprint ce (invalidate_conflict_ref_fpm (id, phl) am fpm) ty fp.
+
+Lemma invalidate_conflict_ref_fpm_wt_footprint_unchanged: forall phl id (fpm: fp_map) am ty (fp: footprint),
+    wt_footprint ce (fpm_to_tenv fpm) ty fp ->
+    wt_footprint ce (fpm_to_tenv (invalidate_conflict_ref_fpm (id, phl) am fpm)) ty fp.
 Admitted.
 
 
@@ -853,7 +861,8 @@ Hint Resolve
   invalidate_conflict_ref_fpm_wt_fpm_unchanged
   invalidate_conflict_ref_fpm_env_eq
   invalidate_conflict_ref_fpm_coherent_eq
-  invalidate_conflict_ref_fpm_check_path_is_dropped: invalidate_fp_ref.
+  invalidate_conflict_ref_fpm_check_path_is_dropped
+  invalidate_conflict_ref_fpm_fp_ref_wf_unchanged: invalidate_fp_ref.
 
 Lemma kill_paths_ref_sem_wt_val: forall v (fp: footprint) vs mp,
     sem_wt_val ce fp v mp ->
@@ -876,6 +885,7 @@ Lemma eval_expr_match: forall (e: expr) vfp (fpm1 fpm2: fp_map) m MP1 FMP
     (MPRED: m |= MP1 ** FMP)
     (WTEXPR: wt_expr fpm1 ce e)
     (WTFPM: wt_fpm ce fpm1)
+    (REF_WF: fp_ref_loc_wf_fpm fpm1)
     (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2)),
     exists v mp MP2,
       Rustlightown.eval_expr ce fpm1 m tge e v
@@ -894,7 +904,7 @@ Proof.
     exploit (@get_owner_path_for_owner ame); eauto. 
     eapply get_owner_loc_footprint_map_eq; eauto. intros GPH.
     exploit (get_owner_path_map_eval_place); eauto. eapply MPRED.
-    1-3: eauto with invalidate_fp_ref. rewrite POP. eapply GPH.    
+    1-4: eauto with invalidate_fp_ref. rewrite POP. eapply GPH.    
     intros (b1 & ofs1 & fp & A1 & A2).    
     unfold fpm1' in *.
     setoid_rewrite A1 in EQ. inv EQ.
@@ -989,25 +999,23 @@ Proof.
     (* evaluate expr *)
     exploit eval_expr_match. eauto. eapply MPRED. 
     (* wt_expr *) eauto.
-    (* wt_fpm *) eauto.
+    (* wt_fpm: we should add a new state invariant *) admit.
+    eapply BOR_INV.
     eauto.
     intros (tv & mp1 & mp2 & TEVAL & WTVAL & COH1 & MPRED1).
     (* evaluate expr preserves borrow check invariant. We should write
     it in a separated lemma *)
     exploit (@eval_expr_preserve_borchk_inv ame); eauto.
-    intros (BORCK_INV1 & WTFPM1 & WTFP1).
+    intros BORCK_INV1.  (* & WTFPM1 & WTFP1). *)
     (* shallow write preserves borrow check invariant *)
     exploit (@borrow_check_inv_shallow_write ame); eauto.
-    econstructor. eauto. econstructor.
-    intros (BORCK_INV2 & WTFP2 & WTFPM2).
+    (* econstructor. eauto. econstructor. *)
+    intros BORCK_INV2.  (* & WTFP2 & WTFPM2). *)
     (* set footprint to the assginee preserves the invariant *)
     exploit (@borrow_check_inv_set_fp ame); eauto.
     eapply kill_paths_ref_fpm_preserve_is_dropped; eauto.
     eapply clear_footprint_map_is_dropped; eauto.
-    admit.  (* We cannot prove that the type of the tgt path is
-         (typeof e) but we can prove that its type is equal to (typeof
-         e) modulo the regions. *)
-    intros (BORCK_INV3 & WTFP3 & WTFPM3).
+    intros BORCK_INV3. (* & WTFP3 & WTFPM3). *)
     (* derive the memory predicate before setting the footprint into
     fpm *)
     exploit invalidate_conflict_ref_fpm_check_path_is_dropped; eauto.
@@ -1022,8 +1030,11 @@ Proof.
     instantiate (1 := vs). intros WTVAL1.
     (* evaluate the address of the assignee *)
     exploit (get_owner_path_map_eval_place p).
-    eapply COH1. eapply MPRED1. eauto. 
+    eapply COH1. eapply MPRED1. 
+    (* wt_fpm ce x0: we should prove a wt_footprint/wt_fpm
+    preservation leamm *) admit.
     (* wt_place *) admit.
+    eapply BORCK_INV1.
     rewrite POP. eapply EQ0.
     intros (b & ofs & pfp & GPLOC & EVALP).
     (** TODO: prove that invalidate_fp_ref, kill_paths_ref_fpm and
@@ -1033,13 +1044,16 @@ Proof.
     (** Proved by type checking *)
     assert (BYVAL: exists chunk, access_mode (typeof_place p) = Ctypes.By_value chunk) by admit.
     destruct BYVAL as (chunk & BYVAL).    
-    inv WTFP2. inv H4.
+    (* inv WTFP2. inv H4. *)
     (* assign_loc *)
     exploit (@get_owner_loc_footprint_map_wt ame); eauto.
+    instantiate (1 := ce).
+    (* wt_fpm: we should prove a wt_footprint/wt_fpm
+    preservation leamm *) admit.
     intros (ty & WTPH1 & WTFP4 & AL).
     exploit (@assign_loc_by_value_coherent_fpm ame). eapply COH3.
     eapply WTVAL1. eauto.
-    eapply GPLOC1. eauto. eauto.
+    eapply GPLOC1. eauto. eauto. 
     (** lots of work need to be done to prove ty = typeof e = typeof p
     where '=' represent type_eq_except_origins because the
     get_owner_path_map p is performed on x0 instead of the fp_map
@@ -1064,6 +1078,7 @@ Proof.
       replace (Mem.support m) with (Mem.support m1) by admit.
       econstructor; eauto.
     + econstructor; eauto.
+      eapply borrow_check_fpg_vals_inv_empty. eauto.
       
   - admit.
   - admit.
@@ -1076,12 +1091,13 @@ Proof.
     exploit get_owner_footprint_map_loc; eauto.
     intros (b & ofs & GLOC).
     exploit (@borrow_check_inv_move ame); eauto.
-    econstructor. instantiate (1 := typeof p). admit. (* wt_place
+    instantiate (1 := nil).  admit.
+    (* econstructor. instantiate (1 := typeof p). admit. (* wt_place *)
     implies wt_path *)
-    intros (BOR_INV1 & WTFP1 & WTFPM1).
+    intros BOR_INV1. (* & WTFP1 & WTFPM1). *)
     exploit (@borrow_check_inv_drop ame); eauto.
     instantiate (1 := O). simpl.
-    intros (BOR_INV2 & WTFP2 & WTFPM2).
+    intros BOR_INV2. (* & WTFP2 & WTFPM2). *)
     eapply borrow_check_fpg_vals_inv_empty in BOR_INV2.
     
 

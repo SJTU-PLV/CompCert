@@ -182,8 +182,55 @@ Definition borrow_check_views_inv (fpg: fp_graph) : Prop :=
     mutable_path ph fpg = OK true ->
     alias_graph_views_inv fpg ph vs tgt.
 
-(** Type invariants: the reference type must be equal to the type it
-points to *)
+(** Location stored in fp_ref is equal to the address of its point-to
+owner path *)
+
+Section FPM_ENV.
+
+Variable fpm: fp_map.
+
+(* We define a new field_offset which returns the starting offset of a
+field that does not consider the alignment. *)
+
+
+Inductive fp_ref_loc_wf_field (P: footprint -> Prop): ffpty -> Prop :=
+| fp_ref_loc_wf_field_intro: forall fid base fofs ffp
+    (WF_FIELD: P ffp),
+    fp_ref_loc_wf_field P (fid, ((base, fofs), ffp)).
+
+Inductive fp_ref_obj_exposed_wf (P: footprint -> Prop): (ident * (block * Z * type * footprint)) -> Prop :=
+| fp_ref_obj_exposed_wf_intro: forall fid b lo ty ffp
+    (WTFP: P ffp),
+    fp_ref_obj_exposed_wf P (fid, ((b, lo), ty, ffp)).
+
+Inductive fp_ref_loc_wf : footprint -> Prop :=
+| fp_uninit_wf sz al: fp_ref_loc_wf (fp_uninit sz al)
+| fp_scalar_wf chunk v: fp_ref_loc_wf (fp_scalar chunk v)
+| fp_struct_wf: forall id fpl
+    (MATCH: Forall (fp_ref_loc_wf_field fp_ref_loc_wf) fpl),
+    fp_ref_loc_wf (fp_struct id fpl)        
+| fp_enum_wf: forall id ffp fid fofs tag
+    (WF: fp_ref_loc_wf ffp),
+    fp_ref_loc_wf (fp_enum id tag fid fofs ffp)
+| fp_ref_some_wf: forall ph b ofs fp vs mut 
+    (GLOC: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp))
+    (** TODO: we need to show that all path in vs are valid in fpm *),
+    fp_ref_loc_wf (fp_ref mut b ofs (Some ph) vs)
+| fp_ref_none_wf: forall b ofs vs mut,
+    fp_ref_loc_wf (fp_ref mut b ofs None vs)
+| fp_object_wf: forall id obj exposed
+     (WF: Forall (fp_ref_obj_exposed_wf fp_ref_loc_wf) exposed),
+    fp_ref_loc_wf (fp_object id obj exposed).
+
+Definition fp_ref_loc_wf_list fpl :=
+  Forall fp_ref_loc_wf fpl.
+
+End FPM_ENV.
+
+Definition fp_ref_loc_wf_fpm (fpm: fp_map) : Prop :=
+  forall id b ofs r ty fp,
+    fpm ! id = Some (b, ofs, r, ty, fp) ->
+    fp_ref_loc_wf fpm fp.
 
 
 (* Definition fpg_ref_type_inv ce (fpg: fp_graph) : Prop := *)
@@ -204,10 +251,15 @@ the expression and fpm to compute the address.  *)
 
 
 (* The invariant established and preserved by the borrow checking *)
-Record borrow_check_inv (fpg: fp_graph) : Prop :=
-  { borrowck_views_inv: borrow_check_views_inv fpg; }.
-    (* borrowck_fpg_ref_type_inv: fpg_ref_type_inv ce fpm; *)
-    (* borrowck_fpm_ref_loc_inv: fpm_ref_loc_inv fpm fpm; }. *)
+Record borrow_check_inv (fpm: fp_map) : Prop :=
+  { borrowck_views_inv: borrow_check_views_inv (fpm_to_fpg fpm);
+    (** One alternative is to encode the location invariant of fp_ref
+    into views invariant: for all reachable path, if we can compute
+    its reached memory location, then this location must be equal to
+    the owner location? One (big) problem is that get_owner_path is
+    defined on fp_graph instead of fp_map, we cannot compute the
+    target location of arbitary path? *)
+    borrowck_fp_ref_loc_inv: fp_ref_loc_wf_fpm fpm; }.
 
 
 (* Useful in the proof to store the evaluated value in a fresh temp *)
@@ -219,13 +271,20 @@ Definition fresh_PTree_idents {A: Type} (m: PTree.t A) (n: nat) : list ident :=
   let fresh_id := fresh_PTree_ident m in
   npos n fresh_id.
 
-Definition borrow_check_fpg_vals_inv (fpg: fp_graph) (vl: list footprint) : Prop :=
-  let idl := fresh_PTree_idents fpg (length vl) in
-  let fpg1 := PTree_Properties.of_list ((PTree.elements fpg) ++ (combine idl vl)) in
-  borrow_check_inv fpg.
+(* We need to establish invariant for some intermediate state which
+contains some computed values (e.g., creating a reference) *)
+Record borrow_check_inv_snapshot (fpm: fp_map) (fpg: fp_graph) (fpl: list footprint) : Prop :=
+  { borrowck_views_inv_snapshot: borrow_check_views_inv fpg;
+    borrowck_fp_ref_loc_inv_snapshot: fp_ref_loc_wf_fpm fpm; 
+    borrowck_fpl_wf: fp_ref_loc_wf_list fpm fpl}.
+
+Definition borrow_check_fpm_vals_inv (fpm: fp_map) (vl: list footprint) : Prop :=
+  let idl := fresh_PTree_idents fpm (length vl) in
+  let fpg1 := PTree_Properties.of_list ((PTree.elements (fpm_to_fpg fpm)) ++ (combine idl vl)) in
+  borrow_check_inv_snapshot fpm fpg1 vl.
 
 Lemma borrow_check_fpg_vals_inv_empty: forall fpm,
-    borrow_check_fpg_vals_inv fpm nil ->
+    borrow_check_fpm_vals_inv fpm nil ->
     borrow_check_inv fpm.
 Admitted.
 
@@ -237,7 +296,7 @@ Definition fpm_to_tenv (fpm: fp_map) : typenv :=
 Section COMP_ENV.
 
 Variable ce: composite_env.
-Variable fpm: fp_map.
+Variable te: typenv.
 (** Move it to Rusttypes.v  *)
 
 (* We define a new field_offset which returns the starting offset of a
@@ -297,13 +356,17 @@ callee. In a well-formed footprint/fp_map, it should not appear. *)
     (* It is used to make sure that dropping any location within a
     block does not cause overflow *)
     wt_footprint (Tbox ty) (fp_box b fp)
-| wt_fp_ref_some: forall ty b ofs ph org mut vs fp pty
-    (** [ty] is equal to the type in [ph] *)
-    (WTPH: wt_path ce (fpm_to_tenv fpm) ph = OK pty)
-    (TYEQ: type_eq_except_origins ty pty = true)
-    (** The memory location stored in this reference is equal to the
-    location of [ph] *)
-    (LOCEQ: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp)),    
+(* | wt_fp_ref_some: forall ty b ofs ph org mut vs fp pty *)
+(*     (** [ty] is equal to the type in [ph] *) *)
+(*     (WTPH: wt_path ce (fpm_to_tenv fpm) ph = OK pty) *)
+(*     (TYEQ: type_eq_except_origins ty pty = true) *)
+(*     (** The memory location stored in this reference is equal to the *)
+(*     location of [ph] *) *)
+(*     (LOCEQ: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp)),     *)
+(*     wt_footprint (Treference org mut ty) (fp_ref mut b ofs (Some ph) vs) *)
+| wt_fp_ref_some: forall ty b ofs org mut vs ph pty
+    (WTPH: wt_path ce te ph = OK pty)
+    (TYEQ: type_eq_except_origins ty pty = true),
     wt_footprint (Treference org mut ty) (fp_ref mut b ofs (Some ph) vs)
 | wt_fp_ref_none: forall ty b ofs org mut vs,
     wt_footprint (Treference org mut ty) (fp_ref mut b ofs None vs)
@@ -324,7 +387,7 @@ End COMP_ENV.
 Definition wt_fpm ce (fpm: fp_map) : Prop :=
   forall id b ofs r ty fp,
     fpm ! id = Some (b, ofs, r, ty, fp) ->
-    wt_footprint ce fpm ty fp.
+    wt_footprint ce (fpm_to_tenv fpm) ty fp.
 
 
 (** Properties of get/set footprint map  *)
@@ -332,10 +395,15 @@ Lemma get_owner_loc_footprint_map_wt ce: forall phl id fpm b ofs fp,
     get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, fp) ->
     wt_fpm ce fpm ->
     exists ty, wt_path ce (fpm_to_tenv fpm) (id, phl) = OK ty
-          /\ wt_footprint ce fpm ty fp
+          /\ wt_footprint ce (fpm_to_tenv fpm) ty fp
           /\ (alignof ce ty | ofs).
 Admitted.
 
+Lemma get_owner_loc_footprint_map_fp_ref_wf: forall phl id fpm b ofs fp,
+    get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, fp) ->
+    fp_ref_loc_wf_fpm fpm ->
+    fp_ref_loc_wf fpm fp.
+Admitted.
 
 
 Lemma get_owner_path_map_inv: forall id phl (fpg: fp_graph) ph vs,
@@ -409,7 +477,6 @@ Inductive borrowck_inv_cont: cont -> Prop :=
     borrowck_inv_cont (Kloop s k)
 | borrowck_inv_cont_Kcall: forall k fpm inout_paths substs p f
     (CONT: borrowck_inv_cont k)
-    (WTFPM: wt_fpm ce fpm)
     (* We may require some invariant about that all views in
     inout_paths must cover all reachable path of the inout_path in
     fpm?  *)
@@ -419,17 +486,15 @@ Inductive borrowck_inv_cont: cont -> Prop :=
 
 Inductive borrowck_inv : state -> Prop :=
 | borrowck_inv_regular_states: forall f s k substs fpm sup
-    (WTFPM: wt_fpm ce fpm)
     (BOR_INV: borrow_check_inv fpm)
     (CONT: borrowck_inv_cont k),
     borrowck_inv (State f s k substs fpm sup)
 | borrowck_inv_callstates: forall fid fpl inout_fpm sup k fd orgs org_rels tyargs tyres cconv
     (FINDF: ge.(genv_defmap) ! fid = Some (Gfun fd))
     (TYF: type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv)
-    (WTFPM: wt_fpm ce inout_fpm)
-    (BOR_INV: borrow_check_fpg_vals_inv inout_fpm fpl)
-    (CONT: borrowck_inv_cont k)
-    (WTFP: list_forall2 (wt_footprint ce inout_fpm) (type_list_of_typelist tyargs) fpl),
+    (BOR_INV: borrow_check_fpm_vals_inv inout_fpm fpl)
+    (CONT: borrowck_inv_cont k),
+    (* (WTFP: list_forall2 (wt_footprint ce (fpm_to_tenv inout_fpm)) (type_list_of_typelist tyargs) fpl), *)
     borrowck_inv (Callstate fid fpl inout_fpm sup k)
 | borrowck_inv_returnstates: forall rfp inout_fpm sup k rety
     (* The regions in the return type computed from cont are different
@@ -437,9 +502,8 @@ Inductive borrowck_inv : state -> Prop :=
     preservation. It is only related to proving the
     over-approximation? *)
     (RETY: typeof_cont_call (rs_sig_res sg) k = rety)
-    (WTFP: wt_footprint ce inout_fpm rety rfp)
-    (WTFPM: wt_fpm ce inout_fpm)
-    (BOR_INV: borrow_check_fpg_vals_inv inout_fpm [rfp])
+    (* (WTFP: wt_footprint ce (fpm_to_tenv inout_fpm) rety rfp) *)
+    (BOR_INV: borrow_check_fpm_vals_inv inout_fpm [rfp])
     (CONT: borrowck_inv_cont k),
     borrowck_inv (Returnstate rfp inout_fpm sup k).
 
@@ -476,51 +540,51 @@ Definition dummy_origin : ident := 1%positive.
 (* Deep access of a path, which creates a temporary reference. This
 reference can be seen as a normal reference, or it can be used to
 extract the point-to footprint to act as a move operation. *)
-Lemma borrow_check_inv_deep_access: forall (fpm1 fpm2: fp_map) fpl phl id mut ty tyl vs tgt b ofs fp,
-    borrow_check_fpg_vals_inv fpm1 fpl ->
-    wt_fpm ce fpm1 ->
-    wt_footprint_list ce fpm1 tyl fpl ->
-    wt_path ce (fpm_to_tenv fpm1) (id, phl) = OK ty ->
+Lemma borrow_check_inv_deep_access: forall (fpm1 fpm2: fp_map) fpl phl id mut vs tgt b ofs fp,
+    borrow_check_fpm_vals_inv fpm1 fpl ->
+    (* wt_fpm ce fpm1 -> *)
+    (* wt_footprint_list ce fpm1 tyl fpl -> *)
+    (* wt_path ce (fpm_to_tenv fpm1) (id, phl) = OK ty -> *)
     get_owner_path_map (id, phl) fpm1 = OK (tgt, vs) ->
     get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp) ->
     fpm2 = invalidate_conflict_ref_fpm (id, phl) BorrowCheckDomain.Adeep fpm1 ->
-    borrow_check_fpg_vals_inv fpm2 ((fp_ref mut b ofs (Some tgt) vs) :: fpl)
-    /\ wt_footprint_list ce fpm2 ((Treference dummy_origin mut ty) :: tyl) ((fp_ref mut b ofs (Some tgt) vs) :: fpl)
-    /\ wt_fpm ce fpm2.
+    borrow_check_fpm_vals_inv fpm2 ((fp_ref mut b ofs (Some tgt) vs) :: fpl).
+    (* /\ wt_footprint_list ce fpm2 ((Treference dummy_origin mut ty) :: tyl) ((fp_ref mut b ofs (Some tgt) vs) :: fpl) *)
+    (* /\ wt_fpm ce fpm2. *)
 Admitted.
 
 (* Move out the footprint pointed by the fp_ref in the temporary
 values and then use this footprint to replace the fp_ref to simulate
 the move operation.  *)
-Lemma borrow_check_inv_replace_move: forall (fpm1 fpm2: fp_map) fpl ty tyl vs tgt b ofs fp r,
-    borrow_check_fpg_vals_inv fpm1 ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) ->
-    wt_fpm ce fpm1 ->
-    wt_footprint_list ce fpm1 ((Treference r Mutable ty) :: tyl) ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) ->
+Lemma borrow_check_inv_replace_move: forall (fpm1 fpm2: fp_map) fpl vs tgt b ofs fp,
+    borrow_check_fpm_vals_inv fpm1 ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) ->
+    (* wt_fpm ce fpm1 -> *)
+    (* wt_footprint_list ce fpm1 ((Treference r Mutable ty) :: tyl) ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) -> *)
     get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp) ->
     clear_footprint_map ce tgt fpm1 = OK fpm2 ->
-    borrow_check_fpg_vals_inv fpm2 (fp :: fpl)
-    /\ wt_footprint_list ce fpm2 (ty :: tyl) (fp :: fpl)
-    /\ wt_fpm ce fpm2.
+    borrow_check_fpm_vals_inv fpm2 (fp :: fpl).
+    (* /\ wt_footprint_list ce fpm2 (ty :: tyl) (fp :: fpl) *)
+    (* /\ wt_fpm ce fpm2. *)
 Admitted.
 
 (* The borrow check invariant preserves when we drop any of the
 temporary footprint value. *)
-Lemma borrow_check_inv_drop: forall n (fpm: fp_map) fpl tyl,
-    borrow_check_fpg_vals_inv fpm fpl ->
-    wt_fpm ce fpm ->
-    wt_footprint_list ce fpm tyl fpl ->
-    borrow_check_fpg_vals_inv fpm (list_delete n fpl)
-    /\ wt_footprint_list ce fpm (list_delete n tyl) (list_delete n fpl)
-    /\ wt_fpm ce fpm.
+Lemma borrow_check_inv_drop: forall n (fpm: fp_map) fpl,
+    borrow_check_fpm_vals_inv fpm fpl ->
+    (* wt_fpm ce fpm -> *)
+    (* wt_footprint_list ce fpm tyl fpl -> *)
+    borrow_check_fpm_vals_inv fpm (list_delete n fpl).
+    (* /\ wt_footprint_list ce fpm (list_delete n tyl) (list_delete n fpl) *)
+    (* /\ wt_fpm ce fpm. *)
 Admitted.
 
 (* Moving out a footprint: proved by borrow_check_inv_deep_access and
 borrow_check_inv_replace_move *)
-Lemma borrow_check_inv_move: forall (fpm1 fpm2 fpm3: fp_map) fpl ty tyl tgt b ofs fp,
-    borrow_check_fpg_vals_inv fpm1 fpl ->
-    wt_fpm ce fpm1 ->
-    wt_footprint_list ce fpm1 tyl fpl ->
-    wt_path ce (fpm_to_tenv fpm1) tgt = OK ty ->
+Lemma borrow_check_inv_move: forall (fpm1 fpm2 fpm3: fp_map) fpl tgt b ofs fp,
+    borrow_check_fpm_vals_inv fpm1 fpl ->
+    (* wt_fpm ce fpm1 -> *)
+    (* wt_footprint_list ce fpm1 tyl fpl -> *)
+    (* wt_path ce (fpm_to_tenv fpm1) tgt = OK ty -> *)
     (* In a move operastion, we first do deep access (simulate
     creating a reference) and then move out the footprint after the
     invalidation process. But note that in
@@ -530,9 +594,9 @@ Lemma borrow_check_inv_move: forall (fpm1 fpm2 fpm3: fp_map) fpl ty tyl tgt b of
     fpm2 = invalidate_conflict_ref_fpm tgt BorrowCheckDomain.Adeep fpm1 ->
     get_owner_loc_footprint_map tgt fpm2 = OK (b, ofs, fp) ->
     clear_footprint_map ce tgt fpm2 = OK fpm3 ->
-    borrow_check_fpg_vals_inv fpm3 (fp :: fpl)
-    /\ wt_footprint_list ce fpm3 (ty :: tyl) (fp :: fpl)
-    /\ wt_fpm ce fpm3.
+    borrow_check_fpm_vals_inv fpm3 (fp :: fpl).
+    (* /\ wt_footprint_list ce fpm3 (ty :: tyl) (fp :: fpl) *)
+    (* /\ wt_fpm ce fpm3. *)
 Proof.
   intros. subst.
   destruct tgt as (tid & tphl).
@@ -544,7 +608,7 @@ Proof.
   intros GPH.
   exploit borrow_check_inv_deep_access; eauto.
   instantiate (1 := Mutable).
-  intros (B1 & B2 & B3).  
+  intros B1.  
   eapply borrow_check_inv_replace_move; eauto. 
 Qed.  
   
@@ -555,33 +619,33 @@ set the footprint of this path to fp_uninit othewise the invariant may
 be broken? Because when we set fp_uninit to some path, we should
 either invalidate the path point to the reachable path of this to-set
 path or kill the loans related to those reachable path? *)
-Lemma borrow_check_inv_shallow_write: forall (fpm1 fpm2 fpm3 fpm4: fp_map) id phl fpl tyl vs tgt,
-    borrow_check_fpg_vals_inv fpm1 fpl ->
-    wt_footprint_list ce fpm1 tyl fpl ->
-    wt_fpm ce fpm1 ->
+Lemma borrow_check_inv_shallow_write: forall (fpm1 fpm2 fpm3 fpm4: fp_map) id phl fpl vs tgt,
+    borrow_check_fpm_vals_inv fpm1 fpl ->
+    (* wt_footprint_list ce fpm1 tyl fpl -> *)
+    (* wt_fpm ce fpm1 -> *)
     get_owner_path_map (id, phl) fpm1 = OK (tgt, vs) ->
     check_path_is_dropped fpm1 tgt = OK true ->
     fpm2 = invalidate_conflict_ref_fpm (id, phl) BorrowCheckDomain.Ashallow fpm1 ->
     clear_footprint_map ce tgt fpm2 = OK fpm3 ->
     fpm4 = kill_paths_ref_fpm vs fpm3 ->
-    borrow_check_fpg_vals_inv fpm4 (map (kill_paths_ref vs) fpl)
-    /\ wt_footprint_list ce fpm4 tyl (map (kill_paths_ref vs) fpl)
-    /\ wt_fpm ce fpm4.
+    borrow_check_fpm_vals_inv fpm4 (map (kill_paths_ref vs) fpl).
+    (* /\ wt_footprint_list ce fpm4 tyl (map (kill_paths_ref vs) fpl) *)
+    (* /\ wt_fpm ce fpm4. *)
 Admitted.
 
 (* We can move the footprint from temporary variables to a path whose
 footprint is fp_emp or has been cleared by clear_footprint_map, and
 the invariant preserves. *)
-Lemma borrow_check_inv_set_fp: forall (fpm1 fpm2: fp_map) fpl ty tyl tgt fp,
-    borrow_check_fpg_vals_inv fpm1 (fp :: fpl) ->
-    wt_fpm ce fpm1 ->    
-    wt_footprint_list ce fpm1 (ty :: tyl) (fp :: fpl) ->
+Lemma borrow_check_inv_set_fp: forall (fpm1 fpm2: fp_map) fpl tgt fp,
+    borrow_check_fpm_vals_inv fpm1 (fp :: fpl) ->
+    (* wt_fpm ce fpm1 ->     *)
+    (* wt_footprint_list ce fpm1 (ty :: tyl) (fp :: fpl) -> *)
     check_path_is_dropped fpm1 tgt = OK true ->
     set_footprint_map tgt fp fpm1 = OK fpm2 ->
-    wt_path ce (fpm_to_tenv fpm1) tgt = OK ty ->
-    borrow_check_fpg_vals_inv fpm2 fpl
-    /\ wt_footprint_list ce fpm2 tyl fpl
-    /\ wt_fpm ce fpm2.
+    (* wt_path ce (fpm_to_tenv fpm1) tgt = OK ty -> *)
+    borrow_check_fpm_vals_inv fpm2 fpl.
+    (* /\ wt_footprint_list ce fpm2 tyl fpl *)
+    (* /\ wt_fpm ce fpm2. *)
 Admitted.
 
 (* moving from a place preserves the borrow checking invariant
@@ -589,18 +653,18 @@ under the successful checking. But what is the effect of checking
 for pure expr? *)
 Lemma eval_expr_preserve_borchk_inv: forall (fpm1 fpm2: fp_map) e vfp
     (INV: borrow_check_inv fpm1)
-    (WTFPM: wt_fpm ce fpm1)
-    (WTEXPR: wt_expr (fpm_to_env fpm1) ce e)
+    (* (WTFPM: wt_fpm ce fpm1) *)
+    (* (WTEXPR: wt_expr (fpm_to_env fpm1) ce e) *)
     (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2)),
-    borrow_check_fpg_vals_inv fpm2 [vfp]
-    /\ wt_fpm ce fpm2
-    /\ wt_footprint ce fpm2 (typeof e) vfp.
+    borrow_check_fpm_vals_inv fpm2 [vfp].
+    (* /\ wt_fpm ce fpm2 *)
+    (* /\ wt_footprint ce fpm2 (typeof e) vfp. *)
 Proof.
   destruct e; intros.
   (* moveplace *)
   - simpl in EVAL.
     monadInv EVAL. destruct x as (b & ofs).
-    inv WTEXPR. 
+    (* inv WTEXPR.  *)
 Admitted.
 
 (** Misc (TODO: we should categorize these lemmas to structure the

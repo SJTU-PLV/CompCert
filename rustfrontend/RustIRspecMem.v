@@ -1261,8 +1261,8 @@ Lemma store_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs 
     (AL: (alignof ce ty | ofs))
     (* (MAT1: fp_match_chunk pfp chunk) *)
     (* (MAT2: fp_match_chunk vfp chunk),     *)
-    (WTFP1: wt_footprint ce fpm ty pfp)
-    (WTFP2: wt_footprint ce fpm ty vfp)
+    (WTFP1: wt_footprint ce (fpm_to_tenv fpm) ty pfp)
+    (WTFP2: wt_footprint ce (fpm_to_tenv fpm) ty vfp)
     (BYVAL: access_mode ty = Ctypes.By_value chunk),
     exists m1 fpm1 mass3,
       Mem.store chunk m b ofs v = Some m1
@@ -1306,8 +1306,8 @@ Lemma assign_loc_by_value_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pf
     (AL: (alignof ce ty | ofs))
     (* (MAT1: fp_match_chunk pfp chunk) *)
     (* (MAT2: fp_match_chunk vfp chunk),     *)
-    (WTFP1: wt_footprint ce fpm ty pfp)
-    (WTFP2: wt_footprint ce fpm ty vfp)
+    (WTFP1: wt_footprint ce (fpm_to_tenv fpm) ty pfp)
+    (WTFP2: wt_footprint ce (fpm_to_tenv fpm) ty vfp)
     (BYVAL: access_mode ty = Ctypes.By_value chunk),
     exists m1 fpm1 mass3,
       assign_loc ce ty m b (Ptrofs.repr ofs) v m1
