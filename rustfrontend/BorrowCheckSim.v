@@ -844,6 +844,11 @@ Lemma invalidate_conflict_ref_fpm_env_eq: forall phl id (fpm: fp_map) am,
     (fpm_to_env fpm) = (fpm_to_env (invalidate_conflict_ref_fpm (id, phl) am fpm)).
 Admitted.
 
+Lemma invalidate_conflict_ref_fpm_tenv_eq: forall phl id (fpm: fp_map) am,
+    (fpm_to_tenv fpm) = (fpm_to_tenv (invalidate_conflict_ref_fpm (id, phl) am fpm)).
+Admitted.
+
+
 Lemma invalidate_conflict_ref_fpm_coherent_eq: forall phl id (fpm: fp_map) am mp,
     coherent_fpm ce fpm mp ->
     coherent_fpm ce (invalidate_conflict_ref_fpm (id, phl) am fpm) mp.
@@ -860,6 +865,7 @@ Hint Resolve
   invalidate_conflict_ref_fpm_coherent_unchanged
   invalidate_conflict_ref_fpm_wt_fpm_unchanged
   invalidate_conflict_ref_fpm_env_eq
+  invalidate_conflict_ref_fpm_tenv_eq
   invalidate_conflict_ref_fpm_coherent_eq
   invalidate_conflict_ref_fpm_check_path_is_dropped
   invalidate_conflict_ref_fpm_fp_ref_wf_unchanged: invalidate_fp_ref.
@@ -1099,7 +1105,92 @@ Proof.
     instantiate (1 := O). simpl.
     intros BOR_INV2. (* & WTFP2 & WTFPM2). *)
     eapply borrow_check_fpg_vals_inv_empty in BOR_INV2.
+    (* Use type information to do case analysis *)
+    assert (WTFPM1: wt_fpm ce (invalidate_conflict_ref_fpm (pid, phl)
+            BorrowCheckDomain.Adeep fpm1)) by admit.
+    assert (DROP_TY: drop_type (typeof_place p) = true) by admit. (* It should be ensured by the syntatic type checking *)
+    exploit (@get_owner_loc_footprint_map_wt ame); eauto.
+    intros (pty & WTPH & WTFP & AL).
+    replace pty with (typeof_place p) in * by admit. (* wt_path and wt_place properties *)
+    destruct (typeof_place p) eqn: PTY; simpl in DROP_TY; try congruence.
     
+    (* Tbox *)
+    + inv WTFP; try congruence.
+        (* fp_uninit is impossible. It should be ruled out by Drop
+         elaboration *)
+      (* memory predicate after deep access *)
+      exploit (invalidate_conflict_ref_fpm_coherent_eq phl pid fpm1 BorrowCheckDomain.Adeep); eauto.
+      intros COH1.
+      (* eval_place *)
+      exploit (get_owner_path_map_eval_place); eauto. eapply MPRED.
+      1-4: eauto with invalidate_fp_ref. 
+      eapply invalidate_conflict_ref_fpm_fp_ref_wf_unchanged. eapply BOR_INV.
+      eapply get_owner_path_for_owner.
+      eapply get_owner_loc_footprint_map_eq. rewrite POP. eapply GLOC.
+      rewrite POP.
+      intros (b1 & ofs1 & fp1 & A1 & A2).    
+      rewrite GLOC in A1. inv A1.
+      (* evaluate the address of dropped place *)
+      exploit (@get_owner_loc_footprint_map_sem_wt_split ame); eauto.
+      intros (mp1 & mp2 & B1 & B2).
+      inv B1.
+      (* memory predicate after drop: drop is like a move operation *)
+      exploit (@get_owner_loc_footprint_map_clear_coherent); eauto.
+      econstructor. eauto. reflexivity.
+      intros (mp3 & COH2 & MPIMP).
+      rewrite EQV in B2. 
+      generalize MPRED as MPRED1. intros.
+      rewrite B2 in MPRED.
+      exploit load_rule. eapply MPRED. intros (?v & C1 & C2). subst.
+      (* evaluate the free operation *)
+      assert (FREE: exists m1, extcall_free_sem tge [Vptr b0 Ptrofs.zero] m E0 Vundef m1).
+      { unfold box_pred in *.
+        (* range_perm of fp *)
+        exploit (@sem_wt_loc_range_perm ame). eapply WT. eauto.
+        intros FP_RANGE. rewrite FP_RANGE in MPRED.
+        replace (sizeof_footprint ce fp) with (sizeof ce t) in * by admit.
+        (* load the size of the deallocated block *)
+        exploit load_rule_neg. eapply MPRED. intros (?v & D1 & D2). subst.
+        (** A bit tricky here: we use MPIMP and MPRED1 to prove the
+        free operation because mp3 is the predicate after
+        clear_footprint *)
+        rewrite MPIMP in MPRED1.
+        rewrite FP_RANGE in MPRED1.        
+        (** free operation : TODO the free_rules only support positive
+        location for now.  *)        
+        assert (RANGE_PRED: m |= range b0 (- size_chunk Mptr) (sizeof ce t) ** mp3 ** FMP).
+        admit.
+        edestruct Mem.range_perm_free as (m1 & FREE).
+        red. intros. eapply RANGE_PRED. eauto.
+        exists m1. 
+        econstructor. 
+        rewrite Z.sub_0_l. eauto.
+        all: rewrite Ptrofs.unsigned_repr.
+        admit. (* sizeof positive *)
+        admit. (* sizeof range *)
+        rewrite Z.add_0_l. rewrite Z.sub_0_l. 
+        eauto. 
+        admit. (* sizeof range *) }
+      destruct FREE as (m1 & FREE).  
+      (* To prove this, we need a free_rule which supports negative
+      location *)
+      assert (MPRED2: m1 |= mp3 ** FMP) by admit.
+      (** All operations on fpm do not change the local env *)
+      assert (ENVEQ1: fpm_to_env fpm1 = fpm_to_env fpm3) by admit.
+      eexists. do 3 (try apply conj).
+      * econstructor.
+        eapply step_drop_box. 
+        erewrite invalidate_conflict_ref_fpm_env_eq.
+        eauto. eauto.
+        econstructor. reflexivity. simpl. rewrite Ptrofs.unsigned_repr.
+        eauto. admit.           (* range proof *)
+        eauto. eapply star_refl. auto.
+      * rewrite ENVEQ1.
+        replace (Mem.support m) with (Mem.support m1) by admit.
+        econstructor; eauto.
+      * econstructor; eauto.
+
+    + 
 
 End BORROW_CHECK.
 

@@ -195,13 +195,13 @@ say this location is still sem_wt_loc *)
 | sem_wt_ref: forall b1 b2 ofs1 ofs2 ph mp mut vs
     (EQV: massert_eqv mp (hasvalue Mptr b1 ofs1 (Vptr b2 (Ptrofs.repr ofs2)))),
     sem_wt_loc (fp_ref mut b2 ofs2 ph vs) b1 ofs1 mp
-| sem_wt_box: forall b ofs fp b1 nextmp mp mp1
+| sem_wt_box: forall b ofs fp b1 nextmp mp1
     (* (WTVAL: sem_wt_val (fp_box b1 sz1 fp) v mass), *)
     (* When this box pointer is not moved from (i.e., shallow_init is
     false), its point-to location is freeable and sem_wt_loc *)
-    (FREE: massert_eqv mp (box_pred fp b1 nextmp))
+    (* (EQV: massert_eqv mp (box_pred fp b1 nextmp)) *)
     (WTLOC: sem_wt_loc fp b1 0 nextmp)
-    (EQV: massert_eqv mp1 ((hasvalue Mptr b ofs (Vptr b1 Ptrofs.zero)) ** mp)),
+    (EQV: massert_eqv mp1 ((hasvalue Mptr b ofs (Vptr b1 Ptrofs.zero)) ** (box_pred fp b1 nextmp))),
     sem_wt_loc (fp_box b1 fp) b ofs mp1
 
 | sem_wt_struct: forall b ofs fpl id mass mp
@@ -445,7 +445,7 @@ Lemma sem_wt_loc_unique ce: forall fp mp1 mp2 b ofs
     massert_eqv mp1 mp2.
 Proof.
   induction fp using strong_footprint_ind; intros; inv WTLOC1; inv WTLOC2; try (rewrite EQV; rewrite EQV0; reflexivity).
-  - rewrite EQV, EQV0. rewrite FREE, FREE0. 
+  - rewrite EQV, EQV0. 
     exploit IHfp. eauto. eapply WTLOC. intros. unfold box_pred.
     rewrite H. reflexivity. 
   - rewrite EQV, EQV0.
@@ -663,6 +663,21 @@ Proof.
   eapply Mem.perm_storebytes_1; eauto. eapply H; eauto.
 Qed.
 
+
+Lemma free_rule: forall chunk m b ofs (spec: Values.val -> Prop) P,
+    m |= contains chunk b ofs spec ** P ->
+    exists m', Mem.free m b ofs (ofs + size_chunk chunk) = Some m'
+          /\ m' |= P.
+Proof.
+  intros until P. intros MP.
+  edestruct Mem.range_perm_free as (m1 & FREE1).
+  eapply MP. exists m1. split; auto.
+  eapply m_invar. eapply MP.
+  eapply Mem.free_unchanged_on. eauto.
+  intros. intro.
+  eapply MP; eauto.
+  simpl. auto.
+Qed.
 
 (* The opposite direction is not correct as we cannot prove Q and R
 are disjoint *)
