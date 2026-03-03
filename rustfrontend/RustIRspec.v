@@ -1434,7 +1434,13 @@ Definition eval_assign (fpm1: fp_map) (p: place) (e: expr) : res (path * footpri
   do (vfp, fpm2) <- eval_expr ge fpm1 e;
   do (ph_vs, fpm3) <- before_write_place fpm2 p;
   let (ph, vs) := ph_vs in
-  OK (ph, (kill_paths_ref vs vfp), fpm3).
+  (* We also need to do invalidation on vfp? I think we cannot create
+  some reference which borrows prefix of shallow children parts of the
+  written place ,e.g., [*a = &mut a] or [a.f = &mut a]. But anyway,
+  the static borrow checking would check this situation, therefore we
+  need to do invalidation on the evaluated footprint. *)
+  let vfp1 := invalidate_conflict_ref p Ashallow vfp in
+  OK (ph, (kill_paths_ref vs vfp1), fpm3).
 
 
 Inductive step : state -> trace -> state -> Prop :=

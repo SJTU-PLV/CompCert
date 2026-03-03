@@ -848,6 +848,10 @@ Lemma invalidate_conflict_ref_fpm_tenv_eq: forall phl id (fpm: fp_map) am,
     (fpm_to_tenv fpm) = (fpm_to_tenv (invalidate_conflict_ref_fpm (id, phl) am fpm)).
 Admitted.
 
+Lemma invalidate_conflict_ref_sem_wt_val_eq: forall phl id (fp: footprint) v am mp,
+    sem_wt_val ce fp v mp ->
+    sem_wt_val ce (invalidate_conflict_ref (id, phl) am fp) v mp.
+Admitted.   
 
 Lemma invalidate_conflict_ref_fpm_coherent_eq: forall phl id (fpm: fp_map) am mp,
     coherent_fpm ce fpm mp ->
@@ -866,6 +870,7 @@ Hint Resolve
   invalidate_conflict_ref_fpm_wt_fpm_unchanged
   invalidate_conflict_ref_fpm_env_eq
   invalidate_conflict_ref_fpm_tenv_eq
+  invalidate_conflict_ref_sem_wt_val_eq
   invalidate_conflict_ref_fpm_coherent_eq
   invalidate_conflict_ref_fpm_check_path_is_dropped
   invalidate_conflict_ref_fpm_fp_ref_wf_unchanged: invalidate_fp_ref.
@@ -1018,6 +1023,7 @@ Proof.
     (* econstructor. eauto. econstructor. *)
     intros BORCK_INV2.  (* & WTFP2 & WTFPM2). *)
     (* set footprint to the assginee preserves the invariant *)
+    simpl in BORCK_INV2.
     exploit (@borrow_check_inv_set_fp ame); eauto.
     eapply kill_paths_ref_fpm_preserve_is_dropped; eauto.
     eapply clear_footprint_map_is_dropped; eauto.
@@ -1032,8 +1038,10 @@ Proof.
     exploit (kill_paths_ref_coherent_fpm x3 vs). eapply COH2. 
     intros COH3.
     (* derive the predicate for the value *)
+    exploit (invalidate_conflict_ref_sem_wt_val_eq phl pid x tv BorrowCheckDomain.Ashallow); eauto.
+    intros WTVAL1.
     exploit kill_paths_ref_sem_wt_val; eauto. 
-    instantiate (1 := vs). intros WTVAL1.
+    instantiate (1 := vs). intros WTVAL2.
     (* evaluate the address of the assignee *)
     exploit (get_owner_path_map_eval_place p).
     eapply COH1. eapply MPRED1. 
@@ -1058,7 +1066,7 @@ Proof.
     preservation leamm *) admit.
     intros (ty & WTPH1 & WTFP4 & AL).
     exploit (@assign_loc_by_value_coherent_fpm ame). eapply COH3.
-    eapply WTVAL1. eauto.
+    eapply WTVAL2. eauto.
     eapply GPLOC1. eauto. eauto. 
     (** lots of work need to be done to prove ty = typeof e = typeof p
     where '=' represent type_eq_except_origins because the
@@ -1112,25 +1120,25 @@ Proof.
     exploit (@get_owner_loc_footprint_map_wt ame); eauto.
     intros (pty & WTPH & WTFP & AL).
     replace pty with (typeof_place p) in * by admit. (* wt_path and wt_place properties *)
+    (* memory predicate after deep access *)
+    exploit (invalidate_conflict_ref_fpm_coherent_eq phl pid fpm1 BorrowCheckDomain.Adeep); eauto.
+    intros COH1.
+    (* eval_place *)
+    exploit (get_owner_path_map_eval_place); eauto. eapply MPRED.
+    1-4: eauto with invalidate_fp_ref. 
+    eapply invalidate_conflict_ref_fpm_fp_ref_wf_unchanged. eapply BOR_INV.
+    eapply get_owner_path_for_owner.
+    eapply get_owner_loc_footprint_map_eq. rewrite POP. eapply GLOC.
+    rewrite POP.
+    intros (b1 & ofs1 & fp1 & A1 & A2).    
+    rewrite GLOC in A1. inv A1.
     destruct (typeof_place p) eqn: PTY; simpl in DROP_TY; try congruence.
-    
     (* Tbox *)
     + inv WTFP; try congruence.
         (* fp_uninit is impossible. It should be ruled out by Drop
          elaboration *)
-      (* memory predicate after deep access *)
-      exploit (invalidate_conflict_ref_fpm_coherent_eq phl pid fpm1 BorrowCheckDomain.Adeep); eauto.
-      intros COH1.
-      (* eval_place *)
-      exploit (get_owner_path_map_eval_place); eauto. eapply MPRED.
-      1-4: eauto with invalidate_fp_ref. 
-      eapply invalidate_conflict_ref_fpm_fp_ref_wf_unchanged. eapply BOR_INV.
-      eapply get_owner_path_for_owner.
-      eapply get_owner_loc_footprint_map_eq. rewrite POP. eapply GLOC.
-      rewrite POP.
-      intros (b1 & ofs1 & fp1 & A1 & A2).    
-      rewrite GLOC in A1. inv A1.
-      (* evaluate the address of dropped place *)
+      (* specific to drop(Box): evaluate the address of dropped memory
+      location *)
       exploit (@get_owner_loc_footprint_map_sem_wt_split ame); eauto.
       intros (mp1 & mp2 & B1 & B2).
       inv B1.
@@ -1143,7 +1151,7 @@ Proof.
       rewrite B2 in MPRED.
       exploit load_rule. eapply MPRED. intros (?v & C1 & C2). subst.
       (* evaluate the free operation *)
-      assert (FREE: exists m1, extcall_free_sem tge [Vptr b0 Ptrofs.zero] m E0 Vundef m1).
+      assert (FREE: exists m1, extcall_free_sem tge [Vptr b Ptrofs.zero] m E0 Vundef m1).
       { unfold box_pred in *.
         (* range_perm of fp *)
         exploit (@sem_wt_loc_range_perm ame). eapply WT. eauto.
@@ -1158,7 +1166,7 @@ Proof.
         rewrite FP_RANGE in MPRED1.        
         (** free operation : TODO the free_rules only support positive
         location for now.  *)        
-        assert (RANGE_PRED: m |= range b0 (- size_chunk Mptr) (sizeof ce t) ** mp3 ** FMP).
+        assert (RANGE_PRED: m |= range b (- size_chunk Mptr) (sizeof ce t) ** mp3 ** FMP).
         admit.
         edestruct Mem.range_perm_free as (m1 & FREE).
         red. intros. eapply RANGE_PRED. eauto.
@@ -1190,7 +1198,19 @@ Proof.
         econstructor; eauto.
       * econstructor; eauto.
 
-    + 
+    (* drop struct *)
+    + admit.
+    (* drop enum *)
+    + admit.
+
+  (* storagelive *)
+  - admit.
+  (* storagedead *)
+  - admit.
+  (* Scall *)
+  - 
+
+
 
 End BORROW_CHECK.
 

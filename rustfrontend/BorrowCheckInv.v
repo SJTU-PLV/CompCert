@@ -540,18 +540,26 @@ Definition dummy_origin : ident := 1%positive.
 (* Deep access of a path, which creates a temporary reference. This
 reference can be seen as a normal reference, or it can be used to
 extract the point-to footprint to act as a move operation. *)
-Lemma borrow_check_inv_deep_access: forall (fpm1 fpm2: fp_map) fpl phl id mut vs tgt b ofs fp,
-    borrow_check_fpm_vals_inv fpm1 fpl ->
+Lemma borrow_check_inv_deep_access: forall phl id (fpm1 fpm2: fp_map) fpl mut vs tgt b ofs fp
+    (BOR_INV: borrow_check_fpm_vals_inv fpm1 fpl)
     (* wt_fpm ce fpm1 -> *)
     (* wt_footprint_list ce fpm1 tyl fpl -> *)
     (* wt_path ce (fpm_to_tenv fpm1) (id, phl) = OK ty -> *)
-    get_owner_path_map (id, phl) fpm1 = OK (tgt, vs) ->
-    get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp) ->
-    fpm2 = invalidate_conflict_ref_fpm (id, phl) BorrowCheckDomain.Adeep fpm1 ->
-    borrow_check_fpm_vals_inv fpm2 ((fp_ref mut b ofs (Some tgt) vs) :: fpl).
+    (REACH: get_owner_path_map (id, phl) fpm1 = OK (tgt, vs))
+    (GET: get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp))
+    (INVALID: fpm2 = invalidate_conflict_ref_fpm (id, phl) BorrowCheckDomain.Adeep fpm1),
+    (** We also need to invalidate fpl because some reference in fpl
+    may be created by deeply accessing (id,phl)! This scenario is
+    ruled out by the static borrow checking! *)
+    borrow_check_fpm_vals_inv fpm2 ((fp_ref mut b ofs (Some tgt) vs) :: (map (invalidate_conflict_ref (id, phl) BorrowCheckDomain.Adeep) fpl)).
     (* /\ wt_footprint_list ce fpm2 ((Treference dummy_origin mut ty) :: tyl) ((fp_ref mut b ofs (Some tgt) vs) :: fpl) *)
     (* /\ wt_fpm ce fpm2. *)
-Admitted.
+Proof.
+  intros. econstructor.
+  inv BOR_INV.
+  (* We need to ignore how to prove the properties of using arbitary
+  fresh idents for temporary footprints *)
+Admitted.  
 
 (* Move out the footprint pointed by the fp_ref in the temporary
 values and then use this footprint to replace the fp_ref to simulate
@@ -594,7 +602,7 @@ Lemma borrow_check_inv_move: forall (fpm1 fpm2 fpm3: fp_map) fpl tgt b ofs fp,
     fpm2 = invalidate_conflict_ref_fpm tgt BorrowCheckDomain.Adeep fpm1 ->
     get_owner_loc_footprint_map tgt fpm2 = OK (b, ofs, fp) ->
     clear_footprint_map ce tgt fpm2 = OK fpm3 ->
-    borrow_check_fpm_vals_inv fpm3 (fp :: fpl).
+    borrow_check_fpm_vals_inv fpm3 (fp :: (map (invalidate_conflict_ref tgt BorrowCheckDomain.Adeep) fpl)).
     (* /\ wt_footprint_list ce fpm3 (ty :: tyl) (fp :: fpl) *)
     (* /\ wt_fpm ce fpm3. *)
 Proof.
@@ -628,7 +636,7 @@ Lemma borrow_check_inv_shallow_write: forall (fpm1 fpm2 fpm3 fpm4: fp_map) id ph
     fpm2 = invalidate_conflict_ref_fpm (id, phl) BorrowCheckDomain.Ashallow fpm1 ->
     clear_footprint_map ce tgt fpm2 = OK fpm3 ->
     fpm4 = kill_paths_ref_fpm vs fpm3 ->
-    borrow_check_fpm_vals_inv fpm4 (map (kill_paths_ref vs) fpl).
+    borrow_check_fpm_vals_inv fpm4 (map (kill_paths_ref vs) (map (invalidate_conflict_ref (id, phl) BorrowCheckDomain.Ashallow) fpl)).
     (* /\ wt_footprint_list ce fpm4 tyl (map (kill_paths_ref vs) fpl) *)
     (* /\ wt_fpm ce fpm4. *)
 Admitted.
