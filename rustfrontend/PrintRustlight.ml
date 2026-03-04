@@ -525,6 +525,27 @@ and pexpr p (prec, e) =
     fprintf p "%s" (extern_atom id)
   | Eunop(Oabsfloat, a1, _) ->
     fprintf p "__builtin_fabs(%a)" pexpr (2, a1)
+  | Eunop(Onotbool, a1, ty) ->
+    (* C 的逻辑非 `!x`：把 x 当作布尔值（0/NULL 为 false），结果是 0/1（通常是 int）。
+       Rust 的 `!` 在整数上是按位取反，会导致 `!0 == -1`，从而把 `(!x) != 0` 这类模式变成恒真，
+       进而引发死循环/越界（例如 chomp 的 get_value/next_data）。这里统一改为零值比较。 *)
+    let a1_ty = type_of_pexpr a1 in
+    let want_bool = is_bool_type ty in
+    let ty_name = name_rust_type ty in
+    let print_cond fmt =
+      if is_declared_ptr_type a1_ty || is_pointer_type a1_ty then
+        fprintf fmt "(%a).is_null()" pexpr (0, a1)
+      else if is_bool_type a1_ty then
+        fprintf fmt "!(%a)" pexpr (prec', a1)
+      else if is_float_type a1_ty then
+        fprintf fmt "((%a) == 0.0)" pexpr (0, a1)
+      else
+        fprintf fmt "((%a) == 0)" pexpr (0, a1)
+    in
+    if want_bool then
+      fprintf p "%t" print_cond
+    else
+      fprintf p "((%t) as %s)" print_cond ty_name
   | Eunop(op, a1, _) ->
     fprintf p "%s%a" (name_unop op) pexpr (prec', a1)
   | Ebinop(Oadd, a1, a2, ty) when is_pointer_type ty ->
