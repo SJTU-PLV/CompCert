@@ -39,9 +39,13 @@ Finally, you can then build the compiler as follows:
 ## Run the compiler
 The generated binary executable compiler is named `ccomp` in the main directory. A simple instruction of running the compiler is:
 ```
-./ccomp test.rs -o test
+./ccomp test.c -drustlight
 ```
-Here `test.rs` is the source file written in our `Rustsurface` language and `test` is the name of the target executable file. After the compilation, the compiler would generate `rust_compile.log` which contains the pretty-printed rust intermediate programs generated during the compilation.
+Here `test.c` is the source file of `C` language and augment of `drustlight` tell compiler to generate test.rs file. Then, you can run:
+```
+rustc test.rs -o test
+./test
+```
 
 ### Test the compiler
 
@@ -83,6 +87,10 @@ The structure of the test cases is explained [here](./rustexamples/compiler_test
   + Implementation: [Clightgen.v](./rustfrontend/Clightgen.v)
   + Verification: [Clightgenspec.v](./rustfrontend/Clightgenspec.v) and [Clightgenproof.v](./rustfrontend/Clightgenproof.v)
 * CompCertO backend: we utilize the CompCertO C compiler as the backend of our Rust compiler. The structure of the CompCertO is similar to the structure of CompCert. The version of CompCertO we use is based on the work of [Direct Refinement](https://github.com/SJTU-PLV/direct-refinement-popl24-artifact).
+* Clight2Rustlight:
+  + [Clight2Rustlight.v](clight2rustlight/Clight2Rustlight.v): the file that translate clight to rustlight
+  + [Rustsurface.ml](rustfrontend/PrintRustlight.ml): print rustlight in form of rust
+  + [ptr.rs&callback.rs](runtime/ptr.rs & runtime/callback.rs): runtime library
 
 **Simulation convention:**
 
@@ -93,6 +101,6 @@ The calling conventions adapted in the Rust interface: [RA.v](./driver/RA.v) and
 
 To see the statistics of the LOC of our development, use the following command:
 ```
-bash eval.sh
+python benchmark.py
 ```
 
