@@ -647,31 +647,30 @@ all the path in views are mutable path *)
 Definition conflict_view (ph: path) (am : access_mode_bor) (vs: views) : bool :=
   existsb (relevant_path ph am) vs.
 
-Fixpoint invalidate_conflict_ref (ph: path) (am : access_mode_bor) (fp: footprint) : footprint :=
+Fixpoint invalidate_conflict_ref (ph: path) (ak: access_kind) (am : access_mode_bor) (fp: footprint) : footprint :=
   match fp with
   | fp_ref mut b ofs (Some ph1) vs =>
-      if conflict_view ph am vs then
+    if conflict_access ak mut && conflict_view ph am vs then
         fp_ref mut b ofs None vs
       else
         fp_ref mut b ofs (Some ph1) vs
   | fp_struct id fpl =>
-      fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, invalidate_conflict_ref ph am ffp))) fpl)
+      fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, invalidate_conflict_ref ph ak am ffp))) fpl)
   | fp_enum id tag fid fofs fp1 =>
-      fp_enum id tag fid fofs (invalidate_conflict_ref ph am fp1)
+      fp_enum id tag fid fofs (invalidate_conflict_ref ph ak am fp1)
   | fp_box b fp1 =>
-      fp_box b (invalidate_conflict_ref ph am fp1)
+      fp_box b (invalidate_conflict_ref ph ak am fp1)
   | _ => fp
   end.
 
-Definition invalidate_conflict_ref_fpm (ph: path) (am : access_mode_bor) (fpm: fp_map) : fp_map :=
-  PTree.map1 (fun '(b, ofs, r, ty, fp) => (b, ofs, r, ty, invalidate_conflict_ref ph am fp)) fpm.
+Definition invalidate_conflict_ref_fpm (ph: path) (ak: access_kind) (am : access_mode_bor) (fpm: fp_map) : fp_map :=
+  PTree.map1 (fun '(b, ofs, r, ty, fp) => (b, ofs, r, ty, invalidate_conflict_ref ph ak am fp)) fpm.
 
-Fixpoint invalidate_conflict_ref_fpm_list (l: list path) (am : access_mode_bor) (fpm: fp_map) : fp_map :=
+Fixpoint invalidate_conflict_ref_fpm_list (l: list path) (ak: access_kind) (am : access_mode_bor) (fpm: fp_map) : fp_map :=
   match l with
   | nil => fpm
-
   | ph :: l1 =>
-      invalidate_conflict_ref_fpm_list l1 am (invalidate_conflict_ref_fpm ph am fpm)
+      invalidate_conflict_ref_fpm_list l1 ak am (invalidate_conflict_ref_fpm ph ak am fpm)
   end.
 
 (** Kill loans *)
@@ -1207,21 +1206,22 @@ Fixpoint eval_pexpr (fpm: fp_map) (pe: pexpr) : res (footprint * fp_map) :=
   | Eplace p ty =>
       do (ph, _) <- get_owner_path_map p fpm;
       do (_, fp) <- get_owner_loc_footprint_map ph fpm;
-      OK (fp, invalidate_conflict_ref_fpm p Adeep fpm)
+      OK (fp, invalidate_conflict_ref_fpm p ARead Adeep fpm)
   | Ecktag p fid =>
       do (ph, _) <- get_owner_path_map p fpm;
       do (_, fp) <- get_owner_loc_footprint_map ph fpm;
       match fp with
       | fp_enum _ _ fid1 _ _ =>
           (* Should we use Adeep or Ashallow? *)
-          OK (fp_scalar Mint8unsigned (Val.of_bool (ident_eq fid fid1)), invalidate_conflict_ref_fpm p Ashallow fpm)
+          OK (fp_scalar Mint8unsigned (Val.of_bool (ident_eq fid fid1)), invalidate_conflict_ref_fpm p ARead Ashallow fpm)
       | _ => Error nil
       end
   | Eref _ mut p _ =>
       do (ph, vs) <- get_owner_path_map p fpm;
       do (bofs, _) <- get_owner_loc_footprint_map ph fpm;
       let (b, ofs) := bofs in
-      OK (fp_ref mut b ofs (Some ph) vs, invalidate_conflict_ref_fpm p Adeep fpm)
+      let ak := match mut with | Mutable => AWrite | Immutable => ARead end in
+      OK (fp_ref mut b ofs (Some ph) vs, invalidate_conflict_ref_fpm p ak Adeep fpm)
   | _ => Error nil
   end.
 
@@ -1237,7 +1237,7 @@ Definition eval_expr (ce: composite_env) (fpm: fp_map) (e: expr) : res (footprin
       [fp]? Maybe in the static borrow checking, we can show that all
       reachable path of [p] is live so we cannot invalidate their
       fp_ref? No matter whether the fp_ref is reachable from [p]? *)
-      let fpm1 := invalidate_conflict_ref_fpm p Adeep fpm in
+      let fpm1 := invalidate_conflict_ref_fpm p AWrite Adeep fpm in
       (* Why do we get the location after invalidation? It does not
       matter? The only difference is the fp_ref in fp may be
       invalidated but the static borrow check should rule out this
@@ -1419,7 +1419,7 @@ Definition before_write_place (fpm1: fp_map) (p: place) : res (path * views * fp
     semantics. *)
   do is_dropped <- check_path_is_dropped fpm1 ph;
   if is_dropped then
-    let fpm2 := invalidate_conflict_ref_fpm p Ashallow fpm1 in  
+    let fpm2 := invalidate_conflict_ref_fpm p AWrite Ashallow fpm1 in  
     (* Before overwrite the target location, we should first set it to
     fp_uninit so that the original fp_ref in this location is removed
     and we can establish invariant before overwriting a new value *)
@@ -1439,7 +1439,7 @@ Definition eval_assign (fpm1: fp_map) (p: place) (e: expr) : res (path * footpri
   written place ,e.g., [*a = &mut a] or [a.f = &mut a]. But anyway,
   the static borrow checking would check this situation, therefore we
   need to do invalidation on the evaluated footprint. *)
-  let vfp1 := invalidate_conflict_ref p Ashallow vfp in
+  let vfp1 := invalidate_conflict_ref p AWrite Ashallow vfp in
   OK (ph, (kill_paths_ref vs vfp1), fpm3).
 
 
@@ -1478,7 +1478,7 @@ keeps the drop statement for the place that is init. *)
     reassignment. We should use [drop_and_replace( *p, v)] to perform
     drop on [*p]. *)
     (* (EVALP: get_owner_loc p fpm1 = OK (ph, vs)) *)
-    (INVP: invalidate_conflict_ref_fpm p Adeep fpm1 = fpm2)
+    (INVP: invalidate_conflict_ref_fpm p AWrite Adeep fpm1 = fpm2)
     (* Properties ensured by Drop elaboration, which we encode into
     the semantics *)
     (DEEP_INIT: check_path_is_droppable fpm2 p = OK true)
@@ -1519,7 +1519,7 @@ keeps the drop statement for the place that is init. *)
     variable's reachable locations? *)
     (EVAL: eval_expr ge fpm1 (Emoveplace p (typeof_place p)) = OK (vfp, fpm2))
     (* perform shallow write for variables/parameters *)
-    (FREE: invalidate_conflict_ref_fpm_list (map (fun '(id, _) => (id,nil)) (f.(fn_vars) ++ f.(fn_params))) Ashallow fpm1 = fpm2)
+    (FREE: invalidate_conflict_ref_fpm_list (map (fun '(id, _) => (id,nil)) (f.(fn_vars) ++ f.(fn_params))) AWrite Ashallow fpm1 = fpm2)
     (* kill loans reborrowed from variables/parameters *)
     (KILL: kill_paths_ref_fpm (vars_to_paths (f.(fn_vars) ++ f.(fn_params))) fpm2 = fpm3)
     (* set all the variables/parameters to fp_uninit to align with the

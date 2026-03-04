@@ -11,6 +11,7 @@ Require Import Rusttypes Rustlight.
 Require Import RustOp RustIR Rusttyping.
 Require Import Errors.
 Require Import Listmisc.
+Require Import BorrowCheckDomain.
 Require Import Rustlightown RustIRspec.
 
 Import ListNotations.
@@ -165,6 +166,15 @@ Record alias_graph_views_inv (fpg: fp_graph) (ph: path) (vs: views) (tgt: path) 
       mutable_path ph1 fpg = OK true ->
       In ph1 vs;
 
+    (* It actually requires two kinds of stack discipline: if ph is a
+    mutable path, then there may be some paths that are on top of it,
+    i.e., ph is included in its view. But if ph is an immutable path,
+    we may need to say that all the mutable path to the same location
+    is included in the views of ph? In fact, we can prove [~ In ph
+    vs1] because all the path in the view must be mutable path using
+    the borrow_check_views_inv. As a result, we can use the stack
+    discipline of ph1 to prove that In ph1 vs which is a contradiction
+    with ~In ph1 vs. *)
     alias_graph_views_stack_discipline: forall ph1 vs1,
       get_owner_path_map ph1 fpg = OK (tgt, vs1) ->
       mutable_path ph1 fpg = OK true ->
@@ -179,7 +189,8 @@ Record alias_graph_views_inv (fpg: fp_graph) (ph: path) (vs: views) (tgt: path) 
 Definition borrow_check_views_inv (fpg: fp_graph) : Prop :=
   forall ph tgt vs,
     get_owner_path_map ph fpg = OK (tgt, vs) ->
-    mutable_path ph fpg = OK true ->
+    (* It is ok that this path we consider is not a mutable path *)
+    (* mutable_path ph fpg = OK true -> *)
     alias_graph_views_inv fpg ph vs tgt.
 
 (** Location stored in fp_ref is equal to the address of its point-to
@@ -443,10 +454,10 @@ Admitted.
 
 (** Misc for invalidate_conflict_ref and kill_paths *)
 
-Lemma get_owner_loc_footprint_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 am b ofs fp,
-    get_owner_loc_footprint_map ph1 (invalidate_conflict_ref_fpm ph2 am fpm) = OK (b, ofs, fp) ->
+Lemma get_owner_loc_footprint_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ak am b ofs fp,
+    get_owner_loc_footprint_map ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK (b, ofs, fp) ->
     exists fp', get_owner_loc_footprint_map ph1 fpm = OK (b, ofs, fp')
-           /\ invalidate_conflict_ref ph2 am fp' = fp.
+           /\ invalidate_conflict_ref ph2 ak am fp' = fp.
 Admitted.
 
 
@@ -535,31 +546,46 @@ Ltac destr_path_of_place p :=
 
 (** The smallest operations that preserve the borrow check invariant  *)
 
-Definition dummy_origin : ident := 1%positive.
+(* Definition dummy_origin : ident := 1%positive. *)
 
 (* Deep access of a path, which creates a temporary reference. This
 reference can be seen as a normal reference, or it can be used to
-extract the point-to footprint to act as a move operation. *)
-Lemma borrow_check_inv_deep_access: forall phl id (fpm1 fpm2: fp_map) fpl mut vs tgt b ofs fp
+extract the point-to footprint to act as a move operation. The
+access_kind is irrelevant because we need to prove that the views of
+all reachable path from this accessed path cover all the mutable
+path. *)
+Lemma borrow_check_inv_deep_access: forall phl id (fpm1 fpm2: fp_map) fpl mut vs tgt b ofs fp ak
     (BOR_INV: borrow_check_fpm_vals_inv fpm1 fpl)
     (* wt_fpm ce fpm1 -> *)
     (* wt_footprint_list ce fpm1 tyl fpl -> *)
     (* wt_path ce (fpm_to_tenv fpm1) (id, phl) = OK ty -> *)
     (REACH: get_owner_path_map (id, phl) fpm1 = OK (tgt, vs))
     (GET: get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp))
-    (INVALID: fpm2 = invalidate_conflict_ref_fpm (id, phl) BorrowCheckDomain.Adeep fpm1),
+    (INVALID: fpm2 = invalidate_conflict_ref_fpm (id, phl) ak BorrowCheckDomain.Adeep fpm1),
     (** We also need to invalidate fpl because some reference in fpl
     may be created by deeply accessing (id,phl)! This scenario is
     ruled out by the static borrow checking! *)
-    borrow_check_fpm_vals_inv fpm2 ((fp_ref mut b ofs (Some tgt) vs) :: (map (invalidate_conflict_ref (id, phl) BorrowCheckDomain.Adeep) fpl)).
+    (** TODO: mut must be converted from ak? *)
+    borrow_check_fpm_vals_inv fpm2 ((fp_ref mut b ofs (Some tgt) vs) :: (map (invalidate_conflict_ref (id, phl) ak BorrowCheckDomain.Adeep) fpl)).
     (* /\ wt_footprint_list ce fpm2 ((Treference dummy_origin mut ty) :: tyl) ((fp_ref mut b ofs (Some tgt) vs) :: fpl) *)
     (* /\ wt_fpm ce fpm2. *)
 Proof.
   intros. econstructor.
   inv BOR_INV.
   (* We need to ignore how to prove the properties of using arbitary
-  fresh idents for temporary footprints *)
-Admitted.  
+  fresh idents for temporary footprints. We reduce the proof to the
+  form that all the idents of fpl are the same as the ids after
+  inserting the new fp_ref. *)
+  (* We need to show that if we perform invalidation directly on the
+  fp_graph, the result is the same? *)
+  (* Therefore, we can prove it using following steps: (1) we prove
+  the properties derived from the deep access (i.e., all reachable
+  path of this deeply accessed path have views that contain all the
+  reachable path to the same location); (2) we prove that with the
+  above properties, we can extract this deep access path to a new
+  temporary value. *)
+  Admitted.
+
 
 (* Move out the footprint pointed by the fp_ref in the temporary
 values and then use this footprint to replace the fp_ref to simulate
@@ -599,10 +625,10 @@ Lemma borrow_check_inv_move: forall (fpm1 fpm2 fpm3: fp_map) fpl tgt b ofs fp,
     borrow_check_inv_deep_access, we first get the owner path and then
     do the invalidation. It does not matter because getting the owner
     path of an owner is irrelevant to the invalidation procee. *)
-    fpm2 = invalidate_conflict_ref_fpm tgt BorrowCheckDomain.Adeep fpm1 ->
+    fpm2 = invalidate_conflict_ref_fpm tgt AWrite BorrowCheckDomain.Adeep fpm1 ->
     get_owner_loc_footprint_map tgt fpm2 = OK (b, ofs, fp) ->
     clear_footprint_map ce tgt fpm2 = OK fpm3 ->
-    borrow_check_fpm_vals_inv fpm3 (fp :: (map (invalidate_conflict_ref tgt BorrowCheckDomain.Adeep) fpl)).
+    borrow_check_fpm_vals_inv fpm3 (fp :: (map (invalidate_conflict_ref tgt AWrite BorrowCheckDomain.Adeep) fpl)).
     (* /\ wt_footprint_list ce fpm3 (ty :: tyl) (fp :: fpl) *)
     (* /\ wt_fpm ce fpm3. *)
 Proof.
@@ -615,7 +641,7 @@ Proof.
   eapply get_owner_loc_footprint_map_eq. eauto.
   intros GPH.
   exploit borrow_check_inv_deep_access; eauto.
-  instantiate (1 := Mutable).
+  instantiate (1 := AWrite). instantiate (1 := Mutable).
   intros B1.  
   eapply borrow_check_inv_replace_move; eauto. 
 Qed.  
@@ -633,10 +659,10 @@ Lemma borrow_check_inv_shallow_write: forall (fpm1 fpm2 fpm3 fpm4: fp_map) id ph
     (* wt_fpm ce fpm1 -> *)
     get_owner_path_map (id, phl) fpm1 = OK (tgt, vs) ->
     check_path_is_dropped fpm1 tgt = OK true ->
-    fpm2 = invalidate_conflict_ref_fpm (id, phl) BorrowCheckDomain.Ashallow fpm1 ->
+    fpm2 = invalidate_conflict_ref_fpm (id, phl) AWrite BorrowCheckDomain.Ashallow fpm1 ->
     clear_footprint_map ce tgt fpm2 = OK fpm3 ->
     fpm4 = kill_paths_ref_fpm vs fpm3 ->
-    borrow_check_fpm_vals_inv fpm4 (map (kill_paths_ref vs) (map (invalidate_conflict_ref (id, phl) BorrowCheckDomain.Ashallow) fpl)).
+    borrow_check_fpm_vals_inv fpm4 (map (kill_paths_ref vs) (map (invalidate_conflict_ref (id, phl) AWrite BorrowCheckDomain.Ashallow) fpl)).
     (* /\ wt_footprint_list ce fpm4 tyl (map (kill_paths_ref vs) fpl) *)
     (* /\ wt_fpm ce fpm4. *)
 Admitted.

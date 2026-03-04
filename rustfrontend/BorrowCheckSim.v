@@ -812,55 +812,55 @@ Lemma deref_loc_sem_wt_val: forall (fp: footprint) b ofs mp ty m fpm
       /\ massert_imp mp (mp1 ** mp2).
 Admitted.
 
-Lemma invalidate_conflict_ref_fpm_coherent_unchanged: forall phl id (fpm: fp_map) am mp,
+Lemma invalidate_conflict_ref_fpm_coherent_unchanged: forall phl id (fpm: fp_map) ak am mp,
     coherent_fpm ce fpm mp ->
-    coherent_fpm ce (invalidate_conflict_ref_fpm (id, phl) am fpm) mp.
+    coherent_fpm ce (invalidate_conflict_ref_fpm (id, phl) ak am fpm) mp.
 Admitted.
 
-Lemma invalidate_conflict_ref_fpm_wt_fpm_unchanged: forall phl id (fpm: fp_map) am,
+Lemma invalidate_conflict_ref_fpm_wt_fpm_unchanged: forall phl id (fpm: fp_map) ak am,
     wt_fpm ce fpm ->
-    wt_fpm ce (invalidate_conflict_ref_fpm (id, phl) am fpm).
+    wt_fpm ce (invalidate_conflict_ref_fpm (id, phl) ak am fpm).
 Admitted.
 
-Lemma invalidate_conflict_ref_fpm_fp_ref_wf_unchanged: forall phl id (fpm: fp_map) am,
+Lemma invalidate_conflict_ref_fpm_fp_ref_wf_unchanged: forall phl id (fpm: fp_map) ak am,
     fp_ref_loc_wf_fpm fpm ->
-    fp_ref_loc_wf_fpm (invalidate_conflict_ref_fpm (id, phl) am fpm).
+    fp_ref_loc_wf_fpm (invalidate_conflict_ref_fpm (id, phl) ak am fpm).
 Admitted.
 
 
-Lemma invalidate_conflict_ref_fpm_wt_footprint_unchanged: forall phl id (fpm: fp_map) am ty (fp: footprint),
+Lemma invalidate_conflict_ref_fpm_wt_footprint_unchanged: forall phl id (fpm: fp_map) ak am ty (fp: footprint),
     wt_footprint ce (fpm_to_tenv fpm) ty fp ->
-    wt_footprint ce (fpm_to_tenv (invalidate_conflict_ref_fpm (id, phl) am fpm)) ty fp.
+    wt_footprint ce (fpm_to_tenv (invalidate_conflict_ref_fpm (id, phl) ak am fpm)) ty fp.
 Admitted.
 
 
-Lemma invalidate_conflict_ref_fpm_wt_place_unchanged: forall phl id (fpm: fp_map) am p,
+Lemma invalidate_conflict_ref_fpm_wt_place_unchanged: forall phl id (fpm: fp_map) ak am p,
     wt_place fpm ce p ->
-    wt_place (invalidate_conflict_ref_fpm (id, phl) am fpm) ce p.
+    wt_place (invalidate_conflict_ref_fpm (id, phl) ak am fpm) ce p.
 Admitted.
 
 
-Lemma invalidate_conflict_ref_fpm_env_eq: forall phl id (fpm: fp_map) am,
-    (fpm_to_env fpm) = (fpm_to_env (invalidate_conflict_ref_fpm (id, phl) am fpm)).
+Lemma invalidate_conflict_ref_fpm_env_eq: forall phl id (fpm: fp_map) ak am,
+    (fpm_to_env fpm) = (fpm_to_env (invalidate_conflict_ref_fpm (id, phl) ak am fpm)).
 Admitted.
 
-Lemma invalidate_conflict_ref_fpm_tenv_eq: forall phl id (fpm: fp_map) am,
-    (fpm_to_tenv fpm) = (fpm_to_tenv (invalidate_conflict_ref_fpm (id, phl) am fpm)).
+Lemma invalidate_conflict_ref_fpm_tenv_eq: forall phl id (fpm: fp_map) ak am,
+    (fpm_to_tenv fpm) = (fpm_to_tenv (invalidate_conflict_ref_fpm (id, phl) ak am fpm)).
 Admitted.
 
-Lemma invalidate_conflict_ref_sem_wt_val_eq: forall phl id (fp: footprint) v am mp,
+Lemma invalidate_conflict_ref_sem_wt_val_eq: forall phl id (fp: footprint) v ak am mp,
     sem_wt_val ce fp v mp ->
-    sem_wt_val ce (invalidate_conflict_ref (id, phl) am fp) v mp.
+    sem_wt_val ce (invalidate_conflict_ref (id, phl) ak am fp) v mp.
 Admitted.   
 
-Lemma invalidate_conflict_ref_fpm_coherent_eq: forall phl id (fpm: fp_map) am mp,
+Lemma invalidate_conflict_ref_fpm_coherent_eq: forall phl id (fpm: fp_map) ak am mp,
     coherent_fpm ce fpm mp ->
-    coherent_fpm ce (invalidate_conflict_ref_fpm (id, phl) am fpm) mp.
+    coherent_fpm ce (invalidate_conflict_ref_fpm (id, phl) ak am fpm) mp.
 Admitted.   
 
-Lemma invalidate_conflict_ref_fpm_check_path_is_dropped: forall phl id am (fpm: fp_map) ph,
+Lemma invalidate_conflict_ref_fpm_check_path_is_dropped: forall phl id ak am (fpm: fp_map) ph,
     check_path_is_dropped fpm ph = OK true ->
-    check_path_is_dropped (invalidate_conflict_ref_fpm (id, phl) am fpm) ph = OK true.
+    check_path_is_dropped (invalidate_conflict_ref_fpm (id, phl) ak am fpm) ph = OK true.
 Admitted.
 
 Hint Resolve 
@@ -909,7 +909,7 @@ Proof.
   - simpl in EVAL.
     monadInv EVAL. destruct x as (b & ofs).
     inv WTEXPR.
-    set (fpm1' := (invalidate_conflict_ref_fpm p BorrowCheckDomain.Adeep fpm1)) in *.
+    set (fpm1' := (invalidate_conflict_ref_fpm p AWrite BorrowCheckDomain.Adeep fpm1)) in *.
     destr_path_of_place p.
     eapply invalidate_conflict_ref_fpm_coherent_unchanged in COH as COH1.
     exploit (@get_owner_path_for_owner ame); eauto. 
@@ -1038,7 +1038,7 @@ Proof.
     exploit (kill_paths_ref_coherent_fpm x3 vs). eapply COH2. 
     intros COH3.
     (* derive the predicate for the value *)
-    exploit (invalidate_conflict_ref_sem_wt_val_eq phl pid x tv BorrowCheckDomain.Ashallow); eauto.
+    exploit (invalidate_conflict_ref_sem_wt_val_eq phl pid x tv AWrite BorrowCheckDomain.Ashallow); eauto.
     intros WTVAL1.
     exploit kill_paths_ref_sem_wt_val; eauto. 
     instantiate (1 := vs). intros WTVAL2.
@@ -1115,13 +1115,13 @@ Proof.
     eapply borrow_check_fpg_vals_inv_empty in BOR_INV2.
     (* Use type information to do case analysis *)
     assert (WTFPM1: wt_fpm ce (invalidate_conflict_ref_fpm (pid, phl)
-            BorrowCheckDomain.Adeep fpm1)) by admit.
+            AWrite BorrowCheckDomain.Adeep fpm1)) by admit.
     assert (DROP_TY: drop_type (typeof_place p) = true) by admit. (* It should be ensured by the syntatic type checking *)
     exploit (@get_owner_loc_footprint_map_wt ame); eauto.
     intros (pty & WTPH & WTFP & AL).
     replace pty with (typeof_place p) in * by admit. (* wt_path and wt_place properties *)
     (* memory predicate after deep access *)
-    exploit (invalidate_conflict_ref_fpm_coherent_eq phl pid fpm1 BorrowCheckDomain.Adeep); eauto.
+    exploit (invalidate_conflict_ref_fpm_coherent_eq phl pid fpm1 AWrite BorrowCheckDomain.Adeep); eauto.
     intros COH1.
     (* eval_place *)
     exploit (get_owner_path_map_eval_place); eauto. eapply MPRED.
