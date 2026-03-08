@@ -16,6 +16,12 @@ Open Scope error_monad_scope.
 
 (** ** The abstract domain for borrow checking based on Polonius *)
 
+Definition mut_to_access_kind (mut: mutkind) : access_kind :=
+  match mut with
+  | Mutable => AWrite
+  | Immutable => ARead
+  end.
+
 (** Loans  *)
 
 Inductive loan : Type :=

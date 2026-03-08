@@ -71,7 +71,7 @@ Fixpoint check_pure_expr (e: LOrgEnv.t) (pe: pexpr) : res unit :=
       else
         OK tt
   | Eref org mut p ty =>
-      let ak := match mut with | Mutable => AWrite | Immutable => ARead end in
+      let ak := mut_to_access_kind mut in
       if illegal_access e p Adeep ak then
         Error [MSG "access a place (transfer_pure_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Eref"]
       else

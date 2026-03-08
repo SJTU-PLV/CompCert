@@ -1220,7 +1220,7 @@ Fixpoint eval_pexpr (fpm: fp_map) (pe: pexpr) : res (footprint * fp_map) :=
       do (ph, vs) <- get_owner_path_map p fpm;
       do (bofs, _) <- get_owner_loc_footprint_map ph fpm;
       let (b, ofs) := bofs in
-      let ak := match mut with | Mutable => AWrite | Immutable => ARead end in
+      let ak := mut_to_access_kind mut in
       OK (fp_ref mut b ofs (Some ph) vs, invalidate_conflict_ref_fpm p ak Adeep fpm)
   | _ => Error nil
   end.

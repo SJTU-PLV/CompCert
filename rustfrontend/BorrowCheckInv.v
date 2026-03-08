@@ -150,6 +150,11 @@ Inductive reachable_from_dominators (fpg: fp_graph) : path -> path -> Prop :=
     get_owner_path_map (id1, pjl1) fpg = OK ((id2, dom_pjl), vs) ->
     reachable_from_dominators fpg (id1, pjl1 ++ suf_pjl) (id2, pjl).
     
+Definition fp_ref_views_adequate (fpg: fp_graph) (tgt: path) (vs: views) : Prop := 
+  forall ph1, reachable_from_dominators fpg ph1 tgt ->
+         mutable_path ph1 fpg = OK true ->
+         In ph1 vs.
+
 
 Record alias_graph_views_inv (fpg: fp_graph) (ph: path) (vs: views) (tgt: path) : Prop :=
   { alias_graph_views_precise: forall ph1,
@@ -161,10 +166,12 @@ Record alias_graph_views_inv (fpg: fp_graph) (ph: path) (vs: views) (tgt: path) 
     alias_graph_views_owner: In tgt vs;
 
     (* all dominators path is included in vs *)
-    alias_graph_views_adequate: forall ph1,
-      reachable_from_dominators fpg ph1 tgt ->
-      mutable_path ph1 fpg = OK true ->
-      In ph1 vs;
+    (** It is not correct because ph may also reach tgt via the same
+    dominators but ph1 may be created by reborrowing ph *)
+    (* alias_graph_views_adequate: forall ph1, *)
+    (*   reachable_from_dominators fpg ph1 tgt -> *)
+    (*   mutable_path ph1 fpg = OK true -> *)
+    (*   In ph1 vs; *)
 
     (* It actually requires two kinds of stack discipline: if ph is a
     mutable path, then there may be some paths that are on top of it,
@@ -193,8 +200,11 @@ Definition borrow_check_views_inv (fpg: fp_graph) : Prop :=
     (* mutable_path ph fpg = OK true -> *)
     alias_graph_views_inv fpg ph vs tgt.
 
-(** Location stored in fp_ref is equal to the address of its point-to
-owner path *)
+(** There are two invariants need to hold at each reference. The first
+is that location stored in fp_ref is equal to the address of its
+point-to owner path. The second is that the views stored in each
+reference must contain all the paths which reach to the point-to
+target via a dominator path. *)
 
 Section FPM_ENV.
 
@@ -202,7 +212,6 @@ Variable fpm: fp_map.
 
 (* We define a new field_offset which returns the starting offset of a
 field that does not consider the alignment. *)
-
 
 Inductive fp_ref_loc_wf_field (P: footprint -> Prop): ffpty -> Prop :=
 | fp_ref_loc_wf_field_intro: forall fid base fofs ffp
@@ -225,6 +234,12 @@ Inductive fp_ref_loc_wf : footprint -> Prop :=
     fp_ref_loc_wf (fp_enum id tag fid fofs ffp)
 | fp_ref_some_wf: forall ph b ofs fp vs mut 
     (GLOC: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp))
+    (* It is OK to just say that the views are adequate in fpm instead
+    of fp_graph which contains the temporary value, because there
+    cannot be some reference point to this temporary value which could
+    break the adequate invariant after setting some temporary value to
+    a path. *)
+    (ADEQUATE: fp_ref_views_adequate fpm ph vs)
     (** TODO: we need to show that all path in vs are valid in fpm *),
     fp_ref_loc_wf (fp_ref mut b ofs (Some ph) vs)
 | fp_ref_none_wf: forall b ofs vs mut,
@@ -548,25 +563,32 @@ Ltac destr_path_of_place p :=
 
 (* Definition dummy_origin : ident := 1%positive. *)
 
+Definition access_kind_to_mut (ak: access_kind) : mutkind :=
+  match ak with
+  | AWrite => Mutable
+  | ARead => Immutable
+  end.
+
+Coercion access_kind_to_mut : access_kind >-> mutkind.
+
 (* Deep access of a path, which creates a temporary reference. This
 reference can be seen as a normal reference, or it can be used to
 extract the point-to footprint to act as a move operation. The
 access_kind is irrelevant because we need to prove that the views of
 all reachable path from this accessed path cover all the mutable
 path. *)
-Lemma borrow_check_inv_deep_access: forall phl id (fpm1 fpm2: fp_map) fpl mut vs tgt b ofs fp ak
+Lemma borrow_check_inv_deep_access: forall phl id (fpm1 fpm2: fp_map) fpl vs tgt b ofs fp ak
     (BOR_INV: borrow_check_fpm_vals_inv fpm1 fpl)
     (* wt_fpm ce fpm1 -> *)
     (* wt_footprint_list ce fpm1 tyl fpl -> *)
     (* wt_path ce (fpm_to_tenv fpm1) (id, phl) = OK ty -> *)
     (REACH: get_owner_path_map (id, phl) fpm1 = OK (tgt, vs))
     (GET: get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp))
-    (INVALID: fpm2 = invalidate_conflict_ref_fpm (id, phl) ak BorrowCheckDomain.Adeep fpm1),
+    (INVALID: fpm2 = invalidate_conflict_ref_fpm (id, phl) ak Adeep fpm1),
     (** We also need to invalidate fpl because some reference in fpl
     may be created by deeply accessing (id,phl)! This scenario is
     ruled out by the static borrow checking! *)
-    (** TODO: mut must be converted from ak? *)
-    borrow_check_fpm_vals_inv fpm2 ((fp_ref mut b ofs (Some tgt) vs) :: (map (invalidate_conflict_ref (id, phl) ak BorrowCheckDomain.Adeep) fpl)).
+    borrow_check_fpm_vals_inv fpm2 ((fp_ref ak b ofs (Some tgt) vs) :: (map (invalidate_conflict_ref (id, phl) ak BorrowCheckDomain.Adeep) fpl)).
     (* /\ wt_footprint_list ce fpm2 ((Treference dummy_origin mut ty) :: tyl) ((fp_ref mut b ofs (Some tgt) vs) :: fpl) *)
     (* /\ wt_fpm ce fpm2. *)
 Proof.
@@ -580,11 +602,36 @@ Proof.
   fp_graph, the result is the same? *)
   (* Therefore, we can prove it using following steps: (1) we prove
   the properties derived from the deep access (i.e., all reachable
-  path of this deeply accessed path have views that contain all the
-  reachable path to the same location); (2) we prove that with the
-  above properties, we can extract this deep access path to a new
-  temporary value. *)
+  path of this deeply accessed path have views that contain the views
+  of all the reachable path to the same location); (2) we prove that
+  with the above properties, we can extract this deep access path to a
+  new temporary value. *)
+
+  (* Thinking of its sufficiency to prove the borrow check invariant:
+  the key point is to prove the stack discipline in the invariant. I
+  think the two premises about the reachability in the borrow check
+  invariant and the stack discipline field can be applied to this
+  lemma? *)
+  Lemma invalidate_conflict_ref_fpm_views_largest: forall phl1 id1 phl2 id2 phl3 id3 (fpm1 fpm2: fp_map) fpl vs1 vs2 tgt b ofs fp ak
+    (* (REACH1: get_owner_path_map (id1, phl1) fpm1 = OK (tgt, vs1)) *)
+    (INVALID: fpm2 = invalidate_conflict_ref_fpm (id1, phl1) ak am fpm1)
+    (* We want to say that the views of (id2, phl2) are the largest
+    view to its location *)
+    (CONFLICT: relevant_path (id1, phl1) am (id2, phl2))
+    (* Any two paths which reach the same target loaction, the views
+    of (id2, phl2) must include the views of the other *)
+    (BEFORE: get_owner_path_map (id2, phl2) fpm2 = OK (tgt, vs2))
+    (AFTER: get_owner_path_map (id3, phl3) fpm2 = OK (tgt, vs3))
+    (* If (id3, phl3) is just a immutable path, we cannot compare its
+    views with those of (id2, phl2) *)
+    (MUTABLE: mutable_path (id3, phl3) fpm2 = OK true),
+    incl vs3 vs2.
   Admitted.
+
+  (* To define the second property: we can extract the deep access
+  path to form a new reference using a temporary variable with a fresh
+  identifier *)
+
 
 
 (* Move out the footprint pointed by the fp_ref in the temporary
