@@ -123,10 +123,17 @@ let precedence = function
 module StringSet = Set.Make(String)
 
 let global_var_names : StringSet.t ref = ref StringSet.empty
+(* Globals printed as `static mut` in the generated Rust code.
+   Accessing them requires an `unsafe` block in Rust, so when we avoid
+   wrapping whole functions in `unsafe { ... }`, we selectively wrap
+   the statements that touch these globals. *)
+let static_mut_global_names : StringSet.t ref = ref StringSet.empty
 (* Extern globals whose declared type is a C pointer.
    These must be printed with FFI-safe raw pointer types in `PrintRustsyntax`,
    and uses must wrap them into our `Ptr<T>` runtime representation. *)
 let extern_pointer_globals : StringSet.t ref = ref StringSet.empty
+(* Names of external C functions declared via FFI (after lowercasing). *)
+let external_function_names : StringSet.t ref = ref StringSet.empty
 let current_name_map = Hashtbl.create 97
 let used_local_names : StringSet.t ref = ref StringSet.empty
 
@@ -1268,7 +1275,7 @@ let print_malloc_assignment p dest info =
   | Some count_expr ->
       fprintf p "@[<hv 2>%a = %t;@]"
         print_place dest
-        (fun fmt -> print_alloc fmt (fun fmt -> fprintf fmt "(%a) as usize" pexpr (0, count_expr)))
+        (fun fmt -> print_alloc fmt (fun fmt -> fprintf fmt "unsafe { (%a) as usize }" pexpr (0, count_expr)))
   | None ->
       fprintf p "@[<hv 2>%a = %t;@]"
         print_place dest
@@ -1293,7 +1300,7 @@ let print_malloc_value_for_ty dest_ty p info =
   in
   match info.malloc_count with
   | Some count_expr ->
-      print_alloc p (fun fmt -> fprintf fmt "(%a) as usize" pexpr (0, count_expr))
+      print_alloc p (fun fmt -> fprintf fmt "unsafe { (%a) as usize }" pexpr (0, count_expr))
   | None ->
       print_alloc p (fun fmt -> fprintf fmt "1")
 
@@ -1548,7 +1555,124 @@ let print_function_call_name p e =
 let current_function_is_main = ref false
 let current_function_return_type = ref Rusttypes.Tunit
 
-let rec print_stmt p (s: Rustlight.statement) = 
+let is_static_mut_global_id (id: AST.ident) : bool =
+  let nm = lookup_ident_name id in
+  StringSet.mem nm !static_mut_global_names
+
+let rec place_needs_unsafe (p: place) : bool =
+  match p with
+  | Plocal(id, _) ->
+      is_static_mut_global_id id
+  | Pderef(Pparenthesize(_, _, Ebinop(Oadd, _base, _index, _)), _) ->
+      (* This pattern is printed using safe Ptr/array indexing, not raw-pointer deref,
+         but its subexpressions may still touch unsafe globals. *)
+      pexpr_needs_unsafe _base || pexpr_needs_unsafe _index
+  | Pderef(p', _) ->
+      (* `*ptr` is printed as a raw pointer deref via `.as_mut_ptr()` for our
+         Ptr<T>.  This requires an unsafe block. *)
+      (is_ptr_place p') || place_needs_unsafe p'
+  | Pfield(p', _, _) ->
+      (* Union field access is unsafe in Rust.  In our IR, C unions are
+         represented as Tvariant. *)
+      (match type_of_place p' with
+       | Rusttypes.Tvariant(_, _) -> true
+       | _ -> false)
+      || place_needs_unsafe p'
+  | Pdowncast(p', _, _) ->
+      place_needs_unsafe p'
+  | Pparenthesize(_, _, ll) ->
+      pexpr_needs_unsafe ll
+  | ParrayIndex(p_base, _, _) ->
+      place_needs_unsafe p_base
+  | Ppair(p1, p2) ->
+      place_needs_unsafe p1 || place_needs_unsafe p2
+
+and pexpr_needs_unsafe (pe: Rustlight.pexpr) : bool =
+  match pe with
+  | Eplace(place, _) -> place_needs_unsafe place
+  | Eref(_, _, place, _) -> place_needs_unsafe place
+  | Ecktag(place, _) -> place_needs_unsafe place
+  | Eunop(_, pe1, _) -> pexpr_needs_unsafe pe1
+  | Ebinop(_, pe1, pe2, _) -> pexpr_needs_unsafe pe1 || pexpr_needs_unsafe pe2
+  | Eas(pe1, _) -> pexpr_needs_unsafe pe1
+  | Ederef(pe1, _) -> pexpr_needs_unsafe pe1
+  | Eglobal(_, _) -> false
+  | Eunit -> false
+  | Econst_int(_, _) -> false
+  | Econst_float(_, _) -> false
+  | Econst_single(_, _) -> false
+  | Econst_long(_, _) -> false
+  | Esizeof(_, _) -> false
+
+and expr_needs_unsafe (e: expr) : bool =
+  match e with
+  | Epure pe -> pexpr_needs_unsafe pe
+  | Emoveplace(place, _) -> place_needs_unsafe place
+
+let call_needs_unsafe (callee: expr) : bool =
+  match get_callee_name callee with
+  | None -> false
+  | Some name ->
+      (* Calls to external functions require an unsafe block unless we
+         generated a safe wrapper function that shadows the extern. *)
+      StringSet.mem name !external_function_names
+      && not (List.mem name !wrapped_function_names)
+
+let is_special_cased_call_name (name: string) : bool =
+  (* These calls are printed using special translation rules. *)
+  name = "scanf"
+  || name = "printf"
+  || name = "malloc"
+  || name = "calloc"
+  || name = "realloc"
+  || name = "free"
+  || name = "memcpy"
+
+let rec stmt_needs_unsafe (s: Rustlight.statement) : bool =
+  match s with
+  | Sskip -> false
+  | Sassign(v, e) -> place_needs_unsafe v || expr_needs_unsafe e
+  | Sassign_variant(v, _, _, e) -> place_needs_unsafe v || expr_needs_unsafe e
+  | Scall(v, e1, el) ->
+      let needs_call_unsafe =
+        match get_callee_name e1 with
+        | Some name when is_special_cased_call_name name -> false
+        | _ -> call_needs_unsafe e1
+      in
+      place_needs_unsafe v
+      || expr_needs_unsafe e1
+      || List.exists expr_needs_unsafe el
+      || needs_call_unsafe
+  | Smethod_call(v, receiver, _, el) ->
+      place_needs_unsafe v
+      || expr_needs_unsafe receiver
+      || List.exists expr_needs_unsafe el
+  | Ssequence(s1, s2) -> stmt_needs_unsafe s1 || stmt_needs_unsafe s2
+  | Sifthenelse(e, s1, s2) -> expr_needs_unsafe e || stmt_needs_unsafe s1 || stmt_needs_unsafe s2
+  | Sloop(s1) -> stmt_needs_unsafe s1
+  | Sbreak -> false
+  | Scontinue -> false
+  | Sreturn v -> place_needs_unsafe v
+  | Sbox(v, e) -> place_needs_unsafe v || expr_needs_unsafe e
+  | Slet(_, _, s1) -> stmt_needs_unsafe s1
+
+let rec print_stmt p (s: Rustlight.statement) =
+  match s with
+  | Ssequence(_, _)
+  | Sloop(_) ->
+      (* Avoid wrapping structural nodes: we wrap only the leaf statements
+         that actually perform unsafe operations.  This prevents deeply
+         nested `unsafe { ... }` blocks. *)
+      print_stmt_raw p s
+  | _ ->
+      if stmt_needs_unsafe s then begin
+        fprintf p "@[<v 2>unsafe {@ ";
+        print_stmt_raw p s;
+        fprintf p "@;<0 -2>}@]"
+      end else
+        print_stmt_raw p s
+
+and print_stmt_raw p (s: Rustlight.statement) = 
   match s with
   | Sskip ->
     (* comment *)
@@ -1742,13 +1866,22 @@ let rec print_stmt p (s: Rustlight.statement) =
                | Some ty -> let nm = name_rust_type ty in (nm, nm)
                | None -> ("u8", "u8")
              in
-             fprintf p "@[<hv 2>%a =@ Ptr::<%s>::alloc((%a) as usize)" print_place v alloc_elem_name print_expr param;
-             (match dest_elem_ty_opt with
-              | Some ty when name_rust_type ty <> alloc_elem_name ->
-                  fprintf p ".cast::<%s>()" (name_rust_type ty)
-              | Some Rusttypes.Tvoid -> fprintf p ".cast::<%s>()" cast_target_name
-              | _ -> ());
-             fprintf p ";@]")
+             let cast_target_opt =
+               match dest_elem_ty_opt with
+               | Some Rusttypes.Tvoid -> Some cast_target_name
+               | Some ty ->
+                   let target_name = name_rust_type ty in
+                   if target_name <> alloc_elem_name then Some target_name else None
+               | None -> None
+             in
+             (match cast_target_opt with
+              | None ->
+                  fprintf p "@[<hv 2>%a =@ Ptr::<%s>::alloc((%a) as usize);@]"
+                    print_place v alloc_elem_name print_expr param
+              | Some target_name ->
+                  (* Ptr::cast is unsafe. *)
+                  fprintf p "@[<hv 2>%a =@ unsafe { Ptr::<%s>::alloc((%a) as usize).cast::<%s>() };@]"
+                    print_place v alloc_elem_name print_expr param target_name))
     | Some "malloc", _ ->
         fprintf p "@[<hv 2>/* 错误：malloc参数数量错误 */@]"
     | Some "calloc", [nmemb; size] ->
@@ -1883,7 +2016,16 @@ let rec print_stmt p (s: Rustlight.statement) =
     | Some "free", arg :: _ ->
         (match place_from_ptr_arg arg with
          | Some place ->
-             fprintf p "@[<hv 2>%a.free();@]" print_place place
+             (match extract_pointer_field_place place with
+              | Some (ptr_base, fid, _) ->
+                  (* free(p->field): mutate the field inside the pointed-to struct *)
+                  fprintf p "@[<v 2>{@ ";
+                  fprintf p "let mut __tmp = (%a.load(0));@ " print_place ptr_base;
+                  fprintf p "__tmp.%s.free();@ " (extern_atom fid);
+                  fprintf p "(%a).store(0, __tmp);@ " print_place ptr_base;
+                  fprintf p "@;<0 -2>}@]"
+              | None ->
+                  fprintf p "@[<hv 2>%a.free();@]" print_place place)
          | None ->
              fprintf p "@[<hv 2>/* free call could not be translated */@]")
     | Some "free", [] ->
@@ -1964,10 +2106,32 @@ let rec print_stmt p (s: Rustlight.statement) =
         | Rusttypes.Tunit -> true
         | _ -> false
       in
+      (* Special case: calling `.free()` on a pointer field behind a C pointer.
+         If we print it by first loading the struct and then calling `.free()` on
+         the field value, we would mutate a copy and the original struct would
+         remain unchanged.  Instead, load the struct, free the field, then store
+         the updated struct back. *)
+      let method_str = extern_atom method_name in
+      let receiver_field_opt =
+        match receiver with
+        | Epure (Eplace (place, _)) ->
+            (match extract_pointer_field_place place with
+             | Some (ptr_base, fid, _) -> Some (ptr_base, fid)
+             | None -> None)
+        | _ -> None
+      in
+      (match String.lowercase_ascii method_str, receiver_field_opt, el, is_ignored_return with
+       | "free", Some (ptr_base, fid), [], true ->
+           fprintf p "@[<v 2>{@ ";
+           fprintf p "let mut __tmp = (%a.load(0));@ " print_place ptr_base;
+           fprintf p "__tmp.%s.free();@ " (extern_atom fid);
+           fprintf p "(%a).store(0, __tmp);@ " print_place ptr_base;
+           fprintf p "@;<0 -2>}@]";
+           ()
+       | _ ->
       (* For method calls, we need to determine if the method is mutable (takes &mut self) or not *)
       (* For now, we'll use a simple heuristic: methods that modify the receiver are typically mutable *)
       (* Common patterns: push, pop, insert, remove, clear, etc. *)
-      let method_str = extern_atom method_name in
       let is_mut_method = 
         let lower = String.lowercase_ascii method_str in
         (* Common mutable methods *)
@@ -2003,6 +2167,7 @@ let rec print_stmt p (s: Rustlight.statement) =
             print_expr receiver
             method_str
             print_expr_list (true, el)
+      )
   | Ssequence(Sskip, s2) ->
       print_stmt p s2
   | Ssequence(s1, Sskip) ->
@@ -2068,7 +2233,6 @@ let print_function p id f =
     in
     fprintf p "fn main()%s" ret_annotation;
     fprintf p "{@;@[<v 2>  @[<v 1>@;";
-        fprintf p "unsafe {@ ";  (* Wrap in unsafe for static mut access *)
         (* If C main had parameters (argc, argv), declare them as local variables with default values *)
         let print_param_init (param_id, param_ty) =
           let var_name = lookup_ident_name param_id in
@@ -2119,11 +2283,10 @@ let print_function p id f =
         (* 全局指针/包含指针的静态变量在静态初始化阶段只能放零值，
            真实初始化在 __init_globals 中完成，这里在 main 开头调用一次。 *)
         if PrintRustsyntax.has_pointer_globals () then
-          fprintf p "__init_globals();@ ";
+          fprintf p "unsafe { __init_globals(); }@ ";
         current_function_is_main := true;
         print_stmt p f.fn_body;
         current_function_is_main := false;
-        fprintf p "@;<0 -2>}@ ";
     fprintf p "@]@;<0 -2>}@]@ @ "
     end
   else
@@ -2141,7 +2304,6 @@ let print_function p id f =
                       f.fn_origins_relation)
                    f.fn_return);
       fprintf p "@[<v 2>{@ ";
-        fprintf p "unsafe {@ ";  (* Wrap in unsafe for static mut access *)
         (* Print variables and their types *)
         List.iter 
         (fun (id, ty) ->
@@ -2173,7 +2335,6 @@ let print_function p id f =
           fprintf p "fn_param: %s;@ " (name_rust_decl (extern_atom id) ty))
         f.fn_params; *)
         print_stmt p f.fn_body;
-        fprintf p "@;<0 -2>}@ ";
       fprintf p "@;<0 -2>}@]@ @ "
     end
 
@@ -2412,6 +2573,21 @@ let collect_global_var_names defs =
        | _ -> acc)
     StringSet.empty defs
 
+let collect_static_mut_global_names defs =
+  List.fold_left
+    (fun acc (id, gd) ->
+       match gd with
+       | AST.Gvar v ->
+           let name1 = extern_atom id in
+           let is_string_literal = Str.string_match re_string_literal name1 0 in
+           let is_static_mut = is_string_literal || not v.AST.gvar_readonly in
+           if is_static_mut then
+             StringSet.add (sanitize_rust_identifier name1) acc
+           else
+             acc
+       | _ -> acc)
+    StringSet.empty defs
+
 let collect_extern_pointer_globals defs =
   List.fold_left
     (fun acc (id, gd) ->
@@ -2424,6 +2600,15 @@ let collect_extern_pointer_globals defs =
              StringSet.add (sanitize_rust_identifier (extern_atom id)) acc
            else
              acc
+       | _ -> acc)
+    StringSet.empty defs
+
+let collect_external_function_names defs =
+  List.fold_left
+    (fun acc (id, gd) ->
+       match gd with
+       | AST.Gfun (Rusttypes.External _) ->
+           StringSet.add (String.lowercase_ascii (extern_atom id)) acc
        | _ -> acc)
     StringSet.empty defs
 
@@ -2443,7 +2628,9 @@ let print_program p (prog: Rustlight.program) =
     ) prog.Rusttypes.prog_defs
   in
   global_var_names := collect_global_var_names prog.Rusttypes.prog_defs;
+  static_mut_global_names := collect_static_mut_global_names prog.Rusttypes.prog_defs;
   extern_pointer_globals := collect_extern_pointer_globals prog.Rusttypes.prog_defs;
+  external_function_names := collect_external_function_names prog.Rusttypes.prog_defs;
   (* Pre-collect globals whose initializers contain pointers so that we
      can both (1) avoid non-const pointer operations in their static
      initializers and (2) generate a runtime __init_globals() that
