@@ -155,50 +155,93 @@ Definition fp_ref_views_adequate (fpg: fp_graph) (tgt: path) (vs: views) : Prop 
          mutable_path ph1 fpg = OK true ->
          In ph1 vs.
 
+(* Note that the precision is conditional. It only holds for the valid
+path. *)
+Definition fp_ref_views_precise (fpg: fp_graph) (tgt: path) (vs: views) : Prop := 
+  forall ph1 tgt1 vs1,
+    In ph1 vs ->
+    (* If it reaches a target? Consider invalidate some mutable
+    path while reading some mutable path, but the views in the
+    immutable reference do not change. We can kill this loan in the
+    immutable reference maybe? But then the adequate property becomes
+    non-trivial to be preserved under invalidation because we can
+    reduce some path in the views. I think this should be related to
+    actual kill loans operations. *)
+    (* Actually, it is not definable because we need to do something
+    like when invalidating a reference, we need to kill the loans
+    related to this reference for other reference.  *)
+    get_owner_path_map ph1 fpg = OK (tgt1, vs1) ->
+    tgt = tgt1 /\ mutable_path ph1 fpg = OK true.
 
-Record alias_graph_views_inv (fpg: fp_graph) (ph: path) (vs: views) (tgt: path) : Prop :=
-  { alias_graph_views_precise: forall ph1,
-      In ph1 vs ->
-      exists vs1, 
-        get_owner_path_map ph1 fpg = OK (tgt, vs1)
-        /\ mutable_path ph1 fpg = OK true;
+(* We cannot define stack discipline in the context of fp_map because
+we need to show that all the temporary footprint does not point to the
+same location? We need to define this property in the whole fp_graph
+with temporary values. *)
+
+(* The paths that reach the same location should form a total order
+chain. Should we enforce that the views of mutable path must be
+smaller than those of immutable path? Because we have an invariant say
+that all paths in the view is mutable path, then there must be no
+mutable path whose views are greater than some immutable path? *)
+Definition fp_graph_views_inv (fpg: fp_graph) : Prop :=
+  forall ph1 ph2 tgt vs1 vs2,
+    ph1 <> ph2 ->
+    (* How to distinguish mutable and immutable path? *)
+    get_owner_path_map ph1 fpg = OK (tgt, vs1) ->
+    get_owner_path_map ph2 fpg = OK (tgt, vs2) ->
+    (incl vs1 vs2 \/ incl vs2 vs1)
+    (* If they are equivalent, then two paths must be immutable path.
+    we create some immutable reference from a mutable path whose
+    weight is in the middle, then the views of this path are not
+    equivalent to the views of other immutable reference. But it is
+    still be included in the views of other immutable reference? *)
+    /\ (list_equiv vs1 vs2 ->
+       (mutable_path ph1 fpg = OK false /\ mutable_path ph2 fpg = OK false)).
+
+
+(* Record alias_graph_views_inv (fpg: fp_graph) (ph: path) (vs: views) (tgt: path) : Prop := *)
+(*   { alias_graph_views_precise: forall ph1, *)
+(*       In ph1 vs -> *)
+(*       exists vs1,  *)
+(*         get_owner_path_map ph1 fpg = OK (tgt, vs1) *)
+(*         /\ mutable_path ph1 fpg = OK true; *)
     
-    alias_graph_views_owner: In tgt vs;
+(*     alias_graph_views_owner: In tgt vs; *)
 
-    (* all dominators path is included in vs *)
-    (** It is not correct because ph may also reach tgt via the same
-    dominators but ph1 may be created by reborrowing ph *)
-    (* alias_graph_views_adequate: forall ph1, *)
-    (*   reachable_from_dominators fpg ph1 tgt -> *)
-    (*   mutable_path ph1 fpg = OK true -> *)
-    (*   In ph1 vs; *)
+(*     (* all dominators path is included in vs *) *)
+(*     (** It is not correct because ph may also reach tgt via the same *)
+(*     dominators but ph1 may be created by reborrowing ph *) *)
+(*     (* alias_graph_views_adequate: forall ph1, *) *)
+(*     (*   reachable_from_dominators fpg ph1 tgt -> *) *)
+(*     (*   mutable_path ph1 fpg = OK true -> *) *)
+(*     (*   In ph1 vs; *) *)
 
-    (* It actually requires two kinds of stack discipline: if ph is a
-    mutable path, then there may be some paths that are on top of it,
-    i.e., ph is included in its view. But if ph is an immutable path,
-    we may need to say that all the mutable path to the same location
-    is included in the views of ph? In fact, we can prove [~ In ph
-    vs1] because all the path in the view must be mutable path using
-    the borrow_check_views_inv. As a result, we can use the stack
-    discipline of ph1 to prove that In ph1 vs which is a contradiction
-    with ~In ph1 vs. *)
-    alias_graph_views_stack_discipline: forall ph1 vs1,
-      get_owner_path_map ph1 fpg = OK (tgt, vs1) ->
-      mutable_path ph1 fpg = OK true ->
-      ~ In ph1 vs ->
-      In ph vs1;                (* If [ph] is a temporary path, then
-      it cannot be in [vs1], which means that [ph1] must be in [vs],
-      i.e., all the paths reachable to tgt is included in the views
-      [vs] of [ph] *)
+(*     (* It actually requires two kinds of stack discipline: if ph is a *)
+(*     mutable path, then there may be some paths that are on top of it, *)
+(*     i.e., ph is included in its view. But if ph is an immutable path, *)
+(*     we may need to say that all the mutable path to the same location *)
+(*     is included in the views of ph? In fact, we can prove [~ In ph *)
+(*     vs1] because all the path in the view must be mutable path using *)
+(*     the borrow_check_views_inv. As a result, we can use the stack *)
+(*     discipline of ph1 to prove that In ph1 vs which is a contradiction *)
+(*     with ~In ph1 vs. *) *)
+(*     alias_graph_views_stack_discipline: forall ph1 vs1, *)
+(*       get_owner_path_map ph1 fpg = OK (tgt, vs1) -> *)
+(*       mutable_path ph1 fpg = OK true -> *)
+(*       ~ In ph1 vs -> *)
+(*       In ph vs1;                (* If [ph] is a temporary path, then *)
+(*       it cannot be in [vs1], which means that [ph1] must be in [vs], *)
+(*       i.e., all the paths reachable to tgt is included in the views *)
+(*       [vs] of [ph] *) *)
 
- }.
+(*  }. *)
 
-Definition borrow_check_views_inv (fpg: fp_graph) : Prop :=
-  forall ph tgt vs,
-    get_owner_path_map ph fpg = OK (tgt, vs) ->
-    (* It is ok that this path we consider is not a mutable path *)
-    (* mutable_path ph fpg = OK true -> *)
-    alias_graph_views_inv fpg ph vs tgt.
+(* Definition borrow_check_views_inv (fpg: fp_graph) : Prop := *)
+(*   forall ph tgt vs, *)
+(*     get_owner_path_map ph fpg = OK (tgt, vs) -> *)
+(*     (* It is ok that this path we consider is not a mutable path *) *)
+(*     (* mutable_path ph fpg = OK true -> *) *)
+(*     alias_graph_views_inv fpg ph vs tgt. *)
 
 (** There are two invariants need to hold at each reference. The first
 is that location stored in fp_ref is equal to the address of its
@@ -233,13 +276,18 @@ Inductive fp_ref_loc_wf : footprint -> Prop :=
     (WF: fp_ref_loc_wf ffp),
     fp_ref_loc_wf (fp_enum id tag fid fofs ffp)
 | fp_ref_some_wf: forall ph b ofs fp vs mut 
+    (* Address consistency property *)
     (GLOC: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp))
     (* It is OK to just say that the views are adequate in fpm instead
     of fp_graph which contains the temporary value, because there
     cannot be some reference point to this temporary value which could
     break the adequate invariant after setting some temporary value to
     a path. *)
+    (* This adequate property may be redundant for temporary value
+    since the fp_ref_views_inv is stronger than this adequacy. But
+    this proeprty is required for the reference inside the fp_map.  *)
     (ADEQUATE: fp_ref_views_adequate fpm ph vs)
+    (PRECISE: fp_ref_views_precise fpm ph vs)
     (** TODO: we need to show that all path in vs are valid in fpm *),
     fp_ref_loc_wf (fp_ref mut b ofs (Some ph) vs)
 | fp_ref_none_wf: forall b ofs vs mut,
@@ -278,7 +326,7 @@ the expression and fpm to compute the address.  *)
 
 (* The invariant established and preserved by the borrow checking *)
 Record borrow_check_inv (fpm: fp_map) : Prop :=
-  { borrowck_views_inv: borrow_check_views_inv (fpm_to_fpg fpm);
+  { borrowck_views_inv: fp_graph_views_inv (fpm_to_fpg fpm);
     (** One alternative is to encode the location invariant of fp_ref
     into views invariant: for all reachable path, if we can compute
     its reached memory location, then this location must be equal to
@@ -300,8 +348,8 @@ Definition fresh_PTree_idents {A: Type} (m: PTree.t A) (n: nat) : list ident :=
 (* We need to establish invariant for some intermediate state which
 contains some computed values (e.g., creating a reference) *)
 Record borrow_check_inv_snapshot (fpm: fp_map) (fpg: fp_graph) (fpl: list footprint) : Prop :=
-  { borrowck_views_inv_snapshot: borrow_check_views_inv fpg;
-    borrowck_fp_ref_loc_inv_snapshot: fp_ref_loc_wf_fpm fpm; 
+  { borrowck_views_inv_snapshot: fp_graph_views_inv fpg;
+    borrowck_fp_ref_loc_inv_snapshot: fp_ref_loc_wf_fpm fpm;
     borrowck_fpl_wf: fp_ref_loc_wf_list fpm fpl}.
 
 Definition borrow_check_fpm_vals_inv (fpm: fp_map) (vl: list footprint) : Prop :=
@@ -606,6 +654,7 @@ Proof.
   of all the reachable path to the same location); (2) we prove that
   with the above properties, we can extract this deep access path to a
   new temporary value. *)
+  
 
   (* Thinking of its sufficiency to prove the borrow check invariant:
   the key point is to prove the stack discipline in the invariant. I
@@ -625,12 +674,15 @@ Proof.
     (* If (id3, phl3) is just a immutable path, we cannot compare its
     views with those of (id2, phl2) *)
     (MUTABLE: mutable_path (id3, phl3) fpm2 = OK true),
+    (* What if we require strict subset relation, but it require that
+    (id3, phl3) is disjoint with (id2, phl2)? *)
     incl vs3 vs2.
   Admitted.
 
   (* To define the second property: we can extract the deep access
   path to form a new reference using a temporary variable with a fresh
-  identifier *)
+  identifier. Maybe there is no need to define this property in a new
+  lemma? *)
 
 
 
