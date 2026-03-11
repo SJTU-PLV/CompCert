@@ -96,7 +96,7 @@ let print_ae pp ae =
 
 let print_live_regions pp live =
   let orgs = RegionSet.elements live in
-  fprintf pp "Live regions: %s@." (origin_list_to_string orgs) 
+  fprintf pp "Live regions (after this node): %s@." (origin_list_to_string orgs) 
 
 let print_instruction_debug pp prog (pc, (i, (live, ae))) =
   PrintRustIR.print_instruction pp prog (pc,i);

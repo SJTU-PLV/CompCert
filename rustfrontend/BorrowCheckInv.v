@@ -25,6 +25,7 @@ Context {ame: adt_mem_env}.
 
 Notation footprint := (@footprint ame).
 Notation fp_map := (@fp_map ame).
+Notation fp_graph := (@fp_graph ame).
 Notation get_owner_path_map := (@get_owner_path_map ame).
 
 (* Section COMP_ENV. *)
@@ -178,6 +179,34 @@ we need to show that all the temporary footprint does not point to the
 same location? We need to define this property in the whole fp_graph
 with temporary values. *)
 
+
+Inductive views_order (fpg: fp_graph) (ph1 ph2: path) (vs1 vs2: views) : Prop :=
+| views_order_immut_mut
+    (IMMUTL: mutable_path ph1 fpg = OK false)
+    (MUT: mutable_path ph2 fpg = OK true)
+    (INCL: incl vs2 vs1)
+    (NEQ: ~ list_equiv vs1 vs2):
+  views_order fpg ph1 ph2 vs1 vs2
+| views_order_mut_immut
+    (IMMUTL: mutable_path ph2 fpg = OK false)
+    (MUT: mutable_path ph1 fpg = OK true)
+    (INCL: incl vs1 vs2)
+    (NEQ: ~ list_equiv vs1 vs2):
+  views_order fpg ph1 ph2 vs1 vs2
+| views_order_mut_mut
+    (IMMUTL: mutable_path ph1 fpg = OK true)
+    (MUT: mutable_path ph2 fpg = OK true)
+    (INCL: incl vs1 vs2 \/ incl vs2 vs1)
+    (NEQ: ~ list_equiv vs1 vs2):
+  views_order fpg ph1 ph2 vs1 vs2
+| views_order_immut_immut
+    (IMMUTL: mutable_path ph1 fpg = OK false)
+    (MUT: mutable_path ph2 fpg = OK false):
+  (* The relation between two immutable paths are not important?
+  Because they cannot invalidate each other. *)
+  views_order fpg ph1 ph2 vs1 vs2.
+
+  
 (* The paths that reach the same location should form a total order
 chain. Should we enforce that the views of mutable path must be
 smaller than those of immutable path? Because we have an invariant say
@@ -189,14 +218,18 @@ Definition fp_graph_views_inv (fpg: fp_graph) : Prop :=
     (* How to distinguish mutable and immutable path? *)
     get_owner_path_map ph1 fpg = OK (tgt, vs1) ->
     get_owner_path_map ph2 fpg = OK (tgt, vs2) ->
-    (incl vs1 vs2 \/ incl vs2 vs1)
-    (* If they are equivalent, then two paths must be immutable path.
-    we create some immutable reference from a mutable path whose
-    weight is in the middle, then the views of this path are not
-    equivalent to the views of other immutable reference. But it is
-    still be included in the views of other immutable reference? *)
-    /\ (list_equiv vs1 vs2 ->
-       (mutable_path ph1 fpg = OK false /\ mutable_path ph2 fpg = OK false)).
+    views_order fpg ph1 ph2 vs1 vs2.
+
+    (* (** In fact, there is no need to compare the views between two *)
+    (* immutable path because they cannot affect each other.  *) *)
+    (* (incl vs1 vs2 \/ incl vs2 vs1) *)
+    (* (* If they are equivalent, then two paths must be immutable path. *)
+    (* we create some immutable reference from a mutable path whose *)
+    (* weight is in the middle, then the views of this path are not *)
+    (* equivalent to the views of other immutable reference. But it is *)
+    (* still be included in the views of other immutable reference? *) *)
+    (* /\ (list_equiv vs1 vs2 -> *)
+    (*    (mutable_path ph1 fpg = OK false /\ mutable_path ph2 fpg = OK false)). *)
 
 
 (* Record alias_graph_views_inv (fpg: fp_graph) (ph: path) (vs: views) (tgt: path) : Prop := *)
@@ -609,6 +642,10 @@ Ltac destr_path_of_place p :=
 
 (** The smallest operations that preserve the borrow check invariant  *)
 
+Definition invalidate_conflict_ref_fpg (ph: path) (ak: access_kind) (am : access_mode_bor) (fpg: fp_graph) : fp_graph :=
+  PTree.map1 (invalidate_conflict_ref ph ak am) fpg.
+
+
 (* Definition dummy_origin : ident := 1%positive. *)
 
 Definition access_kind_to_mut (ak: access_kind) : mutkind :=
@@ -661,22 +698,63 @@ Proof.
   think the two premises about the reachability in the borrow check
   invariant and the stack discipline field can be applied to this
   lemma? *)
-  Lemma invalidate_conflict_ref_fpm_views_largest: forall phl1 id1 phl2 id2 phl3 id3 (fpm1 fpm2: fp_map) fpl vs1 vs2 tgt b ofs fp ak
-    (* (REACH1: get_owner_path_map (id1, phl1) fpm1 = OK (tgt, vs1)) *)
-    (INVALID: fpm2 = invalidate_conflict_ref_fpm (id1, phl1) ak am fpm1)
+  Lemma invalidate_conflict_ref_fpm_views_largest: forall phl1 id1 phl2 id2 phl3 id3 (fpg1 fpg2: fp_graph) fpl vs1 vs2 tgt b ofs fp ak
+    (* Should we ensure that the mutability of (id1, phl1) (id2, phl2)
+    match the access kind? How to dynamically check that all the deep
+    path of (id1, phl1) is mutable? Maybe we do not need to check that
+    because we do not actually use this path to do something, we just
+    check the views of this path. When the path is immutable but the
+    access is write, the views are still computed to be mutable paths
+    (by the definition of get_owner_path) *)
+    (* Thinking of how to prove: Do we need other invariants to prove
+    this lemma, such as precision? I think we need the precision
+    property? Because when we accumulate the view, we should ensure
+    that it can actually reaches the target location we want otherwise
+    the set of views are not comparable! But in fact, the stack
+    property before invalidation can give us this guarantee? Because
+    when these two path can reach a target in fpg2 then they must
+    reach the same target with the same views at fpg1. Then we can
+    apply the stack property of fpg1. The remaining thing is to prove
+    that vs3 includes vs2 is impossible? How? We can show that all the
+    path in vs3 is not relevant to the path in vs2 (or more
+    specifically, (id2,phl2))?  The key part here is how to show that
+    when accumulating the path from traversing (id3, phl3), the
+    irrelevant relation between the path is maintained? I think it is
+    correct because when some path is already irrelevant to (id2,
+    phl2) then if we append some projection on it, it must be also
+    irrelevant to (id2, phl2). There is still a problem, we use (id1,
+    phl1) to do the invalidation so how to argue that vs3 has no
+    relevant path of (id2, phl2)? We just know that vs3 has no
+    relevant path of (id1, phl1). We can prove that (id2, phl2) is
+    relevant to (id1, phl1) (remember that we are accessing (id1,
+    phl1), so when it is shallow access, (id2, phl2) is prefix of
+    (id1,phl1)) and the path in vs3 is not relevant to (id1,phl1),
+    then this path must be not relevant to (id2, phl2). *)
+    (VIEWS_INV: fp_graph_views_inv fpg1)
+    (INVALID: fpg2 = invalidate_conflict_ref_fpg (id1, phl1) ak am fpg1)
     (* We want to say that the views of (id2, phl2) are the largest
     view to its location *)
-    (CONFLICT: relevant_path (id1, phl1) am (id2, phl2))
+    (CONFLICT: relevant_path (id1, phl1) am (id2, phl2) = true)
     (* Any two paths which reach the same target loaction, the views
     of (id2, phl2) must include the views of the other *)
-    (BEFORE: get_owner_path_map (id2, phl2) fpm2 = OK (tgt, vs2))
-    (AFTER: get_owner_path_map (id3, phl3) fpm2 = OK (tgt, vs3))
-    (* If (id3, phl3) is just a immutable path, we cannot compare its
-    views with those of (id2, phl2) *)
-    (MUTABLE: mutable_path (id3, phl3) fpm2 = OK true),
-    (* What if we require strict subset relation, but it require that
-    (id3, phl3) is disjoint with (id2, phl2)? *)
-    incl vs3 vs2.
+    (BEFORE: get_owner_path_map (id2, phl2) fpg2 = OK (tgt, vs2))
+    (AFTER: get_owner_path_map (id3, phl3) fpg2 = OK (tgt, vs3))
+    (PH_NEQ: (id2, phl2) <> (id3, phl3)),
+      match ak with
+      | AWrite =>
+          (* Should we also prove that (id3, phl3) must be a mutable path? *)
+          incl vs3 vs2 /\ ~ list_equiv vs2 vs3
+      | ARead =>
+          (mutable_path (id3, phl3) fpg2 = OK true -> incl vs3 vs2)
+          (* If (id3, phl3) is not a mutable path, we do not know the
+          relation between vs2 and vs3 but we must ensure that that
+          are comparable. Is it necessary to compare the views between
+          immutable path? Because there is not way to invalidate other
+          views by immutable access (But this should be ensured by the
+          compatibility between access_kind and the mutablibity of the
+          access path?) *)
+          (* /\ (incl vs3 vs2 \/ incl vs2 vs3) *)
+      end.
   Admitted.
 
   (* To define the second property: we can extract the deep access
