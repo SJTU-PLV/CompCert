@@ -656,6 +656,73 @@ Definition access_kind_to_mut (ak: access_kind) : mutkind :=
 
 Coercion access_kind_to_mut : access_kind >-> mutkind.
 
+(* Thinking of its sufficiency to prove the borrow check invariant:
+the key point is to prove the stack discipline in the invariant. I
+think the two premises about the reachability in the borrow check
+invariant and the stack discipline field can be applied to this
+lemma? *)
+Lemma invalidate_conflict_ref_fpm_views_largest: forall phl1 id1 ak am (fpg1 fpg2: fp_graph)
+  (* Should we ensure that the mutability of (id1, phl1) (id2, phl2)
+  match the access kind? How to dynamically check that all the deep
+  path of (id1, phl1) is mutable? Maybe we do not need to check that
+  because we do not actually use this path to do something, we just
+  check the views of this path. When the path is immutable but the
+  access is write, the views are still computed to be mutable paths
+  (by the definition of get_owner_path) *)
+  (* Note: Do we need other invariants to prove this lemma, such as
+  precision? I think we need the precision property? Because when we
+  accumulate the view, we should ensure that it can actually reaches
+  the target location we want otherwise the set of views are not
+  comparable! But in fact, the stack property before invalidation
+  can give us this guarantee? Because when these two path can reach
+  a target in fpg2 then they must reach the same target with the
+  same views at fpg1. Then we can apply the stack property of
+  fpg1. The remaining thing is to prove that vs3 includes vs2 is
+  impossible? How? We can show that all the path in vs3 is not
+  relevant to the path in vs2 (or more specifically, (id2,phl2))?
+  The key part here is how to show that when accumulating the path
+  from traversing (id3, phl3), the irrelevant relation between the
+  path is maintained? I think it is correct because when some path
+  is already irrelevant to (id2, phl2) then if we append some
+  projection on it, it must be also irrelevant to (id2, phl2). There
+  is still a problem, we use (id1, phl1) to do the invalidation so
+  how to argue that vs3 has no relevant path of (id2, phl2)? We just
+  know that vs3 has no relevant path of (id1, phl1). We can prove
+  that (id2, phl2) is relevant to (id1, phl1) (remember that we are
+  accessing (id1, phl1), so when it is shallow access, (id2, phl2)
+  is prefix of (id1,phl1)) and the path in vs3 is not relevant to
+  (id1,phl1), then this path must be not relevant to (id2, phl2). *)
+  (VIEWS_INV: fp_graph_views_inv fpg1)
+  (** TODO: define the spec of invalidae_conflict_ref_fpg for fpg2
+  instead of mentioning fpg1 here *)
+  (INVALID: fpg2 = invalidate_conflict_ref_fpg (id1, phl1) ak am fpg1)
+  phl2 id2 phl3 id3 vs2 vs3 tgt 
+  (* We want to say that the views of (id2, phl2) are the largest
+  view to its location *)
+  (CONFLICT: relevant_path (id1, phl1) am (id2, phl2) = true)
+  (* Any two paths which reach the same target loaction, the views
+  of (id2, phl2) must include the views of the other *)
+  (BEFORE: get_owner_path_map (id2, phl2) fpg2 = OK (tgt, vs2))
+  (AFTER: get_owner_path_map (id3, phl3) fpg2 = OK (tgt, vs3))
+  (PH_NEQ: (id2, phl2) <> (id3, phl3)),
+    match ak with
+    | AWrite =>
+        (* Should we also prove that (id3, phl3) must be a mutable path? *)
+        incl vs3 vs2 /\ ~ list_equiv vs2 vs3
+    | ARead =>
+        (mutable_path (id3, phl3) fpg2 = OK true -> incl vs3 vs2)
+        (* If (id3, phl3) is not a mutable path, we do not know the
+        relation between vs2 and vs3 but we must ensure that that
+        are comparable. Is it necessary to compare the views between
+        immutable path? Because there is not way to invalidate other
+        views by immutable access (But this should be ensured by the
+        compatibility between access_kind and the mutablibity of the
+        access path?) *)
+        (* /\ (incl vs3 vs2 \/ incl vs2 vs3) *)
+    end.
+Admitted.
+
+
 (* Deep access of a path, which creates a temporary reference. This
 reference can be seen as a normal reference, or it can be used to
 extract the point-to footprint to act as a move operation. The
@@ -669,6 +736,8 @@ Lemma borrow_check_inv_deep_access: forall phl id (fpm1 fpm2: fp_map) fpl vs tgt
     (* wt_path ce (fpm_to_tenv fpm1) (id, phl) = OK ty -> *)
     (REACH: get_owner_path_map (id, phl) fpm1 = OK (tgt, vs))
     (GET: get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp))
+    (* Maybe we need to show that the mutability of (id,phl) is
+    compatible with ak *)
     (INVALID: fpm2 = invalidate_conflict_ref_fpm (id, phl) ak Adeep fpm1),
     (** We also need to invalidate fpl because some reference in fpl
     may be created by deeply accessing (id,phl)! This scenario is
@@ -677,8 +746,7 @@ Lemma borrow_check_inv_deep_access: forall phl id (fpm1 fpm2: fp_map) fpl vs tgt
     (* /\ wt_footprint_list ce fpm2 ((Treference dummy_origin mut ty) :: tyl) ((fp_ref mut b ofs (Some tgt) vs) :: fpl) *)
     (* /\ wt_fpm ce fpm2. *)
 Proof.
-  intros. econstructor.
-  inv BOR_INV.
+  intros. 
   (* We need to ignore how to prove the properties of using arbitary
   fresh idents for temporary footprints. We reduce the proof to the
   form that all the idents of fpl are the same as the ids after
@@ -691,78 +759,47 @@ Proof.
   of all the reachable path to the same location); (2) we prove that
   with the above properties, we can extract this deep access path to a
   new temporary value. *)
-  
-
-  (* Thinking of its sufficiency to prove the borrow check invariant:
-  the key point is to prove the stack discipline in the invariant. I
-  think the two premises about the reachability in the borrow check
-  invariant and the stack discipline field can be applied to this
-  lemma? *)
-  Lemma invalidate_conflict_ref_fpm_views_largest: forall phl1 id1 phl2 id2 phl3 id3 (fpg1 fpg2: fp_graph) fpl vs1 vs2 tgt b ofs fp ak
-    (* Should we ensure that the mutability of (id1, phl1) (id2, phl2)
-    match the access kind? How to dynamically check that all the deep
-    path of (id1, phl1) is mutable? Maybe we do not need to check that
-    because we do not actually use this path to do something, we just
-    check the views of this path. When the path is immutable but the
-    access is write, the views are still computed to be mutable paths
-    (by the definition of get_owner_path) *)
-    (* Thinking of how to prove: Do we need other invariants to prove
-    this lemma, such as precision? I think we need the precision
-    property? Because when we accumulate the view, we should ensure
-    that it can actually reaches the target location we want otherwise
-    the set of views are not comparable! But in fact, the stack
-    property before invalidation can give us this guarantee? Because
-    when these two path can reach a target in fpg2 then they must
-    reach the same target with the same views at fpg1. Then we can
-    apply the stack property of fpg1. The remaining thing is to prove
-    that vs3 includes vs2 is impossible? How? We can show that all the
-    path in vs3 is not relevant to the path in vs2 (or more
-    specifically, (id2,phl2))?  The key part here is how to show that
-    when accumulating the path from traversing (id3, phl3), the
-    irrelevant relation between the path is maintained? I think it is
-    correct because when some path is already irrelevant to (id2,
-    phl2) then if we append some projection on it, it must be also
-    irrelevant to (id2, phl2). There is still a problem, we use (id1,
-    phl1) to do the invalidation so how to argue that vs3 has no
-    relevant path of (id2, phl2)? We just know that vs3 has no
-    relevant path of (id1, phl1). We can prove that (id2, phl2) is
-    relevant to (id1, phl1) (remember that we are accessing (id1,
-    phl1), so when it is shallow access, (id2, phl2) is prefix of
-    (id1,phl1)) and the path in vs3 is not relevant to (id1,phl1),
-    then this path must be not relevant to (id2, phl2). *)
-    (VIEWS_INV: fp_graph_views_inv fpg1)
-    (INVALID: fpg2 = invalidate_conflict_ref_fpg (id1, phl1) ak am fpg1)
-    (* We want to say that the views of (id2, phl2) are the largest
-    view to its location *)
-    (CONFLICT: relevant_path (id1, phl1) am (id2, phl2) = true)
-    (* Any two paths which reach the same target loaction, the views
-    of (id2, phl2) must include the views of the other *)
-    (BEFORE: get_owner_path_map (id2, phl2) fpg2 = OK (tgt, vs2))
-    (AFTER: get_owner_path_map (id3, phl3) fpg2 = OK (tgt, vs3))
-    (PH_NEQ: (id2, phl2) <> (id3, phl3)),
-      match ak with
-      | AWrite =>
-          (* Should we also prove that (id3, phl3) must be a mutable path? *)
-          incl vs3 vs2 /\ ~ list_equiv vs2 vs3
-      | ARead =>
-          (mutable_path (id3, phl3) fpg2 = OK true -> incl vs3 vs2)
-          (* If (id3, phl3) is not a mutable path, we do not know the
-          relation between vs2 and vs3 but we must ensure that that
-          are comparable. Is it necessary to compare the views between
-          immutable path? Because there is not way to invalidate other
-          views by immutable access (But this should be ensured by the
-          compatibility between access_kind and the mutablibity of the
-          access path?) *)
-          (* /\ (incl vs3 vs2 \/ incl vs2 vs3) *)
-      end.
-  Admitted.
-
-  (* To define the second property: we can extract the deep access
-  path to form a new reference using a temporary variable with a fresh
-  identifier. Maybe there is no need to define this property in a new
-  lemma? *)
-
-
+  (* 1. The invariant is preserved by the invalidation process  *)
+  assert (BOR_INV1: borrow_check_fpm_vals_inv fpm2 (map (invalidate_conflict_ref (id, phl) ak Adeep) fpl)) by admit.
+  inv BOR_INV.
+  set (fpg1 := ((PTree_Properties.of_list
+                  (PTree.elements (fpm_to_fpg fpm1) ++
+                     combine (fresh_PTree_idents fpm1 (Datatypes.length fpl)) fpl)))) in *.  
+  inv BOR_INV1.
+  set (fpm2 := (invalidate_conflict_ref_fpm 
+                  (id, phl) ak Adeep fpm1)) in *.
+  set (fpl2 := (map
+                  (invalidate_conflict_ref 
+                     (id, phl) ak Adeep) fpl)) in *.
+  set (fpg2 := ((PTree_Properties.of_list
+                  (PTree.elements (fpm_to_fpg fpm2) ++
+                     combine (fresh_PTree_idents fpm2 (Datatypes.length fpl2)) fpl2)))) in *.
+  assert (FPG2: fpg2 = invalidate_conflict_ref_fpg (id, phl) ak Adeep fpg1) by admit.
+  (* 2. apply invalidate_conflict_ref_fpm_views_largest to show the
+  property of [vs] *)
+  generalize (invalidate_conflict_ref_fpm_views_largest phl id ak Adeep fpg1 fpg2 borrowck_views_inv_snapshot0 FPG2).
+  intros VS_TOP.
+  econstructor.
+  (* For now, ignore how to chose the new id *)
+  set (fresh_id := fresh_PTree_ident fpg2).
+  replace ((PTree_Properties.of_list
+       (PTree.elements (fpm_to_fpg fpm2) ++
+        combine
+          (fresh_PTree_idents fpm2
+             (Datatypes.length (fp_ref ak b ofs (Some tgt) vs :: fpl2)))
+          (fp_ref ak b ofs (Some tgt) vs :: fpl2)))) with (PTree.set fresh_id (fp_ref ak b ofs (Some tgt) vs) fpg2) by admit.
+  red.
+  (* Note: By case analysis, if both ph1 and ph2 do not include
+  fresh_id, then we use the invariant for fpg2; if ph1 or ph2 includes
+  fresh_id, then we use the property of
+  invalidate_conflict_ref_fpm_views_largest; if both ph1 and ph2
+  include fresh_id, then we may use the stack invariant in fpg2 to
+  show that the views created from traversing tgt to the tgt0 have
+  linear order.*)
+  admit.
+  admit.
+  admit.
+Admitted.
 
 (* Move out the footprint pointed by the fp_ref in the temporary
 values and then use this footprint to replace the fp_ref to simulate

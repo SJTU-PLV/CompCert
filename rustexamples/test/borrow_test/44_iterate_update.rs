@@ -12,7 +12,7 @@ struct X {
     next: OptionX
 }
 
-// Both "no_control_flow" and "conditional" can pass our borrow checking.
+// Both "no_control_flow" and "conditional" can pass our borrow checking. We do not have the imprecision problem in Polonius alpha (although it is not a theretical problem). 
 
 fn no_control_flow() {
     let b: OptionX = OptionX::Some(Box(X { next: OptionX::None }));
