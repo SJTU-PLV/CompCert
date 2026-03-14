@@ -14,35 +14,51 @@ struct X {
 
 // Both "no_control_flow" and "conditional" can pass our borrow checking. We do not have the imprecision problem in Polonius alpha (although it is not a theretical problem). 
 
-fn no_control_flow() {
-    let b: OptionX = OptionX::Some(Box(X { next: OptionX::None }));
-    let p: &mut OptionX = &mut b;
-    loop {
-        match *p {
-            OptionX::None => {
-                break;
-            }
-            OptionX::Some(ref mut now) => {
-                p = &mut (**now).next;
-                // At this point, loan(*p) is killed
-            }
-        }
-    }
-}
+// fn no_control_flow() {
+//     let b: OptionX = OptionX::Some(Box(X { next: OptionX::None }));
+//     let p: &mut OptionX = &mut b;
+//     loop {
+//         match *p {
+//             OptionX::None => {
+//                 break;
+//             }
+//             OptionX::Some(ref mut now) => {
+//                 p = &mut (**now).next;
+//                 // At this point, loan(*p) is killed
+//             }
+//         }
+//     }
+// }
 
-fn conditional() {
-    let b: OptionX = OptionX::Some(Box(X { next: OptionX::None }));
-    let p: &mut OptionX = &mut b;
+// fn conditional() {
+//     let b: OptionX = OptionX::Some(Box(X { next: OptionX::None }));
+//     let p: &mut OptionX = &mut b;
+//     loop {
+//         match *p {
+//             OptionX::None => {
+//                 break;
+//             }
+//             OptionX::Some(ref mut now) => {
+//                 if true {
+//                     p = &mut (**now).next;
+//                 }
+//                 // At this point, loan(*p) is not killed because the else branch does not kill it.
+//             }
+//         }
+//     }
+// }
+
+fn consume_list() {
+    let p: OptionX = OptionX::Some(Box(X { next: OptionX::None }));
+
     loop {
-        match *p {
+        match p {
             OptionX::None => {
                 break;
             }
-            OptionX::Some(ref mut now) => {
-                if true {
-                    p = &mut (**now).next;
-                }
-                // At this point, loan(*p) is not killed because the else branch does not kill it.
+            OptionX::Some(boxed_node) => {
+                // reassign p would drop the block p points to
+                p = (*boxed_node).next;
             }
         }
     }

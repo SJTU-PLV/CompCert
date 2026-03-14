@@ -83,6 +83,8 @@ let rec name_rust_decl id ty =
       "variant" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
   | Tarray(ty, sz) ->
     name_rust_decl (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
+  | Tadt(name) ->
+    "adt" ^ " " ^ extern_atom name
 
 (* Type *)
 

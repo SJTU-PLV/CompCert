@@ -1422,11 +1422,11 @@ Definition before_write_place (fpm1: fp_map) (p: place) : res (path * views * fp
     let fpm2 := invalidate_conflict_ref_fpm p AWrite Ashallow fpm1 in  
     (* Before overwrite the target location, we should first set it to
     fp_uninit so that the original fp_ref in this location is removed
-    and we can establish invariant before overwriting a new value *)
+    and we can establish invariant before overwriting a new value. Maybe in high-level spec without views at fp_ref, we can remove this extra operation because the cleared place would be immediately assigned with value. *)
     do fpm3 <- clear_footprint_map ge ph fpm2;
     (* To make the views at each reference precise. Note that we
     should also kill the loans in the evaluated value (e.g., consider
-    x = &mut *x *)
+    x = &mut *x. Therefore we return the views of p. *)
     OK (ph, vs, kill_paths_ref_fpm vs fpm3)
   else Error nil.
 

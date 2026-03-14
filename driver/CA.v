@@ -5,7 +5,7 @@ Require Import Conventions Mach Asm.
 Require Import CKLR.
 Require Import Locations CallConv.
 Require Import Inject InjectFootprint.
-Require Import MemFootprint.
+(* Require Import MemFootprint. *)
 
 (*
    cc_c_asm_injp   ≡    c_injp @  ≡ c_injp @

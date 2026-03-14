@@ -804,8 +804,16 @@ Admitted.
 (* Move out the footprint pointed by the fp_ref in the temporary
 values and then use this footprint to replace the fp_ref to simulate
 the move operation.  *)
-Lemma borrow_check_inv_replace_move: forall (fpm1 fpm2: fp_map) fpl vs tgt b ofs fp,
-    borrow_check_fpm_vals_inv fpm1 ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) ->
+(* Note: Do case analysis. When two paths do not go through the
+temporary reference, then we use the invariant of fpm1; when one of
+them goes through this reference, the view of the path that does not
+go through this reference must be the same as that before moving, so
+we can construct a path in fpm1 that goes through the reference and
+use the invariant of fpm1; when both two path go through the moved out
+footprint, then we just construct their original path in fpm1 with the
+reference. *)
+Lemma borrow_check_inv_replace_move: forall (fpm1 fpm2: fp_map) fpl tgt b ofs fp,
+    borrow_check_fpm_vals_inv fpm1 ((fp_ref Mutable b ofs (Some tgt) [tgt]) :: fpl) ->
     (* wt_fpm ce fpm1 -> *)
     (* wt_footprint_list ce fpm1 ((Treference r Mutable ty) :: tyl) ((fp_ref Mutable b ofs (Some tgt) vs) :: fpl) -> *)
     get_owner_loc_footprint_map tgt fpm1 = OK (b, ofs, fp) ->
@@ -855,11 +863,11 @@ Proof.
   eapply get_owner_loc_footprint_map_eq. eauto.
   intros GPH.
   exploit borrow_check_inv_deep_access; eauto.
-  instantiate (1 := AWrite). instantiate (1 := Mutable).
+  instantiate (1 := AWrite). 
   intros B1.  
   eapply borrow_check_inv_replace_move; eauto. 
 Qed.  
-  
+
 
 (* Why is it so complicated? When we do shallow write on a path, we
 should also simultaneously kill the loans related to this paths and
@@ -872,8 +880,12 @@ Lemma borrow_check_inv_shallow_write: forall (fpm1 fpm2 fpm3 fpm4: fp_map) id ph
     (* wt_footprint_list ce fpm1 tyl fpl -> *)
     (* wt_fpm ce fpm1 -> *)
     get_owner_path_map (id, phl) fpm1 = OK (tgt, vs) ->
+    (* If we do not check this property, then some path may point to
+    the descendant of tgt which cannot be invalidated by the shallow
+    access *)
     check_path_is_dropped fpm1 tgt = OK true ->
     fpm2 = invalidate_conflict_ref_fpm (id, phl) AWrite BorrowCheckDomain.Ashallow fpm1 ->
+    (* This clearing operation is used to align with the kill loans operation. *)
     clear_footprint_map ce tgt fpm2 = OK fpm3 ->
     fpm4 = kill_paths_ref_fpm vs fpm3 ->
     borrow_check_fpm_vals_inv fpm4 (map (kill_paths_ref vs) (map (invalidate_conflict_ref (id, phl) AWrite BorrowCheckDomain.Ashallow) fpl)).
@@ -886,7 +898,7 @@ footprint is fp_emp or has been cleared by clear_footprint_map, and
 the invariant preserves. *)
 Lemma borrow_check_inv_set_fp: forall (fpm1 fpm2: fp_map) fpl tgt fp,
     borrow_check_fpm_vals_inv fpm1 (fp :: fpl) ->
-    (* wt_fpm ce fpm1 ->     *)
+    (* wt_fpm ce fpm1 -> *)
     (* wt_footprint_list ce fpm1 (ty :: tyl) (fp :: fpl) -> *)
     check_path_is_dropped fpm1 tgt = OK true ->
     set_footprint_map tgt fp fpm1 = OK fpm2 ->

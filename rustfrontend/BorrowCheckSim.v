@@ -14,7 +14,7 @@ Require Import Errors.
 Require Import InitDomain InitAnalysis.
 Require Import RustIRspec RustIRsem.
 Require Import RustIRspecMem.
-Require Import BorrowCheckInv.
+Require Import BorrowCheck BorrowCheckInv.
 Require Import Wfsimpl.
 Require Import Separation Listmisc.
 (* use free_list related lemmas *)
@@ -928,6 +928,9 @@ Proof.
     move from an opaque object *)  
     (* admit. *)
     (* intros (mp3 & mp4 & S1 & S2 & S3). *)
+    (** FIXME: as we support copying composite type for now, we cannot
+    assume that the type of place is accessed by value anymore.  *)
+    assert (WRONG_ASSUMPTION: access_by_value (typeof_place p) = true) by admit.
     exploit deref_loc_sem_wt_val; eauto.     
     (** TODO; wt_footprint *)
     admit.
@@ -1209,13 +1212,13 @@ Proof.
   - admit.
   (* Scall *)
   - 
+Admitted.
 
 
+End BORROW_CHECK_SIM.
 
-End BORROW_CHECK.
 
-
-Notation li_rs_spec := (@li_rs_spec ae).
+Notation li_rs_spec := (@li_rs_spec ame).
 
 (** TODO: the interface for the borrow checking *)
 Definition rs_spec : invariant li_rs_spec := inv_bot.
@@ -1250,3 +1253,5 @@ Theorem borrow_check_spec_safe (M M': RustIR.program) :
   module_type_safe rs_spec rs_spec (RustIRspec.semantics M) SIF.
 Proof.
 Admitted.
+
+End ADT_ENV.

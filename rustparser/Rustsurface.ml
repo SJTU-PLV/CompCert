@@ -237,6 +237,8 @@ module To_syntax = struct
     | T.Tvariant (orgs, id) ->
       pp_print_string pp (IdentMap.find id symmap);
       pp_print_origins symmap pp orgs
+    | T.Tadt (id) ->
+      pp_print_string pp (IdentMap.find id symmap)
     | T.Treference (org, m, t) ->
       pp_print_string pp "&";
       (* print origin *)

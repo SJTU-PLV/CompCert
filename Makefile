@@ -175,13 +175,13 @@ RUSTFRONTEND=Rusttypes.v Rustsyntax.v Rustlight.v RustIR.v\
   MoveChecking.v \
   Clightgen.v Clightgenspec.v Clightgenproof.v\
   RustOp.v Rusttyping.v\
-  StkBorPermission.v RustIRbor.v RustIRspec.v\
+  RustIRspec.v\
   BorrowCheckDomain.v ReplaceOrigins.v BorrowCheckPolonius.v\
   RegionLiveness.v BorrowCheck.v BorrowCheckInv.v \
-  BorrowCheckSound.v BorrowCheckSim.v RustIRspecMem.v\
+  BorrowCheckSim.v RustIRspecMem.v\
   Listmisc.v\
   # BorrowCheckSafe.v
-
+  # StkBorPermission.v RustIRbor.v BorrowCheckSound.v
 # RUSTDEMO=LinkedList.v LinkedListSafe.v HashMap.v HashMapSafe.v HashMapCommon.v \
 #   HashMapLink.v
 

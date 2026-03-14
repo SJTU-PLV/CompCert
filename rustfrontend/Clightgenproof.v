@@ -985,8 +985,8 @@ Proof.
           rewrite  L.   rewrite   Ptrofs.add_zero.  eauto. 
         ** eapply Clight.eval_Econst_int. 
         ** simpl. 
-          unfold sem_cmp. simpl. 
-          unfold sem_binarith. simpl. 
+          unfold Cop.sem_cmp. simpl. 
+          unfold Cop.sem_binarith. simpl. 
           unfold Cop.sem_cast. simpl. 
           destruct Archi.ptr64 eqn:ARCHI. 
           simpl. eauto. 
@@ -1050,7 +1050,7 @@ Lemma alignof_blockcopy_1248: forall ty ofs,
   -> (Ctypes.alignof_blockcopy tge (to_ctype ty) | Ptrofs.unsigned ofs). 
 Proof. 
   intros. 
-  induction ty; inv H; simpl in *; eauto.
+  induction ty; inv H; simpl in *; eauto; try lia.
   - destruct ((prog_comp_env prog) ! i) eqn: A; inv H0.
     inv TRANSL. 
     apply match_prog_comp_env0 in A. 
@@ -1272,11 +1272,11 @@ sizeof ge ty <= Ctypes.sizeof tge (to_ctype ty).
 Proof. 
   intros. 
   induction ty; simpl in *; try (lia). 
-  zify. 
-  destruct H0. destruct H. subst. 
-  eapply Zmult_lt_0_le_compat_r. auto. 
-  auto. 
-  destruct H. lia. 
+  - zify. 
+    destruct H0. destruct H. subst. 
+    eapply Zmult_lt_0_le_compat_r. auto. 
+    auto. 
+    destruct H. lia. 
   - inv TRANSL. 
     inv match_prog_comp_env0. 
     destruct ((prog_comp_env prog) ! i) eqn : Q.
@@ -1289,7 +1289,7 @@ Proof.
     destruct ((Ctypes.prog_comp_env tprog) ! i). 
     generalize (Ctypes.co_sizeof_pos c). lia. 
     lia. 
-    - inv TRANSL. 
+  - inv TRANSL. 
     inv match_prog_comp_env0. 
     destruct ((prog_comp_env prog) ! i) eqn : Q.
     apply tr_composite_some in Q. 
@@ -1301,6 +1301,8 @@ Proof.
     destruct ((Ctypes.prog_comp_env tprog) ! i). 
     generalize (Ctypes.co_sizeof_pos c). lia. 
     lia. 
+  - destruct ((Ctypes.prog_comp_env tprog) ! i) eqn : Q.
+    generalize (Ctypes.co_sizeof_pos c). lia. lia.    
 Qed. 
 
 Lemma map_nil : forall (A B: Type) (f: A -> B) l, 
