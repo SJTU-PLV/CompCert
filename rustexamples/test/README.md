@@ -1,3 +1,18 @@
+
+# Test suite for RustCompCert
+
+## Run test
+
+Before running the test, you should first build the compiler at the main directory. To run the test case, use the following command:
+
+```
+make test
+```
+
+> For now, the only failed test case is `21struct_enum_generic.rs` which involves some pattern match mechanism we do not support
+
+## Explanation of (part of) the test cases
+
 1.  Attempting to modify a borrowed value 
 ```
 fn main() {

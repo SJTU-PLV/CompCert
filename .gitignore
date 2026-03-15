@@ -82,3 +82,5 @@
 .nia.cache
 .nra.cache
 .csdp.cache
+# Generated from test cases
+/rustexamples/test/*.s

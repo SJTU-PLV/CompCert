@@ -1,0 +1,1 @@
+The main test cases for RustCompCert locate in [`test`](test) directory.

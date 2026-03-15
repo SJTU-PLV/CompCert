@@ -798,7 +798,9 @@ Lemma get_owner_loc_footprint_map_clear_coherent: forall id phl fpm1 b ofs fp mp
       /\ massert_imp mp (mp1 ** mp2).
 Admitted.
 
-(* What is the difference between this lemma and sem_wt_loc_split? *)
+(* What is the difference between this lemma and sem_wt_loc_split?
+Note that this lemma only works for Emoveplace not. It does not
+support Eplace. *)
 Lemma deref_loc_sem_wt_val: forall (fp: footprint) b ofs mp ty m fpm
     (WTLOC: sem_wt_loc ce fp b ofs mp)
     (* For now we only support by_value dereference *)
@@ -807,10 +809,12 @@ Lemma deref_loc_sem_wt_val: forall (fp: footprint) b ofs mp ty m fpm
     (MPRED: m |= mp),
     exists v mp1 mp2,
       deref_loc ty m b (Ptrofs.repr ofs) v
+      (* What if we do not move out the footprint? *)
       /\ sem_wt_loc ce (clear_footprint_rec ce fp) b ofs mp1
       /\ sem_wt_val ce fp v mp2
       /\ massert_imp mp (mp1 ** mp2).
 Admitted.
+
 
 Lemma invalidate_conflict_ref_fpm_coherent_unchanged: forall phl id (fpm: fp_map) ak am mp,
     coherent_fpm ce fpm mp ->
@@ -891,13 +895,14 @@ Hint Resolve
   kill_paths_ref_coherent_fpm : kill_paths_ref.
 
 
-Lemma eval_expr_match: forall (e: expr) vfp (fpm1 fpm2: fp_map) m MP1 FMP 
+Lemma eval_expr_match_by_value: forall (e: expr) vfp (fpm1 fpm2: fp_map) m MP1 FMP 
     (COH: coherent_fpm ce fpm1 MP1)
     (MPRED: m |= MP1 ** FMP)
     (WTEXPR: wt_expr fpm1 ce e)
     (WTFPM: wt_fpm ce fpm1)
     (REF_WF: fp_ref_loc_wf_fpm fpm1)
-    (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2)),
+    (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2))
+    (BYVAL: access_by_value (typeof e) = true),
     exists v mp MP2,
       Rustlightown.eval_expr ce fpm1 m tge e v
       /\ sem_wt_val ce vfp v mp
@@ -928,9 +933,6 @@ Proof.
     move from an opaque object *)  
     (* admit. *)
     (* intros (mp3 & mp4 & S1 & S2 & S3). *)
-    (** FIXME: as we support copying composite type for now, we cannot
-    assume that the type of place is accessed by value anymore.  *)
-    assert (WRONG_ASSUMPTION: access_by_value (typeof_place p) = true) by admit.
     exploit deref_loc_sem_wt_val; eauto.     
     (** TODO; wt_footprint *)
     admit.
@@ -958,6 +960,27 @@ Proof.
     + econstructor. auto.
 Admitted.      
 
+(* We only allow moving composite for now and do not allow copying
+them in pure expression *)
+Lemma eval_Emoveplace_by_copy: forall (e: expr) vfp (fpm1 fpm2: fp_map) m MP1 FMP 
+    (COH: coherent_fpm ce fpm1 MP1)
+    (MPRED: m |= MP1 ** FMP)
+    (WTEXPR: wt_expr fpm1 ce e)
+    (WTFPM: wt_fpm ce fpm1)
+    (REF_WF: fp_ref_loc_wf_fpm fpm1)
+    (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2))
+    (BYCOPY: access_mode (typeof e) = Ctypes.By_copy), 
+    exists b ofs mp1 mp2 mp3 mp4,
+      Rustlightown.eval_expr ce fpm1 m tge e (Vptr b (Ptrofs.repr ofs))
+      /\ sem_wt_fp ce vfp mp1
+      /\ coherent_fpm ce fpm2 mp2
+      /\ sem_wt_loc ce vfp b ofs mp4
+      (* mp3 can be seen as the information we lost when we clear the
+      footprint in the location of p *)
+      /\ massert_imp (mp1 ** mp2 ** mp3) mp4
+      /\ m |= mp1 ** mp2 ** mp3 ** FMP.
+Proof.  
+Admitted.
 
 
 Lemma clear_is_dropped_fp_map_coherent: forall (fpm1 fpm2: fp_map) ph mp1,
@@ -1011,11 +1034,14 @@ Proof.
     unfold_before_write_place.        
     destr_path_of_place p.
     (* evaluate expr *)
-    exploit eval_expr_match. eauto. eapply MPRED. 
+    exploit eval_expr_match_by_value. eauto. eapply MPRED. 
     (* wt_expr *) eauto.
     (* wt_fpm: we should add a new state invariant *) admit.
     eapply BOR_INV.
     eauto.
+    (** TODO: we need to consider that we may access e by copying its
+    content from its location. *)
+    admit.
     intros (tv & mp1 & mp2 & TEVAL & WTVAL & COH1 & MPRED1).
     (* evaluate expr preserves borrow check invariant. We should write
     it in a separated lemma *)
@@ -1058,7 +1084,7 @@ Proof.
     clear_footprint_map in [ph] does not change the location of [ph] *)
     assert (GPLOC1: get_owner_loc_footprint_map  (tgt_id, tgt_phl)  (kill_paths_ref_fpm vs x3) = OK (b, ofs, clear_footprint_rec ce pfp)) by admit.
     assert (MPRED3: m |= mp2' ** mp1 ** FMP) by admit.
-    (** Proved by type checking *)
+    (** FIXME: consider by_copy access *)
     assert (BYVAL: exists chunk, access_mode (typeof_place p) = Ctypes.By_value chunk) by admit.
     destruct BYVAL as (chunk & BYVAL).    
     (* inv WTFP2. inv H4. *)
