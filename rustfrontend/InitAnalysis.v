@@ -11,7 +11,7 @@ Require Import InitDomain.
 Import ListNotations.
 Local Open Scope list_scope.
 
-
+(* FIXME: when we support reference, we have to consider the case that [p] is not a movable place *)
 (* S is the whole set, flag = true indicates that it computes the MaybeInit set *)
 Definition transfer (S: PathsMap.t) (flag: bool) (f: function) (cfg: rustcfg) (pc: node) (before: IM.t) : IM.t :=
   match before with

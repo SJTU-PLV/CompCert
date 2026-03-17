@@ -179,7 +179,12 @@ let process_rust_file test_case =
     in
     (* Set config *)
     Machine.config := Machine.x86_64;
-    (* add helper functions which is required by Selection pass *)
+    (* Add helper functions which is required by Selection pass. The
+    important problem here is that this operation makes the
+    compilation implemented in Ocaml side mismatched with the
+    implementation in Rocq side (i.e., the top-level function in
+    Compiler.v). One possible solution is to insert this operation in
+    the Clightgen pass and prove its correctness. *)
     let gl = C2C.add_helper_functions clight_prog.Ctypes.prog_defs in
     let clight_prog' =
       { Ctypes.prog_defs = gl;

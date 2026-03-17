@@ -48,11 +48,11 @@ fn conditional() {
     }
 }
 
-fn consume_list() {
+fn consume_list_until() {
     let p: OptionX = OptionX::Some(Box(X { next: OptionX::None }));
 
     loop {
-        match p {
+        match p { 
             OptionX::None => {
                 break;
             }
