@@ -22,8 +22,8 @@ fn get_suffix_at_x<'a>(ls: &'a mut List, x: i32) -> &'a mut List {
            return ls;
        }
        List::Cons(ref mut node) => { 
-           let hd: &mut i32 = &mut (*node).value;
-           let tl: &mut List = &mut *(*node).next;
+           let mut hd: &mut i32 = &mut (*node).value;
+           let mut tl: &mut List = &mut *(*node).next;
            if *hd == x { 
                return ls;
            } else { 

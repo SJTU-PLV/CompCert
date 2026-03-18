@@ -1,9 +1,9 @@
 fn main(){
-    let v1: i32 = 22;
-    let v2: i32 = 44;
-    let p2: &mut i32 = &mut v2; // 'p2 -> {v2}
-    let p1: &mut i32 = &mut v1; // 'p1 -> {v1}, 'p2 -> {v2}
-    let q: &mut &mut i32;
+    let mut v1: i32 = 22;
+    let mut v2: i32 = 44;
+    let mut p2: &mut i32 = &mut v2; // 'p2 -> {v2}
+    let mut p1: &mut i32 = &mut v1; // 'p1 -> {v1}, 'p2 -> {v2}
+    let mut q: &mut &mut i32;
     if true {
         q = &mut p1;
     } else{

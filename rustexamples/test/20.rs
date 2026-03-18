@@ -1,9 +1,9 @@
 fn main(){
-    let x: i32 = 22;
-    let y: i32 = 44;
-    let p: & i32 = &x;
+    let mut x: i32 = 22;
+    let mut y: i32 = 44;
+    let mut p: & i32 = &x;
     y = y + 1;
-    let q: & i32 = &y;
+    let mut q: & i32 = &y;
     if x < y {
         p = q;
         x = x + 1;
@@ -12,6 +12,6 @@ fn main(){
         y = y + 1; 
     }
     y = y + 1; // If we uncomment the following line, error should be reported here
-    // let tmp: i32 = *p;
+    // let mut tmp: i32 = *p;
     // printf("%d", *p);
 }

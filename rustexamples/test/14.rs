@@ -1,8 +1,8 @@
 fn main(){
-    let v: i32 = 1;
-    let tmp: i32 = 2;
-    let p: &mut i32 = &mut v;
-    let q: &mut i32 = &mut *p;
+    let mut v: i32 = 1;
+    let mut tmp: i32 = 2;
+    let mut p: &mut i32 = &mut v;
+    let mut q: &mut i32 = &mut *p;
     p = &mut tmp; // note that p is reassigned here
     *q = 5;
     v = 4;

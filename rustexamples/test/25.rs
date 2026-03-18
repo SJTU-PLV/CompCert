@@ -13,7 +13,7 @@ struct list<'a> {
 }
 
 fn sum<'a>(l: &'a mut list<'a>) -> i32 {
-    let result: i32 = 0;
+    let mut result: i32 = 0;
     loop {
         result = result + (*l).value;
         match (*l).next {
@@ -44,9 +44,9 @@ fn add_one<'a, 'b>(l: &'a mut list<'b>) where 'b: 'a {
 }
 
 fn main(){
-    let l0: list = list {value: 1, next: list_node::None};
-    let l1: list = list {value: 2, next: list_node::Some(&mut l0)};
-    let l2: list = list {value: 3, next: list_node::Some(&mut l1)};
+    let mut l0: list = list {value: 1, next: list_node::None};
+    let mut l1: list = list {value: 2, next: list_node::Some(&mut l0)};
+    let mut l2: list = list {value: 3, next: list_node::Some(&mut l1)};
     add_one(&mut l2);
     // printf("Sum of list is %d", sum(&mut l2));
 }

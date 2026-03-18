@@ -1,12 +1,12 @@
 // Example to test time-traveling in Polonis
 
 fn main(){
-    let v: i32 = 1;
-    let a: i32 = 2;
-    let b: i32 = 3;
-    let x: &mut i32 = &mut a;
-    let p: &mut i32 = &mut v;
-    let q: &mut &mut i32 = &mut p;
+    let mut v: i32 = 1;
+    let mut a: i32 = 2;
+    let mut b: i32 = 3;
+    let mut x: &mut i32 = &mut a;
+    let mut p: &mut i32 = &mut v;
+    let mut q: &mut &mut i32 = &mut p;
     *q = &mut *x;
     // *x = 16;
     // **q = 15;

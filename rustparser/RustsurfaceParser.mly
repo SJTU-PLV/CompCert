@@ -359,6 +359,10 @@ stmt_item:
     { Slet (x, t, Option.None) }
   | LET; x = ID; COLON; t = ty; ASSIGN; e = expr
     { Slet (x, t, Option.Some e)}
+  | LET; MUT; x = ID; COLON; t = ty;
+    { Slet (x, t, Option.None) }
+  | LET; MUT; x = ID; COLON; t = ty; ASSIGN; e = expr
+    { Slet (x, t, Option.Some e)}
   // | LET; x = ID; COLON; t = ty; ASSIGN; xs = ID; LBRACE; flds = struct_fields; RBRACE
   //   { Slet (x, t, Option.Some (Estruct (xs, fst flds, snd flds))) }
   | BREAK { Sbreak }
@@ -381,4 +385,3 @@ stmt:
     { Ssequence (Sloop s, s1) }
   | LBRACE; s = stmt; RBRACE; s1 = stmt; { Ssequence (Sscope s, s1) }
   | s = stmt_item; SEMICOLON; s2 = stmt { Ssequence (s, s2) }
-

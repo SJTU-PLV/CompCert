@@ -25,19 +25,19 @@ fn test2<'a,'b,'c>(a: &'a mut i32, b: &'b mut i32) -> &'c mut i32
 //     q = &mut p;
 // }
 // fn main(){
-//     let v1: i32 = 1;
-//     let v2: i32 = 2;
-//     let v3: i32 = 3;
-//     let p: &mut i32 = &mut v1; // p1: &mut i32
+//     let mut v1: i32 = 1;
+//     let mut v2: i32 = 2;
+//     let mut v3: i32 = 3;
+//     let mut p: &mut i32 = &mut v1; // p1: &mut i32
 //     test1(&mut p, &mut v2, &mut v3);
 // //  v1 = 5;
 //     *p = 4;
 // }
 
 fn main(){
-    let v1: i32 = 1;
-    let v2: i32 = 2;
-    let p: &mut i32 = test2(&mut v1, &mut v2);
+    let mut v1: i32 = 1;
+    let mut v2: i32 = 2;
+    let mut p: &mut i32 = test2(&mut v1, &mut v2);
 //    v1 = 3;
     *p = 4;
 }

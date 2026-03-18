@@ -4,11 +4,11 @@ struct Rectangle {
 }
 
 fn main() {
-    let rect1 : Rectangle = Rectangle {
+    let mut rect1 : Rectangle = Rectangle {
         width: 30,
         height: 50,
     };
-    let area1 : i32 = area(&rect1);
+    let mut area1 : i32 = area(&rect1);
 }
 
 fn area(rectangle: &Rectangle) -> i32 {

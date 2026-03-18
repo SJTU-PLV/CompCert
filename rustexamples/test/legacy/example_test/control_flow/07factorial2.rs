@@ -1,8 +1,8 @@
 fn example2() -> Box<i32> {
-    let n : i32 = 10;
-    let b : i32 = 1;
+    let mut n : i32 = 10;
+    let mut b : i32 = 1;
     while 0 < n {
-        let c : Box<i32> = Box(*b);
+        let mut c : Box<i32> = Box(*b);
         *c = (*b) * n;
         n = n - 1;
         b = c;
@@ -11,5 +11,5 @@ fn example2() -> Box<i32> {
 }
 
 fn main() {
-	let y : Box<i32> = example2();
+	let mut y : Box<i32> = example2();
 }

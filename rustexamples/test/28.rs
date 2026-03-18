@@ -1,6 +1,6 @@
 // Current Polonius
 // let mut v: i32 = 1;
-// let p: &'p mut i32 = &'v mut v;
+// let mut p: &'p mut i32 = &'v mut v;
 // v = 2; // Current Polonius reports error here: 
 //        // 'p is live origin computed by liveness analysis, 
 //        // so v is a live loan and accessing v is invalid
@@ -9,7 +9,7 @@
 
 // // Pure forward propagation
 // let mut v: i32 = 1;
-// let p: &'p mut i32 = &'v mut v;
+// let mut p: &'p mut i32 = &'v mut v;
 // v = 2; // no error report here; accessing v would invalidate the origin 'p as {v} ⊆ 'p
 // ... // unrelated code
 // *p = 3; // In pure forward propagation: 
@@ -87,11 +87,11 @@
 // }
 
 fn main(){
-    let v1: i32 = 1;
-    let v2: i32 = 2;
-    let p1: & mut i32 = & mut v1; 
+    let mut v1: i32 = 1;
+    let mut v2: i32 = 2;
+    let mut p1: & mut i32 = & mut v1; 
         // after this point: live loans is {v1}
-    let p2: & mut i32 = & mut *p1; 
+    let mut p2: & mut i32 = & mut *p1; 
         // live loans is {v1, *p1}
     p1 = &mut v2; // {v1, v2}
     *p1 = 3; // {v1}

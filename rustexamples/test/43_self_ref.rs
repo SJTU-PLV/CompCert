@@ -6,10 +6,10 @@ struct A<'a>{
 }
 
 fn main(){
-    let v: i32 = 1;
-    let a: A = A {x: &mut v, y: 3};
+    let mut v: i32 = 1;
+    let mut a: A = A {x: &mut v, y: 3};
     a.x = &mut a.y;
-    let p: &mut i32 = &mut *a.x;
-    // let p: &mut i32 = &mut a.y; // This line also cause error because 'a which contain {a.y} is live and we deeply access a.y
-    let b: A = a; // error! If we uncomment this line, there would be no error
+    let mut p: &mut i32 = &mut *a.x;
+    // let mut p: &mut i32 = &mut a.y; // This line also cause error because 'a which contain {a.y} is live and we deeply access a.y
+    let mut b: A = a; // error! If we uncomment this line, there would be no error
 }

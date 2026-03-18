@@ -43,6 +43,6 @@ fn his_money_in_cents(p: Person) -> u8 {
 
 
 fn main() {
-	let x : u8 = his_money_in_cents(Person::A(Coin::Quarter(())));
+	let mut x : u8 = his_money_in_cents(Person::A(Coin::Quarter(())));
 }
 

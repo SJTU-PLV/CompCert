@@ -1,5 +1,5 @@
 fn main() {
-    let counter : i32 = 0;
+    let mut counter : i32 = 0;
 
     loop {
         counter = counter + 1;

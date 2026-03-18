@@ -38,7 +38,7 @@ where 'c: 'b, 'd: 'b { // l: &'l1 mut List<'l2>, p1: &'p1 mut i32, p2: &'p2 mut 
 // This example is too compilcated and may be not very useful
 // fn choose<'a, 'b, 'c, 'd, 'e>(l: &'a mut List<'b, 'c>, p1: &'d mut i32, p2: &'e mut i32) 
 //     where 'd: 'b, 'e: 'b {
-//     let current: &mut List = &mut *l;
+//     let mut current: &mut List = &mut *l;
 //     loop{
 //         match *current {
 //             List::Nil => { 
@@ -72,11 +72,11 @@ fn read_list_head<'a, 'b>(l: &'a List<'b>) -> i32 {
 }
 
 fn main(){
-    let v1: i32 = 1; let v2: i32 = 2;
-    let l0: List = List::Nil;
-    let l1: List = List::Cons(Node {val: &mut v1, next: &mut l0});
-    let l2: List = List::Cons(Node {val: &mut v2, next: &mut l1}); // ['l2] -> {l0, l1, v1, v2}
-    let v3: i32 = 3; let v4: i32 = 4;
+    let mut v1: i32 = 1; let mut v2: i32 = 2;
+    let mut l0: List = List::Nil;
+    let mut l1: List = List::Cons(Node {val: &mut v1, next: &mut l0});
+    let mut l2: List = List::Cons(Node {val: &mut v2, next: &mut l1}); // ['l2] -> {l0, l1, v1, v2}
+    let mut v3: i32 = 3; let mut v4: i32 = 4;
     reborrow_head(&mut l2, &mut v3, &mut v4);
     // step1: ['a] -> {l2}, ['b, 'l2] -> {l0, l1, v1, v2}, ['c] -> {v3}, ['d] -> {v4}
     // step2: ['a] -> {l2}, ['b, 'l2] -> {l0, l1, v1, v2, v3, v4}, ['c] -> {v3}, ['d] -> {v4}

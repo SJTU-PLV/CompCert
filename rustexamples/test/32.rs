@@ -12,11 +12,11 @@
 // }
 
 fn main(){
-    let v1 : i32 = 22;
-    let v2 : i32 = 44;
-    let p1: &mut i32 = &mut v1; // ['p1] -> {v1}
-    let p2: &mut i32 = &mut v2; // ['p1] -> {v1}, ['p2] -> {v2}
-    let q: &mut &mut i32 = &mut p1; // ['q1] -> {p1}, ['p1, 'q2] -> {v1}, ['p2] -> {v2}
+    let mut v1 : i32 = 22;
+    let mut v2 : i32 = 44;
+    let mut p1: &mut i32 = &mut v1; // ['p1] -> {v1}
+    let mut p2: &mut i32 = &mut v2; // ['p1] -> {v1}, ['p2] -> {v2}
+    let mut q: &mut &mut i32 = &mut p1; // ['q1] -> {p1}, ['p1, 'q2] -> {v1}, ['p2] -> {v2}
     if true {
         // Steps of transfer in line :
         // 1. apply liveness: remove 'q1 and 'q2 as q1 is dead, which produces ['p1] -> {v1}, ['p2] -> {v2}
@@ -36,11 +36,11 @@ fn main(){
 
 
 fn test(){
-    let v1 : i32 = 22;
-    let v2 : i32 = 44;
-    let p1: &mut i32 = &mut v1; // ['p1] -> {v1}
-    let p2: &mut i32 = &mut v2; // ['p1] -> {v1}, ['p2] -> {v2}
-    let q: &mut &mut i32 = &mut p1; // ['q1] -> {p1}, ['p1, 'q2] -> {v1}, ['p2] ->  {v2}
+    let mut v1 : i32 = 22;
+    let mut v2 : i32 = 44;
+    let mut p1: &mut i32 = &mut v1; // ['p1] -> {v1}
+    let mut p2: &mut i32 = &mut v2; // ['p1] -> {v1}, ['p2] -> {v2}
+    let mut q: &mut &mut i32 = &mut p1; // ['q1] -> {p1}, ['p1, 'q2] -> {v1}, ['p2] ->  {v2}
     if true {
         q = &mut p2;
     }

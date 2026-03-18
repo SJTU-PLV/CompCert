@@ -1,9 +1,9 @@
 fn main() {
-	let a : i32 = 2;
+	let mut a : i32 = 2;
 	
 	{
-		let r1 : &mut i32 = &mut a;
+		let mut r1 : &mut i32 = &mut a;
 	}
 	*r1 = 3;
-	let r2 : &mut i32 = &mut a;
+	let mut r2 : &mut i32 = &mut a;
 }

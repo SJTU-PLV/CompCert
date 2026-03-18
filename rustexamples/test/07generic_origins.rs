@@ -1,8 +1,8 @@
 fn main() {
-    let v1: i32 = 1;
-    let v2: i32 = 2;
-    let p: &i32 = &v1;
-	let q : &i32 = return_ref(p, &v2);
+    let mut v1: i32 = 1;
+    let mut v2: i32 = 2;
+    let mut p: &i32 = &v1;
+	let mut q : &i32 = return_ref(p, &v2);
     // printf("%d", *q);
 }
 
