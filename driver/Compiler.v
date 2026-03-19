@@ -127,6 +127,16 @@ Parameter print_RTL: Z -> RTL.program -> unit.
 Parameter print_LTL: LTL.program -> unit.
 Parameter print_Mach: Mach.program -> unit.
 
+(** Pretty-printers for the Rust frontend (defined in OCaml). *)
+Parameter print_Rustlight: Rustlight.program -> unit.
+Parameter print_RustIR: RustIR.program -> unit.
+Parameter print_RustIRCFG: RustIR.program -> unit.
+Parameter print_InitAnalysis: RustIR.program -> unit.
+Parameter print_BeforeBorrowck: RustIR.program -> unit.
+Parameter print_Moveck: RustIR.program -> unit.
+Parameter print_Borrowck: RustIR.program -> unit.
+
+
 Local Open Scope string_scope.
 
 (** * Composing the translation passes *)
@@ -236,21 +246,6 @@ Definition transl_init := Initializers.transl_init.
 
 (** * Rust frontend compiler  *)
 
-(* The pass of Rustsyntax to Rustlight is unverified *)
-Definition transf_rust_program (p: Rustsyntax.program) : res Asm.program :=
-  OK p
-  @@@ time "Rustsyntax to Rustlight" Rustlightgen.transl_program
-  !@@ time "Rustlight to RustIR" RustIRgen.transl_program
-  @@@ time "Elaborate drop in RustIR" ElaborateDrop.transl_program
-  (** The move checking and borrow checking are not verified yet *)
-  (* @@@ time "Replace origins in RustIR" ReplaceOrigins.transl_program *)
-  (* @@@ time "Borrow check" (fun p => match BorrowCheckPolonius.borrow_check_program p with *)
-  (*                                | OK _ => OK p *)
-  (*                                | Error msg => Error msg *)
-  (*                                end) *)
-  @@@ time "Generate Clight and insert drop glue" Clightgen.transl_program
-  @@@ transf_clight_program.
-
 (* For ownership language, we just consider Rustlight as the source
 language and remove the borrow checking passes. This compilation is
 verified. *)
@@ -278,6 +273,33 @@ Definition transf_rustlight_program_complete (p: Rustlight.program) : res Asm.pr
                                  end)
   @@@ time "Generate Clight and insert drop glue" Clightgen.transl_program
   @@@ transf_clight_program.
+
+(* The pass from Rustsyntax to Rustlight is unverified *)
+Definition transf_rust_program (p: Rustsyntax.program) : res Asm.program :=
+  OK p
+  @@@ time "Rustsyntax to Rustlight" Rustlightgen.transl_program
+  @@@ transf_rustlight_program.
+
+(* For now, this function is called at OCaml side. The final goal is
+to just call transf_rust_program at OCaml side. *)
+Definition transf_rust_to_clight (p: Rustsyntax.program) : res Clight.program :=
+  OK p
+  @@@ time "Rustsyntax to Rustlight" Rustlightgen.transl_program
+  !@@ print print_Rustlight
+  !@@ time "Rustlight to RustIR" RustIRgen.transl_program
+  !@@ print print_RustIR
+  !@@ print print_RustIRCFG
+  !@@ print print_InitAnalysis
+  @@@ time "Replace origins in RustIR" ReplaceOrigins.transl_program
+  @@@ time "Elaborate drop in RustIR" ElaborateDrop.transl_program
+  !@@ print print_BeforeBorrowck
+  @@@ time "Borrow checking" (fun p => match BorrowCheck.borrow_check_program p with
+                                 | OK _ => OK p
+                                 | Error msg => Error msg
+                                 end)
+  !@@ print print_Moveck
+  !@@ print print_Borrowck
+  @@@ time "Generate Clight and insert drop glue" Clightgen.transl_program.
 
 
 

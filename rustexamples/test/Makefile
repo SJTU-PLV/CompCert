@@ -12,15 +12,25 @@ FAIL_SRCS := 01.rs 03.rs 11.rs 12.rs 13.rs 15.rs 16.rs 17.rs 18.rs 22dangle.rs 2
 SUCCESS_EXPECTED := $(filter-out $(FAIL_SRCS),$(SRCS))
 
 CCOMP=../../ccomp
-CCOMP_ASM_FLAGS=-dclight -S
-CCOM_EXE_FLAGS=-dclight
+DUMP_FLAGS :=
+ifneq ($(filter dump,$(MAKECMDGOALS)),)
+DUMP_FLAGS += -drust_all
+endif
+
+CCOMP_ASM_FLAGS=-dclight -S $(DUMP_FLAGS)
+CCOM_EXE_FLAGS=-dclight $(DUMP_FLAGS)
 
 GREEN=\033[32m
 RED=\033[31m
 RESET=\033[0m
 
+.PHONY: all test clean dump
+
 # default target
 all: $(SUCCESS_EXPECTED:%.rs=%.compcert)
+
+dump: $(if $(filter-out dump,$(MAKECMDGOALS)),,$(SUCCESS_EXPECTED:%.rs=%.compcert))
+	@:
 
 %.s: %.rs
 	$(CCOMP) $(CCOMP_ASM_FLAGS) $< -o $@
@@ -48,5 +58,8 @@ test: $(SRCS)
 	done
 
 clean:
-	rm -f *.s *.light.c *.compcert
+	rm -f *.s *.compcert
+	rm -f *.rustsyntax *.rustlight *.rminor *.rcfg *.init
+	rm -f *.after_elabdrop *.before_borrowck *.moveck *.borrowck
+	rm -f *.light.c *.compcert.c *.parsed.c *.cm *.rtl *.alloctrace *.ltl *.mach *.json
 	rm -f *.o

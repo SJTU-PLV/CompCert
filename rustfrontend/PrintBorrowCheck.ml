@@ -147,3 +147,13 @@ let print_cfg_program_borrow_check p (prog: RustIR.coq_function Rusttypes.progra
   List.iter (PrintRustIR.print_globdecl p) prog.prog_defs;
   List.iter (PrintRustIR.print_globdef p (print_cfg_borrow_check prog.prog_comp_env)) prog.prog_defs;
   fprintf p "@]@."
+
+let destination : string option ref = ref None
+
+let print_if prog =
+  match !destination with
+  | None -> ()
+  | Some f ->
+      let oc = open_out f in
+      print_cfg_program_borrow_check (formatter_of_out_channel oc) prog;
+      close_out oc

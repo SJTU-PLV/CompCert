@@ -10,7 +10,6 @@ open PrintRustsyntax
 open PrintRustlight
 open Maps
 open InitDomain
-open InitAnalysis
 
 let rec print_stmt p (s: RustIR.statement) =
   match s with
@@ -199,10 +198,10 @@ let print_cfg_body_debug pp (body, entry, cfg) mayinit mayuninit =
   List.iter (print_instruction_debug pp body) instrs;
   fprintf pp "}\n\n"
 
-let print_cfg_debug ce pp id f  =
+let print_cfg_initanalysis_debug ce pp id f  =
   match generate_cfg f.fn_body with
   | Errors.OK(entry, cfg) ->
-    (match analyze ce f cfg entry with
+    (match InitAnalysis.analyze ce f cfg entry with
     | Errors.OK ((mayinit, mayuninit), _) ->
       fprintf pp "%s(%a) {\n" (extern_atom id) print_params f.fn_params;
       (* Print variables and their types *)
@@ -262,12 +261,12 @@ let print_cfg_program p prog =
   List.iter (print_globdef p print_cfg) prog.prog_defs;
   fprintf p "@]@."
 
-let print_cfg_program_debug p prog =
+let print_cfg_program_initanalysis_debug p prog =
   fprintf p "@[<v 0>";
   List.iter (PrintRustsyntax.declare_composite p) prog.prog_types;
   List.iter (PrintRustsyntax.define_composite p) prog.prog_types;
   List.iter (print_globdecl p) prog.prog_defs;
-  List.iter (print_globdef p (print_cfg_debug prog.prog_comp_env)) prog.prog_defs;
+  List.iter (print_globdef p (print_cfg_initanalysis_debug prog.prog_comp_env)) prog.prog_defs;
   fprintf p "@]@."
 
 let destination : string option ref = ref None
@@ -278,4 +277,35 @@ let print_if prog =
   | Some f ->
       let oc = open_out f in
       print_program (formatter_of_out_channel oc) prog;
+      close_out oc
+
+let destination_cfg : string option ref = ref None
+
+let print_if_cfg prog =
+  match !destination with
+  | None -> ()
+  | Some f ->
+      let oc = open_out f in
+      print_cfg_program (formatter_of_out_channel oc) prog;
+      close_out oc
+
+let destination_cfg_initanalysis : string option ref = ref None
+
+let print_if_cfg_initanalysis prog =
+  match !destination_cfg_initanalysis with
+  | None -> ()
+  | Some f ->
+      let oc = open_out f in
+      print_cfg_program_initanalysis_debug (formatter_of_out_channel oc) prog;
+      close_out oc
+
+let destination_moveck : string option ref = ref None
+
+(** Just print the result of init analysis *)
+let print_if_moveck prog =
+  match !destination_moveck with
+  | None -> ()
+  | Some f ->
+      let oc = open_out f in
+      print_cfg_program_initanalysis_debug (formatter_of_out_channel oc) prog;
       close_out oc

@@ -39,11 +39,11 @@ Finally, you can then build the compiler as follows:
 ```
 
 Note that the above command only works for Linux users. If you are
-using MacOS (Silicon), you can use the following configure command,
-which instructs the assembler to generate Mach-O instead of ELF. Note
-that the instruction architecture is still x86_64. So if you want to
-run the generated executable code in your Mac, you need to use
-`Rosseta` or an emulator.
+using MacOS (with ARM architecture), you can use the following
+configure command, which instructs the assembler to generate Mach-O
+instead of ELF. Note that the instruction architecture is still
+x86_64. So if you want to run the generated executable code in your
+Mac, you need to use `Rosseta` or an emulator.
 
 ```
 % ./configure x86_64-macos

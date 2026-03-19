@@ -138,6 +138,14 @@ Extract Constant Rustlightgen.dummy_origin => "PrintRustsyntax.dummy_origin".
 (* Extract Constant RustIRgen.fresh_atom => "Camlcoq.fresh_atom". *)
 Extract Constant ReplaceOrigins.fresh_atom => "Camlcoq.fresh_atom".
 
+Extract Constant Compiler.print_Rustlight => "PrintRustlight.print_if".
+Extract Constant Compiler.print_RustIR => "PrintRustIR.print_if".
+Extract Constant Compiler.print_RustIRCFG => "PrintRustIR.print_if_cfg".
+Extract Constant Compiler.print_InitAnalysis => "PrintRustIR.print_if_cfg_initanalysis".
+Extract Constant Compiler.print_BeforeBorrowck => "PrintRustIR.print_if_cfg".
+Extract Constant Compiler.print_Moveck => "PrintRustIR.print_if_moveck".
+Extract Constant Compiler.print_Borrowck => "PrintBorrowCheck.print_if".
+
 (* Initializers *)
 
 Extract Constant Initializers.ident_to_block => "(fun x -> x)".
@@ -162,8 +170,6 @@ Load extractionMachdep.
 (* Avoid name clashes *)
 Extraction Blacklist List String Int.
 
-Extraction Floats.Float. 
-
 (*
 (* Cutting the dependency to R. *)
 Extract Inlined Constant Defs.F2R => "fun _ -> assert false".
@@ -185,6 +191,7 @@ Separate Extraction
    (* rust *)
    Compiler.transf_rust_program MoveChecking.move_check_program
    Compiler.transf_rustlight_program_complete
+   Compiler.transf_rust_to_clight
    (* Some functions are needed in Ocaml side *)
    Rusttypes.signature_of_type Rusttypes.build_composite_env Rustsyntax.empty_drop_globdef
    Rustsyntax.type_of_function Rustlight.type_of_function RustIR.type_of_function

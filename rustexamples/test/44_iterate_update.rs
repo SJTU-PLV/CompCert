@@ -67,4 +67,6 @@ fn consume_list_until() {
     }
 }
 
-fn main() {}
+fn main() {
+    consume_list_until();
+}

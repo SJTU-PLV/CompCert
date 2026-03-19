@@ -1520,8 +1520,37 @@ module To_syntax = struct
         return ((drop_id, Rustsyntax.empty_drop_globdef id))
       ) >>= fun drops ->
     return (comp_defs, drops)
-      
-  let transl_prog log (p: prog) : (Rustsyntax.coq_function Rusttypes.program) monad =
+
+let destination : string option ref = ref None
+
+let print_Rustsyntax_if rev_symmap comp_defs external_funs fun_defs =
+  match !destination with
+  | None -> ()
+  | Some f ->
+    let log = Format.formatter_of_out_channel (open_out f) in
+  Format.fprintf log "RustAST: @.";
+  Format.fprintf log "@[<v 0>";
+  List.iter (pp_print_composite rev_symmap log) comp_defs;
+  List.iter
+    (fun (i, g) ->
+      match g with
+      | AST.Gfun (Rusttypes.External (orgs, rels, _, typs, typ, _)) ->
+          pp_print_fun_decl rev_symmap log i orgs rels
+            (typelist_to_list typs) typ
+      | _ -> failwith "unreachable (add_fn_decl)")
+    external_funs;
+  List.iter
+    (fun (i, g) ->
+      match g with
+      | AST.Gfun (Rusttypes.Internal f) ->
+          pp_print_function rev_symmap log i f;
+          Format.fprintf log "\n"
+      | _ -> failwith "unreachable (transl_fn)")
+    fun_defs;
+  Format.fprintf log "@]@."
+
+
+  let transl_prog (p: prog) : (Rustsyntax.coq_function Rusttypes.program) monad =
     (* convert composite declarations to support mutual recursive ADT *)
     map_m p.composite_decls
       (fun (x, s_or_e, orgs, rels) -> add_composite_decl x s_or_e orgs rels) >>= fun _ ->
@@ -1552,25 +1581,8 @@ module To_syntax = struct
     (* malloc and free empty functions *)
     let empty_malloc = (Dropglue.malloc_id, AST.Gfun(Rusttypes.External([], [], AST.EF_malloc, Rusttypes.Tnil, Rusttypes.Tunit, AST.cc_default))) in
     let empty_free = (Dropglue.free_id, AST.Gfun(Rusttypes.External([], [], AST.EF_free, Rusttypes.Tnil, Rusttypes.Tunit, AST.cc_default))) in
-    (* Print RustAST *)
-    Format.fprintf log "RustAST: @.";
-    Format.fprintf log "@[<v 0>";
-    List.iter (pp_print_composite st.rev_symmap log) comp_defs;
-    (* Print external functions *)
-    List.iter
-      (fun (i, g) ->  match g with
-        | AST.Gfun (Rusttypes.External(orgs, rels, ef, typs, typ, _)) ->
-          pp_print_fun_decl st.rev_symmap log i orgs rels (typelist_to_list typs) typ
-        | _ -> failwith "unreachable (add_fn_decl)") 
-        st.external_funs;
-    List.iter
-      (fun (i, g) -> match g with
-         | AST.Gfun (Rusttypes.Internal f) ->
-           pp_print_function st.rev_symmap log i f;
-           Format.fprintf log "\n"
-         | _ -> failwith "unreachable (transl_fn)")
-      fun_defs;
-    Format.fprintf log "@]@.";
+    (* Print AST *)
+    print_Rustsyntax_if st.rev_symmap comp_defs st.external_funs fun_defs;
     (* generate prog_comp_env *)
     match Rusttypes.build_composite_env comp_defs with
     | Errors.OK comp_env ->
@@ -1582,4 +1594,5 @@ module To_syntax = struct
     | Errors.Error msg ->
       Diagnostics.fatal_error Diagnostics.no_loc "%a" Driveraux.print_error msg
 end
+
 
