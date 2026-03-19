@@ -29,3 +29,5 @@ fn test_assign(){
     // let mut tmp: i32 = *input; // if uncomment this line, line 27 would be an error
     // printf("Use-after-free of input: %d", *input);
 }
+
+fn main() {}

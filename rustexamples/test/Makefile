@@ -4,23 +4,34 @@ SRCS=$(wildcard *.rs)
 # Files whose comilation is expected to be failed
 FAIL_EXPECTED := 01.rs 03.rs 11.rs 12.rs 13.rs 15.rs 16.rs 17.rs 18.rs 22dangle.rs 32.rs 34.rs 41.rs 43_self_ref.rs
 
+# Files whose comilation would be failed. Compared to FAIL_EXPECTED,
+# it addtionaly contains 21struct_enum_generic.rs whose syntax is not
+# supported now.
+FAIL_SRCS := 01.rs 03.rs 11.rs 12.rs 13.rs 15.rs 16.rs 17.rs 18.rs 22dangle.rs 21struct_enum_generic.rs 32.rs 34.rs 41.rs 43_self_ref.rs
+
+SUCCESS_EXPECTED := $(filter-out $(FAIL_SRCS),$(SRCS))
+
 CCOMP=../../ccomp
-CCOMP_FLAGS=-S
+CCOMP_ASM_FLAGS=-dclight -S
+CCOM_EXE_FLAGS=-dclight
 
 GREEN=\033[32m
 RED=\033[31m
 RESET=\033[0m
 
 # default target
-all: test
+all: $(SUCCESS_EXPECTED:%.rs=%.compcert)
 
 %.s: %.rs
-	$(CCOMP) $(CCOMP_FLAGS) $*.rs
+	$(CCOMP) $(CCOMP_ASM_FLAGS) $< -o $@
+
+%.compcert: %.rs
+	$(CCOMP) $(CCOM_EXE_FLAGS) $< -o $@
 
 test: $(SRCS)
 	@echo "Running tests..."
 	@for f in $^; do \
-		out=$$($(CCOMP) $(CCOMP_FLAGS) $$f 2>/dev/null; echo $$?); \
+		out=$$($(CCOMP) $(CCOMP_ASM_FLAGS) $$f 2>/dev/null; echo $$?); \
 		if echo "$(FAIL_EXPECTED)" | grep -q "$$f"; then \
 			if [ $$out -ne 0 ]; then \
 				printf "$(GREEN)PASS$(RESET) (expected failure): %s\n" "$$f"; \
@@ -37,4 +48,5 @@ test: $(SRCS)
 	done
 
 clean:
-	rm -f *.s	
+	rm -f *.s *.light.c *.compcert
+	rm -f *.o

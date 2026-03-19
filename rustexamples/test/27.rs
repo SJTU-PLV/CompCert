@@ -6,3 +6,5 @@ fn return_bor_or_modify<'a>(x: &'a mut i32) -> &'a mut i32{
     *x = 4;
     return x;
 }
+
+fn main() {}

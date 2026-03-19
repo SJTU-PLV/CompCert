@@ -43,7 +43,7 @@ let asm =
         fatal_error loc "%a"  print_error msg in
   (* Dump Asm in binary and JSON format *)
   AsmToJSON.print_if asm name;
-  (* Print Asm in text form. It is necessary because we need to use the GAS to assemble the test asm file *)
+  (* Print Asm in text form no matter whether we set '-dasm' or not. *)
   let ofile = output_filename name ~suffix:".s" in
   let oc = open_out ofile in
   PrintAsm.print_program oc asm;

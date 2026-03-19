@@ -32,3 +32,5 @@ fn get_suffix_at_x<'a>(ls: &'a mut List, x: i32) -> &'a mut List {
        } 
     }
 }
+
+fn main() {}

@@ -10,7 +10,7 @@ The development is known to compile with the following software:
 ## Instructions for compiling
 
 We recommend using the `opam` package manager to set up a build environment. 
-We have tested the building on **Linux** with the following shell commands. Note that we only target X86, so MacOS with M-series chips is unable to compile the test cases.
+We have tested the building on **Linux** with the following shell commands. Note that we only target X86, so MacOS with M-series chips is unable to compile and run the test cases directly. We provide some instructions for cross compilation and using `qemu` to run the generated executable programs on MacOS.
 
     # Initialize opam (if you haven't used it before)
     opam init --bare
@@ -31,31 +31,52 @@ In addition, our modifications rely on the Coqrel library (repo in [here](https:
 
 Finally, you can then build the compiler as follows:
 
-    % ./configure x86_64-linux
-	% make depend
-    % make all
-    # or make all -jn (where n is the number of cores)
+```
+% ./configure x86_64-linux
+% make depend
+% make all
+# or make all -jn (n is the number of running cores)
+```
+
+Note that the above command only works for Linux users. If you are
+using MacOS (Silicon), you can use the following configure command,
+which instructs the assembler to generate Mach-O instead of ELF. Note
+that the instruction architecture is still x86_64. So if you want to
+run the generated executable code in your Mac, you need to use
+`Rosseta` or an emulator.
+
+```
+% ./configure x86_64-macos
+% make depend
+% make all
+# or make all -jn (n is the number of running cores)
+```
 
 ## Run the compiler
-The generated binary executable compiler is named `ccomp` in the main directory. A simple instruction of running the compiler is:
+The generated binary executable compiler is named `ccomp` in the main directory. When you write a source file named `test.rs`. A simple instruction of running the compiler to compile `test.rs` is:
 ```
-./ccomp test.rs -o test
+./ccomp test.rs -o test -dclight
 ```
-Here `test.rs` is the source file written in our `Rustsurface` language and `test` is the name of the target executable file. After the compilation, the compiler would generate `rust_compile.log` which contains the pretty-printed rust intermediate programs generated during the compilation.
+Here `test.rs` is the source file written in our `Rustsurface`
+language and `test` is the name of the target executable file. After
+the compilation, the compiler would also output a file named
+`rust_compile.log` which contains the pretty-printed rust intermediate
+programs generated during the compilation and a Clight file generated
+by the frontend.
 
 ### Test the compiler
 
-The test cases are in ['rustexamples/compiler_tests'](./rustexamples/compiler_tests/). To run the test cases of the compiler, use the following commands:
+The test cases are in ['rustexamples/test'](./rustexamples/test/). To run the test cases of the compiler, use the following commands:
 
 ```
 cd rustexamples/compiler_tests
-# compile the test cases
+# compile the test cases, which only compiles the test cases that can pass the safety checking
 make all 
-# run the test
+# run the compilation testing (compile all the test cases)
 make test
 ```
 
-The structure of the test cases is explained [here](./rustexamples/compiler_tests/README.md).
+The structure of the test cases is explained [here](./rustexamples/test/README.md).
 
 ## Structure of the source code
 
