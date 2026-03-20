@@ -142,7 +142,7 @@ Extract Constant Compiler.print_Rustlight => "PrintRustlight.print_if".
 Extract Constant Compiler.print_RustIR => "PrintRustIR.print_if".
 Extract Constant Compiler.print_RustIRCFG => "PrintRustIR.print_if_cfg".
 Extract Constant Compiler.print_InitAnalysis => "PrintRustIR.print_if_cfg_initanalysis".
-Extract Constant Compiler.print_BeforeBorrowck => "PrintRustIR.print_if_before_borrowck".
+Extract Constant Compiler.print_AfterElabDrop => "PrintRustIR.print_if_after_elabdrop".
 Extract Constant Compiler.print_Moveck => "PrintRustIR.print_if_moveck".
 Extract Constant Compiler.print_Borrowck => "PrintBorrowCheck.print_if".
 

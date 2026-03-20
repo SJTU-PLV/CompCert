@@ -1,5 +1,5 @@
 fn retbox() -> Box<i32>{
-    return Box(1);
+    return Box::new(1);
 }
 
 fn t() -> bool{

@@ -17,19 +17,19 @@ fn pop_and_push(l: Box<list>, v: i32) -> Box<list> {
     head.value = v;
     match *l {
         list::nil => {      
-            head.next = Box(list::nil);
+            head.next = Box::new(list::nil);
         } 
         list::cons(tl) => {
             head.next = tl.next;
         }
     };
     let mut ret : list = list::cons(head);
-    return Box(ret);
+    return Box::new(ret);
 }
 
 fn push(l: Box<list>, v: i32) -> Box<list> {
     let mut head : list_node = list_node {value: v, next: l};
-    return Box(list::cons(head));
+    return Box::new(list::cons(head));
 }
 
 fn print_list(l: Box<list>) {
@@ -47,8 +47,8 @@ fn print_list(l: Box<list>) {
 fn main(){
     let mut head : list_node;
     head.value = 0;
-    head.next = Box(list::nil);
-    let mut ls : Box<list> = Box(list::cons(head));
+    head.next = Box::new(list::nil);
+    let mut ls : Box<list> = Box::new(list::cons(head));
     ls = push(ls, 1);
     ls = push(ls, 2);
     ls = push(ls, 3);

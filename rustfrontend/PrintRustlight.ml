@@ -16,7 +16,7 @@ let temp_name (id: AST.ident) =
 
 let rec print_place out (p: place) =
   (* Also print the type of this place *)
-  match p with
+  (* match p with
   | Plocal(id, ty) ->
     fprintf out "%s with %s " (extern_atom id) (name_rust_type ty)
   | Pderef(p', ty) ->
@@ -24,8 +24,8 @@ let rec print_place out (p: place) =
   | Pfield(p', fid, ty) ->
     fprintf out "%a.%s with %s " print_place p' (extern_atom fid)  (name_rust_type ty)
   | Pdowncast(p',fid, ty) ->
-      fprintf out "(%a as %s) with %s " print_place p' (extern_atom fid) (name_rust_type ty)
-  (* match p with
+      fprintf out "(%a as %s) with %s " print_place p' (extern_atom fid) (name_rust_type ty) *)
+  match p with
   | Plocal(id, ty) ->
     fprintf out "%s" (extern_atom id)
   | Pderef(p', ty) ->
@@ -33,7 +33,7 @@ let rec print_place out (p: place) =
   | Pfield(p', fid, ty) ->
     fprintf out "%a.%s" print_place p' (extern_atom fid)
   | Pdowncast(p',fid, _) ->
-      fprintf out "(%a as %s)" print_place p' (extern_atom fid) *)
+      fprintf out "(%a as %s)" print_place p' (extern_atom fid)
 
 (* Precedences and associativity (copy from PrintClight.ml) *)
 
@@ -125,8 +125,17 @@ let rec print_expr_list p (first, rl) =
       expr p (2, r);
       print_expr_list p (false, rl)
 
+let rec collapse_skip s =
+  match s with
+  | Ssequence(Sskip, s2) -> collapse_skip s2
+  | Ssequence(s1, Sskip) -> collapse_skip s1
+  | Ssequence(s1, s2) -> Ssequence(collapse_skip s1, collapse_skip s2)
+  | Sifthenelse(e, s1, s2) -> Sifthenelse(e, collapse_skip s1, collapse_skip s2)
+  | Sloop(s1) -> Sloop(collapse_skip s1)
+  | _ -> s
 
 let rec print_stmt p (s: Rustlight.statement) =
+  let s = collapse_skip s in
   match s with
   | Sskip ->
     (* comment *)

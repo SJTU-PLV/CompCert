@@ -86,6 +86,7 @@ rule read =
  | "break" { BREAK }
 
  | "return" { RETURN }
+ | "Box::new" { BOX }
  | "Box" { BOX }
  | "match" { MATCH }
  | "case" { CASE }

@@ -31,8 +31,8 @@ fn sum<'a>(l: &'a mut list) -> i32 {
 
 fn main(){
     let mut l0: list = list {value: 1, next: list_node::None(())};
-    let mut l1: list = list {value: 2, next: list_node::Some(Box(l0))};
-    let mut l2: list = list {value: 3, next: list_node::Some(Box(l1))};
+    let mut l1: list = list {value: 2, next: list_node::Some(Box::new(l0))};
+    let mut l2: list = list {value: 3, next: list_node::Some(Box::new(l1))};
     let mut res: i32 = sum(&mut l2);
     // printf("Sum of list is %d", sum(&mut l2));
 }

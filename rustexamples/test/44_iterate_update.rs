@@ -15,7 +15,7 @@ struct X {
 // Both "no_control_flow" and "conditional" can pass our borrow checking. We do not have the imprecision problem in Polonius alpha (although it is not a theretical problem). 
 
 fn no_control_flow() {
-    let mut b: OptionX = OptionX::Some(Box(X { next: OptionX::None }));
+    let mut b: OptionX = OptionX::Some(Box::new(X { next: OptionX::None }));
     let mut p: &mut OptionX = &mut b;
     loop {
         match *p {
@@ -31,7 +31,7 @@ fn no_control_flow() {
 }
 
 fn conditional() {
-    let mut b: OptionX = OptionX::Some(Box(X { next: OptionX::None }));
+    let mut b: OptionX = OptionX::Some(Box::new(X { next: OptionX::None }));
     let mut p: &mut OptionX = &mut b;
     loop {
         match *p {
@@ -49,7 +49,7 @@ fn conditional() {
 }
 
 fn consume_list_until() {
-    let mut p: OptionX = OptionX::Some(Box(X { next: OptionX::None }));
+    let mut p: OptionX = OptionX::Some(Box::new(X { next: OptionX::None }));
 
     loop {
         match p { 

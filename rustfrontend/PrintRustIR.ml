@@ -11,7 +11,17 @@ open PrintRustlight
 open Maps
 open InitDomain
 
+let rec collapse_skip s =
+  match s with
+  | Ssequence(Sskip, s2) -> collapse_skip s2
+  | Ssequence(s1, Sskip) -> collapse_skip s1
+  | Ssequence(s1, s2) -> Ssequence(collapse_skip s1, collapse_skip s2)
+  | Sifthenelse(e, s1, s2) -> Sifthenelse(e, collapse_skip s1, collapse_skip s2)
+  | Sloop(s1) -> Sloop(collapse_skip s1)
+  | _ -> s
+
 let rec print_stmt p (s: RustIR.statement) =
+  let s = collapse_skip s in
   match s with
   | Sskip ->
     (* comment *)
@@ -310,12 +320,12 @@ let print_if_moveck prog =
       print_cfg_program_initanalysis_debug (formatter_of_out_channel oc) prog;
       close_out oc
 
-let destination_before_borrowck : string option ref = ref None
+let destination_after_elabdrop : string option ref = ref None
 
-let print_if_before_borrowck prog =
-  match !destination_before_borrowck with
+let print_if_after_elabdrop prog =
+  match !destination_after_elabdrop with
   | None -> ()
   | Some f ->
       let oc = open_out f in
-      print_cfg_program_initanalysis_debug (formatter_of_out_channel oc) prog;
+      print_program (formatter_of_out_channel oc) prog;
       close_out oc

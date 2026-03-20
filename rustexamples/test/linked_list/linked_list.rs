@@ -47,9 +47,9 @@ fn iterate_until_consume(l: Box<List>, x: i32) {
 // init(3) produces the list 3 -> 2 -> 1 -> Nil
 fn init_list(n: i32) -> Box<List> {
     if n == 0 {
-        return Box(List::Nil);
+        return Box::new(List::Nil);
     } else {
-        return Box(List::Cons(Node { val: n, next: init_list(n - 1) }));
+        return Box::new(List::Cons(Node { val: n, next: init_list(n - 1) }));
     }
 }
 

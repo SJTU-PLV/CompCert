@@ -6,10 +6,10 @@ fn main() {
 fn example3() -> Box<i32> {
     let mut n : i32 = 10;
 	let mut a : i32 = 1;
-    let mut b : Box<i32> = Box(1);
+    let mut b : Box<i32> = Box::new(1);
 
 	while true {
-		let mut c : Box<i32> = Box(*b);
+		let mut c : Box<i32> = Box::new(*b);
 		if 0 < n {
 			*c = (*b) * n;
 			n = n - 1;

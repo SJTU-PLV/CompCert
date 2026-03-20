@@ -132,7 +132,7 @@ Parameter print_Rustlight: Rustlight.program -> unit.
 Parameter print_RustIR: RustIR.program -> unit.
 Parameter print_RustIRCFG: RustIR.program -> unit.
 Parameter print_InitAnalysis: RustIR.program -> unit.
-Parameter print_BeforeBorrowck: RustIR.program -> unit.
+Parameter print_AfterElabDrop: RustIR.program -> unit.
 Parameter print_Moveck: RustIR.program -> unit.
 Parameter print_Borrowck: RustIR.program -> unit.
 
@@ -292,13 +292,13 @@ Definition transf_rust_to_clight (p: Rustsyntax.program) : res Clight.program :=
   !@@ print print_InitAnalysis
   @@@ time "Replace origins in RustIR" ReplaceOrigins.transl_program
   @@@ time "Elaborate drop in RustIR" ElaborateDrop.transl_program
-  !@@ print print_BeforeBorrowck
+  !@@ print print_AfterElabDrop
+  !@@ print print_Moveck
+  !@@ print print_Borrowck
   @@@ time "Borrow checking" (fun p => match BorrowCheck.borrow_check_program p with
                                  | OK _ => OK p
                                  | Error msg => Error msg
                                  end)
-  !@@ print print_Moveck
-  !@@ print print_Borrowck
   @@@ time "Generate Clight and insert drop glue" Clightgen.transl_program.
 
 

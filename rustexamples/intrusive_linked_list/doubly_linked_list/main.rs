@@ -15,12 +15,12 @@ fn link_offset() -> u64{
 
 fn create(v: i32) -> Box<Node> {
     // We can call an assembly program to encrypt the value and then store it to the list. The pop functions can decrypt the value.
-    let head : Box<Node> = Box(Node{val: v, link: empty_link()});
+    let head : Box<Node> = Box::new(Node{val: v, link: empty_link()});
     return create_link(head);
 }
 
 fn push(l: Box<Node>, v: i32) -> Box<Node> {
-    let head: Box<Node> = Box(Node {val: v, link: empty_link()});
+    let head: Box<Node> = Box::new(Node {val: v, link: empty_link()});
     l = push_front(l, head);
     return l;
 }

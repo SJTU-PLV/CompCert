@@ -11,10 +11,10 @@ fn main(){
 }
 
 fn loop_box_move(){
-    let mut v : Box<i32> = Box(1);
-    let mut x : Box<i32> = Box(2);
+    let mut v : Box<i32> = Box::new(1);
+    let mut x : Box<i32> = Box::new(2);
     loop{
-        v = Box(3);
+        v = Box::new(3);
         *v = 4;
         *x = 5;
         x = v;
@@ -22,12 +22,12 @@ fn loop_box_move(){
 }
 
 fn is_box_in_one_block_correct(){
-    let mut v : Box<i32> = Box(1);
-    let mut x : Box<i32> = Box(2);
+    let mut v : Box<i32> = Box::new(1);
+    let mut x : Box<i32> = Box::new(2);
     let mut tmp : i32 = 13;
     let mut p : &mut i32 = &mut tmp;
     loop {
-        v = Box(1);
+        v = Box::new(1);
         *v = 3;
         *p = 4;
         x = v;
@@ -40,9 +40,9 @@ fn ref_in_box(){
     let mut b : i32 = 2;
     let mut v : Box<&mut i32>;
     let mut tmp  i32 = 13;
-    let mut x : Box<&mut i32> = Box(&mut tmp);
+    let mut x : Box<&mut i32> = Box::new(&mut tmp);
     loop {
-        v = Box(&mut a);
+        v = Box::new(&mut a);
         **x = 5;
         **v = 4;
         x = v;

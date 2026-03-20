@@ -126,7 +126,17 @@ let rec print_expr_list p (first, rl) =
 
 (* Statements *)
 
+let rec collapse_skip s =
+  match s with
+  | Ssequence(Sskip, s2) -> collapse_skip s2
+  | Ssequence(s1, Sskip) -> collapse_skip s1
+  | Ssequence(s1, s2) -> Ssequence(collapse_skip s1, collapse_skip s2)
+  | Sifthenelse(e, s1, s2) -> Sifthenelse(e, collapse_skip s1, collapse_skip s2)
+  | Sloop(s1, s2) -> Sloop(collapse_skip s1, collapse_skip s2)
+  | _ -> s
+
 let rec print_stmt p s =
+  let s = collapse_skip s in
   match s with
   | Sskip ->
       fprintf p "/*skip*/;"

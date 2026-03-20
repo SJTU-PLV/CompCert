@@ -12,11 +12,11 @@ struct A{
 
 fn main(){
     let a : A = A {
-        f: Box(Box(
-            B{ l: Box(1), 
-               m: Box(2), 
+        f: Box::new(Box::new(
+            B{ l: Box::new(1), 
+               m: Box::new(2), 
                n: 3})), 
-        g: Box(4), 
+        g: Box::new(4), 
         h: 5
     };
     let b : Box<i32> = (**(a.f)).l;

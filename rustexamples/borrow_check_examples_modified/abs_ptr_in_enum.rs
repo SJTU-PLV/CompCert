@@ -15,8 +15,8 @@ fn main() {
     let mut x: i32 = 1;
     let mut y: i32 = 2;
 
-    let l0 = List::Cons(&mut v1, Box(List::Dummy(&mut x)));
-    let l1 = List::Cons(Box(&mut v2), Box(l0));
+    let l0 = List::Cons(&mut v1, Box::new(List::Dummy(&mut x)));
+    let l1 = List::Cons(Box::new(&mut v2), Box::new(l0));
 
     match l1 {
         List::Dummy(_) => {
@@ -38,8 +38,8 @@ fn test_list1() {
     let mut x: i32 = 1;
     let mut y: i32 = 2;
 
-    let l0 : List1 = List1::Cons(Box(&mut v1), Box(List1::Dummy(&mut x)));
-    let l1 : List1 = List1::Cons(Box(&mut v2), Box(l0));
+    let l0 : List1 = List1::Cons(Box::new(&mut v1), Box::new(List1::Dummy(&mut x)));
+    let l1 : List1 = List1::Cons(Box::new(&mut v2), Box::new(l0));
 
     match l1 {
         List1::Dummy(_) => {

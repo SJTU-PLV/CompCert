@@ -1,12 +1,12 @@
 fn main() {
     
-    let a : i32 = Box(12);
+    let a : i32 = Box::new(12);
     loop {
         if t() {
-            a = Box(13); 
+            a = Box::new(13); 
         }
         else { 
-            a = Box(3); 
+            a = Box::new(3); 
             let b : i32 = a;
         }
     }

@@ -23,7 +23,7 @@ fn test_assign(){
     let mut v: i32 = 2;
     let mut input: &mut i32 = &mut v;
     {
-        let mut b: Box<i32> = Box(2);
+        let mut b: Box<i32> = Box::new(2);
         assign(&mut input, &mut *b);
     }  
     // let mut tmp: i32 = *input; // if uncomment this line, line 27 would be an error

@@ -20,8 +20,8 @@ fn test() -> bool {
 fn f2(){
     // not supporting 
     let pDD: Pair;
-    pDD.x = Box(1);
-    pDD.y = Box(2);
+    pDD.x = Box::new(1);
+    pDD.y = Box::new(2);
     let pDS : Pair; 
     let some_d : Option;
     if test() {
@@ -32,7 +32,7 @@ fn f2(){
     } else {
         pDD.y = pDD.x;
         some_d = Option::None;
-        pDS.x = Box(3);
+        pDS.x = Box::new(3);
     }
 }
 

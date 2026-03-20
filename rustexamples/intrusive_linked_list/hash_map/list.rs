@@ -43,12 +43,12 @@ fn find_and_process(l: Box<List>, k: i32) -> Box<List>{
 }
 
 fn empty_list() -> Box<List> {
-    return Box(List::Nil);
+    return Box::new(List::Nil);
 }
 
 fn insert(l: Box<List>, k: i32, v: Box<i32>) -> Box<List>{
     let head: Node = Node{key: k, val: v, next: l};
-    l = Box(List::Cons(head));
+    l = Box::new(List::Cons(head));
     return l;
 }
 

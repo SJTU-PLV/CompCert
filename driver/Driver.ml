@@ -213,23 +213,23 @@ Code generation options: (use -fno-<opt> to turn off -f<opt>)
  assembler_help ^
  linker_help ^
 {|Tracing options:
-  -dprepro       Save C file after preprocessing in <file>.i
-  -dparse        Save C file after parsing and elaboration in <file>.parsed.c
-  -dc            Save generated Compcert C in <file>.compcert.c
-  -dclight       Save generated Clight in <file>.light.c
   -drustsyntax   Save generated Rustsyntax in <file>.rustsyntax
   -drustlight    Save generated Rustlight in <file>.rustlight
   -drminor       Save generated RustIR in <file>.rminor
   -rcfg          Save Rust CFG in <file>.rcfg
   -dinit         Save Rust initialization analysis in <file>.init
-  -dbefore_borrowck Save RustIR before borrow checking in <file>.before_borrowck
-  -dmoveck       Save RustIR after move checking in <file>.moveck
+  -dafter_elabdrop Save RustIR after Drop Elaboration in <file>.after_elabdrop
+  -dmoveck       Save the information of initialization analysis before move checking in <file>.moveck
+  -dborrowck     Save the borrow check analysis (i.e., the loans-flow analysis) before borrow checking in <file>.borrowck
+  -drust_all     Save all Rust intermediate files in <file>.<ext>
+  -dprepro       Save C file after preprocessing in <file>.i
+  -dparse        Save C file after parsing and elaboration in <file>.parsed.c
+  -dc            Save generated Compcert C in <file>.compcert.c
+  -dclight       Save generated Clight in <file>.light.c
   -dcminor       Save generated Cminor in <file>.cm
   -drtl          Save RTL at various optimization points in <file>.rtl.<n>
   -dltl          Save LTL after register allocation in <file>.ltl
   -dmach         Save generated Mach code in <file>.mach
-  -dborrowck     Save Rust borrow-check analysis in <file>.borrowck
-  -drust_all     Save all Rust intermediate files in <file>.<ext>
   -dasm          Save generated assembly in <file>.s
   -dall          Save all generated intermediate files in <file>.<ext>
   -sdump         Save info for post-linking validation in <file>.json
@@ -341,7 +341,7 @@ let cmdline_actions =
   Exact "-drminor", Set option_drminor;
   Exact "-rcfg", Set option_rcfg;
   Exact "-dinit", Set option_dinit;
-  Exact "-dbefore_borrowck", Set option_dbefore_borrowck;
+  Exact "-dafter_elabdrop", Set option_dafter_elabdrop;
   Exact "-dmoveck", Set option_dmoveck;
   Exact "-dcminor", Set option_dcminor;
   Exact "-drtl", Set option_drtl;
@@ -355,7 +355,7 @@ let cmdline_actions =
     option_drminor := true;
     option_rcfg := true;
     option_dinit := true;
-    option_dbefore_borrowck := true;
+    option_dafter_elabdrop := true;
     option_dmoveck := true;
     option_dborrowck := true;
     option_dclight := true);
@@ -369,7 +369,7 @@ let cmdline_actions =
     option_drminor := true;
     option_rcfg := true;
     option_dinit := true;
-    option_dbefore_borrowck := true;
+    option_dafter_elabdrop := true;
     option_dmoveck := true;
     option_dcminor := true;
     option_drtl := true;
