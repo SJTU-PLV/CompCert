@@ -156,10 +156,14 @@ origin_relations:
   | { [] }
   | WHERE; rels = origin_relations_ { rels }
 
+opt_mut:
+|             { () }
+| MUT         { () }
+
 composite_fields:
   | { [] }
-  | x = ID; COLON; t = ty { [(x, t)] }
-  | x = ID; COLON; t = ty; COMMA; flds = composite_fields { (x, t)::flds }
+  | opt_mut; x = ID; COLON; t = ty { [(x, t)] }
+  | opt_mut; x = ID; COLON; t = ty; COMMA; flds = composite_fields { (x, t)::flds }
 
 non_empty_ty_sequence:
   | t = ty { [t] }

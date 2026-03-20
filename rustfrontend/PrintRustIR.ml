@@ -309,3 +309,13 @@ let print_if_moveck prog =
       let oc = open_out f in
       print_cfg_program_initanalysis_debug (formatter_of_out_channel oc) prog;
       close_out oc
+
+let destination_before_borrowck : string option ref = ref None
+
+let print_if_before_borrowck prog =
+  match !destination_before_borrowck with
+  | None -> ()
+  | Some f ->
+      let oc = open_out f in
+      print_cfg_program_initanalysis_debug (formatter_of_out_channel oc) prog;
+      close_out oc

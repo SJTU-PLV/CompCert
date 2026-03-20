@@ -66,6 +66,7 @@ let compile_rustsyntax prog name =
   set_dest PrintRustIR.destination option_drminor name ".rminor";
   set_dest PrintRustIR.destination_cfg option_rcfg name ".rcfg";
   set_dest PrintRustIR.destination_cfg_initanalysis option_dinit name ".init";
+  set_dest PrintRustIR.destination_before_borrowck option_dbefore_borrowck name ".before_borrowck";
   set_dest PrintRustIR.destination_moveck option_dmoveck name ".moveck";
   set_dest PrintBorrowCheck.destination option_dborrowck name ".borrowck";
   (* Compile the Rustsyntax program *)

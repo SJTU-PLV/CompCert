@@ -10,7 +10,7 @@ The development is known to compile with the following software:
 ## Instructions for compiling
 
 We recommend using the `opam` package manager to set up a build environment. 
-We have tested the building on **Linux** with the following shell commands. Note that we only target X86, so MacOS with M-series chips is unable to compile and run the test cases directly. We provide some instructions for cross compilation and using `qemu` to run the generated executable programs on MacOS.
+We have tested the building on **Linux** with the following shell commands. Note that we only target X86_64, so MacOS with M-series chips (i.e., ARM architecture) is unable to run the generated executable directly. We also provide some instructions on how to configure the compiler to generate X86_64 Mach-O executable. To run this x86_64 Mach-O files, you need to use `Rosseta` or an emulator such as qemu.
 
     # Initialize opam (if you haven't used it before)
     opam init --bare
