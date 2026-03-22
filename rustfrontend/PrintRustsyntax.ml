@@ -38,90 +38,125 @@ let origin_relations_string (rels: origin_rel list) =
   | _ ->
     "where " ^ origin_relations_string_aux rels
 
+let append_if_nonempty buf prefix s =
+  if s <> "" then begin
+    Buffer.add_string buf prefix;
+    Buffer.add_string buf s
+  end
 
-let rec name_rust_decl id ty =
+let rec append_typed_args buf args cconv =
+  let rec add_args first = function
+    | Tnil ->
+        if first then
+          Buffer.add_string buf (if cconv.cc_vararg <> None then "..." else "")
+        else if cconv.cc_vararg <> None then
+          Buffer.add_string buf ", ..."
+    | Tcons(t1, tl) ->
+        if not first then Buffer.add_string buf ", ";
+        Buffer.add_string buf (name_rust_type t1);
+        add_args false tl
+  in
+  if not cconv.cc_unproto then add_args true args
+
+and name_rust_type ty =
   match ty with
   | Rusttypes.Tunit ->
-      "()" ^ name_optid id
+      "()"
   | Rusttypes.Tint(sz, sg) ->
-      name_inttype sz sg ^ name_optid id
+      name_inttype sz sg
   | Rusttypes.Tfloat(sz) ->
-      name_floattype sz ^ name_optid id
+      name_floattype sz
   | Rusttypes.Tlong(sg) ->
-      name_longtype sg ^ name_optid id
+      name_longtype sg
   | Rusttypes.Treference(org, mut, t) ->
-      "&" ^ (extern_atom org) ^" "^  string_of_mut mut ^ (name_rust_decl ""  t) ^ name_optid id
-  | Tbox(t) ->
-      "Box<" ^ (name_rust_decl ""  t) ^ ">" ^ name_optid id
-  | Tfunction( orgs, rels, args, res, cconv) ->
-      let b = Buffer.create 20 in
-      if id = ""
-      then Buffer.add_string b "(*)"
-      else Buffer.add_string b id;
+      "&" ^ extern_atom org ^ " " ^ string_of_mut mut ^ name_rust_type t
+  | Tbox t ->
+      "Box<" ^ name_rust_type t ^ ">"
+  | Tfunction(orgs, rels, args, res, cconv) ->
+      let b = Buffer.create 32 in
+      Buffer.add_string b "fn";
       Buffer.add_string b (print_origins orgs);
       Buffer.add_char b '(';
-      let rec add_args first = function
-      | Tnil ->
-          if first then
-            Buffer.add_string b
-               (if cconv.cc_vararg <> None then "..." else "void")
-          else if cconv.cc_vararg <> None then
-            Buffer.add_string b ", ..."
-          else
-            ()
-      | Tcons(t1, tl) ->
-          if not first then Buffer.add_string b ", ";
-          Buffer.add_string b (name_rust_decl "" t1);
-          add_args false tl in
-      if not cconv.cc_unproto then add_args true args;
+      append_typed_args b args cconv;
       Buffer.add_char b ')';
-      Buffer.add_string b (origin_relations_string rels);
-      name_rust_decl (Buffer.contents b) res
+      Buffer.add_string b " -> ";
+      Buffer.add_string b (name_rust_type res);
+      append_if_nonempty b " " (origin_relations_string rels);
+      Buffer.contents b
   | Tstruct(orgs, name) ->
-      "struct" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      extern_atom name ^ print_origins orgs
   | Tvariant(orgs, name) ->
-      "variant" ^ print_origins orgs ^ " " ^ extern_atom name ^ name_optid id
+      extern_atom name ^ print_origins orgs
   | Tarray(ty, sz) ->
-    name_rust_decl (sprintf "%s[%ld]" id (camlint_of_coqint sz)) ty
-  | Tadt(name) ->
-    "adt" ^ " " ^ extern_atom name
+      sprintf "[%s; %ld]" (name_rust_type ty) (camlint_of_coqint sz)
+  | Tadt name ->
+      extern_atom name
 
-(* Type *)
-
-let name_rust_type ty = name_rust_decl "" ty
+let name_rust_binding id ty =
+  if id = "" then name_rust_type ty else id ^ ": " ^ name_rust_type ty
 
 (* TODO: print expressions and statements *)
 
 let name_function_parameters name_param fun_name params cconv name_origins rels =
-    let b = Buffer.create 20 in
-    Buffer.add_string b fun_name;
-    (* origins *)
-    Buffer.add_string b (print_origins name_origins);
-    Buffer.add_char b '(';
-    begin match params with
-    | [] ->
-        Buffer.add_string b (if cconv.cc_vararg <> None then "..." else "")
-    | _ ->
-        let rec add_params first = function
-        | [] ->
-            if cconv.cc_vararg <> None then Buffer.add_string b ",..."
-        | (id, ty) :: rem ->
-            if not first then Buffer.add_string b ", ";
-            Buffer.add_string b ((name_param id)^": "^(name_rust_decl "" ty));
-            add_params false rem in
-        add_params true params
-    end;
-    Buffer.add_char b ')';
-    Buffer.add_string b "\n";
-    Buffer.add_string b (origin_relations_string rels);
-    Buffer.contents b
+  let b = Buffer.create 32 in
+  Buffer.add_string b fun_name;
+  Buffer.add_string b (print_origins name_origins);
+  Buffer.add_char b '(';
+  begin match params with
+  | [] ->
+      Buffer.add_string b (if cconv.cc_vararg <> None then "..." else "")
+  | _ ->
+      let rec add_params first = function
+      | [] ->
+          if cconv.cc_vararg <> None then Buffer.add_string b ", ..."
+      | (id, ty) :: rem ->
+          if not first then Buffer.add_string b ", ";
+          Buffer.add_string b (name_param id ^ ": " ^ name_rust_type ty);
+          add_params false rem in
+      add_params true params
+  end;
+  Buffer.add_char b ')';
+  append_if_nonempty b " " (origin_relations_string rels);
+  Buffer.contents b
+
+let name_rust_function_decl name params cconv orgs rels ret =
+  "fn "
+  ^ name_function_parameters extern_atom name params cconv orgs rels
+  ^ " -> "
+  ^ name_rust_type ret
+
+let name_rust_function_decl_from_type name orgs rels args res cconv =
+  let b = Buffer.create 32 in
+  Buffer.add_string b "fn ";
+  Buffer.add_string b name;
+  Buffer.add_string b (print_origins orgs);
+  Buffer.add_char b '(';
+  append_typed_args b args cconv;
+  Buffer.add_char b ')';
+  Buffer.add_string b " -> ";
+  Buffer.add_string b (name_rust_type res);
+  append_if_nonempty b " " (origin_relations_string rels);
+  Buffer.contents b
+
+let name_rust_decl id ty =
+  match ty with
+  | Tfunction(orgs, rels, args, res, cconv) ->
+      name_rust_function_decl_from_type id orgs rels args res cconv
+  | _ ->
+      name_rust_binding id ty
 
 let print_fundecl p id fd =
   match fd with
   | Ctypes.Internal f ->
       let linkage = if C2C.atom_is_static id then "static" else "extern" in
-      fprintf p "%s %s;@ @ " linkage
-                (name_rust_decl (extern_atom id) (Rustsyntax.type_of_function f))
+      let decl =
+        match Rustsyntax.type_of_function f with
+        | Tfunction(orgs, rels, args, res, cconv) ->
+            name_rust_function_decl_from_type (extern_atom id) orgs rels args res cconv
+        | ty ->
+            name_rust_binding (extern_atom id) ty
+      in
+      fprintf p "%s %s;@ @ " linkage decl
   | _ -> ()
 
 let print_globvar p id v =
@@ -130,13 +165,13 @@ let print_globvar p id v =
   match v.gvar_init with
   | [] ->
       fprintf p "extern %s;@ @ "
-              (name_rust_decl name2 v.gvar_info)
+              (name_rust_binding name2 v.gvar_info)
   | [Init_space _] ->
       fprintf p "%s;@ @ "
-              (name_rust_decl name2 v.gvar_info)
+              (name_rust_binding name2 v.gvar_info)
   | _ ->
       fprintf p "@[<hov 2>%s = "
-              (name_rust_decl name2 v.gvar_info);
+              (name_rust_binding name2 v.gvar_info);
       begin match v.gvar_info, v.gvar_init with
       | (Rusttypes.Tint _ | Rusttypes.Tlong _ | Rusttypes.Tfloat _ | Tfunction _),
         [i1] ->
@@ -153,7 +188,7 @@ let print_globvardecl p id v =
   let name = extern_atom id in
   let name = if v.gvar_readonly then "const "^name else name in
   let linkage = if C2C.atom_is_static id then "static" else "extern" in
-  fprintf p "%s %s;@ @ " linkage (name_rust_decl name v.gvar_info)
+  fprintf p "%s %s;@ @ " linkage (name_rust_binding name v.gvar_info)
 
 let print_globdecl p (id,gd) =
   match gd with
@@ -166,14 +201,14 @@ let print_globdecl p (id,gd) =
   | Gfun f -> print_fundef p id f
   | Gvar v -> print_globvar p id v *)
 
-let struct_or_variant = function Struct -> "struct" | TaggedUnion -> "variant"
+let struct_or_variant = function Struct -> "struct" | TaggedUnion -> "enum"
 
 let declare_composite p (Composite(id, su, m, orgs, rels)) =
   fprintf p "%s %s%s %s;@ " (struct_or_variant su) (extern_atom id) (print_origins orgs) (origin_relations_string rels)
 
 let print_member p = function
   | Member_plain(id, ty) ->
-      fprintf p "@ %s;" (name_rust_decl (extern_atom id) ty)
+      fprintf p "@ %s;" (name_rust_binding (extern_atom id) ty)
 
 let define_composite p (Composite(id, su, m, orgs, rels)) =
   fprintf p "@[<v 2>%s %s%s %s{"

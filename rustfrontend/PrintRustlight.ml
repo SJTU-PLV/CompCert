@@ -89,7 +89,8 @@ let rec pexpr p (prec, e) =
   | Econst_long(n, _) ->
     fprintf p "%LdLL" (camlint64_of_coqint n)
   | Eglobal(id, ty) ->
-    fprintf p "glob %s with %s" (extern_atom id) (name_rust_type ty)
+    (* fprintf p "glob %s with %s" (extern_atom id) (name_rust_type ty) *)
+    fprintf p "%s" (extern_atom id)
   | Eunop(Oabsfloat, a1, _) ->
     fprintf p "__builtin_fabs(%a)" pexpr (2, a1)
   | Eunop(op, a1, _) ->
@@ -98,7 +99,7 @@ let rec pexpr p (prec, e) =
     fprintf p "%a@ %s %a"
       pexpr (prec1, a1) (name_binop op) pexpr (prec2, a2)
   | Ecktag(v, fid) ->
-    fprintf p "%s(%a, %s)" "cktag" print_place v (extern_atom fid)
+    fprintf p "%s(%a, %s)" "discriminant_eq" print_place v (extern_atom fid)
   | Eref(org, mut, v, _) ->
     fprintf p "&%s %s%a" (extern_atom org) (string_of_mut mut) print_place v
   end;
@@ -191,11 +192,17 @@ let print_stmt_direct stmt = print_stmt (formatter_of_out_channel stdout) stmt
 
 let print_function p id f =
   fprintf p "%s@ "
-            (name_rust_decl (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
+            (PrintRustsyntax.name_rust_function_decl
+               (extern_atom id)
+               f.fn_params
+               f.fn_callconv
+               f.fn_generic_origins
+               f.fn_origins_relation
+               f.fn_return);
   (* Print variables and their types *)
   List.iter
     (fun (id, ty) ->
-      fprintf p "%s;@ " (name_rust_decl (extern_atom id) ty))
+      fprintf p "let %s;@ " (name_rust_binding (extern_atom id) ty))
     f.fn_vars;
   fprintf p "@[<v 2>{@ ";
   print_stmt p f.fn_body;
@@ -212,12 +219,24 @@ let print_fundecl p id fd =
   match fd with
   | Rusttypes.External(_, _, (AST.EF_external _ | AST.EF_runtime _ | AST.EF_malloc | AST.EF_free), args, res, cconv) ->
       fprintf p "extern %s;@ "
-                (name_rust_decl (extern_atom id) (Rusttypes.Tfunction([], [], args, res, cconv)))
+                (PrintRustsyntax.name_rust_function_decl_from_type
+                   (extern_atom id)
+                   []
+                   []
+                   args
+                   res
+                   cconv)
   | Rusttypes.External(_, _ ,_, _, _, _) ->
       ()
   | Rusttypes.Internal f ->
       fprintf p "%s;@ "
-                (name_rust_decl (extern_atom id) (Rustlight.type_of_function f))
+                (PrintRustsyntax.name_rust_function_decl
+                   (extern_atom id)
+                   f.fn_params
+                   f.fn_callconv
+                   f.fn_generic_origins
+                   f.fn_origins_relation
+                   f.fn_return)
 
 let print_globdef p (id, gd) =
   match gd with

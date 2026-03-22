@@ -127,13 +127,19 @@ let print_cfg_borrow_check ce pp id f  =
     (match loans_flow_analyze ce f cfg entry with
     | Errors.OK (live, ae) ->
       fprintf pp "%s@ "
-          (PrintRustsyntax.name_rust_decl (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
+          (PrintRustsyntax.name_rust_function_decl
+             (extern_atom id)
+             f.fn_params
+             f.fn_callconv
+             f.fn_generic_origins
+             f.fn_origins_relation
+             f.fn_return);
       fprintf pp "@[<v 2>{@ ";
       (* fprintf pp "%s(%a) {\n" (extern_atom id) PrintRustIR.print_params f.fn_params; *)
       (* Print variables and their types *)
       List.iter
       (fun (id, ty) ->
-        fprintf pp "%s;@ " (PrintRustsyntax.name_rust_decl (extern_atom id) ty)) f.fn_vars;
+        fprintf pp "let %s;@ " (PrintRustsyntax.name_rust_binding (extern_atom id) ty)) f.fn_vars;
       print_cfg_body_borrow_check pp (f.fn_body, entry, cfg) (snd live) (snd ae)
     | Errors.Error msg ->
       Diagnostics.fatal_error Diagnostics.no_loc "Error in borrow check: %a@ " Driveraux.print_error msg)

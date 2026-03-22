@@ -115,12 +115,18 @@ let print_succ pp s dfl =
 
 let print_function pp id f =
   fprintf pp "%s@ "
-            (name_rust_decl (PrintRustsyntax.name_function_parameters extern_atom (extern_atom id) f.fn_params f.fn_callconv f.fn_generic_origins f.fn_origins_relation) f.fn_return);
+            (PrintRustsyntax.name_rust_function_decl
+               (extern_atom id)
+               f.fn_params
+               f.fn_callconv
+               f.fn_generic_origins
+               f.fn_origins_relation
+               f.fn_return);
   fprintf pp "@[<v 2>{@ ";
   (* Print variables and their types *)
   List.iter
     (fun (id, ty) ->
-      fprintf pp "%s;@ " (name_rust_decl (extern_atom id) ty))
+      fprintf pp "let %s;@ " (name_rust_binding (extern_atom id) ty))
     f.fn_vars;
   print_stmt pp f.fn_body;
   fprintf pp "@;<0 -2>}@]@ @ "
@@ -140,11 +146,18 @@ let print_cfg_body pp (body, entry, cfg) =
 let print_cfg pp id f =
   match generate_cfg f.fn_body with
   | Errors.OK(entry, cfg) ->
-    fprintf pp "%s(%a) {\n" (extern_atom id) print_params f.fn_params;
+    fprintf pp "%s {\n"
+      (PrintRustsyntax.name_rust_function_decl
+         (extern_atom id)
+         f.fn_params
+         f.fn_callconv
+         f.fn_generic_origins
+         f.fn_origins_relation
+         f.fn_return);
     (* Print variables and their types *)
     List.iter
     (fun (id, ty) ->
-      fprintf pp "%s;@ " (name_rust_decl (extern_atom id) ty)) f.fn_vars;
+      fprintf pp "let %s;@ " (name_rust_binding (extern_atom id) ty)) f.fn_vars;
     print_cfg_body pp (f.fn_body, entry, cfg)
   | Errors.Error msg ->
     Diagnostics.fatal_error Diagnostics.no_loc "Error in generating CFG: %a" Driveraux.print_error msg
@@ -213,11 +226,18 @@ let print_cfg_initanalysis_debug ce pp id f  =
   | Errors.OK(entry, cfg) ->
     (match InitAnalysis.analyze ce f cfg entry with
     | Errors.OK ((mayinit, mayuninit), _) ->
-      fprintf pp "%s(%a) {\n" (extern_atom id) print_params f.fn_params;
+      fprintf pp "%s {\n"
+        (PrintRustsyntax.name_rust_function_decl
+           (extern_atom id)
+           f.fn_params
+           f.fn_callconv
+           f.fn_generic_origins
+           f.fn_origins_relation
+           f.fn_return);
       (* Print variables and their types *)
       List.iter
       (fun (id, ty) ->
-        fprintf pp "%s;@ " (name_rust_decl (extern_atom id) ty)) f.fn_vars;
+        fprintf pp "let %s;@ " (name_rust_binding (extern_atom id) ty)) f.fn_vars;
       print_cfg_body_debug pp (f.fn_body, entry, cfg) mayinit mayuninit
     | Errors.Error msg ->
       Diagnostics.fatal_error Diagnostics.no_loc "Error in InitAnalysis: %a" Driveraux.print_error msg)
@@ -238,12 +258,24 @@ let print_fundecl p id fd =
   match fd with
   | External(_, _, (AST.EF_external _ | AST.EF_runtime _ | AST.EF_malloc | AST.EF_free), args, res, cconv) ->
       fprintf p "extern %s;@ "
-                (name_rust_decl (extern_atom id) (Tfunction([], [], args, res, cconv)))
+                (PrintRustsyntax.name_rust_function_decl_from_type
+                   (extern_atom id)
+                   []
+                   []
+                   args
+                   res
+                   cconv)
   | External(_, _, _, _, _, _) ->
       ()
   | Internal f ->
       fprintf p "%s;@ "
-                (name_rust_decl (extern_atom id) (RustIR.type_of_function f))
+                (PrintRustsyntax.name_rust_function_decl
+                   (extern_atom id)
+                   f.fn_params
+                   f.fn_callconv
+                   f.fn_generic_origins
+                   f.fn_origins_relation
+                   f.fn_return)
 
 let print_globdef p print (id, gd)  =
   match gd with
