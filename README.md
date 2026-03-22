@@ -69,7 +69,7 @@ by the frontend.
 The test cases are in ['rustexamples/test'](./rustexamples/test/). To run the test cases of the compiler, use the following commands:
 
 ```
-cd rustexamples/compiler_tests
+cd rustexamples/test
 # compile the test cases, which only compiles the test cases that can pass the safety checking
 make all 
 # run the compilation testing (compile all the test cases)
@@ -105,15 +105,19 @@ The structure of the test cases is explained [here](./rustexamples/test/README.m
   + Verification: [Clightgenspec.v](./rustfrontend/Clightgenspec.v) and [Clightgenproof.v](./rustfrontend/Clightgenproof.v)
 * CompCertO backend: we utilize the CompCertO C compiler as the backend of our Rust compiler. The structure of the CompCertO is similar to the structure of CompCert. The version of CompCertO we use is based on the work of [Direct Refinement](https://github.com/SJTU-PLV/direct-refinement-popl24-artifact).
 
+**Borrow Checking:**
+* Move checking: 
+  + Implementation: [MoveChecking.v](./rustfrontend/MoveChecking.v) and [InitAnalysis.v](./rustfrontend/InitAnalysis.v)
+   + Verification (legacy, only valid in the language subset without reference): [MoveCheckingSafe.v](./rustfrontend/MoveCheckingSafe.v)
+* Polonius-based Borrow checking: 
+  + Implementation: [BorrowCheckDomain](./rustfrontend/BorrowCheckDomain.v), [BorrowCheckPolonius](./rustfrontend/BorrowCheckPolonius.v) and [BorrowCheck](./rustfrontend/BorrowCheck.v)
+  + Verification: working on
+
 **Simulation convention:**
 
 The calling conventions adapted in the Rust interface: [RA.v](./driver/RA.v) and [CallConvRust.v](./driver/CallConvRust.v)
 
 **Theorem of compiler correctness:**
-[transf_rustlight_program_correct](./driver/Compiler.v#L1105) in [driver/Compiler.v](./driver/Compiler.v)
+[transf_rustlight_program_correct](./driver/Compiler.v#L1309) in [driver/Compiler.v](./driver/Compiler.v)
 
-To see the statistics of the LOC of our development, use the following command:
-```
-bash eval.sh
-```
 
