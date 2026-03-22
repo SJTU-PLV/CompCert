@@ -25,7 +25,7 @@ the update of the drop flag before the occurence of ownership transfer
 *)
 
 
-Parameter fresh_atom: unit -> ident.
+Parameter fresh_atom: place -> ident.
 
 (** Step 1: generate drop flags for the places whose init information
 is flow-sensitive.  *)
@@ -44,7 +44,7 @@ Fixpoint generate_drop_flags_for_splits (mayinit mayuninit universe: PathsMap.t)
           flags
         else if may_init mayinit mayuninit universe p then
                (* need drop flag *)
-               let drop_flag := fresh_atom tt in
+               let drop_flag := fresh_atom p in
                (p, drop_flag) :: flags
              else
                (* this place must be uninit, no need to drop *)

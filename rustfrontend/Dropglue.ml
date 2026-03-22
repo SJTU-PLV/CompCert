@@ -1,11 +1,26 @@
 open Camlcoq
 open BinNums
+open Rustlight
 
 (* let litNum = ref 0 *)
 
 let dropglue_tbl = (Hashtbl.create 10 : (positive, bool) Hashtbl.t)
 
 let union_tbl = (Hashtbl.create 20 : (positive, bool) Hashtbl.t)
+
+let rec place_suffix = function
+  | Plocal (id, _) ->
+      extern_atom id
+  | Pfield (p, fid, _) ->
+      Printf.sprintf "%s__field__%s" (place_suffix p) (extern_atom fid)
+  | Pderef (p, _) ->
+      Printf.sprintf "deref__%s" (place_suffix p)
+  | Pdowncast (p, fid, _) ->
+      Printf.sprintf "%s__downcast__%s" (place_suffix p) (extern_atom fid)
+
+let create_dropflag_ident (p: place) : positive =
+  let name = Printf.sprintf "__dropflag_%s" (place_suffix p) in
+  intern_string name
 
 let create_dropglue_ident (a: positive) : positive =
   (* use the name of a in the end of drop in place *)

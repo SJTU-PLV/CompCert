@@ -475,7 +475,7 @@ Proof.
   intros. inv H.
   intros. inv H.
   - simpl. rewrite H2. rewrite H0. rewrite H1.
-    exists (fresh_atom tt). econstructor. auto.
+    exists (fresh_atom p). econstructor. auto.
   - exploit IHdrops; eauto.
     intros (id & IN).
     exists id. simpl.
