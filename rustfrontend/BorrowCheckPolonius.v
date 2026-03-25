@@ -684,7 +684,7 @@ Definition transf_fundef (ce: composite_env) (id: ident) (fd: fundef) : Errors.r
   | Internal f =>
       match borrow_check_function ce f with
       | OK _ => OK (Internal f)
-      | Error msg => Error ([MSG "In function "; CTX id; MSG " : "] ++ msg)
+      | Error msg => Error msg
       end
   | External orgs rels ef targs tres cconv => Errors.OK (External orgs rels ef targs tres cconv)
   end.

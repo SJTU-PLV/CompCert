@@ -129,6 +129,13 @@ let rec prog_of_items (pis: prog_item list): prog = match pis with
 
 module To_syntax = struct
 
+  let infer_composite_decls (p: prog) =
+    (* Struct/enum definitions implicitly serve as forward declarations so
+       mutually recursive composites do not require extra surface syntax. *)
+    let from_struc (x, _, orgs, rels) = (x, Struct, orgs, rels) in
+    let from_enum (x, _, orgs, rels) = (x, Enum, orgs, rels) in
+    (List.map from_struc p.strucs) @ (List.map from_enum p.enums) @ p.composite_decls
+
   let noattr = Ctypes.noattr
 
   type state = { symmap: ident IdMap.t
@@ -1511,9 +1518,49 @@ module To_syntax = struct
     let name = Printf.sprintf "__drop_in_place_%s" str in
     get_or_new_ident name
 
+  let ident_mem x xs =
+    List.exists (fun y -> Camlcoq.P.compare x y = 0) xs
+
+  let rec direct_type_deps (t: Rusttypes.coq_type) : ident list =
+    let module T = Rusttypes in
+    match t with
+    | T.Tstruct (_, id) | T.Tvariant (_, id) -> [id]
+    | T.Tarray (t', _) -> direct_type_deps t'
+    | T.Tunit | T.Tint (_, _) | T.Tlong _ | T.Tfloat _ -> []
+    | T.Tfunction (_, _, _, _, _) | T.Tbox _ | T.Treference (_, _, _) | T.Tadt _ -> []
+
+  let member_deps (m: Rusttypes.member) : ident list =
+    direct_type_deps (Rusttypes.type_member m)
+
+  let composite_id (Rusttypes.Composite (id, _, _, _, _)) = id
+
+  let composite_deps (Rusttypes.Composite (id, _, members, _, _)) =
+    List.filter (fun dep -> Camlcoq.P.compare dep id <> 0)
+      (List.flatten (List.map member_deps members))
+
+  let order_composites (comp_defs: Rusttypes.composite_definition list) =
+    (* Emit composites in an order where direct layout dependencies appear
+       first. Box/reference edges are ignored because they do not require
+       the pointee composite to be complete. *)
+    let rec loop done_ids ordered pending =
+      match pending with
+      | [] -> List.rev ordered
+      | _ ->
+        let ready, blocked =
+          List.partition
+            (fun comp -> List.for_all (fun dep -> ident_mem dep done_ids) (composite_deps comp))
+            pending in
+        match ready with
+        | [] -> List.rev ordered @ pending
+        | _ ->
+          let done_ids' = (List.map composite_id ready) @ done_ids in
+          loop done_ids' (List.rev_append ready ordered) blocked
+    in
+    loop [] [] comp_defs
+
   let generate_composites_and_empty_drop_glues  =
     get_st >>= fun st ->
-    let comp_defs = IdentMap.fold (fun _ c cs -> c::cs) st.composites [] in
+    let comp_defs = order_composites (IdentMap.fold (fun _ c cs -> c::cs) st.composites []) in
     map_m comp_defs 
       (fun (Rusttypes.Composite(id,_,_,_,_)) -> 
         create_dropglue_ident id >>= fun drop_id ->
@@ -1552,7 +1599,7 @@ let print_Rustsyntax_if rev_symmap comp_defs external_funs fun_defs =
 
   let transl_prog (p: prog) : (Rustsyntax.coq_function Rusttypes.program) monad =
     (* convert composite declarations to support mutual recursive ADT *)
-    map_m p.composite_decls
+    map_m (infer_composite_decls p)
       (fun (x, s_or_e, orgs, rels) -> add_composite_decl x s_or_e orgs rels) >>= fun _ ->
     map_m p.funcs
       (fun (x, f) -> add_fn x f) >>= fun _ ->
@@ -1594,5 +1641,3 @@ let print_Rustsyntax_if rev_symmap comp_defs external_funs fun_defs =
     | Errors.Error msg ->
       Diagnostics.fatal_error Diagnostics.no_loc "%a" Driveraux.print_error msg
 end
-
-

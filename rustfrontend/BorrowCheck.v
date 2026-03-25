@@ -80,7 +80,7 @@ Definition borrow_check_fundef (ce : composite_env) (id : ident) (fd : fundef) :
   | Internal f =>
       match borrow_check_function ce f with
       | OK _ => OK (Internal f)
-      | Error msg => Error ([MSG "In function "; CTX id; MSG " , in pc "] ++ msg)
+      | Error msg => Error msg
       end
   | External orgs rels ef targs tres cconv =>
       (* We do not support builtin external functions for now *)
@@ -89,7 +89,7 @@ Definition borrow_check_fundef (ce : composite_env) (id : ident) (fd : fundef) :
       | EF_malloc
       | EF_free =>
           OK (External orgs rels ef targs tres cconv)
-      | _ => Error ([MSG "In function "; CTX id; MSG " , unsupported builtin external function"])
+      | _ => Error [MSG "unsupported builtin external function"]
       end
   end.
 

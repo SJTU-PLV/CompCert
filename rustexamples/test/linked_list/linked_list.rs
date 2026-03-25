@@ -1,6 +1,3 @@
-enum List;
-struct Node;
-
 struct Node {
     val: i32,
     next: Box<List>
@@ -12,7 +9,8 @@ enum List {
 }
 
 fn iterate_until<'a, 'b>(mut l: &'a mut List, x: i32) -> &'b mut List
-    where 'a: 'b
+where
+    'a: 'b
 {
     loop {
         match *l {
@@ -51,21 +49,24 @@ fn iterate_until_consume(l: Box<List>, x: i32) {
 fn main() {
     // produce a list 10 -> 9 -> ... -> 1 -> Nil
     let mut l: Box<List> = init_list(10);
-    
+
     // Iterate until 5, and print the suffix list starting from 5
     let mut l1: &mut List = iterate_until(&mut *l, 5);
-    print_list(& *l1);
+    print_list(&*l1);
 
     // Interate until 7, and consume whole list
     iterate_until_consume(l, 7);
 }
 
-// init(3) produces the list 3 -> 2 -> 1 -> Nil
+// init(n) produces the list n -> (n-1) -> ... -> 1 -> Nil
 fn init_list(n: i32) -> Box<List> {
     if n == 0 {
         return Box::new(List::Nil);
     } else {
-        return Box::new(List::Cons(Node { val: n, next: init_list(n - 1) }));
+        return Box::new(List::Cons(Node {
+            val: n,
+            next: init_list(n - 1)
+        }));
     }
 }
 

@@ -259,7 +259,7 @@ Definition transf_fundef (ce: composite_env) (gvars: list ident) (id: ident) (fd
   | Internal f =>
       match replace_origin_function ce gvars f with
       | OK f' => OK (Internal f')
-      | Error msg => Error ([MSG "In function "; CTX id; MSG " : "] ++ msg)
+      | Error msg => Error msg
       end
   | External orgs rels ef targs tres cconv => Errors.OK (External orgs rels ef targs tres cconv)
   end.

@@ -402,7 +402,7 @@ Definition move_check_fundef (ce : composite_env) (id : ident) (fd : fundef) : E
   | Internal f =>
       match move_check_function ce f with
       | OK _ => OK (Internal f)
-      | Error msg => Error ([MSG "In function "; CTX id; MSG " , in pc "] ++ msg)
+      | Error msg => Error msg
       end
   | External orgs rels ef targs tres cconv =>
       (* We do not support builtin external functions for now *)
@@ -411,7 +411,7 @@ Definition move_check_fundef (ce : composite_env) (id : ident) (fd : fundef) : E
       | EF_malloc
       | EF_free =>
           OK (External orgs rels ef targs tres cconv)
-      | _ => Error ([MSG "In function "; CTX id; MSG " , unsupported builtin external function"])
+      | _ => Error [MSG "unsupported builtin external function"]
       end
   end.
 
