@@ -250,7 +250,7 @@ let print_globdecl p (id, gd) =
 
 let print_program p (prog: Rustlight.program) =
   fprintf p "@[<v 0>";
-  List.iter (PrintRustsyntax.declare_composite p) prog.Rusttypes.prog_types;
+  (* List.iter (PrintRustsyntax.declare_composite p) prog.Rusttypes.prog_types; *)
   List.iter (PrintRustsyntax.define_composite p) prog.Rusttypes.prog_types;
   List.iter (print_globdecl p) prog.Rusttypes.prog_defs;
   List.iter (print_globdef p) prog.Rusttypes.prog_defs;

@@ -289,7 +289,7 @@ let print_globdecl p (id, gd) =
 
 let print_program p prog =
   fprintf p "@[<v 0>";
-  List.iter (PrintRustsyntax.declare_composite p) prog.prog_types;
+  (* List.iter (PrintRustsyntax.declare_composite p) prog.prog_types; *)
   List.iter (PrintRustsyntax.define_composite p) prog.prog_types;
   List.iter (print_globdecl p) prog.prog_defs;
   List.iter (print_globdef p print_function) prog.prog_defs;
@@ -297,7 +297,7 @@ let print_program p prog =
 
 let print_cfg_program p prog =
   fprintf p "@[<v 0>";
-  List.iter (PrintRustsyntax.declare_composite p) prog.prog_types;
+  (* List.iter (PrintRustsyntax.declare_composite p) prog.prog_types; *)
   List.iter (PrintRustsyntax.define_composite p) prog.prog_types;
   List.iter (print_globdecl p) prog.prog_defs;
   List.iter (print_globdef p print_cfg) prog.prog_defs;
@@ -305,7 +305,7 @@ let print_cfg_program p prog =
 
 let print_cfg_program_initanalysis_debug p prog =
   fprintf p "@[<v 0>";
-  List.iter (PrintRustsyntax.declare_composite p) prog.prog_types;
+  (* List.iter (PrintRustsyntax.declare_composite p) prog.prog_types; *)
   List.iter (PrintRustsyntax.define_composite p) prog.prog_types;
   List.iter (print_globdecl p) prog.prog_defs;
   List.iter (print_globdef p (print_cfg_initanalysis_debug prog.prog_comp_env)) prog.prog_defs;

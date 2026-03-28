@@ -148,7 +148,7 @@ let print_cfg_borrow_check ce pp id f  =
 
 let print_cfg_program_borrow_check p (prog: RustIR.coq_function Rusttypes.program) =
   fprintf p "@[<v 0>";
-  List.iter (PrintRustsyntax.declare_composite p) prog.prog_types;
+  (* List.iter (PrintRustsyntax.declare_composite p) prog.prog_types; *)
   List.iter (PrintRustsyntax.define_composite p) prog.prog_types;
   List.iter (PrintRustIR.print_globdecl p) prog.prog_defs;
   List.iter (PrintRustIR.print_globdef p (print_cfg_borrow_check prog.prog_comp_env)) prog.prog_defs;
