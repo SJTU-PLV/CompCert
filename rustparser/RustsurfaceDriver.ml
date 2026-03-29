@@ -61,14 +61,21 @@ let fail text buffer (checkpoint : _ I.checkpoint) =
   let location = L.range (E.last buffer) in
   (* Show the tokens just before and just after the error. *)
   let indication = Format.sprintf "Syntax error %s.\n" (E.show (show text) buffer) in
-  (* Fetch an error message from the database. *)
-  let message = RustsurfaceParserM.message (state checkpoint) in
-  (* Expand away the $i keywords that might appear in the message. *)
-  let message = E.expand (get text checkpoint) message in
+  let message =
+    try
+      let message = RustsurfaceParserM.message (state checkpoint) in
+      E.expand (get text checkpoint) message
+    with Not_found ->
+      "Please check the syntax near the highlighted tokens.\n"
+  in
   (* Show these three components. *)
   Format.eprintf "%s%s%s%!" location indication message;
   exit 1
 
+let report positions message =
+  let location = L.range positions in
+  Format.eprintf "%s%s\n%!" location message;
+  exit 1
 
 let parse filename =
   let text, lexbuf = L.read filename in
@@ -85,5 +92,8 @@ let parse filename =
   (* Run the parser. *)
   (* We do not handle [Lexer.Error] because we know that we will not
      encounter a lexical error during this second parsing run. *)
-  I.loop_handle succeed (fail text buffer) supplier checkpoint
-
+  try
+    I.loop_handle succeed (fail text buffer) supplier checkpoint
+  with
+  | Rustsurface.Parse_error (pos1, pos2, message) ->
+      report (pos1, pos2) message

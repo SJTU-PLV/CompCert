@@ -1,5 +1,6 @@
 {
 open RustsurfaceParser
+open Rustsurface
 }
 
 let white = [' ' '\t' '\n']+
@@ -74,6 +75,7 @@ rule read =
 
  | "extern" { EXTERN }
  | "fn" { FN }
+ | "unsafe" { UNSAFE }
  | "where" { WHERE }
  | "in" { IN }
  | "let" { LET }
@@ -98,4 +100,7 @@ rule read =
  | id { ID (Lexing.lexeme lexbuf) }
  | eof { EOF }
 
- | _ as c { failwith (Printf.sprintf "unexpected character: %C" c) }
+ | _ as c {
+   let pos = Lexing.lexeme_start_p lexbuf in
+   raise (Parse_error (pos, pos, Printf.sprintf "unexpected character: %C" c))
+ }

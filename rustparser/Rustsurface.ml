@@ -1,6 +1,8 @@
 
 type id = string
 
+exception Parse_error of Lexing.position * Lexing.position * string
+
 let dummy_origin_str = "'0"
 
 let wildcard_id = "_"

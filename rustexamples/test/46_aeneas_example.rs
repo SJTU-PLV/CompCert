@@ -3,9 +3,6 @@
 // imprecision of NLL. It can be checked by our borrow
 // checker and rustc's Polonius.
 
-enum List;
-struct Node;
-
 struct Node {
     value: i32,
     next: Box<List>

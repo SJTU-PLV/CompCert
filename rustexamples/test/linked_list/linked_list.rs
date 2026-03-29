@@ -8,7 +8,7 @@ enum List {
     Cons(Node)
 }
 
-fn iterate_until_consume(l: Box<List>, x: i32) {
+fn iterate_until_consume(mut l: Box<List>, x: i32) {
     loop {
         match *l {
             List::Nil => {
@@ -72,16 +72,22 @@ fn init_list(n: i32) -> Box<List> {
 }
 
 // Printing functions implemented in C
-extern fn print_i32(x: i32)
-extern fn print_endl()
+extern "C" {
+    fn print_i32(x: i32);
+    fn print_endl();
+}
 
 fn print_list<'a>(l: &'a List) {
     match *l {
         List::Nil => {
-            print_endl();
+            unsafe {
+                print_endl();
+            }
         }
         List::Cons(ref node) => {
-            print_i32((*node).val);
+            unsafe {
+                print_i32((*node).val);
+            };
             print_list(&(*(*node).next));
         }
     }

@@ -1,7 +1,3 @@
-struct list<'a>;
-
-enum list_node<'a>;
-
 enum list_node<'a> {
     None,
     Some(&'a mut list<'a>)
@@ -12,7 +8,7 @@ struct list<'a> {
     next: list_node<'a>
 }
 
-fn sum<'a>(l: &'a mut list<'a>) -> i32 {
+fn sum<'a>(mut l: &'a mut list<'a>) -> i32 {
     let mut result: i32 = 0;
     loop {
         result = result + (*l).value;
@@ -28,7 +24,7 @@ fn sum<'a>(l: &'a mut list<'a>) -> i32 {
     return result;
 }
 
-fn add_one<'a, 'b>(l: &'a mut list<'b>) where 'b: 'a {
+fn add_one<'a, 'b>(mut l: &'a mut list<'b>) where 'b: 'a {
     loop{
         (*l).value = (*l).value + 1;
         match (*l).next {

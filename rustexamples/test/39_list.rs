@@ -1,9 +1,5 @@
 // I have no idea is it necessary to give such a compilcated example
 
-enum List<'r>;
-
-struct Node<'r>;
-
 struct Node<'r> {
     val : &'r mut i32,
     next : &'r mut List<'r>

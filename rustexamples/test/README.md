@@ -9,6 +9,21 @@ Before running the test, you should first build the compiler at the main directo
 make test
 ```
 
+To compare `rustc` with `ccomp` on all `.rs` tests under
+`rustexamples/test`, run:
+
+```
+make compare-rustc
+```
+
+This generates:
+
+- `rustc_ccomp_comparison.md`: per-test comparison report
+- `rustc_ccomp_comparison.json`: raw structured results
+
+By default, the comparison script runs nightly `rustc` with
+`-Z polonius=next`.
+
 > For now, the only failed test case is `21struct_enum_generic.rs` which involves some pattern match mechanism we do not support
 
 ## Explanation of (part of) the test cases

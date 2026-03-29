@@ -1,5 +1,16 @@
 %{
 open Rustsurface
+
+let rec is_single_unsafe_call_stmt s =
+  match s with
+  | Sdo (Ecall _) -> true
+  | Ssequence (Sdo (Ecall _), Sskip) -> true
+  | Sscope s' -> is_single_unsafe_call_stmt s'
+  | _ -> false
+
+let unsafe_block_stmt pos1 pos2 s =
+  if is_single_unsafe_call_stmt s then s
+  else raise (Parse_error (pos1, pos2, "unsafe blocks may only contain a single function call"))
 %}
 
 %token <string> ID
@@ -39,6 +50,7 @@ open Rustsurface
 %token ENUM
 %token EXTERN
 %token FN
+%token UNSAFE
 %token WHERE
 %token LET
 %token IN
@@ -96,6 +108,7 @@ open Rustsurface
 %type <ty list> params_ty
 %type <stmt> stmt
 %type <stmt> stmt_item
+%type <stmt> unsafe_block_body
 %type <id list * expr list> struct_fields
 %type <ty> ty
 %type <(id * ty) list> composite_fields
@@ -106,6 +119,9 @@ open Rustsurface
 %type <id * id list * (id * id) list> enum_decl
 %type <id * id list * (id * id) list> struct_decl
 %type <id * fn> fn
+%type <id * fn_decl> bare_fn_decl
+%type <prog_item list> extern_block_items
+%type <prog_item list> extern_block
 %type <prog_item list> prog
 %type <pat> pattern
 %type <pat list> args_pattern
@@ -124,12 +140,14 @@ prog:
   | c = struct_ { let (x, flds, orgs, rels) = c in [Pstruc (x, flds, orgs, rels)] }
   | f = fn { [Pfn (fst f, snd f)] }
   | f = fn_decl { [Pfn_decl (fst f, snd f)]}
+  | fs = extern_block { fs }
   | d = enum_decl; p = prog { let (x, orgs, rels) = d in (Pcomp_decl (x, Enum, orgs, rels)) :: p }
   | d = struct_decl; p = prog { let (x, orgs, rels) = d in (Pcomp_decl (x, Struct, orgs, rels)) :: p }
   | c = enum; p = prog { let (x, flds, orgs, rels) = c in (Penum (x, flds, orgs, rels))::p }
   | c = struct_; p = prog { let (x, flds, orgs, rels) = c in (Pstruc (x, flds, orgs, rels))::p }
   | f = fn; p = prog { let (id, f) = f in (Pfn (id, f))::p }
   | f = fn_decl; p = prog { let (id, f) = f in (Pfn_decl (id, f))::p }
+  | fs = extern_block; p = prog { fs @ p }
 
 (* optional origin *)
 origin_opt:
@@ -202,12 +220,27 @@ fn:
     { (x, { generic_origins = orgs; origin_relations = rels; return = tr; params = p; body = s }) }
 
 (* For now, all the function declaration must be external function *)
-fn_decl:
-  | EXTERN; FN; x = ID; orgs = generic_origins; LPAREN; p = composite_fields; RPAREN; rels = origin_relations
+bare_fn_decl:
+  | FN; x = ID; orgs = generic_origins; LPAREN; p = composite_fields; RPAREN; rels = origin_relations
     { (x, { generic_origins = orgs; origin_relations = rels; return = Tunit; params = p}) }
   (* function with return type *)
-  | EXTERN; FN; x = ID; orgs = generic_origins; LPAREN; p = composite_fields; RPAREN; RARROW; tr = ty; rels = origin_relations
+  | FN; x = ID; orgs = generic_origins; LPAREN; p = composite_fields; RPAREN; RARROW; tr = ty; rels = origin_relations
     { (x, { generic_origins = orgs; origin_relations = rels; return = tr; params = p}) }
+
+fn_decl:
+  | EXTERN; f = bare_fn_decl { f }
+
+extern_abi_opt:
+  | { () }
+  | STR_LITERAL { () }
+
+extern_block_items:
+  | f = bare_fn_decl; SEMICOLON { let (id, f) = f in [Pfn_decl (id, f)] }
+  | f = bare_fn_decl; SEMICOLON; fs = extern_block_items
+    { let (id, f) = f in (Pfn_decl (id, f)) :: fs }
+
+extern_block:
+  | EXTERN; extern_abi_opt; LBRACE; fs = extern_block_items; RBRACE { fs }
 
 args_expr:
   | { [] }
@@ -357,6 +390,7 @@ match_arms:
 stmt_item:
   | { Sskip }
   | e = expr { Sdo e }
+  | UNSAFE; LBRACE; s = unsafe_block_body; RBRACE { unsafe_block_stmt $startpos $endpos s }
   // | e1 = expr; ASSIGN; x = ID; LBRACE; flds = struct_fields; RBRACE
   //   { Sdo (Eassign (e1, Estruct (x, fst flds, snd flds))) }
   | LET; x = ID; COLON; t = ty;
@@ -375,6 +409,10 @@ stmt_item:
   | RETURN; e = expr { Sreturn (Some e) }
   (* In rust document, this expr must not be struct expr *)
   | MATCH; e = expr_except_struct; LBRACE; arms = match_arms; RBRACE { Smatch (e, arms) }
+
+unsafe_block_body:
+  | s = stmt { s }
+  | s = stmt_item; SEMICOLON { Ssequence (s, Sskip) }
 
 stmt:
   | s = stmt_item { s }

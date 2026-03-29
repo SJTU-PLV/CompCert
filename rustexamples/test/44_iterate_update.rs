@@ -1,8 +1,5 @@
 // This example is adapted from https://github.com/rust-lang/rust/blob/main/tests/ui/nll/polonius/iterating-updating-cursor-issue-57165.rs, which is a test for the linked-list cursor-like pattern of #46859/#48001, where the polonius alpha analysis shows the same imprecision as NLLs, unlike the datalog implementation. 
 
-struct X;
-enum OptionX;
-
 enum OptionX {
     None,
     Some(Box<X>)

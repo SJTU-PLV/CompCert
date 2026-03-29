@@ -25,6 +25,7 @@ RED=\033[31m
 RESET=\033[0m
 
 .PHONY: all test clean dump
+.PHONY: compare-rustc
 
 # default target
 all: $(SUCCESS_EXPECTED:%.rs=%.compcert)
@@ -56,6 +57,9 @@ test: $(SRCS)
 			fi; \
 		fi; \
 	done
+
+compare-rustc:
+	python3 compare_rustc_ccomp.py
 
 clean:
 	rm -f *.s *.compcert
