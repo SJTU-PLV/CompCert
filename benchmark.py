@@ -21,7 +21,7 @@ TIMEOUT_SEC = 10.0
 
 # 编译器命令
 GCC_CMD = "gcc" 
-GCC_FLAGS = ["-O2", "-Wno-return-type", "-Wno-implicit-int"] 
+GCC_FLAGS = ["-O3", "-Wno-return-type", "-Wno-implicit-int"] 
 
 RUSTC_CMD = "rustc"
 # 忽略警告，链接 runtime
