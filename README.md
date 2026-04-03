@@ -61,6 +61,20 @@ make test
 
 The structure of the test cases is explained [here](./rustexamples/compiler_tests/README.md).
 
+## AI Repair Pipeline
+
+An external orchestration script is provided for the workflow:
+
+`C -> Rust -> rustc compile -> LLM repair -> differential testing`
+
+See [AI_PIPELINE.md](./AI_PIPELINE.md) for details.
+
+The entry script is:
+
+```bash
+python3 ai_repair_pipeline.py test.c
+```
+
 ## Structure of the source code
 
 **Languages:**
@@ -103,4 +117,3 @@ To see the statistics of the LOC of our development, use the following command:
 ```
 python benchmark.py
 ```
-
