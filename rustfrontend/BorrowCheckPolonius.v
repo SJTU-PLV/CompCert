@@ -38,6 +38,12 @@ Definition support_origins (p: place) : list origin :=
 Definition aggregate_origin_states (e: LOrgEnv.t) (orgs: list origin) : LOrgSt.t :=
   fold_left (fun acc elt => LOrgSt.lub acc (LOrgEnv.get elt e)) orgs LOrgSt.bot.
 
+Definition borrowed_place_error (action site: string) (p: place) : errmsg :=
+  [MSG action; MSG " place "]
+  ++ errmsg_of_place p
+  ++ [MSG " because it is borrowed; this error occurs in ";
+      MSG site].
+
 Definition map_loan_set (f: loan -> loan) (ls: LoanSet.t) : LoanSet.t :=
   LoanSet.fold (fun ln acc => LoanSet.add (f ln) acc) ls LoanSet.empty.
 
@@ -67,18 +73,18 @@ Fixpoint check_pure_expr (e: LOrgEnv.t) (pe: pexpr) : res unit :=
   match pe with
  | Eplace p ty =>
       if illegal_access e p Adeep ARead then
-        Error [MSG "access a place (transfer_pure_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Eplace"]
+        Error (borrowed_place_error "cannot access" "Eplace of transfer_pure_expr" p)
       else
         OK tt
   | Eref org mut p ty =>
       let ak := mut_to_access_kind mut in
       if illegal_access e p Adeep ak then
-        Error [MSG "access a place (transfer_pure_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Eref"]
+        Error (borrowed_place_error "cannot access" "Eref of transfer_pure_expr" p)
       else
         OK tt
   | Ecktag p id =>
       if illegal_access e p Ashallow ARead then
-        Error [MSG "access a place (transfer_pure_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Ecktag"]
+        Error (borrowed_place_error "cannot access" "Ecktag of transfer_pure_expr" p)
       else
         OK tt
   | Eunop _ pe _ =>
@@ -105,7 +111,7 @@ Definition check_expr (oe: LOrgEnv.t) (e: expr) : res unit :=
   match e with
   | Emoveplace p ty =>
       if illegal_access oe p Adeep AWrite then
-        Error [MSG "access a place (transfer_expr) which is borrowed; id is "; CTX (local_of_place p); MSG " in Emoveplace"]
+        Error (borrowed_place_error "cannot access" "Emoveplace of transfer_expr" p)
       else 
         OK tt
   | Epure pe =>
@@ -183,7 +189,7 @@ Fixpoint flow_loans_list (e: LOrgEnv.t) (ls ld: list type) (k: flow_kind) : LOrg
 
 Definition check_shallow_write_place (e: LOrgEnv.t) (p: place) : res unit :=
   if illegal_access e p Ashallow AWrite then
-    Error [MSG "access a place (shallow_write_place) which is borrowed; id is "; CTX (local_of_place p)]    
+    Error (borrowed_place_error "cannot write to" "shallow_write_place" p)
   else
     OK tt.
 
@@ -417,7 +423,7 @@ Definition check_storagedead (f: function) (oe1: LOrgEnv.t) (id: ident) : res un
 (** TODO: we need to consider p is initialized or not *)
 Definition check_drop (oe1: LOrgEnv.t) (p: place) : res unit :=
   if illegal_access oe1 p Adeep AWrite then
-    Error [MSG "access a place which is borrowed: "; CTX (local_of_place p); MSG " in (check_drop)"]
+    Error (borrowed_place_error "cannot drop" "check_drop" p)
   else OK tt.
 
 (** All the relations between the generic origins after the function
@@ -502,7 +508,7 @@ Definition check_return (f: function) (oe1: LOrgEnv.t) (p: place) : res unit :=
     (* Question: this error should be impossible (or the error has
     been found before this return statement)? Because there is no live
     regions (except generic regions) after the return statement. *)
-    Error [MSG "access a place which is borrowed"; CTX (local_of_place p); MSG "in (transfer_return)"]
+    Error (borrowed_place_error "cannot return" "transfer_return" p)
   else
     let oe2 := flow_loans oe1 (typeof_place p) f.(fn_return) ByVal in
     (* To accept more programs, we clear all the regions except the

@@ -799,10 +799,10 @@ Definition transl_on_instr (src: statement) (pc: node) (instr: instruction)
           | OK ts =>
              set_stmt pc src sel ts
           | Error msg =>
-             Error (MSG "At pc " :: POS pc :: MSG ": " :: msg)
+             Error (MSG "at pc " :: POS pc :: MSG ", " :: msg)
           end
       | None =>
-          Error [MSG "At pc "; POS pc; MSG ": select_stmt error in transl_on_instr"]
+          Error [MSG "at pc "; POS pc; MSG ", select_stmt error in transl_on_instr"]
       end
   | Icond e _ _ =>
       do _ <- check_expr (get_an ae pc) e;

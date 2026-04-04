@@ -41,6 +41,18 @@ Definition typeof_place p :=
   | Pdowncast _ _ ty => ty
   end.
 
+Fixpoint errmsg_of_place (p: place) : errmsg :=
+  match p with
+  | Plocal id _ =>
+      [CTX id]
+  | Pfield p' fid _ =>
+      errmsg_of_place p' ++ [MSG "."; CTX fid]
+  | Pderef p' _ =>
+      [MSG "*"] ++ errmsg_of_place p'
+  | Pdowncast p' fid _ =>
+      [MSG "("] ++ errmsg_of_place p' ++ [MSG " as "; CTX fid; MSG ")"]
+  end.
+
 
 (** ** Expression *)
 

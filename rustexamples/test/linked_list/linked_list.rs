@@ -1,48 +1,48 @@
 struct Node {
-    val: i32,
-    next: Box<List>
+  val: i32,
+  next: Box<List>
 }
 
 enum List {
-    Nil,
-    Cons(Node)
+  Nil,
+  Cons(Node)
 }
 
 fn iterate_until_consume(mut l: Box<List>, x: i32) {
-    loop {
-        match *l {
-            List::Nil => {
-                return;
-            }
-            List::Cons(node) => {
-                if node.val == x {
-                    *l = List::Nil;
-                } else {
-                    l = node.next;
-                }
-            }
+  loop {
+    match *l {
+      List::Nil => {
+        return;
+      }
+      List::Cons(node) => {
+        if node.val == x {
+          *l = List::Nil;
+        } else {
+          l = node.next;
         }
+      }
     }
+  }
 }
 
 fn iterate_until<'a, 'b>(mut l: &'a mut List, x: i32) -> &'b mut List
 where
     'a: 'b
 {
-    loop {
-        match *l {
-            List::Nil => {
-                return l;
-            }
-            List::Cons(ref mut node) => {                
-                if (*node).val == x {
-                    return &mut *(*node).next;
-                } else {
-                    l = &mut *((*node).next);
-                }
-            }
+  loop {
+    match *l {
+      List::Nil => {
+        return l;
+      }
+      List::Cons(ref mut node) => {                
+        if (*node).val == x {
+          return &mut *(*node).next;
+        } else {
+          l = &mut *((*node).next);
         }
+      }
     }
+  }
 }
 
 
@@ -53,10 +53,12 @@ fn main() {
 
     // Iterate until 5, and print the suffix list starting from 4
     let mut l1: &mut List = iterate_until(&mut *l, 5);
+
+    // Using l is not allowed here because l1 still borrows l
+    iterate_until_consume(l, 7); 
+
     print_list(&*l1);
 
-    // Interate until 7, and consume whole list
-    iterate_until_consume(l, 7);
 }
 
 // init(n) produces the list n -> (n-1) -> ... -> 1 -> Nil
@@ -75,9 +77,17 @@ fn init_list(n: i32) -> Box<List> {
 extern "C" {
     fn print_i32(x: i32);
     fn print_endl();
+    fn print_prompt();
 }
 
 fn print_list<'a>(l: &'a List) {
+    unsafe {
+        print_prompt();
+    };
+    print_list_rec(l);
+}
+
+fn print_list_rec<'a>(l: &'a List) {
     match *l {
         List::Nil => {
             unsafe {
@@ -88,7 +98,9 @@ fn print_list<'a>(l: &'a List) {
             unsafe {
                 print_i32((*node).val);
             };
-            print_list(&(*(*node).next));
+            print_list_rec(&(*(*node).next));
         }
     }
 }
+
+

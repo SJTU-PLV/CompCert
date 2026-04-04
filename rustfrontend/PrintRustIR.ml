@@ -73,7 +73,8 @@ let rec print_stmt p (s: RustIR.statement) =
   | Sstoragedead id ->
     fprintf p "storagedead %s;" (extern_atom id)
   | Sdrop v ->
-    fprintf p "drop(%a of %s);" print_place v (name_rust_type (Rustlight.typeof_place v))
+    (* fprintf p "drop(%a of %s);" print_place v (name_rust_type (Rustlight.typeof_place v)) *)
+    fprintf p "drop(%a);" print_place v
     
 
 (* Print cfg of RustIR *)
@@ -324,7 +325,7 @@ let print_if prog =
 let destination_cfg : string option ref = ref None
 
 let print_if_cfg prog =
-  match !destination with
+  match !destination_cfg with
   | None -> ()
   | Some f ->
       let oc = open_out f in

@@ -119,6 +119,18 @@ Section INIT.
 
 Variable ce: composite_env.
 Variable init uninit universe: PathsMap.t.
+
+Definition move_check_place_error (action site: string) (p: place) : errmsg :=
+  [MSG action; MSG " place "]
+  ++ errmsg_of_place p
+  ++ [MSG " because it may be uninitialized or partially moved; this error occurs in ";
+      MSG site].
+
+Definition move_check_assign_error (site: string) (p: place) : errmsg :=
+  [MSG "cannot assign to place "]
+  ++ errmsg_of_place p
+  ++ [MSG " because one of its parent places may be uninitialized; this error occurs in ";
+      MSG site].
   
 Fixpoint move_check_pexpr (pe : pexpr) : bool :=
   match pe with
@@ -150,6 +162,29 @@ Fixpoint move_check_pexpr (pe : pexpr) : bool :=
   | _ => true
   end.
 
+Fixpoint explain_move_check_pexpr_error (site: string) (pe : pexpr) : errmsg :=
+  match pe with
+  | Eplace p _
+  | Ecktag p _
+  | Eref _ _ p _ =>
+      let op := owner_place p in
+      if dominators_must_init init uninit universe op
+         && must_movable ce init uninit universe (valid_owner op) true
+      then [MSG "internal move checking error while explaining a place access"]
+      else move_check_place_error "cannot access" site p
+  | Eunop _ pe0 _ =>
+      explain_move_check_pexpr_error site pe0
+  | Ebinop _ pe1 pe2 _ =>
+      if move_check_pexpr pe1
+      then explain_move_check_pexpr_error site pe2
+      else explain_move_check_pexpr_error site pe1
+  | Eglobal _ _ =>
+      [MSG "move checking does not support a global value; this error occurs in ";
+       MSG site]
+  | _ =>
+      [MSG "internal move checking error while explaining a pure expression"]
+  end.
+
 Definition move_check_expr' (e : expr) : bool :=
   match e with
   | Emoveplace p _ =>
@@ -166,6 +201,17 @@ Definition move_check_expr' (e : expr) : bool :=
       (*   dominators_must_init init uninit universe p && *)
       (*   must_init init uninit universe (valid_owner p) && is_full universe (valid_owner p) *)
   | Epure pe => move_check_pexpr pe
+  end.
+
+Definition explain_move_check_expr_error (site: string) (e : expr) : errmsg :=
+  match e with
+  | Emoveplace p _ =>
+      if dominators_must_init init uninit universe p
+         && must_movable ce init uninit universe (valid_owner p) false
+      then [MSG "internal move checking error while explaining a move expression"]
+      else move_check_place_error "cannot move" site p
+  | Epure pe =>
+      explain_move_check_pexpr_error site pe
   end.
 
 (* This function returns the (init, uninit) pair after moving the
@@ -185,6 +231,11 @@ Definition move_check_expr (e: expr) : option (PathsMap.t * PathsMap.t) :=
 Definition move_check_assign (p : place) :=
   dominators_must_init init uninit universe (owner_place p).
 
+Definition explain_move_check_assign_error (site: string) (p : place) : errmsg :=
+  if move_check_assign p
+  then [MSG "internal move checking error while explaining an assignment"]
+  else move_check_assign_error site p.
+
 End INIT.
 
 Fixpoint move_check_exprlist ce init uninit universe (l : list expr) : option (PathsMap.t * PathsMap.t) :=
@@ -196,6 +247,21 @@ Fixpoint move_check_exprlist ce init uninit universe (l : list expr) : option (P
           move_check_exprlist ce init' uninit' universe l'
       | None =>
           None
+      end
+  end.
+
+Fixpoint explain_move_check_exprlist_error
+         (ce: composite_env) (init uninit universe: PathsMap.t)
+         (site: string) (l : list expr) : errmsg :=
+  match l with
+  | nil =>
+      [MSG "internal move checking error while explaining an expression list"]
+  | e :: l' =>
+      match move_check_expr ce init uninit universe e with
+      | Some (init', uninit') =>
+          explain_move_check_exprlist_error ce init' uninit' universe site l'
+      | None =>
+          explain_move_check_expr_error ce init uninit universe site e
       end
   end.
 
@@ -214,16 +280,16 @@ Definition move_check_stmt ce (an : IM.t * IM.t * PathsMap.t) (stmt : statement)
                   of the analysis before moving the place of e ! *)
               if move_check_assign mayinit' mayuninit' universe p0
               then OK stmt
-              else Error (msg "move_check_assign error")
-          | None => Error (msg "move_check_expr error")
+              else Error (explain_move_check_assign_error mayinit' mayuninit' universe "move_check_assign of assignment" p0)
+          | None => Error (explain_move_check_expr_error ce mayinit mayuninit universe "move_check_expr of assignment" e)
           end
       | Scall p0 _ el =>
           match move_check_exprlist ce mayinit mayuninit universe el with
           | Some (mayinit', mayuninit') =>
               if move_check_assign mayinit' mayuninit' universe p0
               then OK stmt
-              else Error (msg "move_check_assign error in Scall")
-          | None => Error (msg "move_check_exprlist error in Scall")
+              else Error (explain_move_check_assign_error mayinit' mayuninit' universe "move_check_assign of Scall" p0)
+          | None => Error (explain_move_check_exprlist_error ce mayinit mayuninit universe "move_check_exprlist of Scall" el)
           end
       | Sreturn p =>
           (* Is it ok to assume that return p is moving p? *)
@@ -231,7 +297,7 @@ Definition move_check_stmt ce (an : IM.t * IM.t * PathsMap.t) (stmt : statement)
           if move_check_expr' ce mayinit mayuninit universe e then
             OK stmt
           else
-            Error (msg "move_check_expr error in Sreturn")
+            Error (move_check_place_error "cannot return" "Sreturn" p)
       (* Note: p in drop(p) may be partially initialized or this drop
       is inside a if-then-else statement generated by drop
       elaboration, i.e., we cannot conlcude that p must be initialized
@@ -254,13 +320,15 @@ Definition check_cond_expr ce (an : IM.t * IM.t * PathsMap.t) (e: expr) : Errors
   match mayInit, mayUninit with
   | IM.State mayinit, IM.State mayuninit =>
       match e with
-      | Emoveplace _ _ =>
-          Error (msg "cannot move place in conditional expression")
+      | Emoveplace p _ =>
+          Error ([MSG "cannot move place "]
+                 ++ errmsg_of_place p
+                 ++ [MSG " in a conditional expression"])
       | Epure pe =>
           if move_check_pexpr ce mayinit mayuninit universe pe then
             OK tt
           else
-            Error (msg "move_check_pexpr error in conditional expression")
+            Error (explain_move_check_pexpr_error ce mayinit mayuninit universe "conditional expression" pe)
       end
   | _, _ => OK tt
   end.

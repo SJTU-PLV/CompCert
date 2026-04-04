@@ -9,3 +9,8 @@ int print_endl() {
     printf("\n");
     return 0;
 }
+
+int print_prompt() {
+    printf("The list is: ");
+    return 0;
+}
