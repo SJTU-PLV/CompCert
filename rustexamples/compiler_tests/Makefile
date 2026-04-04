@@ -1,4 +1,4 @@
-CCOMP=../../ccomp
+CCOMP=../../rust_comp
 
 PROGS=fib factorial list1 list2 list3 list4 elaborate_drop nested_box
 

@@ -1,6 +1,6 @@
 include ../../Makefile.config
 
-CCOMP=../../ccomp -stdlib ../../runtime
+CCOMP=../../rust_comp -stdlib ../../runtime
 CCOMPFLAGS=
 CFLAGS=-O -Wno-overflow -Wno-constant-conversion
 
@@ -108,4 +108,3 @@ staticlayout.cc: staticlayout.c layout.h
 
 clean::
 	rm -f *.[os] *.compcert *.cc2compcert *.compcert2cc *.light.c
-

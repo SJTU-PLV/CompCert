@@ -94,7 +94,7 @@ LEXERS=cparser/Lexer.mll lib/Tokenize.mll \
 LIBS=str.cmxa unix.cmxa $(MENHIR_LIBS)
 LIBS_BYTE=$(patsubst %.cmxa,%.cma,$(patsubst %.cmx,%.cmo,$(LIBS)))
 
-EXECUTABLES=ccomp ccomp.byte cchecklink cchecklink.byte clightgen clightgen.byte
+EXECUTABLES=rust_comp rust_comp.byte cchecklink cchecklink.byte clightgen clightgen.byte
 GENERATED=$(PARSERS:.mly=.mli) $(PARSERS:.mly=.ml) $(LEXERS:.mll=.ml) cparser/pre_parser_messages.ml rustparser/RustsurfaceParserM.ml
 
 # Beginning of part that assumes .depend.extr already exists
@@ -104,16 +104,16 @@ ifeq ($(wildcard .depend.extr),.depend.extr)
 CCOMP_OBJS:=$(shell $(MODORDER) driver/Driver.cmx)
 
 ifeq ($(OCAML_NATIVE_COMP),true)
-ccomp: $(CCOMP_OBJS)
+rust_comp: $(CCOMP_OBJS)
 	@echo "Linking $@"
 	@$(OCAMLOPT) -o $@ $(LIBS) $(LINK_OPT) $+
 else
-ccomp: ccomp.byte
+rust_comp: rust_comp.byte
 	@echo "Copying to $@"
 	@$(COPY) $+ $@
 endif
 
-ccomp.byte: $(CCOMP_OBJS:.cmx=.cmo)
+rust_comp.byte: $(CCOMP_OBJS:.cmx=.cmo)
 	@echo "Linking $@"
 	@$(OCAMLC) -o $@ $(LIBS_BYTE) $+
 

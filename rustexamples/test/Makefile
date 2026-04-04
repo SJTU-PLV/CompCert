@@ -11,7 +11,7 @@ FAIL_SRCS := 01.rs 03.rs 11.rs 12.rs 13.rs 15.rs 16.rs 17.rs 18.rs 22dangle.rs 2
 
 SUCCESS_EXPECTED := $(filter-out $(FAIL_SRCS),$(SRCS))
 
-CCOMP=../../ccomp
+CCOMP=../../rust_comp
 DUMP_FLAGS :=
 ifneq ($(filter dump,$(MAKECMDGOALS)),)
 DUMP_FLAGS += -drust_all

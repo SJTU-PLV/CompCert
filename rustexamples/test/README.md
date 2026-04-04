@@ -9,7 +9,7 @@ Before running the test, you should first build the compiler at the main directo
 make test
 ```
 
-To compare `rustc` with `ccomp` on all `.rs` tests under
+To compare `rustc` with `rust_comp` on all `.rs` tests under
 `rustexamples/test`, run:
 
 ```

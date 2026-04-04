@@ -1,6 +1,6 @@
 include ../../Makefile.config
 
-CCOMP=../../ccomp
+CCOMP=../../rust_comp
 CCOMPFLAGS=$(CCOMPOPTS) -stdlib ../../runtime \
  -dparse -dc -dclight -dasm -fall \
  -DARCH_$(ARCH) -DMODEL_$(MODEL)

@@ -1,6 +1,6 @@
 include ../../Makefile.config
 
-CC=../../ccomp 
+CC=../../rust_comp 
 CFLAGS=$(CCOMPOPTS) -stdlib ../../runtime -dparse -dclight -dasm -fstruct-return
 
 SRCS=analyze.c clause.c clock.c closure.c cnf.c component.c                 \

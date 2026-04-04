@@ -1,4 +1,4 @@
-CCOMP=../../../ccomp
+CCOMP=../../../rust_comp
 
 PROGS=linked_list.rs printer.c
 OBJ=linked_list

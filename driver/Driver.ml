@@ -165,7 +165,7 @@ let toolchain_help =
 
 let usage_string =
   version_string tool_name ^
-  {|Usage: ccomp [options] <source files>
+  {|Usage: rust_comp [options] <source files>
 Recognized source files:
   .c             C source file
   .i or .p       C source file that should not be preprocessed
@@ -173,6 +173,8 @@ Recognized source files:
   .S or .sx      Assembly file that must be preprocessed
   .o             Object file
   .a             Library file
+  Note: if the input is a C source file, rust_comp uses the original
+                 CompCert C compiler pipeline for that file
 Processing options:
   -c             Compile to object file only (no linking), result in <file>.o
   -E             Preprocess only, send result to standard output

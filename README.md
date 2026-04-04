@@ -53,9 +53,9 @@ Mac, you need to use `Rosseta` or an emulator.
 ```
 
 ## Run the compiler
-The generated binary executable compiler is named `ccomp` in the main directory. When you write a source file named `test.rs`. A simple instruction of running the compiler to compile `test.rs` is:
+The generated binary executable compiler is named `rust_comp` in the main directory. When you write a source file named `test.rs`. A simple instruction of running the compiler to compile `test.rs` is:
 ```
-./ccomp test.rs -o test -dclight
+./rust_comp test.rs -o test -dclight
 ```
 Here `test.rs` is the source file written in our `Rustsurface`
 language and `test` is the name of the target executable file. After
@@ -63,6 +63,10 @@ the compilation, the compiler would also output a file named
 `rust_compile.log` which contains the pretty-printed rust intermediate
 programs generated during the compilation and a Clight file generated
 by the frontend.
+
+If you pass a C source file such as `test.c` to `rust_comp`, it uses
+the original CompCert C compiler pipeline to compile that C file
+instead of the Rust frontend.
 
 ### Test the compiler
 
@@ -119,5 +123,3 @@ The calling conventions adapted in the Rust interface: [RA.v](./driver/RA.v) and
 
 **Theorem of compiler correctness:**
 [transf_rustlight_program_correct](./driver/Compiler.v#L1309) in [driver/Compiler.v](./driver/Compiler.v)
-
-

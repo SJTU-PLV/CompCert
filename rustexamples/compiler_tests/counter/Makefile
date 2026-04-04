@@ -1,4 +1,4 @@
-CCOMP=../../../ccomp
+CCOMP=../../../rust_comp
 
 PROGS=main.rs counter.c
 OBJ=counter

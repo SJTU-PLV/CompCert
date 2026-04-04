@@ -1,6 +1,6 @@
 include ../../Makefile.config
 
-CC=../../ccomp 
+CC=../../rust_comp 
 CFLAGS=$(CCOMPOPTS) -U__GNUC__ -stdlib ../../runtime -dclight -dasm
 LIBS=
 TIME=ocaml unix.cma ../../tools/xtime.ml -mintime 2.0 -minruns 2

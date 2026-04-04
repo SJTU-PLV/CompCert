@@ -1,6 +1,6 @@
 include ../../Makefile.config
 
-CCOMP=../../ccomp
+CCOMP=../../rust_comp
 CCOMPFLAGS=$(CCOMPOPTS) -stdlib ../../runtime -dc -dclight -dasm
 
 CFLAGS=-O1 -Wall

@@ -230,7 +230,7 @@ all:
 	@test -f .depend || $(MAKE) depend
 	$(MAKE) proof
 	$(MAKE) extraction
-	$(MAKE) ccomp
+	$(MAKE) rust_comp
 ifeq ($(HAS_RUNTIME_LIB),true)
 	$(MAKE) runtime
 endif
@@ -264,10 +264,10 @@ extraction/STAMP: $(FILES:.v=.vo) extraction/extraction.v $(ARCH)/extractionMach
 .depend.extr: extraction/STAMP tools/modorder driver/Version.ml
 	$(MAKE) -f Makefile.extr depend
 
-ccomp: .depend.extr compcert.ini driver/Version.ml FORCE
-	$(MAKE) -f Makefile.extr ccomp
-ccomp.byte: .depend.extr compcert.ini driver/Version.ml FORCE
-	$(MAKE) -f Makefile.extr ccomp.byte
+rust_comp: .depend.extr compcert.ini driver/Version.ml FORCE
+	$(MAKE) -f Makefile.extr rust_comp
+rust_comp.byte: .depend.extr compcert.ini driver/Version.ml FORCE
+	$(MAKE) -f Makefile.extr rust_comp.byte
 
 clightgen: .depend.extr compcert.ini driver/Version.ml FORCE
 	$(MAKE) -f Makefile.extr clightgen
@@ -367,11 +367,11 @@ depend1: $(FILES) export/Clightdefs.v
 
 install:
 	install -d $(DESTDIR)$(BINDIR)
-	install -m 0755 ./ccomp $(DESTDIR)$(BINDIR)
+	install -m 0755 ./rust_comp $(DESTDIR)$(BINDIR)
 	install -d $(DESTDIR)$(SHAREDIR)
 	install -m 0644 ./compcert.ini $(DESTDIR)$(SHAREDIR)
 	install -d $(DESTDIR)$(MANDIR)/man1
-	install -m 0644 ./doc/ccomp.1 $(DESTDIR)$(MANDIR)/man1
+	install -m 0644 ./doc/ccomp.1 $(DESTDIR)$(MANDIR)/man1/rust_comp.1
 	$(MAKE) -C runtime install
 ifeq ($(CLIGHTGEN),true)
 	install -m 0755 ./clightgen $(DESTDIR)$(BINDIR)
