@@ -318,10 +318,50 @@ Definition bind_param_origins (e: LOrgEnv.t) (fe: LOrgEnv.t) (ptyl ftyl: list ty
   (* else *)
   (*   Error (error_msg pc ++ [MSG "mismatch between the lengths of types (bind_param_origins)"]). *)
 
+(** The parser sorts the signature relations by SCC-topological order on the
+left-hand origin of each relation. *)
+Fixpoint origin_reaches_fuel (fuel: nat) (rels: list origin_rel) (src tgt: origin) : bool :=
+  if Pos.eqb src tgt then
+    true
+  else
+    match fuel with
+    | O => false
+    | S fuel' =>
+        existsb
+          (fun '(org1, org2) =>
+             if Pos.eqb src org1 then
+               origin_reaches_fuel fuel' rels org2 tgt
+             else
+               false)
+          rels
+    end.
+
+Definition origin_reaches (rels: list origin_rel) (src tgt: origin) : bool :=
+  origin_reaches_fuel (length rels) rels src tgt.
+
+Definition origin_strictly_precedes (rels: list origin_rel) (src tgt: origin) : bool :=
+  origin_reaches rels src tgt && negb (origin_reaches rels tgt src).
+
+Fixpoint check_topologically_sorted_origin_relations_aux
+    (rels seen pending: list origin_rel) : bool :=
+  match pending with
+  | nil => true
+  | (src, tgt) :: pending' =>
+      forallb
+        (fun '(prev_src, _) =>
+           negb (origin_strictly_precedes rels src prev_src))
+        seen
+      && check_topologically_sorted_origin_relations_aux rels ((src, tgt) :: seen) pending'
+  end.
+
+Definition check_topologically_sorted_origin_relations (rels: list origin_rel) : bool :=
+  check_topologically_sorted_origin_relations_aux rels nil rels.
+
 (** Assumption: the relations of origin given by the function
 signature has been sorted topologically, to ensure that we just need
 to flow the origins in one round instead of flowing it until reaching
-a fixed point *)
+a fixed point. [check_topologically_sorted_origin_relations] checks this
+ordering convention, but it is not used for now. *)
 Definition after_call (fe: LOrgEnv.t) (rels: list origin_rel) : LOrgEnv.t :=
   fold_left (fun acc '(src, tgt) =>
                (* it may be less efficient *)

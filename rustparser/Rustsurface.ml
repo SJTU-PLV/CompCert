@@ -92,6 +92,98 @@ module IdMap = Map.Make (struct
     let compare = String.compare
 end)
 
+module IdSet = Set.Make (struct
+    type t = id
+    let compare = String.compare
+end)
+
+
+let stable_unique_ids (ids: id list) : id list =
+  let rec aux seen acc = function
+    | [] -> List.rev acc
+    | x :: xs ->
+      if IdSet.mem x seen then
+        aux seen acc xs
+      else
+        aux (IdSet.add x seen) (x :: acc) xs
+  in
+  aux IdSet.empty [] ids
+
+(* Order function-signature bounds by the SCC-topological order of their left
+   endpoints. Bounds within one cycle remain in source order. *)
+let sort_fn_origin_relations (rels: (id * id) list) : (id * id) list =
+  let nodes =
+    stable_unique_ids
+      (List.concat (List.map (fun (lhs, rhs) -> [lhs; rhs]) rels))
+  in
+  let succs node =
+    rels
+    |> List.filter_map (fun (lhs, rhs) ->
+         if String.equal lhs node then Some rhs else None)
+    |> stable_unique_ids
+  in
+  let preds node =
+    rels
+    |> List.filter_map (fun (lhs, rhs) ->
+         if String.equal rhs node then Some lhs else None)
+    |> stable_unique_ids
+  in
+  let visited = ref IdSet.empty in
+  let finish_order = ref [] in
+  let rec dfs_forward node =
+    if not (IdSet.mem node !visited) then begin
+      visited := IdSet.add node !visited;
+      List.iter dfs_forward (succs node);
+      finish_order := node :: !finish_order
+    end
+  in
+  List.iter dfs_forward nodes;
+  let visited_rev = ref IdSet.empty in
+  let comp_rank = Hashtbl.create (List.length nodes) in
+  let rank = ref 0 in
+  let rec dfs_backward node =
+    if not (IdSet.mem node !visited_rev) then begin
+      visited_rev := IdSet.add node !visited_rev;
+      Hashtbl.replace comp_rank node !rank;
+      List.iter dfs_backward (preds node)
+    end
+  in
+  List.iter
+    (fun node ->
+      if not (IdSet.mem node !visited_rev) then begin
+        dfs_backward node;
+        incr rank
+      end)
+    !finish_order;
+  rels
+  |> List.mapi (fun i rel -> (i, rel))
+  |> List.sort (fun (i1, (lhs1, _)) (i2, (lhs2, _)) ->
+       match compare (Hashtbl.find comp_rank lhs1) (Hashtbl.find comp_rank lhs2) with
+       | 0 -> compare i1 i2
+       | c -> c)
+  |> List.map snd
+
+let mk_fn (generic_origins: id list) (origin_relations: (id * id) list)
+    (return: ty) (params: (id * ty) list) (body: stmt) : fn =
+  { generic_origins
+  ; origin_relations = sort_fn_origin_relations origin_relations
+  ; return
+  ; params
+  ; body
+  }
+
+let mk_fn_decl (generic_origins: id list) (origin_relations: (id * id) list)
+    (return: ty) (params: (id * ty) list) : fn_decl =
+  { generic_origins
+  ; origin_relations = sort_fn_origin_relations origin_relations
+  ; return
+  ; params
+  }
+
+let mk_fn_ty (params: ty list) (return: ty) (generic_origins: id list)
+    (origin_relations: (id * id) list) : ty =
+  Tfunction (params, return, generic_origins, sort_fn_origin_relations origin_relations)
+
 
 module IdentMap = Map.Make (struct
     type t = ident

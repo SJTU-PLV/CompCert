@@ -213,19 +213,19 @@ struct_decl:
 
 fn:
   | FN; x = ID; orgs = generic_origins; LPAREN; p = composite_fields; RPAREN; rels = origin_relations; LBRACE; s = stmt; RBRACE
-    { (x, { generic_origins = orgs; origin_relations = rels; return = Tunit; params = p; body = s }) }
+    { (x, mk_fn orgs rels Tunit p s) }
   (* function with return type *)
   | FN; x = ID; orgs = generic_origins; LPAREN; p = composite_fields; RPAREN; RARROW; tr = ty; rels = origin_relations; LBRACE;
     s = stmt; RBRACE
-    { (x, { generic_origins = orgs; origin_relations = rels; return = tr; params = p; body = s }) }
+    { (x, mk_fn orgs rels tr p s) }
 
 (* For now, all the function declaration must be external function *)
 bare_fn_decl:
   | FN; x = ID; orgs = generic_origins; LPAREN; p = composite_fields; RPAREN; rels = origin_relations
-    { (x, { generic_origins = orgs; origin_relations = rels; return = Tunit; params = p}) }
+    { (x, mk_fn_decl orgs rels Tunit p) }
   (* function with return type *)
   | FN; x = ID; orgs = generic_origins; LPAREN; p = composite_fields; RPAREN; RARROW; tr = ty; rels = origin_relations
-    { (x, { generic_origins = orgs; origin_relations = rels; return = tr; params = p}) }
+    { (x, mk_fn_decl orgs rels tr p) }
 
 fn_decl:
   | EXTERN; f = bare_fn_decl { f }
@@ -373,7 +373,7 @@ ty:
   | UINT8 { Tint (Ctypes.I8, Ctypes.Unsigned) }
   | FLOAT64 { Tfloat (Ctypes.F64) }
   | FLOAT32 { Tfloat (Ctypes.F32) }
-  | FN; orgs = generic_origins; LPAREN; pt = params_ty; RPAREN; RARROW; rt = ty; rels = origin_relations { Tfunction (pt, rt, orgs, rels) }
+  | FN; orgs = generic_origins; LPAREN; pt = params_ty; RPAREN; RARROW; rt = ty; rels = origin_relations { mk_fn_ty pt rt orgs rels }
   | BOX; LANGLE; t = ty; RANGLE { Tbox (t) }
   | REF; org = origin_opt; MUT; t = ty; { Treference(t, org, Rusttypes.Mutable) }
   | REF; org = origin_opt; t = ty; { Treference(t, org, Rusttypes.Immutable) }
