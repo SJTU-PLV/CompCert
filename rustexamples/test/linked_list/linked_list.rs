@@ -34,9 +34,9 @@ where
       List::Nil => {
         return l;
       }
-      List::Cons(ref mut node) => {                
+      List::Cons(ref mut node) => {
         if (*node).val == x {
-          return &mut *(*node).next;
+          return &mut *(*node).next; // return a reference pointing to the rest of the list
         } else {
           l = &mut *((*node).next);
         }
@@ -44,8 +44,6 @@ where
     }
   }
 }
-
-
 
 fn main() {
     // produce a list 10 -> 9 -> ... -> 1 -> Nil
@@ -55,7 +53,7 @@ fn main() {
     let mut l1: &mut List = iterate_until(&mut *l, 5);
 
     // Using l is not allowed here because l1 still borrows l
-    iterate_until_consume(l, 7); 
+    // iterate_until_consume(l, 7); 
 
     print_list(&*l1);
 

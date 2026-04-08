@@ -13,7 +13,7 @@ Require Import Cop RustOp.
 Require Import Ctypes Rusttypes Rusttyping Rustlight.
 Require Import Rustlightown RustIR.
 Require Import LanguageInterface.
-Require Import InitDomain StkBorPermission.
+Require Import InitDomain.
 Require Import Memory.
 Require Import BorrowCheckDomain BorrowCheckPolonius.
 Require Import Separation.

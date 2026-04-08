@@ -310,6 +310,8 @@ Inductive match_split_drop_places flagm : own_env -> list (place * bool) -> stat
     (SPLIT: match_split_drop_places flagm (if is_init own p then move_place own p else own) l ts)
     (NOTSCALAR: drop_type (typeof_place p) = true),
     (* how to ensure that p is owned in own_env *)    
+    (** FIXME: this drop place has a drop flag does not mean that this
+    drop must be conditional *)
     match_split_drop_places flagm own ((p,full)::l) (Ssequence (generate_drop p full (Some flag)) ts)
 | match_sdp_cons_must_init: forall p own l ts full
     (FLAG: get_dropflag_temp flagm p = None)

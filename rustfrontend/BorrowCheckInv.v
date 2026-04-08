@@ -891,6 +891,15 @@ Lemma borrow_check_inv_shallow_write: forall (fpm1 fpm2 fpm3 fpm4: fp_map) id ph
     borrow_check_fpm_vals_inv fpm4 (map (kill_paths_ref vs) (map (invalidate_conflict_ref (id, phl) AWrite BorrowCheckDomain.Ashallow) fpl)).
     (* /\ wt_footprint_list ce fpm4 tyl (map (kill_paths_ref vs) fpl) *)
     (* /\ wt_fpm ce fpm4. *)
+Proof.
+  intros. subst.
+  unfold borrow_check_fpm_vals_inv in *.
+  simpl in *.
+  destruct H as [Hviews Hloc Hvals].
+  econstructor.
+  - admit.
+  - admit.
+  - admit.
 Admitted.
 
 (* We can move the footprint from temporary variables to a path whose
