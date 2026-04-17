@@ -311,7 +311,7 @@ Inductive match_split_drop_places flagm : own_env -> list (place * bool) -> stat
     (NOTSCALAR: drop_type (typeof_place p) = true),
     (* how to ensure that p is owned in own_env *)    
     (** FIXME: this drop place has a drop flag does not mean that this
-    drop must be conditional *)
+    drop must be conditional. However, if this place require a drop flag and here we do not generate conditional drop, then we also need to update the status of the drop flag. But generate_drop function only uses the flag arguments to decide whether to update the drop flag status *)
     match_split_drop_places flagm own ((p,full)::l) (Ssequence (generate_drop p full (Some flag)) ts)
 | match_sdp_cons_must_init: forall p own l ts full
     (FLAG: get_dropflag_temp flagm p = None)
@@ -1688,7 +1688,7 @@ Proof.
     + econstructor. auto.
       eapply IHdrops.
       inv WFDROPS; try congruence.
-      auto. 
+      auto.
     + inv WFDROPS; try congruence.
       destruct (must_init init uninit universe p) eqn: MUST.
       (* must_owned = true *)

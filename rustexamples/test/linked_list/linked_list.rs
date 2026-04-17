@@ -8,23 +8,6 @@ enum List {
   Cons(Node)
 }
 
-fn iterate_until_consume(mut l: Box<List>, x: i32) {
-  loop {
-    match *l {
-      List::Nil => {
-        return;
-      }
-      List::Cons(node) => {
-        if node.val == x {
-          *l = List::Nil;
-        } else {
-          l = node.next;
-        }
-      }
-    }
-  }
-}
-
 fn iterate_until<'a, 'b>(mut l: &'a mut List, x: i32) -> &'b mut List
 where
     'a: 'b
@@ -45,15 +28,32 @@ where
   }
 }
 
+fn iterate_until_consume(mut l: Box<List>, x: i32) {
+  loop {
+    match *l {
+      List::Nil => {
+        return;
+      }
+      List::Cons(node) => {
+        if node.val == x {
+          *l = List::Nil;
+        } else {
+          l = node.next;
+        }
+      }
+    }
+  }
+}
+
 fn main() {
-    // produce a list 10 -> 9 -> ... -> 1 -> Nil
+    // Produce a list 10 -> 9 -> ... -> 1 -> Nil
     let mut l: Box<List> = init_list(10);
 
     // Iterate until 5, and print the suffix list starting from 4
     let mut l1: &mut List = iterate_until(&mut *l, 5);
 
     // Using l is not allowed here because l1 still borrows l
-    // iterate_until_consume(l, 7); 
+    iterate_until_consume(l, 7); 
 
     print_list(&*l1);
 

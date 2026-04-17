@@ -180,37 +180,31 @@ Fixpoint elaborate_drop_for_splits (mayinit mayuninit universe: PathsMap.t) (fla
         end
   end.
 
+(* 
   (** TODO: this version of code does not generate extra conditional drops  *)
-  (*     if negb (drop_type (typeof_place p)) then *)
-  (*       (* no need to generate drop for scalar typed places *) *)
-  (*       (Ssequence Sskip stmt) *)
-  (*     else *)
-  (*       if must_init mayinit mayuninit universe p then *)
-  (*         (Ssequence (generate_drop p full None) stmt) *)
-  (*       else if may_init mayinit mayuninit universe p then *)
-  (*              (* use flagm to decide whether insert drop flag or not *) *)
-  (*              match get_dropflag_temp flagm p with *)
-  (*              | Some id => *)
-  (*           (** TODO: this logic would make the generated code contain *)
-  (*           extra conditional drops because here we do not judge *)
-  (*           whether the place to be dropped is init or not. However, *)
-  (*           the drop flag for this place may be not required at this *)
-  (*           point! *) *)
-  (*                  (* need drop flag *) *)
-  (*                  (Ssequence (generate_drop p full (Some id)) stmt) *)
-  (*              | None => *)
-  (*                  (* Error: this drop is conditional, we should *)
-  (*                  generate a drop flag for it. *) *)
-  (*                  (Ssequence Sskip stmt) *)
-  (*              end *)
-  (*            else  *)
-  (*           (* if must_init mayinit mayuninit universe p then *) *)
-  (*           (*   (Ssequence (generate_drop p full None) stmt) *) *)
-  (*           (* else *) *)
-  (*             (* this place must be uninit, no need to drop *) *)
-  (*             (Ssequence Sskip stmt) *)
-  (*       (* end *) *)
-  (* end. *)
+        (* use flagm to decide whether this place is related to a drop
+        flag or not. If yes, then whatever the init status of p, we
+        need to update the value of the drop flag. *)
+        match get_dropflag_temp flagm p with
+        | Some id =>
+            if must_init mayinit mayuninit universe p then
+              let set_flag := set_dropflag id false in
+              (* TODO: add this logic into generate_drop *)
+              (Ssequence (Ssequence set_flag (generate_drop p full None)) stmt)
+            else if may_init mayinit mayuninit universe p then
+                   (* This drop actually needs drop flag *)
+                   (Ssequence (generate_drop p full (Some id)) stmt)
+                 else
+                   (Ssequence Sskip stmt)
+        | None =>
+            if must_init mayinit mayuninit universe p then
+              (Ssequence (generate_drop p full None) stmt)
+            else
+              (* this place must be uninit, no need to drop *)
+              (Ssequence Sskip stmt)
+        end     
+  end.
+*)
 
 Definition elaborate_drop_for (mayinit mayuninit universemap: PathsMap.t) (ce: composite_env) (flagm: PTree.t (list (place * ident))) (p: place) : Errors.res statement :=
   let universe := PathsMap.get (local_of_place p) universemap in
