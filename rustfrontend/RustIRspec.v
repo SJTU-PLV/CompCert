@@ -1204,24 +1204,30 @@ Fixpoint eval_pexpr (fpm: fp_map) (pe: pexpr) : res (footprint * fp_map) :=
       | _, _ => Error nil
       end
   | Eplace p ty =>
-      do (ph, _) <- get_owner_path_map p fpm;
-      do (_, fp) <- get_owner_loc_footprint_map ph fpm;
-      OK (fp, invalidate_conflict_ref_fpm p ARead Adeep fpm)
+      (* We first do invalidation and then get the footprint because
+      we do not want to do invalidate on the footprint we get. *)
+      let fpm1 := invalidate_conflict_ref_fpm p ARead Adeep fpm in
+      do (ph, _) <- get_owner_path_map p fpm1;
+      do (_, fp) <- get_owner_loc_footprint_map ph fpm1;
+      OK (fp, fpm1)
   | Ecktag p fid =>
-      do (ph, _) <- get_owner_path_map p fpm;
-      do (_, fp) <- get_owner_loc_footprint_map ph fpm;
+      let fpm1 := invalidate_conflict_ref_fpm p ARead Ashallow fpm in
+      do (ph, _) <- get_owner_path_map p fpm1;
+      do (_, fp) <- get_owner_loc_footprint_map ph fpm1;
       match fp with
       | fp_enum _ _ fid1 _ _ =>
-          (* Should we use Adeep or Ashallow? *)
-          OK (fp_scalar Mint8unsigned (Val.of_bool (ident_eq fid fid1)), invalidate_conflict_ref_fpm p ARead Ashallow fpm)
+          (* refer to how rustc handles Discriminant operation
+          (rustc_borrowck/src/lib.rs#L1550) *)
+          OK (fp_scalar Mint8unsigned (Val.of_bool (ident_eq fid fid1)), fpm1)
       | _ => Error nil
       end
   | Eref _ mut p _ =>
-      do (ph, vs) <- get_owner_path_map p fpm;
-      do (bofs, _) <- get_owner_loc_footprint_map ph fpm;
-      let (b, ofs) := bofs in
       let ak := mut_to_access_kind mut in
-      OK (fp_ref mut b ofs (Some ph) vs, invalidate_conflict_ref_fpm p ak Adeep fpm)
+      let fpm1 := invalidate_conflict_ref_fpm p ak Adeep fpm in
+      do (ph, vs) <- get_owner_path_map p fpm1;
+      do (bofs, _) <- get_owner_loc_footprint_map ph fpm1;
+      let (b, ofs) := bofs in
+      OK (fp_ref mut b ofs (Some ph) vs, fpm1)
   | _ => Error nil
   end.
 
@@ -1238,10 +1244,6 @@ Definition eval_expr (ce: composite_env) (fpm: fp_map) (e: expr) : res (footprin
       reachable path of [p] is live so we cannot invalidate their
       fp_ref? No matter whether the fp_ref is reachable from [p]? *)
       let fpm1 := invalidate_conflict_ref_fpm p AWrite Adeep fpm in
-      (* Why do we get the location after invalidation? It does not
-      matter? The only difference is the fp_ref in fp may be
-      invalidated but the static borrow check should rule out this
-      case? *)
       do (_, fp) <- get_owner_loc_footprint_map p fpm1;
       do fpm2 <- clear_footprint_map ce p fpm1;
       OK (fp, fpm2)

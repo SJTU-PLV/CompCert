@@ -309,7 +309,7 @@ Inductive fp_ref_loc_wf : footprint -> Prop :=
     (WF: fp_ref_loc_wf ffp),
     fp_ref_loc_wf (fp_enum id tag fid fofs ffp)
 | fp_ref_some_wf: forall ph b ofs fp vs mut 
-    (* Address consistency property *)
+    (* Reference consistency property *)
     (GLOC: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp))
     (* It is OK to just say that the views are adequate in fpm instead
     of fp_graph which contains the temporary value, because there
