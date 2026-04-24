@@ -706,22 +706,32 @@ let rec print_value_with_inits ty p il =
               | Rusttypes.Traw_pointer(_, elem_ty)
               | Rusttypes.Tslice(_, elem_ty, _) ->
                   begin match drop_spaces remaining with
-                  | Init_addrof(id, _ofs) :: rem ->
-                      let nm = extern_atom id in
-                      fprintf p "(Ptr::from_ref(&mut %s[..])).cast::<%s>()"
-                        nm (name_rust_type elem_ty);
-                      (* 把前缀空洞与 addrof 一起消费掉（只保留其余部分） *)
-                      let _ = remaining in
-                      rem
+	                  | Init_addrof(id, _ofs) :: rem ->
+	                      let nm = extern_atom id in
+	                      let is_string_literal = Str.string_match re_string_literal nm 0 in
+	                      if is_string_literal then
+	                        fprintf p "(Ptr::from_ref_const(&%s[..])).cast::<%s>()"
+	                          nm (name_rust_type elem_ty)
+	                      else
+	                        fprintf p "(Ptr::from_ref(&mut %s[..])).cast::<%s>()"
+	                          nm (name_rust_type elem_ty);
+	                      (* 把前缀空洞与 addrof 一起消费掉（只保留其余部分） *)
+	                      let _ = remaining in
+	                      rem
                   | _ ->
                       (* 容错：若当前不是 addrof，但后续有，把第一个 addrof 拿来作为该字段 *)
-                      begin match take_first_addrof [] remaining with
-                      | Some (id, rem) ->
-                          let nm = extern_atom id in
-                          fprintf p "(Ptr::from_ref(&mut %s[..])).cast::<%s>()"
-                            nm (name_rust_type elem_ty);
-                          rem
-                      | None ->
+	                      begin match take_first_addrof [] remaining with
+	                      | Some (id, rem) ->
+	                          let nm = extern_atom id in
+	                          let is_string_literal = Str.string_match re_string_literal nm 0 in
+	                          if is_string_literal then
+	                            fprintf p "(Ptr::from_ref_const(&%s[..])).cast::<%s>()"
+	                              nm (name_rust_type elem_ty)
+	                          else
+	                            fprintf p "(Ptr::from_ref(&mut %s[..])).cast::<%s>()"
+	                              nm (name_rust_type elem_ty);
+	                          rem
+	                      | None ->
                           (* 退化为默认值，避免把 addrof 错塞进后续数组 *)
                           fprintf p "%s::default()" (name_rust_type fty);
                           remaining
@@ -739,8 +749,13 @@ let rec print_value_with_inits ty p il =
       (match il with
        | Init_addrof(id, _ofs) :: rest ->
            let nm = extern_atom id in
-           fprintf p "(Ptr::from_ref(&mut %s[..])).cast::<%s>()"
-             nm (name_rust_type elem_ty);
+           let is_string_literal = Str.string_match re_string_literal nm 0 in
+           if is_string_literal then
+             fprintf p "(Ptr::from_ref_const(&%s[..])).cast::<%s>()"
+               nm (name_rust_type elem_ty)
+           else
+             fprintf p "(Ptr::from_ref(&mut %s[..])).cast::<%s>()"
+               nm (name_rust_type elem_ty);
            rest
        | init :: rest ->
            (* 回退到通用初始化打印 *)
@@ -760,11 +775,11 @@ let print_composite_init_rust var_info p il =
 
 let print_globvar p id v =
   let name1 = extern_atom id in
-  (* Use 'static mut' for string literals so they can be referenced *)
+  (* String literals are immutable and can be referenced safely. *)
   let is_string_literal = Str.string_match re_string_literal name1 0 in
   let name2 =
     if is_string_literal then
-      "static mut " ^ name1
+      "static " ^ name1
     else if v.gvar_readonly then
       "const " ^ name1
     else

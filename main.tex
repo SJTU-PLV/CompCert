@@ -127,7 +127,7 @@
 \begin{abstract}
 Memory safety vulnerabilities in C programs remain a critical challenge in systems software. While rewriting legacy code in Rust offers a promising solution, manual migration is error-prone and labor-intensive. Existing automated translation tools either generate \texttt{unsafe} Rust or rely on heavy-weight static analysis that struggles with C's flexible pointer arithmetic.
 %
-We present a lightweight and automated approach to translating C to \emph{safe Rust} by exploiting dynamic lifetime and ownership checking provided by Rust's smart pointers.
+We present a lightweight and automated approach to translating C to \emph{safe Rust} by exploiting dynamic ownership checking provided by Rust's smart pointers.
 %
 Our method dynamically tracks ownership and borrow boundaries by using a novel pointer structure \texttt{Ptr<T>}, enabling the translation of complex C pointer operations---including aliasing and pointer arithmetic---into safe Rust code without relying on unsafe blocks in the generated user code, by combining a lightweight static analysis with dynamic checks. We implement our approach for the Clight subset of C, as defined in the CompCert verified compiler.
 %
@@ -175,7 +175,7 @@ We implement our approach by utilizing the CompCert compiler, i.e., we use \emph
 \begin{itemize}
     \item \textbf{A Safe Pointer Abstraction:} We design the \texttt{Ptr<T>} model to encapsulate C-style pointer arithmetic underneath reference counting cells in Rust. This abstraction allows \texttt{load}, \texttt{store}, and \texttt{offset} operations to be translated into safe slice manipulations in Rust, maintaining a one-to-one mapping with C behavior while respecting Rust's ownership rules.
     \item \textbf{Improved Split Tree Algorithm:} We propose an enhancement to the Split Tree algorithm to handle the safe conversion of pointers. Our implementation effectively resolves ``borrowing hell'' issues by intelligently managing disjoint memory slices and leveraging interior mutability.
-    \item \textbf{Implementation and Evaluation:} We implemented the complete translation in CompCert (see the directory \texttt{clight2rustlight}). We successfully translated a majority of the test cases in CompCert's test suite. Our evaluation shows that the generated Rust code passes the Rust compiler (\texttt{rustc}) checks and produces execution results identical to the GCC-compiled C code.
+    \item \textbf{Implementation and Evaluation:} We implemented the complete translation in CompCert (see the directory \texttt{clight2rustlight}). We successfully translated all of the test cases in CompCert's test suite. Our evaluation shows that the generated Rust code passes the Rust compiler (\texttt{rustc}) checks and produces execution results identical to the GCC-compiled C code.
 \end{itemize}
 
 The rest of this paper is organized as follows. Section \ref{sec:background} provides background information and comparison with related work. Section \ref{sec:algorithm} discusses our key ideas. Section \ref{sec:overview} gives an overview of our translation system. Section \ref{sec:eval} presents our experimental results. Section~\ref{sec:discuss} discusses the limitations of our approach and our plan to lift them. Finally, Section \ref{sec:concl} concludes.
@@ -444,8 +444,7 @@ void demonstrate_split_tree(int *arr, int dynamic_offset) {
 
     // Aliasing not statically analyzable due to dynamic offset
     int *p3 = p1 + dynamic_offset;
-    *p3 = *p1 + *p2; 
-}
+    *p3 = *p1 + *p2; }
 \end{lstlisting}
 
 Consider the C function in Listing~\ref{lst:c_example} which exhibits a common scenario involving pointer arithmetic on both static and dynamic offsets. To translate it into safe Rust, we need to make sure that the write operations through pointers (\texttt{*p1 = 10}, \texttt{*p2 = 20}, \texttt{*p3 = *p1 + *p2}) do not violate Rust's requirement on uniqueness of mutable references.
@@ -463,9 +462,7 @@ fn demonstrate_split_tree_static(arr: *mut i32, dynamic_offset: i32) {
     // Split tree algorithm cannot tell if the dynamic offset
     // is < 5 or >= 5. Therefore, it cannot decide whether
     // p1 or p2 should be split and how much the offset is.
-    let (p3_l, p3_r) = ??.split_at_mut(??);
-    ...
-}
+    let (p3_l, p3_r) = ??.split_at_mut(??); ... }
 \end{lstlisting}
 
 However, this approach cannot be applied to \text{p3} to guarantee the safety of subsequent write operation \texttt{*p3 = *p1 + *p2}. To see that, notice that since we do not know the exact value of \texttt{dynamic\_offset}, we do not know whether \texttt{p3} falls into the range of memory owned by \texttt{p1} or \texttt{p2}. Therefore, we do not know which object or offset \texttt{split\_at\_mut} should be applied to. A purely static approach, such as Scylla, would simply reject this valid C program at this point, failing to produce any output.
@@ -485,8 +482,7 @@ fn demonstrate_split_tree(mut arr: Ptr<i32>, mut dynamic_offset: i32) {
     
     // Fallback to dynamic tracking
     p3 = p1.clone().offset(dynamic_offset as isize);
-    p3.store(0, (p1.clone().load(0) as i32 + p2.clone().load(0) as i32));
-}
+    p3.store(0, (p1.clone().load(0) as i32 + p2.clone().load(0) as i32)); }
 \end{lstlisting}
 
 Here, dereferences in C are replaced with safe \texttt{load} and \texttt{store} operations. Aliasing of pointers is implemented by \texttt{clone} operations. If \texttt{dynamic\_offset} results in \texttt{p3} overlapping with \texttt{p1} or \texttt{p2} during execution, the underlying \texttt{RefCell} mechanism will dynamically enforce Rust's borrowing rules to prevent undefined behaviors. This hybrid strategy ensures that even the most unpredictable C idioms can be compiled into safe Rust. Moreover, the translation is straightforward and does not rely on any sophisticated static analysis.
@@ -568,8 +564,7 @@ let mut p: Option<&mut [i32]> = None;
 if cond {
     let mut tmp = vec![0; 10].into_boxed_slice();
     // ERROR E0597: `tmp` is dropped here while still borrowed.
-    p = Some(&mut tmp);
-}
+    p = Some(&mut tmp); }
 \end{lstlisting}
 
 With our approach, \texttt{Ptr::alloc} creates an \texttt{Rc} structure on the heap. Assigning it to \texttt{p} (defined in the outer scope) extends the lifetime of the heap data naturally via reference counting.
@@ -653,9 +648,7 @@ pub trait ArrayPtrCastExt { fn cast<U>(&self) -> Ptr<U>; }
 impl<T, const N: usize> ArrayPtrCastExt for [T; N] {
     fn cast<U>(&self) -> Ptr<U> {
         // Creates a Ptr view from a raw pointer to the stack array.
-         unsafe { Ptr::from_raw_parts(self.as_ptr() as *mut U, N) }
-    }
-}
+         unsafe { Ptr::from_raw_parts(self.as_ptr() as *mut U, N) }}}
 \end{lstlisting}
 This allows generated code to seamlessly treat stack arrays as \texttt{Ptr} objects, enabling calls like \texttt{arr.cast::<i32>().offset(2)}.
 
@@ -896,20 +889,7 @@ The evaluation shows that \textbf{Clight2Rust} produces safe Rust code that is f
 
 \section{Discussions and Limitations}
 \label{sec:discuss}
-
-While our approach successfully bridges a significant semantic gap for a well-defined subset of C, it involves deliberate trade-offs in terms of generality, performance, and the depth of static guarantees.
-
-Our translation pipeline inherits its front-end from CompCert, which accepts a large but carefully defined subset of C (Clight) and excludes most compiler-specific extensions (e.g., GNU C nested functions, inline assembly). Consequently, any input C program must first be valid within the CompCert/Clight ecosystem. Further restrictions are imposed by our own translation layer (\texttt{Clight2Rustlight.v}). While we handle the core imperative constructs, several statement and expression forms are not yet directly supported and are either rewritten (e.g., \texttt{switch} is lowered to \texttt{if-else} chains) or explicitly rejected. Examples of currently unsupported patterns include \texttt{goto} statements, taking the address of a unary operation or a \texttt{sizeof} expression, and certain complex l-value casts. These limitations mean the tool is most robust when translating structured, idiomatic C.  Our current evaluation uses the CompCert test suite precisely because it falls well within this supported syntactic space.  For multi-file C projects, our compiler currently processes each source file individually; the resulting Rust files are then assembled into a single crate by an external script that rewrites cross-file \texttt{extern "C"} declarations.  While this suffices for the PolyBench suite, it is an engineering workaround rather than a native handling of C's translation-unit linkage, and subtle issues with internal linkage or macro expansions can still arise.
-
-In terms of trust, our end-to-end correctness relies on several components.  First, we rely on the correctness of the C standard library. We assume that the external C standard library functions (e.g., \texttt{malloc} and \texttt{printf}) behave according to their specifications. Any undefined behavior within a library may break the safety of our code. Second, the correctness of \texttt{unsafe} blocks within our runtime library (\texttt{runtime/ptr.rs}) is crucial for ensuring safety. For example, we assume that the \texttt{cast} operations between different types (via \texttt{ArrayPtrCastExt}) respect memory layout.  Moreover, the pretty-printer (\texttt{PrintRustlight.ml}) contains a significant amount of non-trivial logic for initialization, control-flow reconstruction, and type casting; bugs in these passes can silently lead to generated code that compiles but behaves differently from the original C.  A formally verified implementation of the standard and runtime libraries (using tools like RustBelt~\cite{Jung2017}) would further reduce this trusted computing base.
-
-A key design decision in Clight2Rust is the use of the \texttt{Ptr<T>} abstraction, which utilizes reference counting (\texttt{Rc}) and interior mutability (\texttt{RefCell}) to effectively defer borrow checking to runtime. This enables a direct translation of many forms of C pointer operations into safe Rust code without solely relying on complex static analysis. For example, ``spaghetti pointers'' that are common in legacy C code, which are impossible to express with standard \texttt{\&mut T} references, could be translated with our approach. However, the resulting code, while safe, is not ``idiomatic'' Rust which in many cases enforces borrow rules statically. Another drawback is that the runtime borrow checking introduces execution overhead as we discussed in evaluation.  A particularly fragile point is the treatment of arrays.  C implicitly decays arrays to pointers, but in our model the translator must decide whether to \texttt{load} an entire array (creating a copy on the stack) or to obtain a view via \texttt{offset}/\texttt{row}.  When large multi-dimensional arrays are involved, an incorrect choice can lead to stack overflows or silently incorrect results, even though the generated Rust compiles successfully.  Our current heuristics handle the CompCert test suite well, but this aspect remains one of the most brittle parts of the translation.  Similarly, our support for dynamic memory management (\texttt{malloc}, \texttt{free}, \texttt{realloc}, etc.) and C standard library functions is achieved through a combination of runtime wrappers and pattern-based recognition in the printer.  Coverage is not yet complete: for instance, \texttt{free} calls that do not follow the expected pattern are simply commented out in the output, and less common library functions or variadic functions with complex argument promotions are not yet robustly supported.
-
-As readers may observe, we have adopted a very conservative approach to handling undefined behaviors. That is, any memory error (e.g., out-of-bounds access) would trigger a panic at runtime. Although this prevents undefined behaviors, it is also not desirable in many situations where crashes during execution could be fatal. A particular such case is the violation of uniqueness of mutable references, which ideally should be caught by borrow checker statically, but instead is delayed to run time in our approach.  Furthermore, the runtime checks on bounds rely on length information that is carried inside \texttt{Ptr<T>}; certain pointer arithmetic operations (e.g., offsetting beyond the statically known extent) can lose accurate length information, after which dynamic bounds checking degrades to a best-effort basis.
-
-Finally, our current implementation has limited support for concurrency and stack data. We use \texttt{Rc} and \texttt{RefCell}, which are not thread safe. Translating concurrent C code would require replacing these with thread-safe primitives like \texttt{Arc} and \texttt{RwLock}. We also rely on \texttt{Rc<RefCell<...> >} which forces all pointed-to data to reside on the heap, prohibiting pointers to stack-allocated variables without performing a deep copy.
-
-All the above problems could be solved by migrating to an approach that employs more aggressive static analysis when possible. With such analysis, it will be possible to turn \texttt{Rc<RefCell<...> >} into standard \texttt{Box} or stack-allocated data. With this change, runtime panics caused by dynamic borrow checking and other undefined behaviors may be prevented at compile time. We plan to carry out this enhancement in the future.
+A detailed discussion of the input language restrictions, trust base, pointer model characteristics, handling of undefined behaviors, and concurrency support is deferred to Appendix~\ref{app:limitations} due to space constraints. In summary, our framework targets the Clight subset of C, relies on a lightweight runtime to enforce safety, and currently exhibits performance overheads and incomplete library support, all of which we plan to address with more aggressive static analysis in future work.
 
 \section{Conclusion}
 \label{sec:concl}
@@ -992,5 +972,25 @@ The generated code links against a handwritten runtime library (\texttt{runtime/
 \end{itemize}
 
 This split architecture—verified translation logic combined with a robust runtime system—allows us to produce code that is both formally grounded and practically executable.
+
+
+\section{Discussions and Limitations}
+\label{app:limitations}
+
+While our approach successfully bridges a significant semantic gap for a well-defined subset of C, it involves deliberate trade-offs in terms of generality, performance, and the depth of static guarantees.
+
+Our translation pipeline inherits its front-end from CompCert, which accepts a carefully defined subset of C (Clight) and excludes most compiler-specific extensions. Consequently, any input C program must first be valid within the CompCert/Clight ecosystem. Further restrictions are imposed by our own translation layer (\texttt{Clight2Rustlight.v}). While we handle the core imperative constructs, several forms are not yet directly supported and are either rewritten (e.g., \texttt{switch} is lowered to \texttt{if-else} chains) or explicitly rejected. Examples include \texttt{goto} statements, taking the address of a unary operation or \texttt{sizeof} expression, and certain complex l-value casts.
+
+In terms of trust, the correctness of our end-to-end pipeline relies on several components. First, we assume that external C standard library functions (e.g., \texttt{malloc}, \texttt{printf}) behave according to their specifications. Second, the correctness of \texttt{unsafe} blocks within our runtime library (\texttt{runtime/ptr.rs}) is crucial for safety. For example, \texttt{cast} operations between different types (via \texttt{ArrayPtrCastExt}) assume compatible memory layouts. Moreover, the pretty-printer (\texttt{PrintRustlight.ml}) contains non-trivial logic for initialization, control-flow reconstruction, and type casting, where bugs could silently lead to semantically incorrect output. A formally verified implementation of these components (using tools like RustBelt~\cite{Jung2017}) would reduce this trusted computing base.
+
+A key design decision in Clight2Rust is the use of the \texttt{Ptr<T>} abstraction, which utilizes reference counting (\texttt{Rc}) and interior mutability (\texttt{RefCell}) to defer borrow checking to runtime. This enables direct translation of many C pointer operations---including ``spaghetti pointers'' that are impossible to express with standard \texttt{\&mut T} references---into safe Rust code. However, the resulting code, while safe, is not idiomatic Rust. Another drawback is the runtime overhead introduced by dynamic borrow checking, as discussed in our evaluation. Our support for C standard library functions and dynamic memory management is achieved through pattern-based recognition in the printer and runtime wrappers; coverage is not yet complete. For instance, \texttt{free} calls that deviate from the expected pattern are conservatively commented out in the output, and variadic functions with complex argument promotions remain fragile.
+
+As readers may observe, we have adopted a conservative approach to undefined behaviors: any memory error (e.g., out-of-bounds access) triggers a panic at runtime. Although this prevents undefined behaviors, it is undesirable in scenarios where runtime crashes are unacceptable. A notable case is the violation of unique mutable references, which ideally should be caught by the borrow checker statically but instead is deferred to runtime in our approach. Furthermore, certain pointer arithmetic operations can lose accurate length information, after which dynamic bounds checking degrades to a best-effort basis.
+
+Finally, our current implementation has limited support for concurrency and stack data. We use \texttt{Rc} and \texttt{RefCell}, which are not thread-safe; translating concurrent C code would require \texttt{Arc} and \texttt{RwLock}. The current design also forces all pointed-to data onto the heap, prohibiting pointers to stack-allocated variables without deep copies.
+
+These limitations can be addressed by migrating to an approach that employs more aggressive static analysis where possible. With such analysis, \texttt{Rc<RefCell<...> >} could be replaced by standard \texttt{Box} or stack-allocated data, and runtime panics caused by dynamic borrow checking could be prevented at compile time. We plan to pursue this enhancement in future work.
+
+
 
 \end{document}
