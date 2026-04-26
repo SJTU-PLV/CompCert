@@ -19,6 +19,9 @@ Import ListNotations.
 Local Open Scope error_monad_scope.
 
 
+Ltac destr_path_of_place p :=
+  destruct (path_of_place p) as (?pid & ?phl) eqn: ?POP.
+
 Section ADT_ENV.
 
 Context {ame: adt_mem_env}.
@@ -311,6 +314,7 @@ Inductive fp_ref_loc_wf : footprint -> Prop :=
 | fp_ref_some_wf: forall ph b ofs fp vs mut 
     (* Reference consistency property *)
     (GLOC: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp))
+    (*TODO: there should be also an invariant about fp which says that fp is fully init, but it is unclear whether we should put it here. *)
     (* It is OK to just say that the views are adequate in fpm instead
     of fp_graph which contains the temporary value, because there
     cannot be some reference point to this temporary value which could
@@ -635,10 +639,6 @@ Ltac unfold_before_write_place :=
           destruct b; try monadInv H2
       end
   end.
-
-Ltac destr_path_of_place p :=
-  destruct (path_of_place p) as (?pid & ?phl) eqn: ?POP.
-
 
 (** The smallest operations that preserve the borrow check invariant  *)
 

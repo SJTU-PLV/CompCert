@@ -530,6 +530,44 @@ Definition get_owner_path_map (ps: path) (fpg: fp_graph) : res (path * views) :=
   | _ => Error nil
   end.
 
+(* Get the target footprint from a source footprint and a path
+traversing the footprint. The result of this function should be the
+same as the resulted evaluated from the combination of get_owner_path
+and get_owner_footprint_map. Why we need this function because
+sometime the starting point at [fp] does not belong to any
+local/external variables *)
+
+Fixpoint get_reachable_footprint (fpg: fp_graph) (phl: list projection) (fp: footprint) : res footprint :=
+  match phl with
+  | nil => OK fp
+  | pj :: l =>
+      match pj, fp with
+      | proj_deref , fp_box _ fp1 =>          
+          get_reachable_footprint fpg l fp1
+      | proj_field fid, fp_struct _ fpl =>
+          match find_field fid fpl with
+          | Some (_, ffp) =>
+              get_reachable_footprint fpg l ffp
+          | None => Error nil
+          end
+      | proj_field fid, fp_object _ _ fpl =>
+          match find_field fid fpl with
+          | Some (_, ffp) =>
+              get_reachable_footprint fpg l ffp
+          | None => Error nil
+          end
+      | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
+          if ident_eq fid1 fid2 then
+            get_reachable_footprint fpg l fp1
+          else
+            Error nil
+      | proj_deref, fp_ref mut _ _ (Some ph2) rebor =>
+          do fp2 <- get_owner_footprint_map ph2 fpg;
+          get_reachable_footprint fpg l fp2
+      | _, _  => Error nil
+      end
+  end.
+
 
 (* To also extract the type, use this function *)
 Fixpoint get_owner_footprint_type ce (phl: list projection) (ty: type) (fp: footprint) : res (type * footprint) :=
@@ -634,13 +672,14 @@ Fixpoint check_path_is_dropped_list (fpm: fp_map) (l: list path) : res bool :=
 
 (* We access ph1, to see whether ph2 in the views is conflict with ph1 *)
 Definition relevant_path (ph1: path) (am: access_mode_bor) (ph2: path) :=
-  match am with
-  | Ashallow => is_prefix_strict_path ph2 ph1 || is_shallow_prefix_path ph1 ph2
-  (* Note that all the path [ph2] in the views are mutable path, so if
+  is_prefix_strict_path ph2 ph1 || 
+    match am with
+    | Ashallow => is_shallow_prefix_path ph1 ph2
+    (* Note that all the path [ph2] in the views are mutable path, so if
   ph1 is a prefix of ph2 than ph1 must be the supporting prefix of
   ph2 *)
-  | Adeep => is_prefix_strict_path ph2 ph1 || is_prefix_path ph1 ph2
-  end.
+    | Adeep => is_prefix_path ph1 ph2
+    end.
         
 (* access ph: note that access ph by write/read is irrelevant because
 all the path in views are mutable path *)
@@ -649,11 +688,9 @@ Definition conflict_view (ph: path) (am : access_mode_bor) (vs: views) : bool :=
 
 Fixpoint invalidate_conflict_ref (ph: path) (ak: access_kind) (am : access_mode_bor) (fp: footprint) : footprint :=
   match fp with
-  | fp_ref mut b ofs (Some ph1) vs =>
-    if conflict_access ak mut && conflict_view ph am vs then
-        fp_ref mut b ofs None vs
-      else
-        fp_ref mut b ofs (Some ph1) vs
+  | fp_ref mut b ofs ph1 vs =>
+      let ph1' := if conflict_access ak mut && conflict_view ph am vs then None else ph1 in
+      fp_ref mut b ofs ph1' vs
   | fp_struct id fpl =>
       fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, invalidate_conflict_ref ph ak am ffp))) fpl)
   | fp_enum id tag fid fofs fp1 =>

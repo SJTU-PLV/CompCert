@@ -565,11 +565,12 @@ Definition conflict_access (a: access_kind) (mut: mutkind) : bool :=
 (* Definition of relevant loan between the accessed place p with
 access mode am and the place p1 in some loan set *)
 Definition relevant_place (p p1: place) am :=
+  is_prefix_strict p1 p || 
   match am with
   | Ashallow =>
-      is_prefix_strict p1 p || is_shallow_prefix p p1
+      is_shallow_prefix p p1
   | Adeep =>
-      is_prefix_strict p1 p || is_support_prefix p p1
+      is_support_prefix p p1
   end.
 
 (* Definition of the conflict relation between a place p and a set of
@@ -585,7 +586,8 @@ Definition conflict_loan p (am: access_mode_bor) (ak: access_kind) (l: loan) : b
 
 (* Accessing p is conflict with the origin state os *)
 Definition conflict p (ls: LoanSet.t) am ak :=
-  LoanSet.exists_ (conflict_loan p am ak) ls.
+  negb (LoanSet.for_all (fun ln => negb (conflict_loan p am ak ln)) ls).
+
 
 (* Invalidate an origin *)
 Definition illegal_access_in_origin_state (p: place) (am: access_mode_bor) (ak: access_kind) (r: origin) (os: origin_state) : bool :=
