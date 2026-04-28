@@ -123,6 +123,7 @@ Definition fpm_to_orgm (fpm: fp_map) : PTree.t (option origin) :=
   PTree.map1 (fun '(_,_,r,_,_) => r) fpm.
 
 
+(* Why do we need region liveness here? *)
 Definition sound_loan_analysis ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) : Prop :=
   forall ph owner_ph opt_ph vs1 vs2 mut b ofs r ty
     (* If we make these two get_xxx as assumptions, how can we use
@@ -142,6 +143,7 @@ Definition sound_loan_analysis ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_m
     (* Approximation: all (mutable) paths in the vs2 are approximated
     in the loans map *)
     /\ loans_approx_views (fpm_to_orgm fpm) ls mut vs2.
+
 
 (* For temporary values *)
 Definition sound_loan_analysis_footprint ce (le: LOrgEnv.t) (fpm: fp_map) (fp: footprint) (ty: type) : Prop :=
@@ -233,7 +235,7 @@ with sound_stacks : cont -> Prop :=
 
 
 Inductive sound_state: state -> Prop :=
-| sound_regular_state: forall f cfg entry maybeInit maybeUninit universe s pc next cont brk nret k fpm mayinit mayuninit live LoansEnv loans_env ns sup
+| sound_regular_state: forall f cfg entry maybeInit maybeUninit universe s pc next cont brk nret k fpm mayinit mayuninit live live_st LoansEnv loans_env ns sup
     (* The init and loans-flow analysis results *)
     (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
@@ -247,8 +249,10 @@ Inductive sound_state: state -> Prop :=
     (CONT: sound_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k (mk_cfg_kinfo next cont brk nret))
     (* Over-approximation of the move checking. *)
     (INIT_APPRO: sound_init_analysis fpm mayinit mayuninit universe)
+    (* We use the liveness information before this pc instead of after this pc *)
+    (LIVE_ST: RegionLiveness.transfer f cfg (regset_fun f) pc (live !! pc) = live_st)
     (* Over-approximation of the borrow checking *)
-    (BORROW_APPRO: sound_loan_analysis ce (live!!pc) loans_env fpm),
+    (BORROW_APPRO: sound_loan_analysis ce live_st loans_env fpm),
     sound_state (State f s k ns fpm sup)
 | sound_callstate: forall fun_id fd orgs org_rels tyargs tyres cconv args k inout_fpm sup
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun fd))
@@ -292,6 +296,7 @@ Lemma get_owner_path_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ph v
     get_owner_path_map ph1 fpm = OK (ph, vs).    
 Admitted.
 
+
 Ltac destr_fp_map_elt p :=
   destruct p as ((((?b & ?ofs) & ?r) & ?ty) & ?fp).
 
@@ -312,6 +317,16 @@ Proof.
   intros. erewrite ! PTree.gmap1.
   destruct (fpm ! i); try destr_fp_map_elt p; auto.
 Qed.
+
+Hint Resolve get_owner_footprint_map_after_invalidate_ref
+             get_owner_path_map_after_invalidate_ref
+             fpm_to_tenv_after_invalidate_ref
+             fpm_to_tenv_after_invalidate_ref: invalidate_fp_ref.
+
+Hint Rewrite get_owner_footprint_map_after_invalidate_ref
+             get_owner_path_map_after_invalidate_ref
+             fpm_to_orgm_after_invalidate_ref
+             fpm_to_tenv_after_invalidate_ref: invalidate_fp_ref.
 
 
 (** invalidation of fp_ref preserves sound approximation invariant *)
@@ -412,12 +427,12 @@ Proof.
     eapply negb_false_iff in CONFLICT.
     eapply LoanSet.for_all_2 in CONFLICT.
     2: { red. unfold Proper. reflexivity. }
-    exploit (SOUND a). auto.
+    exploit (SOUND a). auto.    
     intros (ln & A1 & A2).
     eapply CONFLICT in A1. eapply negb_true_iff in A1.
     eapply loan_approx_conflict_loan_false_implies; eauto.
-Qed.      
-  
+Qed. 
+
 
 
 Lemma invalidate_conflict_ref_fpm_preserves_borchk_approx: forall fpm p am ak le live
@@ -435,7 +450,7 @@ Proof.
   intros (fp1 & GET_FP1 & INVREF).
   destruct fp1; inv INVREF.  
   (* use sound approximation in fpm to prove that ph0 is not invalid *)
-  erewrite !fpm_to_orgm_after_invalidate_ref, !fpm_to_tenv_after_invalidate_ref in *.
+  autorewrite with invalidate_fp_ref in *. 
   exploit SOUND; eauto. 
   intros (ls & A1 & (rph & A2) & A3). subst.
   exists ls. split; eauto.
@@ -445,17 +460,49 @@ Proof.
   erewrite loans_approx_views_not_conflict; eauto.
 Qed.
 
+(* It should be straightforward *)
+Lemma sound_loan_analysis_footprint_inside: forall live le fpm fp ph ty
+  (SOUND: sound_loan_analysis ce live le fpm)
+  (GET_FP: get_owner_footprint_map ph fpm = OK fp)
+  (WTPH: wt_path ce (fpm_to_tenv fpm) ph = OK ty)
+  (* all regions in ty are live *)
+  (LIVE: Forall (fun r => RegionSet.In r live) (origins_of_type ty)),
+    sound_loan_analysis_footprint ce le fpm fp ty.
+Admitted.
+
+(* It should be straightforward *)
+Lemma sound_loan_analysis_after_clear_footprint_map: forall ph fpm1 fpm2 live le,
+    sound_loan_analysis ce live le fpm1 ->
+    clear_footprint_map ce ph fpm1 = OK fpm2 ->
+    sound_loan_analysis ce live le fpm2.
+Admitted.
+
+(* It should be straightforward *)
+Lemma sound_loan_analysis_footprint_after_clear_footprint_map: forall ph fpm1 fpm2 le fp ty,
+    sound_loan_analysis_footprint ce le fpm1 fp ty ->
+    clear_footprint_map ce ph fpm1 = OK fpm2 ->
+    sound_loan_analysis_footprint ce le fpm2 fp ty.
+Admitted.
+
+(* It should be straightforward *)
+Lemma sound_loan_analysis_liveness_refine: forall live1 live2 le fpm,
+    sound_loan_analysis ce live2 le fpm ->
+    RegionSet.Subset live1 live2 ->
+    sound_loan_analysis ce live1 le fpm.
+Admitted.
 
 (** evaluation of expression preserves invariant *)
 
 
 Lemma eval_expr_preserves_borchk_approx: forall e fpm1 fpm2 live le vfp
-  (BORROW_APPROX: sound_loan_analysis ce live le fpm1)
+  (BORROW_APPROX: sound_loan_analysis ce (reg_expr_live e live) le fpm1)
   (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2))
   (* It ensures that we do not invalidate some reference (which is
   live) incorrectly. *) 
   (BORROW_CHECK: check_expr le e = OK tt)
-  (WT: wt_expr (fpm_to_env fpm1) ce e),
+  (WT: wt_expr (fpm_to_env fpm1) ce e)
+  (* all regions in type of [e] are live *)
+  (LIVE: Forall (fun r => RegionSet.In r live) (origins_of_type (typeof e))),
     sound_loan_analysis ce live le fpm2
     /\ sound_loan_analysis_footprint ce le fpm2 vfp (typeof e).
 Proof.
@@ -465,10 +512,26 @@ Proof.
     destruct x.
     simpl in BORROW_CHECK.
     destr_if_with_name BORROW_CHECK ILL_ACCESS.
-    (** TODO: add premise about that p is a local place*)
+    (** TODO: add premise about that p is a local place, which is used
+    to prove that the invalidation of fp_ref is not because this
+    reference contains an extern loans conflict with p *)
     eapply invalidate_conflict_ref_fpm_preserves_borchk_approx with (p:= p) (am:= Adeep) (ak:= AWrite) in BORROW_APPROX as BORROW_APPROX1; eauto.
+    (* approximation property of the evaluated footprint *)
+    exploit @get_owner_loc_footprint_map_after_invalidate_ref. eapply EQ.
+    intros (vfp1 & A1 & A2). subst.
+    (* sound_loan_analysis implies sound_loan_analysis_footprint for
+    each internal footprint *)   
+    assert (SOUND_FP: sound_loan_analysis_footprint ce le (invalidate_conflict_ref_fpm p AWrite Adeep fpm1) (invalidate_conflict_ref p AWrite Adeep vfp1) (typeof_place p)).
+    { eapply sound_loan_analysis_footprint_inside; eauto with fpmap.      
+      (* wt_path *) admit.
+      (* region liveness *) admit. }
+    (* sound approximation is preserved under clearing owner's footprint *)
+    eapply sound_loan_analysis_after_clear_footprint_map in BORROW_APPROX1 as BORROW_APPROX2; eauto.
+    eapply sound_loan_analysis_footprint_after_clear_footprint_map in SOUND_FP as SOUND_FP1; eauto.
+    split; auto.
+    eapply sound_loan_analysis_liveness_refine; eauto. admit.
 
-
+    
 Ltac simpl_getIM IM :=
   generalize IM as IM1; intros;
   inversion IM1 as [? | ? | ? ? GETINIT GETUNINIT]; subst;

@@ -995,3 +995,10 @@ RustIRown *)
 End BORROWCK_INV.
 
 End ADT_ENV.
+
+Global Hint Resolve get_owner_loc_footprint_map_wt
+  get_owner_loc_footprint_map_fp_ref_wf
+  get_owner_path_map_inv
+  get_owner_path_for_owner
+  get_owner_loc_footprint_map_eq
+  get_owner_loc_footprint_map_app: fpmap.
