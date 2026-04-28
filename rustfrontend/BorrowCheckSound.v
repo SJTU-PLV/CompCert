@@ -282,6 +282,8 @@ Ltac destr_if_with_name H name :=
   match type of H with
   | ((if ?x then _ else _) = _) =>
       destruct x eqn: name; try congruence
+  | context G [(match ?x with | _ => _ end)] =>
+      destruct x eqn: name; try congruence
   end.
 
 
@@ -491,7 +493,99 @@ Lemma sound_loan_analysis_liveness_refine: forall live1 live2 le fpm,
     sound_loan_analysis ce live1 le fpm.
 Admitted.
 
+Fixpoint fp_not_contain_ref (fp: footprint) : bool :=
+  match fp with
+  | fp_emp => true
+  | fp_uninit _ _ => true
+  | fp_scalar _ _ => true
+  | fp_struct fid fpl =>
+      forallb (fun '(_, (_, ffp)) => fp_not_contain_ref ffp) fpl
+  | fp_box _ fp1 =>
+      fp_not_contain_ref fp1 
+  | fp_enum _ _ _ _ ffp =>
+      fp_not_contain_ref ffp 
+  | fp_ref _ _ _ _ _ => false
+  | fp_object _ _ fpl =>
+      forallb (fun '(_, (_, _, _, ffp)) => fp_not_contain_ref ffp) fpl
+  end.
+
+Lemma sound_loan_analysis_footprint_trivial: forall fp le fpm ty,
+    fp_not_contain_ref fp = true ->
+    sound_loan_analysis_footprint ce le fpm fp ty.
+Admitted.
+
 (** evaluation of expression preserves invariant *)
+
+Lemma eval_pexpr_preserves_borchk_approx: forall pe fpm1 fpm2 live le vfp
+  (BORROW_APPROX: sound_loan_analysis ce (reg_pexpr_live pe live) le fpm1)
+  (EVAL: eval_pexpr fpm1 pe = OK (vfp, fpm2))
+  (* It ensures that we do not invalidate some reference (which is
+  live) incorrectly. *) 
+  (BORROW_CHECK: check_pure_expr le pe = OK tt)
+  (WT: wt_pexpr (fpm_to_env fpm1) ce pe),
+    sound_loan_analysis ce live (transfer_pure_expr le pe) fpm2
+    /\ sound_loan_analysis_footprint ce (transfer_pure_expr le pe) fpm2 vfp (typeof pe).
+Proof.
+  induction pe; intros.
+  1-5: try (monadInv EVAL; simpl in BORROW_APPROX; split; [eauto| try eapply sound_loan_analysis_footprint_trivial; eauto]).
+  (* Eplace *)
+  - simpl in BORROW_CHECK. 
+    destr_if_with_name BORROW_CHECK ILL.
+    inv WT.
+    monadInv EVAL. 
+    eapply invalidate_conflict_ref_fpm_preserves_borchk_approx in BORROW_APPROX as BORROW_APPROX1; eauto.
+    (* approximation property of the evaluated footprint *)
+    destruct x1 as (b & ofs).
+    exploit @get_owner_loc_footprint_map_after_invalidate_ref. eapply EQ1.
+    intros (vfp1 & A1 & A2). subst.
+    assert (SOUND_FP: sound_loan_analysis_footprint ce le (invalidate_conflict_ref_fpm p ARead Adeep fpm1) (invalidate_conflict_ref p ARead Adeep vfp1) (typeof_place p)).
+    { eapply sound_loan_analysis_footprint_inside; eauto with fpmap.      
+      (* wt_path *) admit.
+      (* region liveness *) admit. }
+    split; auto.
+    eapply sound_loan_analysis_liveness_refine; eauto. 
+    admit.                          (* region liveness inclusion *)
+  (* cktag *)
+  - monadInv EVAL. 
+    destruct x2; try congruence. inv EQ2.
+    simpl in BORROW_APPROX; split; [eauto| try eapply sound_loan_analysis_footprint_trivial; eauto].
+    simpl in BORROW_CHECK.
+    destr_if_with_name BORROW_CHECK ILL_ACCESS.
+    eapply invalidate_conflict_ref_fpm_preserves_borchk_approx; eauto.
+    eapply sound_loan_analysis_liveness_refine; eauto.
+    admit.                      (* liveness inclusion *)
+  (** Eref *)
+  - simpl in BORROW_CHECK. 
+    destr_if_with_name BORROW_CHECK ILL.
+    inv WT.
+    monadInv EVAL. 
+    destruct x1 as (b & ofs). inv EQ2.
+    admit.
+    
+  (* Eunop *)
+  - simpl in BORROW_CHECK.
+    inv WT.
+    monadInv EVAL. 
+    destruct x; try congruence. 
+    destr_if_with_name EQ0 UOP. monadInv EQ0.
+    simpl in BORROW_APPROX; split; [eauto| try eapply sound_loan_analysis_footprint_trivial; eauto].
+    eapply IHpe; eauto.
+  (* Ebinop *)
+  - simpl in BORROW_CHECK. monadInv BORROW_CHECK.
+    inv WT.
+    monadInv EVAL. 
+    destr_if_with_name EQ4 FP1.
+    destr_if_with_name EQ4 FP2. 
+    destr_if_with_name EQ4 BINOP. monadInv EQ4.
+    simpl in BORROW_APPROX; split; [eauto| try eapply sound_loan_analysis_footprint_trivial; eauto].
+    eapply IHpe2 with (le := (transfer_pure_expr le pe1)); eauto.
+    eapply IHpe1; eauto. destruct x; eauto. 
+    (* evaluation does not change type env *)
+    admit.
+  - inv WT.
+Admitted.
+
+
 
 
 Lemma eval_expr_preserves_borchk_approx: forall e fpm1 fpm2 live le vfp
@@ -500,11 +594,9 @@ Lemma eval_expr_preserves_borchk_approx: forall e fpm1 fpm2 live le vfp
   (* It ensures that we do not invalidate some reference (which is
   live) incorrectly. *) 
   (BORROW_CHECK: check_expr le e = OK tt)
-  (WT: wt_expr (fpm_to_env fpm1) ce e)
-  (* all regions in type of [e] are live *)
-  (LIVE: Forall (fun r => RegionSet.In r live) (origins_of_type (typeof e))),
-    sound_loan_analysis ce live le fpm2
-    /\ sound_loan_analysis_footprint ce le fpm2 vfp (typeof e).
+  (WT: wt_expr (fpm_to_env fpm1) ce e),
+    sound_loan_analysis ce live (transfer_expr le e) fpm2
+    /\ sound_loan_analysis_footprint ce (transfer_expr le e) fpm2 vfp (typeof e).
 Proof.
   intros. destruct e.  
   (* moveplace *)
@@ -530,8 +622,10 @@ Proof.
     eapply sound_loan_analysis_footprint_after_clear_footprint_map in SOUND_FP as SOUND_FP1; eauto.
     split; auto.
     eapply sound_loan_analysis_liveness_refine; eauto. admit.
+  - eapply eval_pexpr_preserves_borchk_approx; eauto.
+    inv WT. auto.
+Admitted.
 
-    
 Ltac simpl_getIM IM :=
   generalize IM as IM1; intros;
   inversion IM1 as [? | ? | ? ? GETINIT GETUNINIT]; subst;

@@ -54,7 +54,7 @@ Fixpoint reg_pexpr_live (pe: pexpr) (rs: RegionSet.t) : RegionSet.t :=
   | Eref _ _ p _ => reg_place_live p rs
   | Eunop _ pe _ => reg_pexpr_live pe rs
   | Ebinop _ pe1 pe2 _ =>
-      reg_pexpr_live pe2 (reg_pexpr_live pe1 rs)
+      reg_pexpr_live pe1 (reg_pexpr_live pe2 rs)
   | _ => rs
   end.
 
