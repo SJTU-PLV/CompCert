@@ -149,8 +149,9 @@ Module Type UNION_FIND_DELETE.
       eq uf1 uf2 -> eq uf2 uf1.
   Axiom eq_trans: forall uf1 uf2 uf3,
       eq uf1 uf2 -> eq uf2 uf3 -> eq uf1 uf3.
-  Axiom ge_refl: forall uf,
-      ge uf uf.
+  Axiom ge_refl: forall uf1 uf2,
+      eq uf1 uf2 ->
+      ge uf1 uf2.
   Axiom ge_trans: forall uf1 uf2 uf3,
       ge uf1 uf2 -> ge uf2 uf3 -> ge uf1 uf3.
   Axiom ge_antisym: forall uf1 uf2,
@@ -2188,10 +2189,11 @@ Qed.
     eapply H0. eapply H. auto.
     eapply H. eapply H0. auto.
   Qed.
-  Lemma ge_refl: forall uf,
-      ge uf uf.
+  Lemma ge_refl: forall uf1 uf2,
+      eq uf1 uf2 ->
+      ge uf1 uf2.
   Proof.
-    intros. red. intros. auto.
+    intros. red. red in H. intros. eapply H. auto.
   Qed.
   Lemma ge_trans: forall uf1 uf2 uf3,
       ge uf1 uf2 -> ge uf2 uf3 -> ge uf1 uf3.
@@ -2205,6 +2207,13 @@ Qed.
     intros; split; auto.
   Qed.
 
+  Lemma ge_empty: forall uf,
+      ge uf empty.
+  Proof.
+    intros. red. intros. red in H.
+    rewrite !UFD.repr_empty in H. subst.
+    apply UFD.sameclass_refl.
+  Qed.
 
 Lemma join_sound2: forall uf1 uf2 a b,
       sameclass uf2 a b ->
@@ -2260,6 +2269,20 @@ Lemma eqb_correct: forall uf1 uf2,
     intros. unfold eqb in H. apply andb_true_iff in H as (A1 & A2).
     red. intros. split; eapply geb_correct; auto.
   Qed.
+
+Lemma join_ge1: forall uf1 uf2,
+    ge (join uf1 uf2) uf1.
+Proof.
+  intros. red. intros.
+  eapply join_sound1. auto.
+Qed.
+
+Lemma join_ge2: forall uf1 uf2,
+    ge (join uf1 uf2) uf2.
+Proof.
+  intros. red. intros.
+  eapply join_sound2. auto.
+Qed.
 
 End UFD.
 

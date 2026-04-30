@@ -24,6 +24,16 @@ Import ListNotations.
 
 Local Open Scope error_monad_scope.
 
+Definition append_projs (phl: list projection) (ph: path) :=
+  (fst ph, snd ph ++ phl).
+
+(** Move to other files. Properties of wt_path  *)
+
+Lemma wt_path_append ce: forall ph phl ty1 ty2 te,
+    wt_path ce te ph = OK ty1 ->
+    wt_projections ce ty1 phl = OK ty2 ->
+    wt_path ce te (append_projs phl ph) = OK ty2.
+Admitted.
 
 Section ADT_ENV.
 
@@ -125,33 +135,34 @@ Definition fpm_to_orgm (fpm: fp_map) : PTree.t (option origin) :=
 
 (* Why do we need region liveness here? *)
 Definition sound_loan_analysis ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) : Prop :=
-  forall ph owner_ph opt_ph vs1 vs2 mut b ofs r ty
+  forall ph opt_ph vs mut b ofs r ty
     (* If we make these two get_xxx as assumptions, how can we use
     this approximation property to prove progress, i.e., how to prove
     these two assumptions. For example, when we prove the progress in
     eval_pexpr on Eplace, the two get functions can be proved to make
     progress by using induciton, this approximation property and
     property about "all owners pointed by reference is init" *)
-    (GET_PH: get_owner_path_map ph fpm = OK (owner_ph, vs1))
-    (GET_FP: get_owner_footprint_map owner_ph fpm = OK (fp_ref mut b ofs opt_ph vs2))
+    (* (GET_FP: get_owner_path_map ph fpm = OK (owner_ph, vs1)) *)
+    (* (GET_FP: get_owner_footprint_map owner_ph fpm = OK (fp_ref mut b ofs opt_ph vs2)) *)
+    (GET_FP: get_reachable_footprint_map fpm ph = OK (fp_ref mut b ofs opt_ph vs))
     (WTPH: wt_path ce (fpm_to_tenv fpm) ph = OK (Treference r mut ty))
     (LIVE_REG: RegionSet.In r live),
     (* live region contains valid loans *)
-    exists ls, LOrgEnv.get r le = Live ls
+    exists ls, LOrgSt.eq (LOrgEnv.get r le) (Live ls)
     (* Safety: this reference is not invalidated *)
     /\ (exists rph, opt_ph = Some rph)
     (* Approximation: all (mutable) paths in the vs2 are approximated
     in the loans map *)
-    /\ loans_approx_views (fpm_to_orgm fpm) ls mut vs2.
+    /\ loans_approx_views (fpm_to_orgm fpm) ls mut vs.
 
 
 (* For temporary values *)
 Definition sound_loan_analysis_footprint ce (le: LOrgEnv.t) (fpm: fp_map) (fp: footprint) (ty: type) : Prop :=
-  forall phl opt_ph vs mut b ofs r ty
+  forall phl opt_ph vs mut b ofs r ty1
     (GET_FP: get_reachable_footprint fpm phl fp = OK (fp_ref mut b ofs opt_ph vs))
-    (WT_PROJS: wt_projections ce ty phl = OK (Treference r mut ty)),
+    (WT_PROJS: wt_projections ce ty phl = OK (Treference r mut ty1)),
     (* live region contains valid loans *)
-    exists ls, LOrgEnv.get r le = Live ls
+    exists ls, LOrgSt.eq (LOrgEnv.get r le) (Live ls)
     (* Safety: this reference is not invalidated *)
     /\ (exists rph, opt_ph = Some rph)
     (* Approximation: all (mutable) paths in the vs are approximated
@@ -160,6 +171,16 @@ Definition sound_loan_analysis_footprint ce (le: LOrgEnv.t) (fpm: fp_map) (fp: f
 
 Definition sound_loan_analysis_footprint_list ce (le: LOrgEnv.t) (fpm: fp_map) (fpl: list footprint) (tyl: list type) : Prop :=
   Forall2 (sound_loan_analysis_footprint ce le fpm) fpl tyl.
+
+
+Global Instance sound_loan_analysis_Proper: Proper (eq ==> RegionSet.eq ==> LOrgEnv.eq ==> eq ==> iff) sound_loan_analysis.
+Admitted.
+
+Global Instance sound_loan_analysis_footprint_Proper: Proper (eq ==> LOrgEnv.eq ==> eq ==> eq ==> eq ==>iff) sound_loan_analysis_footprint.
+Admitted.
+
+Global Instance sound_loan_analysis_footprint_list_Proper: Proper (eq ==> LOrgEnv.eq ==> eq ==> eq ==> eq ==>iff) sound_loan_analysis_footprint_list.
+Admitted.
 
 
 (** Over-approximation of the init analysis *)
@@ -286,6 +307,16 @@ Ltac destr_if_with_name H name :=
       destruct x eqn: name; try congruence
   end.
 
+  
+(* get_reachable_footprint_map can be divided into get_owner_path_map
+and then get_reachable_footprint *)
+Lemma get_reachable_footprint_map_append: forall (fpm: fp_map) ph phl ph1 vs fp fp1,
+    get_owner_path_map ph fpm = OK (ph1, vs) ->
+    get_owner_footprint_map ph1 fpm = OK fp ->
+    get_reachable_footprint fpm phl fp = OK fp1 ->
+    get_reachable_footprint_map fpm (append_projs phl ph) = OK fp1.
+Admitted.
+
 
 Lemma get_owner_footprint_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ak am fp,
     get_owner_footprint_map ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK fp ->
@@ -296,6 +327,12 @@ Admitted.
 Lemma get_owner_path_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ph vs ak am,
     get_owner_path_map ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK (ph, vs) ->
     get_owner_path_map ph1 fpm = OK (ph, vs).    
+Admitted.
+
+Lemma get_reachable_footprint_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ak am fp,
+    get_reachable_footprint_map (invalidate_conflict_ref_fpm ph2 ak am fpm) ph1 = OK fp ->
+    exists fp', get_reachable_footprint_map fpm ph1 = OK fp'
+           /\ invalidate_conflict_ref ph2 ak am fp' = fp.
 Admitted.
 
 
@@ -322,20 +359,81 @@ Qed.
 
 Hint Resolve get_owner_footprint_map_after_invalidate_ref
              get_owner_path_map_after_invalidate_ref
+             get_reachable_footprint_map_after_invalidate_ref
              fpm_to_tenv_after_invalidate_ref
              fpm_to_tenv_after_invalidate_ref: invalidate_fp_ref.
 
 Hint Rewrite get_owner_footprint_map_after_invalidate_ref
              get_owner_path_map_after_invalidate_ref
+             get_reachable_footprint_map_after_invalidate_ref
              fpm_to_orgm_after_invalidate_ref
              fpm_to_tenv_after_invalidate_ref: invalidate_fp_ref.
+
+(** Properties of operations on LOrgEnv.t  *)
+
+Lemma loan_env_add_ge: forall le r ls,
+    LOrgEnv.ge (loan_env_add le r ls) le.
+Admitted.
+
+Global Instance loan_env_add_Proper: Proper (LOrgEnv.eq ==> eq ==> LOrgSt.eq ==> LOrgEnv.eq) loan_env_add.
+Proof.
+  intros le1 le2 A r1 r2 B ls1 ls2 C.
+  unfold loan_env_add. subst.
+  eapply LOrgEnv_set_Proper; auto.
+  eapply LOrgSt_lub_Proper; eauto.
+  eapply A.
+Qed.
 
 
 (** invalidation of fp_ref preserves sound approximation invariant *)
 
+
+(* Used to prove conflict_Proper *)
+Lemma forallb_ext_In_perm :
+  forall (A : Type) (f : A -> bool) (l1 l2 : list A),
+    (forall x, In x l1 <-> In x l2) ->
+    forallb f l1 = forallb f l2.
+Proof.
+  intros A f l1 l2 Heq.
+  apply Bool.eq_true_iff_eq.
+  rewrite !forallb_forall.
+  split; intros. eapply H. eapply Heq. auto.
+  intros. eapply H. eapply Heq. auto.
+Qed.
+
+Lemma LoanSet_InA_to_In :
+  forall x l,
+    SetoidList.InA LoanSet.E.eq x l <->
+    In x l.
+Proof.
+  intros x l.
+  split.
+  - intros H. induction H.
+    + left. auto.
+    + right. auto.
+  - intros H. 
+    eapply SetoidList.In_InA; auto.
+    eapply eq_equivalence.
+Qed.
+
+Global Instance conflict_Proper: Proper (eq ==> LoanSet.eq ==> eq ==> eq ==> eq) conflict.
+Proof.
+  unfold conflict.
+  intros p1 p2 EQ1 ls1 ls2 EQ2 am1 am2 EQ3 ak1 ak2 EQ4. subst.
+  rewrite !LoanSetFacts.for_all_b.
+  erewrite forallb_ext_In_perm. reflexivity.
+  split; intros. 
+  eapply LoanSet_InA_to_In. eapply EQ2. 
+  eapply LoanSet_InA_to_In in H. eapply H.
+  eapply LoanSet_InA_to_In. eapply EQ2. 
+  eapply LoanSet_InA_to_In in H. eapply H.
+  intros a1 a2 EQ4. subst. auto.
+  intros a1 a2 EQ4. subst. auto.
+Qed.
+
 Lemma illegal_access_false_implies: forall le p am ak r ls,
     illegal_access le p am ak = false ->
-    LOrgEnv.get r le = Live ls ->
+    LOrgSt.eq (LOrgEnv.get r le) (Live ls) ->
     conflict p ls am ak = false.
 Proof.
   intros until ls. intros ILL.
@@ -343,9 +441,11 @@ Proof.
   erewrite PTree_Properties.exists_false in ILL. 
   unfold LOrgEnv.get.
   destruct (LOrgEnv.m le) ! (UnionFindDelete.UFD.repr (LOrgEnv.uf le) r) eqn: A; auto.  
-  - intros. subst. 
+  - intros EQ. destruct t; simpl in EQ; try contradiction. 
     eapply ILL in A. unfold illegal_access_in_origin_state in A. 
-    destruct conflict; try congruence.
+    destr_if_with_name A CON; try congruence.
+    erewrite conflict_Proper; eauto. 
+    eapply LoanSet.eq_sym; auto.
   - intros. inv H.
 Qed.
 
@@ -443,12 +543,11 @@ Lemma invalidate_conflict_ref_fpm_preserves_borchk_approx: forall fpm p am ak le
     sound_loan_analysis ce live le (invalidate_conflict_ref_fpm p ak am fpm).
 Proof.
   intros. red. intros.
-  exploit get_owner_path_map_after_invalidate_ref; eauto. intros GET_PH1.
   (** The most important property we need to prove is that opt_ph in
   GET_FP may not be the same as the opt_ph in fpm because of the
   invalidation, but we need to prove that they are the same using the
   checking result of [illegal_access] *)  
-  exploit (@get_owner_footprint_map_after_invalidate_ref); eauto.
+  exploit (@get_reachable_footprint_map_after_invalidate_ref); eauto.
   intros (fp1 & GET_FP1 & INVREF).
   destruct fp1; inv INVREF.  
   (* use sound approximation in fpm to prove that ph0 is not invalid *)
@@ -487,11 +586,28 @@ Lemma sound_loan_analysis_footprint_after_clear_footprint_map: forall ph fpm1 fp
 Admitted.
 
 (* It should be straightforward *)
-Lemma sound_loan_analysis_liveness_refine: forall live1 live2 le fpm,
+Lemma loans_approx_views_monotonicity: forall ls1 ls2 orgm vs mut,
+    loans_approx_views orgm ls1 mut vs ->
+    LoanSetL.ge ls2 ls1 ->
+    loans_approx_views orgm ls2 mut vs.
+Admitted.
+  
+(* It should be straightforward *)
+Lemma sound_loan_analysis_liveness_monotonicity: forall live1 live2 le fpm,
     sound_loan_analysis ce live2 le fpm ->
     RegionSet.Subset live1 live2 ->
     sound_loan_analysis ce live1 le fpm.
 Admitted.
+
+(* Sound over-approximation is preserved when we have a more
+   abstracted domain (under LOrgEnv.ge). Formally, it is called
+   "monotonicity with respect to the abstract order". *)
+Lemma sound_loan_analysis_monotonicity: forall live le1 le2 fpm,
+    LOrgEnv.ge le1 le2 ->
+    sound_loan_analysis ce live le2 fpm ->
+    sound_loan_analysis ce live le1 fpm.
+Admitted.
+
 
 Fixpoint fp_not_contain_ref (fp: footprint) : bool :=
   match fp with
@@ -514,7 +630,34 @@ Lemma sound_loan_analysis_footprint_trivial: forall fp le fpm ty,
     sound_loan_analysis_footprint ce le fpm fp ty.
 Admitted.
 
+(** Important TODO: Sound approximation of aggregate_origin_states w.r.t. the views
+collected from get_owner_path_map *)
+Lemma sound_aggregate_origin_states: forall (p: place) le live fpm ph vs mut,
+    sound_loan_analysis ce live le fpm ->
+    get_owner_path_map p fpm = OK (ph, vs) ->
+    exists ls, LOrgSt.eq 
+            (LOrgSt.lub 
+               (aggregate_origin_states le (support_origins p))
+               (Live (LoanSet.singleton (Lintern mut p)))) 
+            (Live ls)
+          /\ loans_approx_views (fpm_to_orgm fpm) ls mut vs.
+Admitted.
+
 (** evaluation of expression preserves invariant *)
+
+Lemma get_reachable_footprint_fp_ref_inv: forall phl (fpm: fp_map) mut b ofs ph vs fp,
+    get_reachable_footprint fpm phl (fp_ref mut b ofs (Some ph) vs) = OK fp ->
+    (fp = (fp_ref mut b ofs (Some ph) vs) /\ phl = nil)
+    \/ (exists fp1 phl1, get_owner_footprint_map ph fpm = OK fp1
+                   /\ phl = proj_deref :: phl1
+                   /\ get_reachable_footprint fpm phl1 fp1 = OK fp).
+Proof.
+  destruct phl.
+  - simpl; intros. inv H. eauto.
+  - intros. simpl in H.
+    destr_if_with_name H PROJ. monadInv H.
+    right. eauto.
+Qed.
 
 Lemma eval_pexpr_preserves_borchk_approx: forall pe fpm1 fpm2 live le vfp
   (BORROW_APPROX: sound_loan_analysis ce (reg_pexpr_live pe live) le fpm1)
@@ -543,7 +686,7 @@ Proof.
       (* wt_path *) admit.
       (* region liveness *) admit. }
     split; auto.
-    eapply sound_loan_analysis_liveness_refine; eauto. 
+    eapply sound_loan_analysis_liveness_monotonicity; eauto. 
     admit.                          (* region liveness inclusion *)
   (* cktag *)
   - monadInv EVAL. 
@@ -552,7 +695,7 @@ Proof.
     simpl in BORROW_CHECK.
     destr_if_with_name BORROW_CHECK ILL_ACCESS.
     eapply invalidate_conflict_ref_fpm_preserves_borchk_approx; eauto.
-    eapply sound_loan_analysis_liveness_refine; eauto.
+    eapply sound_loan_analysis_liveness_monotonicity; eauto.
     admit.                      (* liveness inclusion *)
   (** Eref *)
   - simpl in BORROW_CHECK. 
@@ -560,8 +703,54 @@ Proof.
     inv WT.
     monadInv EVAL. 
     destruct x1 as (b & ofs). inv EQ2.
-    admit.
-    
+    eapply invalidate_conflict_ref_fpm_preserves_borchk_approx in BORROW_APPROX as BORROW_APPROX1; eauto.
+    eapply sound_loan_analysis_liveness_monotonicity with (live1 := live) in BORROW_APPROX1 as BORROW_APPROX2; eauto. 
+    2: admit.                   (* region liveness inclusion *)
+    split.
+    + eapply sound_loan_analysis_monotonicity with (le2:= le).
+      eapply loan_env_add_ge. auto.
+    + simpl.
+      exploit sound_aggregate_origin_states; eauto. instantiate (1 := m).
+      intros (ls & A1 & A2).
+      set (fpm2 := (invalidate_conflict_ref_fpm p (mut_to_access_kind m) Adeep fpm1)) in *.
+      (* (* well-typed property ensured by get_owner_path_map *) *)
+      (* assert (WTPH: wt_path ce (fpm_to_tenv fpm2) x = OK (typeof_place p)) by admit. *)
+      (* Two cases: 1. consider x0 or 2. consider the fp_ref reachable from x *)
+      eapply sound_loan_analysis_footprint_Proper. reflexivity.
+      eapply loan_env_add_Proper. eapply LOrgEnv.eq_refl. reflexivity. eauto.
+      1-3: reflexivity.
+      red. intros.
+      exploit get_reachable_footprint_fp_ref_inv; eauto.
+      intros [[B1 B2] | B2].
+      * inv B1. inv WT_PROJS.        
+        unfold loan_env_add.
+        setoid_rewrite LOrgEnv.gsspec.
+        rewrite peq_true. destruct (LOrgEnv.get r le) eqn: G.
+        -- simpl. exists (LoanSet.union ls ls0). split.
+           reflexivity. split; eauto.
+           eapply loans_approx_views_monotonicity. eauto.
+           eapply LoanSetL.ge_lub_left.
+        -- simpl. exists ls. split. reflexivity. split; eauto.
+      * destruct B2 as (fp1 & phl1 & G1 & G2 & G3).
+        subst.
+        (* use sound_loan_analysis *)
+        exploit BORROW_APPROX1. eapply get_reachable_footprint_map_append; eauto.
+        eapply wt_path_append.
+        (* wt_place *)
+        instantiate (1 := typeof_place p). admit.
+        simpl in WT_PROJS. eauto.
+        (* region liveness *)
+        admit.
+        intros (ls1 & C1 & (rph & C2) & C3). subst.
+        unfold loan_env_add. setoid_rewrite LOrgEnv.gsspec.
+        destruct peq.
+        -- exists (LoanSet.union ls ls1). repeat apply conj; eauto. 
+           assert (G: LOrgEnv.get o le = LOrgEnv.get r le).
+           { unfold LOrgEnv.get. rewrite e. auto. }
+           rewrite G. rewrite C1. reflexivity.
+           eapply loans_approx_views_monotonicity. eauto.
+           eapply LoanSetL.ge_lub_right.
+        -- exists ls1. repeat apply conj; eauto. 
   (* Eunop *)
   - simpl in BORROW_CHECK.
     inv WT.
@@ -604,6 +793,7 @@ Proof.
     destruct x.
     simpl in BORROW_CHECK.
     destr_if_with_name BORROW_CHECK ILL_ACCESS.
+    inv WT.
     (** TODO: add premise about that p is a local place, which is used
     to prove that the invalidation of fp_ref is not because this
     reference contains an extern loans conflict with p *)
@@ -621,7 +811,8 @@ Proof.
     eapply sound_loan_analysis_after_clear_footprint_map in BORROW_APPROX1 as BORROW_APPROX2; eauto.
     eapply sound_loan_analysis_footprint_after_clear_footprint_map in SOUND_FP as SOUND_FP1; eauto.
     split; auto.
-    eapply sound_loan_analysis_liveness_refine; eauto. admit.
+    eapply sound_loan_analysis_liveness_monotonicity; eauto. 
+    admit.                          (* liveness *)    
   - eapply eval_pexpr_preserves_borchk_approx; eauto.
     inv WT. auto.
 Admitted.

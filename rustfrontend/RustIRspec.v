@@ -568,6 +568,14 @@ Fixpoint get_reachable_footprint (fpg: fp_graph) (phl: list projection) (fp: foo
       end
   end.
 
+Definition get_reachable_footprint_map (fpg: fp_graph) (ph: path) : res footprint :=
+  let (id, phl) := ph in
+  match fpg!id with
+  | Some fp =>
+      get_reachable_footprint fpg phl fp
+  | _ => Error nil
+  end.
+
 
 (* To also extract the type, use this function *)
 Fixpoint get_owner_footprint_type ce (phl: list projection) (ty: type) (fp: footprint) : res (type * footprint) :=

@@ -47,6 +47,9 @@ Definition borrowed_place_error (action site: string) (p: place) : errmsg :=
 Definition map_loan_set (f: loan -> loan) (ls: LoanSet.t) : LoanSet.t :=
   LoanSet.fold (fun ln acc => LoanSet.add (f ln) acc) ls LoanSet.empty.
 
+Definition loan_env_add (le: LOrgEnv.t) (r: origin) (ls: LOrgSt.t) : LOrgEnv.t :=
+  LOrgEnv.set r (LOrgSt.lub ls (LOrgEnv.get r le)) le.
+
 (* Transition of pure expression *)
 
 Fixpoint transfer_pure_expr (e: LOrgEnv.t) (pe: pexpr) : LOrgEnv.t :=
@@ -58,8 +61,12 @@ Fixpoint transfer_pure_expr (e: LOrgEnv.t) (pe: pexpr) : LOrgEnv.t :=
       (* aggregate the loans in the support origins *)
       let org_st := aggregate_origin_states e support_orgs in
       let s' := LOrgSt.lub org_st (Live (LoanSet.singleton (Lintern mut p))) in
-      (* let st := loans_of_place e mut p in *)
-      LOrgEnv.set org s' e
+      (** Simplification: we choose not to overwrite the e[org] to
+      simplfy the proof because we do not need to prove that org does
+      not appear in e. This simplification is OK because (1) it does
+      not affect the soundness proof and (2) we can ensure that org
+      must not appear in e using the ReplaceOrigins.v pass. *)
+      loan_env_add e org s'
   | Eunop _ pe _ =>
       transfer_pure_expr e pe
   | Ebinop _ pe1 pe2 _ =>
