@@ -775,8 +775,6 @@ Proof.
 Admitted.
 
 
-
-
 Lemma eval_expr_preserves_borchk_approx: forall e fpm1 fpm2 live le vfp
   (BORROW_APPROX: sound_loan_analysis ce (reg_expr_live e live) le fpm1)
   (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2))
@@ -848,15 +846,22 @@ Proof.
     assert (LIVE_EQ: live_st = reg_expr_live e (reg_assign_place p (live!!pc))).
     { unfold live_st. unfold RegionLiveness.transfer. rewrite SEL.
       rewrite STMT. reflexivity. }
+    (* soundness of eval_expr *)
+    unfold eval_assign in EVAL.
+    monadInv EVAL. destruct x3 as (ph1 & vs). monadInv EQ2.
+    rewrite LIVE_EQ in *.
+    exploit eval_expr_preserves_borchk_approx; eauto.
+
     (** how to show that the regions in [e] and [p] are live, so that
     we can use the borrow check invariant *)
     (* evaluate expr *)
-    exploit eval_expr_match. eauto. eapply MPRED. 
-    eapply BORCK_INV. all: eauto. admit.
-    intros (tv & tfp & fpm2 & mp1 & mp2 & TEVAL & FPMEQ & WTVAL & MEQ1 & COH1 & A1 & A2).
+
     (* evaluate assignee place: before that, we need to prove moving a
     place in the evaluation of expression preserve the borrow check
     invariant for the sv_map and fp_map *)
 
 Admitted.
 
+End BORROW_CHECK.
+
+End ADT_ENV.

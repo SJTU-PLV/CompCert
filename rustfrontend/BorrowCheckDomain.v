@@ -251,7 +251,6 @@ Proof.
   intros. eapply L.eq_trans; eauto.
 Qed.
 
-(* unused *)
 Definition beq_elt (mx my: PTree.t L.t) (x y: positive) : bool :=
   match mx ! x, my ! y with
   | None, None => true
@@ -259,7 +258,6 @@ Definition beq_elt (mx my: PTree.t L.t) (x y: positive) : bool :=
   | _, _ => false
   end.
 
-(* unused *)
 Definition eqb_elt (dm1 dm2: t) a (v: UFD.vt) : bool :=
   (* the set of a in uf2 must be included in uf1 *)
   let x := (UFD.repr (uf dm1) a) in
@@ -268,7 +266,6 @@ Definition eqb_elt (dm1 dm2: t) a (v: UFD.vt) : bool :=
   (* the values of representative nodes are equal *)
   && beq_elt (m dm1) (m dm2) x y.
 
-(* unused *)
 Definition val_eqb_opt2 (m1: PTree.t L.t) (uf2: UFD.t) p (v2: L.t) : bool :=
   match (UFD.m uf2) ! p with
   (* p is a singleton in uf2 *)
@@ -282,7 +279,7 @@ Definition val_eqb_opt2 (m1: PTree.t L.t) (uf2: UFD.t) p (v2: L.t) : bool :=
   | _ => true
   end.
 
-(* unused: It is used only if (m2 ! p is None && uf2 ! p = None) *)
+(* It is used only if (m2 ! p is None && uf2 ! p = None) *)
 Definition val_eqb_opt1 (m2: PTree.t L.t) (uf2: UFD.t) p (v1: L.t) : bool :=
   match (UFD.m uf2) ! p, m2 ! p with
   (* p is a singleton in uf2 and it is not mapped to anything but it
@@ -293,29 +290,6 @@ Definition val_eqb_opt1 (m2: PTree.t L.t) (uf2: UFD.t) p (v1: L.t) : bool :=
   | None, None => false
   | _, _ => true
   end.
-
-(* Unused code *)
-(*   ufd.eqb (uf dm1) (uf dm2) *)
-(* UFD.geb *)
-(*   && PTree.beq L.beq (m dm1) (m dm2). *)
-
-(* Lemma beq_correct: forall dm1 dm2, beq dm1 dm2 = true -> eq dm1 dm2. *)
-(* Proof. *)
-(*   intros.  *)
-(*   unfold beq in H. eapply andb_true_iff in H as (A & B). *)
-(*   constructor. *)
-(*   eapply UFD.eqb_correct. auto. *)
-(*   intros. unfold get. *)
-(*   assert (REQ: (UFD.repr (uf dm1) p) = (UFD.repr (uf dm2) p)). *)
-(* UFD.eq *)
-(*   {  eapply UFD.eqb_correct in A. red in A. *)
-(*      setoid_rewrite <- UFD.sameclass_repr. *)
-
-(* (** TODO: we may need a more efficient implementation for this *)
-(* equality checking as it may be the bottleneck of the performance. The *)
-(* following code is an attempt but it does not satisfy the strict *)
-(* equality definition which requires that the union-find are also *)
-(* equivalent *) *)
 
 
 (* Keep in mind that even if (uf dm1) = (uf dm2), it does not mean

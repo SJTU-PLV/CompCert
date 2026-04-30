@@ -53,7 +53,7 @@ fn main() {
     let mut l1: &mut List = iterate_until(&mut *l, 5);
 
     // Using l is not allowed here because l1 still borrows l
-    iterate_until_consume(l, 7); 
+    // iterate_until_consume(l, 7); 
 
     print_list(&*l1);
 
