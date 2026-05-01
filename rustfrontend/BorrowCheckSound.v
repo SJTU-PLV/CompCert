@@ -256,20 +256,20 @@ with sound_stacks : cont -> Prop :=
 
 
 Inductive sound_state: state -> Prop :=
-| sound_regular_state: forall f cfg entry maybeInit maybeUninit universe s pc next cont brk nret k fpm mayinit mayuninit live live_st LoansEnv loans_env ns sup
+| sound_regular_state: forall f cfg entry maybeInit maybeUninit universe s pc next cont brk nret k fpm live live_st LoansEnv loans_env ns sup
     (* The init and loans-flow analysis results *)
-    (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe))
+    (* (INITAN: InitAnalysis.analyze ce f cfg entry = OK (maybeInit, maybeUninit, universe)) *)
     (LOANSAN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
     (* The result of move checking and borrow checking *)
-    (MCK_STMT: move_check_stmt_spec (maybeInit, maybeUninit, universe) f.(fn_body) cfg s s (mk_cfg_info pc next cont brk nret))
+    (* (MCK_STMT: move_check_stmt_spec (maybeInit, maybeUninit, universe) f.(fn_body) cfg s s (mk_cfg_info pc next cont brk nret)) *)
     (BORCK_STMT: borrow_check_stmt_spec (live, LoansEnv) (regset_fun f) f cfg s s (mk_cfg_info pc next cont brk nret))
     (* The init set and loans environment of the current pc *)
-    (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit)))
+    (* (IM: get_IM_state maybeInit!!pc maybeUninit!!pc (Some (mayinit, mayuninit))) *)
     (LOANS_ST: LoansEnv!!pc = LoansEnv.State loans_env)
     (* Invariant for continuation *)
     (CONT: sound_cont (maybeInit, maybeUninit, universe) (live, LoansEnv) f cfg k (mk_cfg_kinfo next cont brk nret))
     (* Over-approximation of the move checking. *)
-    (INIT_APPRO: sound_init_analysis fpm mayinit mayuninit universe)
+    (* (INIT_APPRO: sound_init_analysis fpm mayinit mayuninit universe) *)
     (* We use the liveness information before this pc instead of after this pc *)
     (LIVE_ST: RegionLiveness.transfer f cfg (regset_fun f) pc (live !! pc) = live_st)
     (* Over-approximation of the borrow checking *)
@@ -660,7 +660,7 @@ Proof.
 Qed.
 
 Lemma eval_pexpr_preserves_borchk_approx: forall pe fpm1 fpm2 live le vfp
-  (BORROW_APPROX: sound_loan_analysis ce (reg_pexpr_live pe live) le fpm1)
+  (BORROW_APPROX: sound_loan_analysis ce live le fpm1)
   (EVAL: eval_pexpr fpm1 pe = OK (vfp, fpm2))
   (* It ensures that we do not invalidate some reference (which is
   live) incorrectly. *) 
@@ -686,8 +686,6 @@ Proof.
       (* wt_path *) admit.
       (* region liveness *) admit. }
     split; auto.
-    eapply sound_loan_analysis_liveness_monotonicity; eauto. 
-    admit.                          (* region liveness inclusion *)
   (* cktag *)
   - monadInv EVAL. 
     destruct x2; try congruence. inv EQ2.
@@ -695,8 +693,6 @@ Proof.
     simpl in BORROW_CHECK.
     destr_if_with_name BORROW_CHECK ILL_ACCESS.
     eapply invalidate_conflict_ref_fpm_preserves_borchk_approx; eauto.
-    eapply sound_loan_analysis_liveness_monotonicity; eauto.
-    admit.                      (* liveness inclusion *)
   (** Eref *)
   - simpl in BORROW_CHECK. 
     destr_if_with_name BORROW_CHECK ILL.
@@ -776,7 +772,7 @@ Admitted.
 
 
 Lemma eval_expr_preserves_borchk_approx: forall e fpm1 fpm2 live le vfp
-  (BORROW_APPROX: sound_loan_analysis ce (reg_expr_live e live) le fpm1)
+  (BORROW_APPROX: sound_loan_analysis ce live le fpm1)
   (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2))
   (* It ensures that we do not invalidate some reference (which is
   live) incorrectly. *) 
@@ -808,12 +804,47 @@ Proof.
     (* sound approximation is preserved under clearing owner's footprint *)
     eapply sound_loan_analysis_after_clear_footprint_map in BORROW_APPROX1 as BORROW_APPROX2; eauto.
     eapply sound_loan_analysis_footprint_after_clear_footprint_map in SOUND_FP as SOUND_FP1; eauto.
-    split; auto.
-    eapply sound_loan_analysis_liveness_monotonicity; eauto. 
-    admit.                          (* liveness *)    
   - eapply eval_pexpr_preserves_borchk_approx; eauto.
     inv WT. auto.
 Admitted.
+
+(* Properties of Kildall solution *)
+Lemma loans_flow_analyze_successor: forall entry cfg pc1 instr pc2 f live LoansEnv le2
+    (AN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
+    (SEL: cfg ! pc1 = Some instr)
+    (PC: In pc2 (successors_instr instr))
+    (TR: transfer ce f cfg live (regset_fun f) pc1 (LoansEnv !! pc1) = le2),
+    LoansEnv.ge (LoansEnv !! pc2) le2.
+Proof.
+  unfold loans_flow_analyze; intros. 
+  destr_if_with_name AN LIVE.
+  destr_if_with_name AN LOANS.
+  inv AN.
+  eapply LoansFlow.fixpoint_solution; try intro; simpl; eauto.
+Qed.
+
+Lemma LoansEnv_ge_inv: forall le1 st2,
+    LoansEnv.ge le1 (LoansEnv.State st2) ->
+    exists st1, le1 = LoansEnv.State st1 /\ LOrgEnv.ge st1 st2.
+Proof.
+  intros. destruct le1; simpl in H; try contradiction; eauto.
+Qed.
+
+Lemma region_liveness_analyze_successor: forall entry cfg pc1 instr pc2 f live LoansEnv live1
+    (AN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
+    (SEL: cfg ! pc1 = Some instr)
+    (PC: In pc2 (successors_instr instr))
+    (TR: RegionLiveness.transfer f cfg (regset_fun f) pc2 (live !! pc2) = live1),
+    RegionSetLat.ge (live !! pc1) live1.
+Proof.
+  unfold loans_flow_analyze; intros. 
+  destr_if_with_name AN LIVE.
+  destr_if_with_name AN LOANS.
+  inv AN.
+  eapply RegionLive.fixpoint_solution; try intro; simpl; eauto.
+  intros. unfold RegionLiveness.transfer. rewrite H. reflexivity.
+Qed.
+
 
 Ltac simpl_getIM IM :=
   generalize IM as IM1; intros;
@@ -827,18 +858,18 @@ Lemma step_preservation: forall s1 t s2,
 Proof.
   intros s1 t s2 SOUND STEP. inv STEP.
   (* Sassign *)
-  - inv SOUND. inv MCK_STMT. inv BORCK_STMT.
+  - inv SOUND. inv BORCK_STMT.
     (* unfold move check and borrow check result. TODO: write ltac for these unfold code *)
-    simpl in TR. simpl_getIM IM.
-    destruct (move_check_expr ce mayinit mayuninit universe e) eqn: MOVE1; try congruence.
-    unfold move_check_expr in MOVE1.
-    destruct (move_check_expr' ce mayinit mayuninit universe e) eqn: MOVECKE; try congruence.
-    destruct p0 as (mayinit' & mayuninit').
-    destruct (move_check_assign mayinit' mayuninit' universe p) eqn: MOVE2; try congruence.
-    inv TR.
-    simpl in TR0. rewrite LOANS_ST in TR0. 
-    unfold BorrowCheckPolonius.borrow_check_stmt, borrow_check_stmt_aux, check_assignment in TR0.
-    monadInv TR0. monadInv EQ.
+    (* simpl in TR. simpl_getIM IM. *)
+    (* destruct (move_check_expr ce mayinit mayuninit universe e) eqn: MOVE1; try congruence. *)
+    (* unfold move_check_expr in MOVE1. *)
+    (* destruct (move_check_expr' ce mayinit mayuninit universe e) eqn: MOVECKE; try congruence. *)
+    (* destruct p0 as (mayinit' & mayuninit'). *)
+    (* destruct (move_check_assign mayinit' mayuninit' universe p) eqn: MOVE2; try congruence. *)
+    (* inv TR. *)
+    simpl in TR. rewrite LOANS_ST in TR. 
+    unfold BorrowCheckPolonius.borrow_check_stmt, borrow_check_stmt_aux, check_assignment in TR.
+    monadInv TR. monadInv EQ.
     rename EQ0 into BORCK_EXPR. rename EQ1 into BORCKP.
     (* end of unfold *)
     set (live_st := (RegionLiveness.transfer f cfg (regset_fun f) pc live !! pc)) in *.
@@ -846,20 +877,33 @@ Proof.
     assert (LIVE_EQ: live_st = reg_expr_live e (reg_assign_place p (live!!pc))).
     { unfold live_st. unfold RegionLiveness.transfer. rewrite SEL.
       rewrite STMT. reflexivity. }
+    (* soundness w.r.t. apply_liveness *)
+    assert (BORROW_APPRO1: sound_loan_analysis ce live_st loans_env1 fpm1).
+    { admit. }
     (* soundness of eval_expr *)
     unfold eval_assign in EVAL.
     monadInv EVAL. destruct x3 as (ph1 & vs). monadInv EQ2.
-    rewrite LIVE_EQ in *.
+    destruct x; destruct x0.
     exploit eval_expr_preserves_borchk_approx; eauto.
-
-    (** how to show that the regions in [e] and [p] are live, so that
-    we can use the borrow check invariant *)
-    (* evaluate expr *)
-
-    (* evaluate assignee place: before that, we need to prove moving a
-    place in the evaluation of expression preserve the borrow check
-    invariant for the sv_map and fp_map *)
-
+    (* wt_expr *) admit.
+    intros (BORROW_APPRO2 & BORROW_APPRO2_FP).
+    (* soundness w.r.t. before_write_place *)
+    set (le2:= (kill_loans (transfer_expr loans_env1 e) p)).
+    assert (BORROW_APPRO3: sound_loan_analysis ce live_st le2 fpm2). admit.
+    assert (BORROW_APPRO3_FP: sound_loan_analysis_footprint ce le2 fpm2 (kill_paths_ref vs (invalidate_conflict_ref p AWrite Ashallow x1)) (typeof e)). admit.
+    (* soundness w.r.t. flow_loans *)
+    set (le3:= flow_loans le2 (typeof e) (typeof_place p) ByVal).
+    assert (BORROW_APPRO4: sound_loan_analysis ce (live!!pc) le3 fpm3). admit.
+    
+    (* Start to prove local sound-approximation of one step transition *)
+    exploit loans_flow_analyze_successor; eauto. left. reflexivity.
+    unfold transfer. rewrite SEL, LOANS_ST, STMT. intros GE1. 
+    edestruct LoansEnv_ge_inv as (le4 & A1 & GE2); eauto.
+    econstructor. eauto.
+    econstructor. eauto. eauto. eauto.
+    eapply sound_loan_analysis_liveness_monotonicity.
+    2: { eapply region_liveness_analyze_successor; eauto. left. auto. }
+    eapply sound_loan_analysis_monotonicity. eapply GE2. eauto.
 Admitted.
 
 End BORROW_CHECK.

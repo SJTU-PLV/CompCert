@@ -114,7 +114,7 @@ Definition transfer (f: function) (cfg: rustcfg) (generic_regions: RegionSet.t) 
   end.
 
 
-Module DS := Backward_Dataflow_Solver(RegionSetLat)(NodeSetBackward).
+Module RegionLive := Backward_Dataflow_Solver(RegionSetLat)(NodeSetBackward).
 
 Fixpoint live_generic_regions (l: list origin) : RegionSet.t := 
   match l with
@@ -129,4 +129,4 @@ Definition regset_fun (f: function) : RegionSet.t :=
 Definition analyze (f: function) (cfg: rustcfg) : option (PMap.t RegionSet.t) :=
   (* All the generic regions are live at all points *)  
   let generic_regions := live_generic_regions f.(fn_generic_origins) in
-  DS.fixpoint cfg successors_instr (transfer f cfg generic_regions).
+  RegionLive.fixpoint cfg successors_instr (transfer f cfg generic_regions).
