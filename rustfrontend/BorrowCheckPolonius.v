@@ -221,42 +221,22 @@ Definition kill_loans (e: LOrgEnv.t) (p: place) : LOrgEnv.t :=
 
 (* Borrow check an assign statement *)
 
-(* Definition transfer_assign_base (oe: LOrgEnv.t) (e: expr) : LOrgEnv.t := *)
-(*   transfer_expr oe e. *)
-
-Definition dead_assigned_regions (p: place) : list origin :=
-  match p with
-  | Plocal _ ty => origins_of_type ty
-  | _ => nil
-  end.
-
-Fixpoint clear_dead_regions (rl: list origin) (le: LOrgEnv.t) : LOrgEnv.t :=
-  match rl with
-  | nil => le
-  | r :: rl1 =>
-      clear_dead_regions rl1 (LOrgEnv.delete r le)
-  end.
-
 Definition transfer_assignment (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t :=
   (* simple type checking *)
   let ty_dest := typeof_place p in
   let ty_src := typeof e in
   let oe1 := transfer_expr oe e in
-  (* clear dead regions *)
-  let oe2 := clear_dead_regions (dead_assigned_regions p) oe1 in
   (* After checking the evaluation of e *)
-  let oe3 := kill_loans oe2 p in
-  flow_loans oe3 ty_src ty_dest ByVal.
+  let oe2 := kill_loans oe1 p in
+  flow_loans oe2 ty_src ty_dest ByVal.
 
 (* The checking function is used for all kinds of assignment *)
 Definition check_assignment (oe: LOrgEnv.t) (p: place) (e: expr) : res unit :=
   do _ <- check_expr oe e;
   let oe1 := transfer_expr oe e in
-  (* clear dead regions *)
-  let oe2 := clear_dead_regions (dead_assigned_regions p) oe1 in  
   (* We cannot kill_loans here because there may be some active loans
   related to p and if we kill them, there may be soundness problem *)
-  check_shallow_write_place oe2 p.
+  check_shallow_write_place oe1 p.
 
 
 Definition transfer_assign_variant (oe: LOrgEnv.t) (p: place) (enum_id: ident) (fid: ident) (e: expr) : LOrgEnv.t :=
@@ -271,11 +251,9 @@ Definition transfer_assign_variant (oe: LOrgEnv.t) (p: place) (enum_id: ident) (
               let orgs_src := co.(co_generic_origins) in
               let ty_dest := replace_origin_in_type ty_i (combine orgs_src orgs_dest) in
               let oe1 := transfer_expr oe e in
-              (* clear dead regions *)
-              let oe2 := clear_dead_regions (dead_assigned_regions p) oe1 in
               (* After checking the evaluation of e *)
-              let oe3 := kill_loans oe2 p in
-              flow_loans oe3 ty_src ty_dest ByVal
+              let oe2 := kill_loans oe1 p in
+              flow_loans oe2 ty_src ty_dest ByVal
           (* It would cause error before borrow checking *)
           | _ => oe
           end
@@ -292,11 +270,9 @@ Definition transfer_Sbox (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t :=
   let ty_dest := typeof_place p in
   let ty_src := Tbox (typeof e) in
   let oe1 := transfer_expr oe e in
-  (* clear dead regions *)
-  let oe2 := clear_dead_regions (dead_assigned_regions p) oe1 in
   (* After checking the evaluation of e *)
-  let oe3 := kill_loans oe2 p in
-  flow_loans oe3 ty_src ty_dest ByVal.
+  let oe2 := kill_loans oe1 p in
+  flow_loans oe2 ty_src ty_dest ByVal.
 
   
 (* bind the origins in two type *)
@@ -430,12 +406,10 @@ Definition transfer_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: 
       let oe3 := flow_loans_list oe2 args_tyl sig_tyl ByVal in
       (* apply the effect of the function call *)
       let oe4 := after_call oe3 org_rels in
-      (* clear dead regions *)
-      let oe5 := clear_dead_regions (dead_assigned_regions p) oe4 in
       (* kill loans *)
-      let oe6 := kill_loans oe5 p in
+      let oe5 := kill_loans oe4 p in
       (* assign the return value to p *)
-      flow_loans oe6 rty tgt_rety ByVal
+      flow_loans oe5 rty tgt_rety ByVal
   | _ => oe1
 (* Error (error_msg pc ++ [MSG "it is not a function type in check_function_call"])       *)
   end.
@@ -453,10 +427,8 @@ Definition check_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: lis
       let oe3 := flow_loans_list oe2 args_tyl sig_tyl ByVal in
       (* apply the effect of the function call *)
       let oe4 := after_call oe3 org_rels in
-      (* clear dead regions *)
-      let oe5 := clear_dead_regions (dead_assigned_regions p) oe4 in
       (* check the assignment of assigning the return value to p *)
-      check_shallow_write_place oe5 p
+      check_shallow_write_place oe4 p
   | _ => OK tt
   end.
 
@@ -593,15 +565,14 @@ Definition check_return (f: function) (oe1: LOrgEnv.t) (p: place) : res unit :=
 
 (* Transition of statements *)
 
-Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (pc: node) (before: LoansEnv.t) : LoansEnv.t :=
+Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap.t RegionSet.t) (generic_regions: RegionSet.t) (pc: node) (before: LoansEnv.t) : LoansEnv.t :=
   match before with
   | LoansEnv.Bot => before
   | LoansEnv.State oe =>
       (* apply liveness result before transfer *)
-      (* let live_after := PMap.get pc live in *)
-      (* let live_before := RegionLiveness.transfer f cfg generic_regions pc live_after in *)
-      (* let oe := LOrgEnv.apply_liveness live_before oe in *)
-      (* let finish_transfer oe := (LoansEnv.State (LOrgEnv.apply_liveness live_after oe)) in *)
+      let live_after := PMap.get pc live in
+      let live_before := RegionLiveness.transfer f cfg generic_regions pc live_after in
+      let oe := LOrgEnv.apply_liveness live_before oe in
       let finish_transfer oe := (LoansEnv.State oe) in
       match cfg ! pc with
       | None => LoansEnv.Bot
@@ -662,7 +633,7 @@ Definition loans_flow_analyze (ce: composite_env) (f: function) (cfg: rustcfg) (
   match RegionLiveness.analyze f cfg with
   | Some live =>
       let init_oe := init_function f in
-      match LoansFlow.fixpoint cfg successors_instr (transfer ce f cfg) entry (LoansEnv.State init_oe) with
+      match LoansFlow.fixpoint cfg successors_instr (transfer ce f cfg live generic_regions) entry (LoansEnv.State init_oe) with
       (* For now we return liveness result for debug purpose *)
       | Some m => OK (live, m)
       | None =>
@@ -722,7 +693,10 @@ Definition get_borck_result generic_regions f cfg (live_loan_env: (PMap.t Region
   match loan_env !! pc with
   | LoansEnv.Bot => LoansEnv.Bot
   | LoansEnv.State oe =>
-      (* apply liveness result before checking *)
+      (* apply liveness result before checking. We need this operation
+      because we want the checking procedure to align with the
+      transfer function. It is also because if we do not apply
+      liveness information to le, there may be some imprecision *)
       let live_after := PMap.get pc live in
       let live_before := RegionLiveness.transfer f cfg generic_regions pc live_after in
       LoansEnv.State (LOrgEnv.apply_liveness live_before oe)
