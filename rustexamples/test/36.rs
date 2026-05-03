@@ -1,5 +1,9 @@
 //rustc +nightly 36.rs -Z polonius=next
 
+// We do not suppor covariant for nested share reference, so this test
+// case cannot be compiled by our compiler but can be compiled by
+// rustc with Polonius.
+
 fn main(){
     let mut v1: i32 = 1;
     let mut v2: i32 = 2;

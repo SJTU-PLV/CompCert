@@ -154,16 +154,28 @@ Qed.
   
 (** * Syntactic type checking  *)
 
-Definition type_deref (ty: type) : res type :=
+Inductive variance :=
+| Covariant
+| Invariant.
+
+Definition join_variance (v1 v2: variance) :=
+  match v1, v2 with
+  | Invariant, _
+  | _, Invariant => Invariant
+  | _, _ => Covariant
+  end.
+
+Definition type_deref (ty: type) : res (type * variance) :=
   match ty with
   (* Only support box type to be dereferenced for now *)
-  | Tbox tyelt => OK tyelt
-  | Treference _ _ tyelt => OK tyelt
+  | Tbox tyelt => OK (tyelt, Covariant)
+  (* We only suppor Invariant for nested shared reference for now *)
+  | Treference _ mut tyelt => OK (tyelt, Invariant)
   | _ => Error (msg "type_deref error")
   end.
 
-Lemma type_deref_some: forall ty1 ty2,
-    type_deref ty1 = OK ty2 ->
+Lemma type_deref_some: forall ty1 ty2 v,
+    type_deref ty1 = OK (ty2, v) ->
     ty1 = Tbox ty2 \/ (exists r mut, ty1 = Treference r mut ty2).
 Proof.
   destruct ty1; intros; simpl in *; try congruence.
@@ -250,9 +262,9 @@ Inductive wt_place : place -> Prop :=
     (WT1: te ! id = Some ty)
     (VTY: valid_type ty = true),
     wt_place (Plocal id ty)
-| wt_deref: forall p ty
+| wt_deref: forall p ty v
     (WT1: wt_place p)
-    (WT2: type_deref (typeof_place p) = OK ty),
+    (WT2: type_deref (typeof_place p) = OK (ty, v)),
     (* (VTY: valid_type ty = true), *)
     wt_place (Pderef p ty)
 | wt_field: forall p ty fid co orgs id
@@ -753,7 +765,7 @@ Variable te: typenv.
         end
     | Pderef p ty =>
         do _ <- type_check_place p;
-        do ty1 <- type_deref (typeof_place p);
+        do (ty1, _) <- type_deref (typeof_place p);
         if type_eq ty ty1 then
           OK tt
         else

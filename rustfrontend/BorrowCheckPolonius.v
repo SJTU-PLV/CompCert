@@ -162,11 +162,15 @@ Fixpoint flow_loans (e: LOrgEnv.t) (s d: type) (fk: flow_kind) : LOrgEnv.t :=
       let e1 := flow_loans_by_regions e org1 org2 fk in
       (* Rust does not support "types differ in mutability", so we can
          assume that the type checking has check that mut1 = mut2 *)
-      let fk' := match mut1 with
-                | Mutable => ByRef
-                | Immutable => ByVal
-                 end in
-      flow_loans e1 ty1 ty2 (meet_flow_kinds fk fk')
+      (** To simplify the proof, we assume all regions nested within
+      reference are invariant. This of course would reduce the
+      precision of the borrow checking, see
+      rustexamples/test/48_shr_ref_invariant.rs for an example. *)
+      (* let fk' := match mut1 with *)
+      (*           | Mutable => ByRef *)
+      (*           | Immutable => ByVal *)
+      (*            end in *)
+      flow_loans e1 ty1 ty2 (meet_flow_kinds fk ByRef)
   | Tbox ty1, Tbox ty2 =>
       (* Box is covariant over ty1/ty2*)
       flow_loans e ty1 ty2 (meet_flow_kinds fk ByVal)

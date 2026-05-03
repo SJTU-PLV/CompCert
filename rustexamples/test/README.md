@@ -24,7 +24,9 @@ This generates:
 By default, the comparison script runs nightly `rustc` with
 `-Z polonius=next`.
 
-> For now, the only failed test case is `21struct_enum_generic.rs` which involves some pattern match mechanism we do not support
+There are two cases (`36.rs` and `48_shr_ref_invariant.rs`) that can be compiled by `rustc` with `-Z polonius=next` but cannot be compiled by our compiler because of the limitation of **covariance** support in our borrow checker.
+
+> For now, the test case `21struct_enum_generic.rs` contain some pattern match mechanism we do not support, so you can see it is the only FAIL test case.
 
 ## Explanation of (part of) the test cases
 

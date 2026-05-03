@@ -560,6 +560,11 @@ Lemma get_owner_loc_footprint_map_after_invalidate_ref: forall (fpm: fp_map) ph1
            /\ invalidate_conflict_ref ph2 ak am fp' = fp.
 Admitted.
 
+Lemma get_owner_path_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ak am ph vs,
+    get_owner_path_map ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK (ph, vs) ->
+    get_owner_path_map ph1 fpm = OK (ph, vs).
+Admitted.
+
 
 (** Proof of the preservation of borrow check invariant *)
 
@@ -879,12 +884,14 @@ Lemma borrow_check_inv_shallow_write: forall (fpm1 fpm2 fpm3 fpm4: fp_map) id ph
     borrow_check_fpm_vals_inv fpm1 fpl ->
     (* wt_footprint_list ce fpm1 tyl fpl -> *)
     (* wt_fpm ce fpm1 -> *)
-    get_owner_path_map (id, phl) fpm1 = OK (tgt, vs) ->
+    (** Adhoc: we first do invalidation because we need to match the
+    static borrow checking *)
+    fpm2 = invalidate_conflict_ref_fpm (id, phl) AWrite BorrowCheckDomain.Ashallow fpm1 ->
+    get_owner_path_map (id, phl) fpm2 = OK (tgt, vs) ->
     (* If we do not check this property, then some path may point to
     the descendant of tgt which cannot be invalidated by the shallow
     access *)
-    check_path_is_dropped fpm1 tgt = OK true ->
-    fpm2 = invalidate_conflict_ref_fpm (id, phl) AWrite BorrowCheckDomain.Ashallow fpm1 ->
+    check_path_is_dropped fpm2 tgt = OK true ->    
     (* This clearing operation is used to align with the kill loans operation. *)
     clear_footprint_map ce tgt fpm2 = OK fpm3 ->
     fpm4 = kill_paths_ref_fpm vs fpm3 ->

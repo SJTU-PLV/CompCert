@@ -32,7 +32,7 @@ Fixpoint wt_projections (ty: type) (phl: list projection) : res type :=
   | ph :: phl1 =>
       do ty1 <- 
            match ph with
-           | proj_deref => type_deref ty
+           | proj_deref => do (ty1, _) <- type_deref ty; OK ty1
            | proj_field fid => type_field ce ty fid
            | proj_downcast fid => type_downcast ce ty fid
            end;
@@ -44,6 +44,32 @@ Definition wt_path (te: typenv) (phs: path) : res type :=
   match te ! id with
   | Some ty =>
       wt_projections ty phl
+  | None =>
+      Error (msg "no local type")
+  end.
+
+Fixpoint wt_projections_variance (ty: type) (phl: list projection) (v: variance) : res (type * variance):=
+  match phl with
+  | nil => OK (ty, v)
+  | ph :: phl1 =>
+      match ph with
+      | proj_deref => 
+          do (ty1, v1) <- type_deref ty;
+          wt_projections_variance ty1 phl1 (join_variance v v1)          
+      | proj_field fid => 
+          do fty <- type_field ce ty fid;
+          wt_projections_variance fty phl1 v
+      | proj_downcast fid => 
+          do fty <- type_downcast ce ty fid;
+          wt_projections_variance fty phl1 v
+      end
+  end.
+
+Definition wt_path_variance (te: typenv) (phs: path) : res (type * variance) :=
+  let (id, phl) := phs in
+  match te ! id with
+  | Some ty =>
+      wt_projections_variance ty phl Covariant
   | None =>
       Error (msg "no local type")
   end.
@@ -584,7 +610,7 @@ Fixpoint get_owner_footprint_type ce (phl: list projection) (ty: type) (fp: foot
   | ph :: l =>
       match ph, fp with
       | proj_deref , fp_box _ fp1 =>
-          do ty1 <- type_deref ty;
+          do (ty1, _) <- type_deref ty;
           get_owner_footprint_type ce l ty1 fp1
       | proj_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
@@ -1454,11 +1480,9 @@ Definition var_to_path (v: ident * type) : path := (fst v, nil).
 Definition vars_to_paths (l: list (ident * type)) : list path :=
   map var_to_path l.
 
-Section SMALLSTEP.
 
-Variable ge: genv.
 
-Definition before_write_place (fpm1: fp_map) (p: place) : res (path * views * fp_map) :=
+Definition before_write_place ce (fpm1: fp_map) (p: place) : res (path * views * fp_map) :=
   do (ph, vs) <- get_owner_path_map p fpm1;
   (* This property should be guaranteed by the correct insertion of
     drop. Since we have no way to express this guarantee provided by
@@ -1466,20 +1490,23 @@ Definition before_write_place (fpm1: fp_map) (p: place) : res (path * views * fp
     semantics. *)
   do is_dropped <- check_path_is_dropped fpm1 ph;
   if is_dropped then
-    let fpm2 := invalidate_conflict_ref_fpm p AWrite Ashallow fpm1 in  
     (* Before overwrite the target location, we should first set it to
     fp_uninit so that the original fp_ref in this location is removed
-    and we can establish invariant before overwriting a new value. Maybe in high-level spec without views at fp_ref, we can remove this extra operation because the cleared place would be immediately assigned with value. *)
-    do fpm3 <- clear_footprint_map ge ph fpm2;
+    and we can establish invariant before overwriting a new
+    value. Maybe in high-level spec without views at fp_ref, we can
+    remove this extra operation because the cleared place would be
+    immediately assigned with value. *)
+    do fpm2 <- clear_footprint_map ce ph fpm1;
     (* To make the views at each reference precise. Note that we
     should also kill the loans in the evaluated value (e.g., consider
     x = &mut *x. Therefore we return the views of p. *)
-    OK (ph, vs, kill_paths_ref_fpm vs fpm3)
+    OK (ph, vs, kill_paths_ref_fpm vs fpm2)
   else Error nil.
 
-Definition eval_assign (fpm1: fp_map) (p: place) (e: expr) : res (path * footprint * fp_map) :=
-  do (vfp, fpm2) <- eval_expr ge fpm1 e;
-  do (ph_vs, fpm3) <- before_write_place fpm2 p;
+Definition eval_assign ce (fpm1: fp_map) (p: place) (e: expr) : res (path * footprint * fp_map) :=
+  do (vfp, fpm2) <- eval_expr ce fpm1 e;
+  let fpm3 := invalidate_conflict_ref_fpm p AWrite Ashallow fpm2 in
+  do (ph_vs, fpm4) <- before_write_place ce fpm3 p;
   let (ph, vs) := ph_vs in
   (* We also need to do invalidation on vfp? I think we cannot create
   some reference which borrows prefix of shallow children parts of the
@@ -1487,17 +1514,22 @@ Definition eval_assign (fpm1: fp_map) (p: place) (e: expr) : res (path * footpri
   the static borrow checking would check this situation, therefore we
   need to do invalidation on the evaluated footprint. *)
   let vfp1 := invalidate_conflict_ref p AWrite Ashallow vfp in
-  OK (ph, (kill_paths_ref vs vfp1), fpm3).
+  OK (ph, (kill_paths_ref vs vfp1), fpm4).
+
+
+Section SMALLSTEP.
+
+Variable ge: genv.
 
 
 Inductive step : state -> trace -> state -> Prop :=
 | step_assign: forall f e (p: place) vfp fpm1 fpm2 fpm3 ph ns k sup
-    (EVAL: eval_assign fpm1 p e = OK (ph, vfp, fpm2))    
+    (EVAL: eval_assign ge fpm1 p e = OK (ph, vfp, fpm2))    
     (ASS: set_footprint_map ph vfp fpm2 = OK fpm3),
     step (State f (Sassign p e) k ns fpm1 sup) E0 (State f Sskip k ns fpm3
  sup)
 | step_assign_variant: forall f e (p: place) k fpm1 fpm2 fpm3 vfp co fid enum_id orgs ph fty ns sup fofs tag
-    (EVAL: eval_assign fpm1 p e = OK (ph, vfp, fpm2))
+    (EVAL: eval_assign ge fpm1 p e = OK (ph, vfp, fpm2))
     (* necessary for clightgen simulation *)
     (TYP: typeof_place p = Tvariant orgs enum_id)
     (CO: ge.(genv_cenv) ! enum_id = Some co)
@@ -1508,7 +1540,7 @@ Inductive step : state -> trace -> state -> Prop :=
     (ASS: set_footprint_map ph (fp_enum enum_id tag fid fofs vfp) fpm2 = OK fpm3),
     step (State f (Sassign_variant p enum_id fid e) k ns fpm1 sup) E0 (State f Sskip k ns fpm3 sup)
 | step_box: forall f e (p: place) k ty fpm1 fpm2 fpm3 vfp ph ns sup
-    (EVAL: eval_assign fpm1 p e = OK (ph, vfp, fpm2))
+    (EVAL: eval_assign ge fpm1 p e = OK (ph, vfp, fpm2))
     (TYP: typeof_place p = Tbox ty)
     (* (CAST: sem_cast v (typeof e) ty = OK v1) *)
     (ASS: set_footprint_map ph (fp_box (Mem.fresh_block sup) vfp) fpm2 = OK fpm3),
@@ -1589,7 +1621,7 @@ keeps the drop statement for the place that is init. *)
     (* We need to first putback the ref-passed location and the do the
     assignment because p may locate in those ref-passed locations *)
     (PUTBACK: receive_return_footprint fpm1 (map (fun '(id, (ph, (vs, _, _))) => (id, ph, vs)) phl) v inout_fpm = OK (v1, fpm2))
-    (EVALP: before_write_place fpm2 p = OK (ph, vs, fpm3))    
+    (EVALP: before_write_place ge fpm2 p = OK (ph, vs, fpm3))    
     (* (CASTED: sval_casted v1 (typeof_place p)) *)
     (ASS: set_footprint_map ph (kill_paths_ref vs v1) fpm3 = OK fpm4),
     step (Returnstate v inout_fpm sup (Kcall p f phl ns fpm1 k)) E0 (State f Sskip k ns fpm4 sup)

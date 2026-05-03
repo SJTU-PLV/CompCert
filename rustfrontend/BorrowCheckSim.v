@@ -863,8 +863,8 @@ Lemma invalidate_conflict_ref_fpm_coherent_eq: forall phl id (fpm: fp_map) ak am
 Admitted.   
 
 Lemma invalidate_conflict_ref_fpm_check_path_is_dropped: forall phl id ak am (fpm: fp_map) ph,
-    check_path_is_dropped fpm ph = OK true ->
-    check_path_is_dropped (invalidate_conflict_ref_fpm (id, phl) ak am fpm) ph = OK true.
+    check_path_is_dropped fpm ph = 
+    check_path_is_dropped (invalidate_conflict_ref_fpm (id, phl) ak am fpm) ph.
 Admitted.
 
 Hint Resolve 
@@ -1046,7 +1046,7 @@ Proof.
     (* evaluate expr preserves borrow check invariant. We should write
     it in a separated lemma *)
     exploit (@eval_expr_preserve_borchk_inv ame); eauto.
-    intros BORCK_INV1.  (* & WTFPM1 & WTFP1). *)
+    intros BORCK_INV1.  (* & WTFPM1 & WTFP1). *)    
     (* shallow write preserves borrow check invariant *)
     exploit (@borrow_check_inv_shallow_write ame); eauto.
     (* econstructor. eauto. econstructor. *)
@@ -1059,8 +1059,8 @@ Proof.
     intros BORCK_INV3. (* & WTFP3 & WTFPM3). *)
     (* derive the memory predicate before setting the footprint into
     fpm *)
-    exploit invalidate_conflict_ref_fpm_check_path_is_dropped; eauto.
-    intros ISDROP1.    
+    (* erewrite <-invalidate_conflict_ref_fpm_check_path_is_dropped in EQ1; eauto. *)
+    (* intros ISDROP1.     *)
     exploit clear_is_dropped_fp_map_coherent. eauto. eapply EQ2.
     eauto with invalidate_fp_ref.
     intros (mp2' & COH2 & MPIMP1).
@@ -1078,7 +1078,8 @@ Proof.
     preservation leamm *) admit.
     (* wt_place *) admit.
     eapply BORCK_INV1.
-    rewrite POP. eapply EQ0.
+    rewrite POP. 
+    eapply get_owner_path_map_after_invalidate_ref. eapply EQ0.
     intros (b & ofs & pfp & GPLOC & EVALP).
     (** TODO: prove that invalidate_fp_ref, kill_paths_ref_fpm and
     clear_footprint_map in [ph] does not change the location of [ph] *)

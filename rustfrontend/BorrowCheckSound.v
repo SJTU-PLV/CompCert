@@ -29,11 +29,20 @@ Definition append_projs (phl: list projection) (ph: path) :=
 
 (** Move to other files. Properties of wt_path  *)
 
+Lemma wt_projections_append ce: forall phl1 phl2 ty1 ty2 ty3,
+    wt_projections ce ty1 phl1 = OK ty2 ->
+    wt_projections ce ty2 phl2 = OK ty3 ->
+    wt_projections ce ty1 (phl1 ++ phl2) = OK ty3.
+Admitted.
+
+
 Lemma wt_path_append ce: forall ph phl ty1 ty2 te,
     wt_path ce te ph = OK ty1 ->
     wt_projections ce ty1 phl = OK ty2 ->
     wt_path ce te (append_projs phl ph) = OK ty2.
 Admitted.
+
+
 
 Section ADT_ENV.
 
@@ -307,6 +316,12 @@ Ltac destr_if_with_name H name :=
       destruct x eqn: name; try congruence
   end.
 
+Lemma get_reachable_footprint_append: forall phl1 phl2 fp1 fp2 fp3 (fpm: fp_map),
+    get_reachable_footprint fpm phl1 fp1 = OK fp2 ->
+    get_reachable_footprint fpm phl2 fp2 = OK fp3 ->
+    get_reachable_footprint fpm (phl1 ++ phl2) fp1 = OK fp3.
+Admitted.
+
   
 (* get_reachable_footprint_map can be divided into get_owner_path_map
 and then get_reachable_footprint *)
@@ -328,6 +343,14 @@ Lemma get_owner_path_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ph v
     get_owner_path_map ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK (ph, vs) ->
     get_owner_path_map ph1 fpm = OK (ph, vs).    
 Admitted.
+
+
+Lemma get_reachable_footprint_after_invalidate_ref: forall phl (fpm: fp_map) ph ak am fp fp1,
+    get_reachable_footprint (invalidate_conflict_ref_fpm ph ak am fpm) phl (invalidate_conflict_ref ph ak am fp) = OK fp1 ->
+    exists fp2, get_reachable_footprint fpm phl fp = OK fp2
+           /\ invalidate_conflict_ref ph ak am fp2 = fp1.
+Admitted.
+
 
 Lemma get_reachable_footprint_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ak am fp,
     get_reachable_footprint_map (invalidate_conflict_ref_fpm ph2 ak am fpm) ph1 = OK fp ->
@@ -359,12 +382,14 @@ Qed.
 
 Hint Resolve get_owner_footprint_map_after_invalidate_ref
              get_owner_path_map_after_invalidate_ref
+             get_reachable_footprint_after_invalidate_ref
              get_reachable_footprint_map_after_invalidate_ref
              fpm_to_tenv_after_invalidate_ref
              fpm_to_tenv_after_invalidate_ref: invalidate_fp_ref.
 
 Hint Rewrite get_owner_footprint_map_after_invalidate_ref
              get_owner_path_map_after_invalidate_ref
+             get_reachable_footprint_after_invalidate_ref
              get_reachable_footprint_map_after_invalidate_ref
              fpm_to_orgm_after_invalidate_ref
              fpm_to_tenv_after_invalidate_ref: invalidate_fp_ref.
@@ -560,6 +585,37 @@ Proof.
   exploit illegal_access_false_implies; eauto. intros CONFLICT_FALSE.
   erewrite loans_approx_views_not_conflict; eauto.
 Qed.
+
+Lemma sound_loan_analysis_footprint_reachable: forall le fpm fp ty fp1 ty1 phl1,
+    sound_loan_analysis_footprint ce le fpm fp ty ->
+    get_reachable_footprint fpm phl1 fp = OK fp1 ->
+    wt_projections ce ty phl1 = OK ty1 ->
+    sound_loan_analysis_footprint ce le fpm fp1 ty1.
+Proof.
+  intros. red. intros.
+  eapply H. 
+  eapply get_reachable_footprint_append; eauto.
+  eapply wt_projections_append; eauto.
+Qed.
+
+Lemma invalidate_conflict_ref_preserves_borchk_approx: forall fp fpm p am ak le ty
+    (SOUND: sound_loan_analysis_footprint ce le fpm fp ty)
+    (ILL_ACCESS: illegal_access le p am ak = false),
+    sound_loan_analysis_footprint ce le (invalidate_conflict_ref_fpm p ak am fpm) (invalidate_conflict_ref p ak am fp) ty.
+Proof.
+  intros. red.
+  intros.
+  exploit get_reachable_footprint_after_invalidate_ref; eauto.
+  intros (fp' & A1 & A2).
+  destruct fp'; inv A2.
+  exploit SOUND; eauto.
+  intros (ls1 & B1 & (rph & B2) & B3). subst.  
+  exploit illegal_access_false_implies; eauto. intros CONFLICT_FALSE.
+  erewrite loans_approx_views_not_conflict in *; eauto.
+  exists ls1. repeat apply conj; eauto.
+  autorewrite with invalidate_fp_ref. auto.
+Qed.    
+
 
 (* It should be straightforward *)
 Lemma sound_loan_analysis_footprint_inside: forall live le fpm fp ph ty
@@ -808,6 +864,17 @@ Proof.
     inv WT. auto.
 Admitted.
 
+
+(** Important TODO  *)
+Lemma before_write_place_sound: forall fpm1 fpm2 le1 live fp ty p ph vs
+    (SOUND: sound_loan_analysis ce live le1 fpm1)
+    (SOUND_FP: sound_loan_analysis_footprint ce le1 fpm1 fp ty)
+    (WRITE: before_write_place ce fpm1 p = OK (ph, vs, fpm2)),
+    sound_loan_analysis ce live (kill_loans le1 p) fpm2
+    /\ sound_loan_analysis_footprint ce (kill_loans le1 p) fpm2 (kill_paths_ref vs fp) ty.
+Admitted.
+
+
 (* Properties of Kildall solution *)
 Lemma loans_flow_analyze_successor: forall entry cfg pc1 instr pc2 f live LoansEnv le2
     (AN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
@@ -887,13 +954,28 @@ Proof.
     exploit eval_expr_preserves_borchk_approx; eauto.
     (* wt_expr *) admit.
     intros (BORROW_APPRO2 & BORROW_APPRO2_FP).
+    (* soundness w.r.t. to invalidate_fp_ref *)
+    set (fpm1' := (invalidate_conflict_ref_fpm p AWrite Ashallow x2)) in *.
+    set (fp1' := (invalidate_conflict_ref p AWrite Ashallow x1)) in *.
+    unfold check_shallow_write_place in BORCKP. destr_if_with_name BORCKP ILLP.    
+    eapply invalidate_conflict_ref_fpm_preserves_borchk_approx in BORROW_APPRO2 as BORROW_APPRO3.
+    2: eauto.
+    eapply invalidate_conflict_ref_preserves_borchk_approx in BORROW_APPRO2_FP as BORROW_APPRO3_FP. 
+    2: eauto.    
     (* soundness w.r.t. before_write_place *)
     set (le2:= (kill_loans (transfer_expr loans_env1 e) p)).
-    assert (BORROW_APPRO3: sound_loan_analysis ce live_st le2 fpm2). admit.
-    assert (BORROW_APPRO3_FP: sound_loan_analysis_footprint ce le2 fpm2 (kill_paths_ref vs (invalidate_conflict_ref p AWrite Ashallow x1)) (typeof e)). admit.
+    exploit before_write_place_sound; eauto. intros (BORROW_APPRO4 & BORROW_APPRO4_FP).  
     (* soundness w.r.t. flow_loans *)
     set (le3:= flow_loans le2 (typeof e) (typeof_place p) ByVal).
-    assert (BORROW_APPRO4: sound_loan_analysis ce (live!!pc) le3 fpm3). admit.
+
+    (* Lemma flow_loans_sound: forall le1 le2 ty1 ty2 fk *)
+    (*     (SOUND: sound_loan_analysis ce live le1 fpm1) *)
+    (*     (SOUND_FP: sound_loan_analysis_footprint ce le1 fpm1 fp ty1) *)
+    (*     (WTPH:  *)
+    (*     (SET_FP: set_footprint_map  *)
+    (*     sound_loan_analysis ce live (flow_loans le1 ty1 ty2) fpm2 *)
+        
+    (* assert (BORROW_APPRO5: sound_loan_analysis ce (live!!pc) le3 fpm3). admit. *)
     
     (* Start to prove local sound-approximation of one step transition *)
     exploit loans_flow_analyze_successor; eauto. left. reflexivity.
@@ -904,7 +986,7 @@ Proof.
     eapply sound_loan_analysis_liveness_monotonicity.
     2: { eapply region_liveness_analyze_successor; eauto. left. auto. }
     eapply sound_loan_analysis_monotonicity. eapply GE2. eauto.
-Admitted.
+Admitted.    
 
 End BORROW_CHECK.
 
