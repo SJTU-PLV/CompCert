@@ -163,6 +163,43 @@ Inductive footprint : Type :=
 | fp_object (id: ident) (obj: (mem_repr (ame id))) (exposed: list (ident * ((block * Z) * type * footprint)))
 .
 
+(* Induction principle for footprint *)
+Section FP_IND.
+
+Variable (P: footprint -> Prop)
+  (HPemp: P fp_emp)
+  (HPuninit: forall sz al, P (fp_uninit sz al))
+  (HPscalar: forall chunk v, P (fp_scalar chunk v))
+  (HPbox: forall (b : block) (fp : footprint), P fp -> P (fp_box b fp))
+  (HPstruct: forall id fpl, (forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl -> P ffp) -> P (fp_struct id fpl))
+  (HPenum: forall id (tag : Z) fid fofs (ffp : footprint), P ffp -> P (fp_enum id tag fid fofs ffp))
+  (HPref: forall mut b ofs ref_owner vs, P (fp_ref mut b ofs ref_owner vs))
+  (HPobj: forall id obj bors, (forall fid b ofs ffp, In (fid, (b, ofs, ffp)) bors -> P ffp) -> P (fp_object id obj bors)).
+
+Fixpoint strong_footprint_ind t: P t.
+Proof.
+  destruct t.
+  - apply HPemp.
+  - apply HPuninit.
+  - apply HPscalar.
+  - eapply HPbox. specialize (strong_footprint_ind t); now subst.
+  - eapply HPstruct. induction fpl.
+    + intros. inv H.
+    + intros. destruct a as (fid1 & ofs1 & fp1).  simpl in H. destruct H.
+      * specialize (strong_footprint_ind fp1). inv H. apply strong_footprint_ind.
+        (* now subst. *)
+      * apply (IHfpl fid base fofs ffp H). 
+  - apply HPenum. apply strong_footprint_ind.
+  - apply HPref. 
+  - eapply HPobj. induction exposed.
+    + intros. inv H.
+    + intros. destruct a as (fid1 & ((b1 & ofs1) & fp1)). simpl in H. destruct H.
+      * specialize (strong_footprint_ind fp1). inv H. apply strong_footprint_ind.
+      * apply (IHexposed fid b ofs ffp H). 
+Qed.
+    
+End FP_IND.
+
 (* It is used to define the invariant for the dynamic borrow check *)
 Definition fp_graph := PTree.t footprint.
 
@@ -555,6 +592,44 @@ Definition get_owner_path_map (ps: path) (fpg: fp_graph) : res (path * views) :=
       get_owner_path fpg (id, nil) phl fp nil
   | _ => Error nil
   end.
+
+(* For temporary footprint, we want to skip this footprint and find a
+reachable path from this footprint to an owner path at fpg *)
+(** Important TODO: maybe we should not use borrow_check_inv_snapshot
+method to write invariant for temporary footprint and use this
+get_reachable_path to derive the views of reachable path from
+temporary footprint *)
+Fixpoint get_reachable_path (fpg: fp_graph) (phl: list projection) (fp: footprint) : res (path * views) :=
+  match phl with
+  | nil => Error nil
+  | pj :: l =>      
+      match pj, fp with
+      | proj_deref , fp_box _ fp1 =>          
+          get_reachable_path fpg l fp1
+      | proj_field fid, fp_struct _ fpl =>
+          match find_field fid fpl with
+          | Some (_, ffp) =>
+              get_reachable_path fpg l ffp
+          | None => Error nil
+          end
+      | proj_field fid, fp_object _ _ fpl =>
+          match find_field fid fpl with
+          | Some (_, ffp) =>
+              get_reachable_path fpg l ffp
+          | None => Error nil
+          end
+      | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
+          if ident_eq fid1 fid2 then
+            get_reachable_path fpg l fp1
+          else
+            Error nil
+      | proj_deref, fp_ref mut _ _ (Some ph2) rebor =>
+          do fp2 <- get_owner_footprint_map ph2 fpg;
+          get_owner_path fpg ph2 l fp2 rebor
+      | _, _  => Error nil
+      end
+  end.
+
 
 (* Get the target footprint from a source footprint and a path
 traversing the footprint. The result of this function should be the

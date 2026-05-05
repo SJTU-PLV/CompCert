@@ -87,45 +87,6 @@ Context {ame: adt_mem_env}.
 Notation footprint := (@footprint ame).
 Notation fp_map := (@fp_map ame).
 
-
-(* Induction principle for footprint *)
-Section FP_IND.
-
-Variable (P: footprint -> Prop)
-  (HPemp: P fp_emp)
-  (HPuninit: forall sz al, P (fp_uninit sz al))
-  (HPscalar: forall chunk v, P (fp_scalar chunk v))
-  (HPbox: forall (b : block) (fp : footprint), P fp -> P (fp_box b fp))
-  (HPstruct: forall id fpl, (forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl -> P ffp) -> P (fp_struct id fpl))
-  (HPenum: forall id (tag : Z) fid fofs (ffp : footprint), P ffp -> P (fp_enum id tag fid fofs ffp))
-  (HPref: forall mut b ofs ref_owner vs, P (fp_ref mut b ofs ref_owner vs))
-  (HPobj: forall id obj bors, (forall fid b ofs ffp, In (fid, (b, ofs, ffp)) bors -> P ffp) -> P (fp_object id obj bors)).
-
-Fixpoint strong_footprint_ind t: P t.
-Proof.
-  destruct t.
-  - apply HPemp.
-  - apply HPuninit.
-  - apply HPscalar.
-  - eapply HPbox. specialize (strong_footprint_ind t); now subst.
-  - eapply HPstruct. induction fpl.
-    + intros. inv H.
-    + intros. destruct a as (fid1 & ofs1 & fp1).  simpl in H. destruct H.
-      * specialize (strong_footprint_ind fp1). inv H. apply strong_footprint_ind.
-        (* now subst. *)
-      * apply (IHfpl fid base fofs ffp H). 
-  - apply HPenum. apply strong_footprint_ind.
-  - apply HPref. 
-  - eapply HPobj. induction exposed.
-    + intros. inv H.
-    + intros. destruct a as (fid1 & ((b1 & ofs1) & fp1)). simpl in H. destruct H.
-      * specialize (strong_footprint_ind fp1). inv H. apply strong_footprint_ind.
-      * apply (IHexposed fid b ofs ffp H). 
-Qed.
-    
-End FP_IND.
-
-
 (* We cannot write Forall (fun ... => sem_wt_loc ... in sem_wt_struct)
 which would report error that sem_wt_loc does not occur positively, so
 we define it here to make sem_wt_loc occurs positively in

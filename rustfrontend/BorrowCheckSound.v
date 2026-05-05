@@ -8,6 +8,7 @@ Require Import Events.
 Require Import Globalenvs.
 Require Import Smallstep SmallstepLinking SmallstepLinkingSafe.
 Require Import LanguageInterface CKLR Invariant.
+Require Import UnionFindDelete.
 Require Import Rusttypes Rustlight Rustlightown.
 Require Import RustOp RustIR RustIRcfg Rusttyping.
 Require Import RustIRspec.
@@ -23,6 +24,7 @@ Require Import BorrowCheckPolonius BorrowCheck BorrowCheckInv.
 Import ListNotations.
 
 Local Open Scope error_monad_scope.
+Local Open Scope Z_scope.
 
 Definition append_projs (phl: list projection) (ph: path) :=
   (fst ph, snd ph ++ phl).
@@ -177,7 +179,7 @@ Definition sound_loan_analysis_footprint ce (le: LOrgEnv.t) (fpm: fp_map) (fp: f
     (* Approximation: all (mutable) paths in the vs are approximated
     in the loans map *)
     /\ loans_approx_views (fpm_to_orgm fpm) ls mut vs.
-
+ 
 Definition sound_loan_analysis_footprint_list ce (le: LOrgEnv.t) (fpm: fp_map) (fpl: list footprint) (tyl: list type) : Prop :=
   Forall2 (sound_loan_analysis_footprint ce le fpm) fpl tyl.
 
@@ -190,6 +192,49 @@ Admitted.
 
 Global Instance sound_loan_analysis_footprint_list_Proper: Proper (eq ==> LOrgEnv.eq ==> eq ==> eq ==> eq ==>iff) sound_loan_analysis_footprint_list.
 Admitted.
+
+
+(** Over-approximation of equality relation in the loans map *)
+
+Definition region_relation_wrt_variance (r1 r2: origin) (va1 va2: variance) (le: LOrgEnv.t) :=
+  match va1, va2 with
+  | _, Invariant
+  | Invariant, _ => UFD.sameclass (LOrgEnv.uf le) r1 r2
+  | _, _ => True
+  end.
+
+Definition sound_region_relations ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) : Prop :=
+  forall ph1 ph2 ph vs1 vs2 phl va1 va2 ty1 ty2 r1 r2 mut1 mut2
+    (GET_PH1: get_owner_path_map ph1 fpm = OK (ph, vs1))
+    (GET_PH2: get_owner_path_map ph2 fpm = OK (ph, vs2))
+    (WTPH1: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl ph1) = OK (Treference r1 mut1 ty1, va1))
+    (WTPH2: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl ph2) = OK (Treference r2 mut2 ty2, va2))
+    (LIVE_REG1: RegionSet.In r1 live)
+    (LIVE_REG2: RegionSet.In r2 live),
+    region_relation_wrt_variance r1 r2 va1 va2 le.
+
+
+Definition sound_region_relations_footprint ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) (fp: footprint) (ty: type) : Prop :=
+  forall phl1 ph2 ph vs1 vs2 phl va1 va2 ty1 ty2 r1 r2 mut1 mut2
+    (GET_PH1: get_reachable_path fpm phl1 fp = OK (ph, vs1))
+    (GET_PH2: get_owner_path_map ph2 fpm = OK (ph, vs2))
+    (WTPH1: wt_projections_variance ce ty (phl1 ++ phl) Covariant = OK (Treference r1 mut1 ty1, va1))
+    (WTPH2: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl ph2) = OK (Treference r2 mut2 ty2, va2))
+    (LIVE_REG2: RegionSet.In r2 live),
+    region_relation_wrt_variance r1 r2 va1 va2 le.
+
+(* An instance of sound_region_relations where we focus on a specific
+   owner path [ph] and we have a reachable path with type [ty1] to
+   this owner path (note that this reachable path can be not given
+   here) *)
+Definition sound_region_relations_path (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) (ph: path) (ty1: type) (va1: variance) := 
+  forall ph2 vs2 phl r1 r2 mut1 mut2 va1' va2 ty1' ty2
+    (GET_PH2: get_owner_path_map ph2 fpm = OK (ph, vs2))
+    (WTPH2: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl ph2) = OK (Treference r2 mut2 ty2, va2))
+    (WTPH1: wt_projections_variance ce ty1 phl va1 = OK (Treference r1 mut1 ty1', va1'))
+    (LIVE_REG1: RegionSet.In r1 live)
+    (LIVE_REG2: RegionSet.In r2 live),
+    region_relation_wrt_variance r1 r2 va1' va2 le.
 
 
 (** Over-approximation of the init analysis *)
@@ -380,19 +425,28 @@ Proof.
   destruct (fpm ! i); try destr_fp_map_elt p; auto.
 Qed.
 
+Lemma fpm_to_orgm_after_set_footprint_map: forall (fpm1 fpm2: fp_map) ph fp,
+    set_footprint_map ph fp fpm1 = OK fpm2 ->
+    fpm_to_orgm fpm2 = fpm_to_orgm fpm1.
+Proof.
+Admitted.
+
+
 Hint Resolve get_owner_footprint_map_after_invalidate_ref
              get_owner_path_map_after_invalidate_ref
              get_reachable_footprint_after_invalidate_ref
              get_reachable_footprint_map_after_invalidate_ref
              fpm_to_tenv_after_invalidate_ref
-             fpm_to_tenv_after_invalidate_ref: invalidate_fp_ref.
+             fpm_to_tenv_after_invalidate_ref
+             fpm_to_orgm_after_set_footprint_map: invalidate_fp_ref.
 
 Hint Rewrite get_owner_footprint_map_after_invalidate_ref
              get_owner_path_map_after_invalidate_ref
              get_reachable_footprint_after_invalidate_ref
              get_reachable_footprint_map_after_invalidate_ref
              fpm_to_orgm_after_invalidate_ref
-             fpm_to_tenv_after_invalidate_ref: invalidate_fp_ref.
+             fpm_to_tenv_after_invalidate_ref
+             fpm_to_orgm_after_set_footprint_map: invalidate_fp_ref.
 
 (** Properties of operations on LOrgEnv.t  *)
 
@@ -875,6 +929,66 @@ Lemma before_write_place_sound: forall fpm1 fpm2 le1 live fp ty p ph vs
 Admitted.
 
 
+
+(** Important TODO  *)
+
+Lemma flow_loans_sound: forall fp le1 ty_src ty_tgt fk va_tgt fpm1 live1 live2 ph fpm2
+    (SOUND: sound_loan_analysis ce live1 le1 fpm1)
+    (SOUND_FP: sound_loan_analysis_footprint ce le1 fpm1 fp ty_src)
+    (REG_SOUND_FP: sound_region_relations_footprint ce live1 le1 fpm1 fp ty_src)
+    (REG_SOUND: sound_region_relations ce live1 le1 fpm1)
+    (* This property should be derived from before_write_place_sound *)
+    (REG_SOUND_PH: sound_region_relations_path live1 le1 fpm1 ph ty_tgt va_tgt)
+    (* What is the relation between live1 and live2? Can we just
+    use ty1 and ty2 to define this relation? One important point
+    is to say that if some region [r] is dead at [live1] but live
+    at [live2], then there must be no other path that can reach
+    the same location as [ph] must be a local path and we have
+    invalidated all path that reborros [ph]. We should also prove
+    that all regions in ty2 are either all live or all dead? *)
+    (SET_FP: set_footprint_map ph fp fpm1 = OK fpm2)
+    (GET_UNINIT: get_owner_footprint_map ph fpm1 = OK (type_to_uninit_footprint ce ty_tgt))
+    (* type checking result *)
+    (TYEQ: type_eq_except_origins ty_src ty_tgt = true)
+    (* Because we are using types to simulate footprint assignment,
+    this operation is sound only if the footprint matches the type *)
+    (WTFP: wt_footprint ce (fpm_to_tenv fpm1) ty_src fp)
+    (** Very subtle: the soundness of loans-flow analysis relies on
+     move checking result. *)
+    (INIT: deep_init fp = true),
+    sound_loan_analysis ce live2 (flow_loans le1 ty_src ty_tgt fk) fpm2
+    /\ sound_region_relations ce live2 (flow_loans le1 ty_src ty_tgt fk) fpm2.
+Proof.
+  induction fp using strong_footprint_ind; intros; inv WTFP.
+  (* fp_uninit *)
+  - inv INIT.
+  (* fp_scalar: boring case *)
+  - admit.
+  (* Tbox *)
+  - destruct ty_tgt; inv TYEQ.
+    (* We can split the set operations into two step. Then use
+    sound_loan_analysis_reachable and sound_xxx_refine to add some
+    fp_box uninit to fpm1 to satify the premised of I.H. *)
+    (* simpl. eapply IHfp; eauto. *)
+    (* admit. *)
+    (* admit. *)
+    (* instantiate (1 := ) *)
+    admit.
+  (* fp_struct *)
+  - destruct ty_tgt; inv TYEQ. 
+    split.
+    + red. intros.
+      (* how to judge that if fp_struct id fpl cannot reach a children of ph *)
+      
+
+  (* induction ty_src; intros; simpl. *)
+  (* - inv WTFP. split. *)
+  (*   + red. intros.  *)
+  (*     erewrite fpm_to_orgm_after_set_footprint_map; eauto. *)
+  (*     eapply SOUND. *)
+Abort.
+
+
 (* Properties of Kildall solution *)
 Lemma loans_flow_analyze_successor: forall entry cfg pc1 instr pc2 f live LoansEnv le2
     (AN: loans_flow_analyze ce f cfg entry = OK (live, LoansEnv))
@@ -967,13 +1081,6 @@ Proof.
     exploit before_write_place_sound; eauto. intros (BORROW_APPRO4 & BORROW_APPRO4_FP).  
     (* soundness w.r.t. flow_loans *)
     set (le3:= flow_loans le2 (typeof e) (typeof_place p) ByVal).
-
-    (* Lemma flow_loans_sound: forall le1 le2 ty1 ty2 fk *)
-    (*     (SOUND: sound_loan_analysis ce live le1 fpm1) *)
-    (*     (SOUND_FP: sound_loan_analysis_footprint ce le1 fpm1 fp ty1) *)
-    (*     (WTPH:  *)
-    (*     (SET_FP: set_footprint_map  *)
-    (*     sound_loan_analysis ce live (flow_loans le1 ty1 ty2) fpm2 *)
         
     (* assert (BORROW_APPRO5: sound_loan_analysis ce (live!!pc) le3 fpm3). admit. *)
     
