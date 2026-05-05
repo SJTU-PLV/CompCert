@@ -14,7 +14,7 @@ fn main(){
         q = &p1;
     } else {
         q = &p2;
-    }
+    } // Loans in 'q2 would be merged here which would propagate to 'p2 because we account nested shared reference as invariant
     // println!("{}", **q); // make sure q is live
     let mut tmp: i32 = **q;
     v1 = 2; // Use *p2 (i.e., v2) at the next line should not interfere with the use of v1

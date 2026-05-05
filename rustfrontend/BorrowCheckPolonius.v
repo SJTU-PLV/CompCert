@@ -4,6 +4,7 @@ Require Import AST.
 Require Import FSetWeakList DecidableType.
 Require Import Lattice Kildall.
 Require Import Rusttypes Rustlight RustIR RustIRcfg.
+Require Import Rusttyping.
 Require Import Errors.
 Require Import ReplaceOrigins.
 Require Import RegionLiveness BorrowCheckDomain.
@@ -146,20 +147,20 @@ Fixpoint check_exprlist (oe: LOrgEnv.t) (l: list expr) : res unit :=
 
 (* Flowing loans from source type to destination type *)
 
-Definition flow_loans_by_regions (e: LOrgEnv.t) (org_src org_tgt: origin) (fk: flow_kind) : LOrgEnv.t :=
-  match fk with
-  | ByVal =>
+Definition flow_loans_by_regions (e: LOrgEnv.t) (org_src org_tgt: origin) (va: variance) : LOrgEnv.t :=
+  match va with
+  | Covariant =>
       let st := LOrgSt.lub (LOrgEnv.get org_src e) (LOrgEnv.get org_tgt e) in
       LOrgEnv.set org_tgt st e
-  | ByRef =>
+  | Invariant =>
       LOrgEnv.union org_src org_tgt e
   end.
 
 (* Subtyping rules of rust borrow checker *)
-Fixpoint flow_loans (e: LOrgEnv.t) (s d: type) (fk: flow_kind) : LOrgEnv.t :=
+Fixpoint flow_loans (e: LOrgEnv.t) (s d: type) (va: variance) : LOrgEnv.t :=
   match s,d with
   | Treference org1 mut1 ty1, Treference org2 mut2 ty2 =>
-      let e1 := flow_loans_by_regions e org1 org2 fk in
+      let e1 := flow_loans_by_regions e org1 org2 va in
       (* Rust does not support "types differ in mutability", so we can
          assume that the type checking has check that mut1 = mut2 *)
       (** To simplify the proof, we assume all regions nested within
@@ -170,10 +171,10 @@ Fixpoint flow_loans (e: LOrgEnv.t) (s d: type) (fk: flow_kind) : LOrgEnv.t :=
       (*           | Mutable => ByRef *)
       (*           | Immutable => ByVal *)
       (*            end in *)
-      flow_loans e1 ty1 ty2 (meet_flow_kinds fk ByRef)
+      flow_loans e1 ty1 ty2 (join_variance va Invariant)
   | Tbox ty1, Tbox ty2 =>
       (* Box is covariant over ty1/ty2*)
-      flow_loans e ty1 ty2 (meet_flow_kinds fk ByVal)
+      flow_loans e ty1 ty2 (join_variance va Covariant)
   | Tstruct orgs1 id1, Tstruct orgs2 id2 
   | Tvariant orgs1 id1 , Tvariant orgs2 id2 =>
       (* type checking must ensure that id1 == id2 and len(orgs1) ==
@@ -188,10 +189,10 @@ Fixpoint flow_loans (e: LOrgEnv.t) (s d: type) (fk: flow_kind) : LOrgEnv.t :=
   | _, _ => e
   end.
           
-Fixpoint flow_loans_list (e: LOrgEnv.t) (ls ld: list type) (k: flow_kind) : LOrgEnv.t :=
+Fixpoint flow_loans_list (e: LOrgEnv.t) (ls ld: list type) (va: variance) : LOrgEnv.t :=
   match ls, ld with
   | s :: ls', d :: ld' =>
-      flow_loans_list (flow_loans e s d k) ls' ld' k
+      flow_loans_list (flow_loans e s d va) ls' ld' va
   | _, _ =>
       e
   end.
@@ -232,7 +233,7 @@ Definition transfer_assignment (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t 
   let oe1 := transfer_expr oe e in
   (* After checking the evaluation of e *)
   let oe2 := kill_loans oe1 p in
-  flow_loans oe2 ty_src ty_dest ByVal.
+  flow_loans oe2 ty_src ty_dest Covariant.
 
 (* The checking function is used for all kinds of assignment *)
 Definition check_assignment (oe: LOrgEnv.t) (p: place) (e: expr) : res unit :=
@@ -257,7 +258,7 @@ Definition transfer_assign_variant (oe: LOrgEnv.t) (p: place) (enum_id: ident) (
               let oe1 := transfer_expr oe e in
               (* After checking the evaluation of e *)
               let oe2 := kill_loans oe1 p in
-              flow_loans oe2 ty_src ty_dest ByVal
+              flow_loans oe2 ty_src ty_dest Covariant
           (* It would cause error before borrow checking *)
           | _ => oe
           end
@@ -276,7 +277,7 @@ Definition transfer_Sbox (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t :=
   let oe1 := transfer_expr oe e in
   (* After checking the evaluation of e *)
   let oe2 := kill_loans oe1 p in
-  flow_loans oe2 ty_src ty_dest ByVal.
+  flow_loans oe2 ty_src ty_dest Covariant.
 
   
 (* bind the origins in two type *)
@@ -407,13 +408,13 @@ Definition transfer_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: 
       (* transfer the arguments *)
       let oe2 := transfer_exprlist oe1 args in      
       (* flow the loans from arguments to the parameter types of the function *)
-      let oe3 := flow_loans_list oe2 args_tyl sig_tyl ByVal in
+      let oe3 := flow_loans_list oe2 args_tyl sig_tyl Covariant in
       (* apply the effect of the function call *)
       let oe4 := after_call oe3 org_rels in
       (* kill loans *)
       let oe5 := kill_loans oe4 p in
       (* assign the return value to p *)
-      flow_loans oe5 rty tgt_rety ByVal
+      flow_loans oe5 rty tgt_rety Covariant
   | _ => oe1
 (* Error (error_msg pc ++ [MSG "it is not a function type in check_function_call"])       *)
   end.
@@ -428,7 +429,7 @@ Definition check_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: lis
       (* transfer the arguments *)
       let oe2 := transfer_exprlist oe1 args in      
       (* flow the loans from arguments to the parameter types of the function *)
-      let oe3 := flow_loans_list oe2 args_tyl sig_tyl ByVal in
+      let oe3 := flow_loans_list oe2 args_tyl sig_tyl Covariant in
       (* apply the effect of the function call *)
       let oe4 := after_call oe3 org_rels in
       (* check the assignment of assigning the return value to p *)
@@ -529,7 +530,7 @@ Fixpoint kill_loans_list (e: LOrgEnv.t) (l: list (ident * type)) : LOrgEnv.t :=
 return type of this function *)
 Definition transfer_return (f: function) (oe1: LOrgEnv.t) (p: place) : LOrgEnv.t :=
   (** The following code is copied from check_return *)
-  let oe2 := flow_loans oe1 (typeof_place p) f.(fn_return) ByVal in
+  let oe2 := flow_loans oe1 (typeof_place p) f.(fn_return) Covariant in
   (* To accept more programs, we clear all the regions except the
     generic ones before checking dangling references. *)
   let generic_regions := regset_fun f in
@@ -546,7 +547,7 @@ Definition check_return (f: function) (oe1: LOrgEnv.t) (p: place) : res unit :=
     regions (except generic regions) after the return statement. *)
     Error (borrowed_place_error "cannot return" "transfer_return" p)
   else
-    let oe2 := flow_loans oe1 (typeof_place p) f.(fn_return) ByVal in
+    let oe2 := flow_loans oe1 (typeof_place p) f.(fn_return) Covariant in
     (* To accept more programs, we clear all the regions except the
     generic ones before checking dangling references. *)
     let generic_regions := regset_fun f in
@@ -577,6 +578,14 @@ Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap
       let live_after := PMap.get pc live in
       let live_before := RegionLiveness.transfer f cfg generic_regions pc live_after in
       let oe := LOrgEnv.apply_liveness live_before oe in
+      (* Why should we apply liveness here? Because if the next node
+      is a merge node, then if we do not apply liveness here to clear
+      some dead invariant relation, then at the next node we would
+      first merge loan env which would introduce imprecision due to
+      this unclear invariant relation. However, I cannot imagine an
+      example related to this imprecision, so we do not apply liveness
+      here. *)
+      (* let finish_transfer oe := (LoansEnv.State (LOrgEnv.apply_liveness live_after oe)) in *)
       let finish_transfer oe := (LoansEnv.State oe) in
       match cfg ! pc with
       | None => LoansEnv.Bot
@@ -627,7 +636,7 @@ Definition init_function (f: function) : LOrgEnv.t :=
                           let os := Live (LoanSet.singleton (Lextern elt)) in
                           LOrgEnv.set elt os acc) f.(fn_generic_origins) LOrgEnv.bot in
   (* flow the loans from the function arguments to the parameters *)
-  flow_loans_list oe1 f.(fn_param_types) (map snd f.(fn_params)) ByVal.
+  flow_loans_list oe1 f.(fn_param_types) (map snd f.(fn_params)) Covariant.
   
 (** Run Liveness analysis and Loans-flow analysis *)
 

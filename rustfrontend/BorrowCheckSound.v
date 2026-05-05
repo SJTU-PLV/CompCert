@@ -44,6 +44,22 @@ Lemma wt_path_append ce: forall ph phl ty1 ty2 te,
     wt_path ce te (append_projs phl ph) = OK ty2.
 Admitted.
 
+Lemma wt_path_append_inv ce: forall ph phl ty2 te,
+    wt_path ce te (append_projs phl ph) = OK ty2 ->
+    exists ty1,  wt_path ce te ph = OK ty1 
+            /\ wt_projections ce ty1 phl = OK ty2.
+Admitted.
+
+Lemma wt_projections_has_variance ce: forall phl ty1 ty2 va1,
+    wt_projections ce ty1 phl = OK ty2 ->
+    exists va2, wt_projections_variance ce ty1 phl va1 = OK (ty2, va2).
+Admitted.
+
+
+Lemma wt_path_has_variance ce: forall ph ty te,
+    wt_path ce te ph = OK ty ->
+    exists va, wt_path_variance ce te ph = OK (ty, va).
+Admitted.
 
 
 Section ADT_ENV.
@@ -428,6 +444,12 @@ Qed.
 Lemma fpm_to_orgm_after_set_footprint_map: forall (fpm1 fpm2: fp_map) ph fp,
     set_footprint_map ph fp fpm1 = OK fpm2 ->
     fpm_to_orgm fpm2 = fpm_to_orgm fpm1.
+Proof.
+Admitted.
+
+Lemma fpm_to_tenv_after_set_footprint_map: forall (fpm1 fpm2: fp_map) ph fp,
+    set_footprint_map ph fp fpm1 = OK fpm2 ->
+    fpm_to_tenv fpm2 = fpm_to_tenv fpm1.
 Proof.
 Admitted.
 
@@ -929,10 +951,51 @@ Lemma before_write_place_sound: forall fpm1 fpm2 le1 live fp ty p ph vs
 Admitted.
 
 
+(** Important TODO: how can we split a reachable path into two parts
+after setting a new footprint into the map?  *)
+Lemma get_reachable_footprint_map_after_set: forall fpm1 fpm2 ph1 ph2 vfp fp,
+    set_footprint_map ph1 vfp fpm1 = OK fpm2 ->
+    get_reachable_footprint_map fpm2 ph2 = OK fp ->
+    get_reachable_footprint_map fpm1 ph2 = OK fp
+    (* We first traverse fpm1 until we reach ph1 and then we start
+    from vfp to traverse fpm2 *)
+    \/ exists id2 phl1 phl2 vs, 
+        ph2 = (id2, phl1 ++ phl2)
+        /\ get_owner_path_map (id2, phl1) fpm1 = OK (ph1, vs)
+        /\ get_reachable_footprint fpm2 phl2 vfp = OK fp.
+Admitted.
+
+(** TODO: combine get_reachable_footprint and get_reachable_path?  *)
+(* Similar to get_reachable_footprint_map_after_set but we focus on
+the path here *)
+Lemma get_owner_path_map_after_set: forall fpm1 fpm2 ph1 ph2 vfp ph vs,
+    set_footprint_map ph1 vfp fpm1 = OK fpm2 ->
+    get_owner_path_map ph2 fpm2 = OK (ph, vs) ->
+    get_owner_path_map ph2 fpm1 = OK (ph, vs)
+    (* We first traverse fpm1 until we reach ph1 and then we start
+    from vfp to traverse fpm2 *)
+    \/ exists id2 phl1 phl2 vs, 
+        ph2 = (id2, phl1 ++ phl2)
+        /\ get_owner_path_map (id2, phl1) fpm1 = OK (ph1, vs)
+        /\ get_reachable_path fpm2 phl2 vfp = OK (ph, vs).
+Admitted.
+
+
+(** Important TODO  *)
+Lemma flow_loans_projections_spec: forall phl ty_src ty_tgt le va va1 va2 r1 r2 mut1 mut2 ty1 ty2,
+    wt_projections_variance ce ty_src phl va = OK (Treference r1 mut1 ty1, va1) ->
+    wt_projections_variance ce ty_tgt phl va = OK (Treference r2 mut2 ty2, va2) ->
+    LOrgSt.eq (LOrgEnv.get r2 (flow_loans le ty_src ty_tgt va)) (LOrgSt.lub (LOrgEnv.get r1 le) (LOrgEnv.get r2 le))
+    /\ match va1 with
+      | Invariant =>
+          UFD.sameclass (LOrgEnv.uf (flow_loans le ty_src ty_tgt va)) r1 r2
+      | _ => True
+      end.
+Admitted.
 
 (** Important TODO  *)
 
-Lemma flow_loans_sound: forall fp le1 ty_src ty_tgt fk va_tgt fpm1 live1 live2 ph fpm2
+Lemma flow_loans_sound: forall fp le1 ty_src ty_tgt fk va_tgt fpm1 live1 live2 ph ph_ty fpm2
     (SOUND: sound_loan_analysis ce live1 le1 fpm1)
     (SOUND_FP: sound_loan_analysis_footprint ce le1 fpm1 fp ty_src)
     (REG_SOUND_FP: sound_region_relations_footprint ce live1 le1 fpm1 fp ty_src)
@@ -949,44 +1012,127 @@ Lemma flow_loans_sound: forall fp le1 ty_src ty_tgt fk va_tgt fpm1 live1 live2 p
     (SET_FP: set_footprint_map ph fp fpm1 = OK fpm2)
     (GET_UNINIT: get_owner_footprint_map ph fpm1 = OK (type_to_uninit_footprint ce ty_tgt))
     (* type checking result *)
+    (* ph_ty is used to relate other types that bypass ph *)
+    (WTPH: wt_path ce (fpm_to_tenv fpm1) ph = OK ph_ty)
+    (TYEQ: type_eq_except_origins ph_ty ty_tgt = true)
     (TYEQ: type_eq_except_origins ty_src ty_tgt = true)
+    (WTFPM: wt_fpm ce fpm1)
     (* Because we are using types to simulate footprint assignment,
     this operation is sound only if the footprint matches the type *)
-    (WTFP: wt_footprint ce (fpm_to_tenv fpm1) ty_src fp)
+    (WTFP: wt_footprint ce (fpm_to_tenv fpm1) ty_src fp),
     (** Very subtle: the soundness of loans-flow analysis relies on
      move checking result. *)
-    (INIT: deep_init fp = true),
+    (* (INIT: deep_init fp = true), *)
     sound_loan_analysis ce live2 (flow_loans le1 ty_src ty_tgt fk) fpm2
     /\ sound_region_relations ce live2 (flow_loans le1 ty_src ty_tgt fk) fpm2.
 Proof.
-  induction fp using strong_footprint_ind; intros; inv WTFP.
-  (* fp_uninit *)
-  - inv INIT.
-  (* fp_scalar: boring case *)
-  - admit.
-  (* Tbox *)
-  - destruct ty_tgt; inv TYEQ.
-    (* We can split the set operations into two step. Then use
-    sound_loan_analysis_reachable and sound_xxx_refine to add some
-    fp_box uninit to fpm1 to satify the premised of I.H. *)
-    (* simpl. eapply IHfp; eauto. *)
-    (* admit. *)
-    (* admit. *)
-    (* instantiate (1 := ) *)
-    admit.
-  (* fp_struct *)
-  - destruct ty_tgt; inv TYEQ. 
-    split.
-    + red. intros.
-      (* how to judge that if fp_struct id fpl cannot reach a children of ph *)
+  intros. split.
+  - red. intros.
+    destruct (RegionSet.mem r live1) eqn: LIVE_REG1.
+    + eapply RegionSet.mem_2 in LIVE_REG1.
+      exploit get_reachable_footprint_map_after_set; eauto.
+      intros [A|(id1 & phl1 & phl2 & vs1 & A2 & A3 & A4)]; subst.
+      (* Case 1: we do not touch the newly set footprint *)
+      * erewrite fpm_to_orgm_after_set_footprint_map; eauto.
+        erewrite fpm_to_tenv_after_set_footprint_map in WTPH0; eauto.
+        exploit SOUND; eauto.
+        intros (ls1 & B1 & (rph & B2) & B3). subst.
+        (* easy: use flow_loans_monotonicity property *)
+        assert (GE: exists ls2, (LOrgEnv.get r (flow_loans le1 ty_src ty_tgt fk)) = ls2 
+                       /\ LOrgSt.ge ls2 (Live ls1)) by admit.
+        admit.
+      (* Case 2: we first reach the path that being set and then traverse the set footprint *)
+      * assert (GET_FP1: get_reachable_footprint fpm1 phl2 fp = OK (fp_ref mut b ofs opt_ph vs)).
+        (** This assertion is the most difficult part in proving the
+      soundness of setting a footprint in an owner path because it
+      relies on stack discipline invariant and the effect of shallow
+      write (which is very subtle). *)
+        admit.
+        edestruct (wt_path_append_inv ce (id1,phl1) phl2) as (ty1 & WT1 & WT2); eauto.
+        (* We should use sound_region_relations_path to relate [r] to
+        the region in [ty_tgt] so that we can know how we update the
+        loans in [r] in flow_loans (which only mention [ty_tgt]. *)
+        (** How to know that we can get wt_projections_variance ty_tgt
+      phl2? We should use wt_footprint and wt_fpm properties to say
+      that (type_eq_except_origins ty1 ty_tgt) *)
+        assert (TY_EQ1: type_eq_except_origins ty1 ty_tgt = true). admit.
+        (* Since we can project ty1 we can also project ty_tgt and ty_src *)
+        assert (PROJ_TY_TGT: exists r_tgt ty_tgt', wt_projections ce ty_tgt phl2 = OK (Treference r_tgt mut ty_tgt')) by admit.        
+        destruct PROJ_TY_TGT as (r_tgt & ty_tgt' & PROJ_TY_TGT).
+        assert (PROJ_TY_SRC: exists r_src ty_src', wt_projections ce ty_src phl2 = OK (Treference r_src mut ty_src')) by admit.
+        destruct PROJ_TY_SRC as (r_src & ty_src' & PROJ_TY_SRC).
+        (* Properties of the loans of r_src *)
+        exploit SOUND_FP. eauto. eauto.
+        intros (ls_src & B1 & (rph & B2) & B3). subst.
+        exploit wt_path_has_variance. eapply WT1. intros (va1 & WTPH1).
+        exploit wt_projections_has_variance. eapply WT2. instantiate (1 := va1).
+        intros (va2 & WTPJ1).
+        exploit wt_projections_has_variance. eapply PROJ_TY_TGT. instantiate (1 := va_tgt).
+        intros (va_tgt' & PROJ_TY_TGT').
+        (** TODO: Covariant here should adhere to fk  *)
+        exploit wt_projections_has_variance. eapply PROJ_TY_SRC. instantiate (1 := Covariant).
+        intros (va_src & PROJ_TY_SRC').
+        (* Strategt: first show how loans of r_src are flowed into
+        r_tgt by proving some properties of flow_loans; then use
+        REG_SOUND_PH to derive the relation between r_tgt and r to
+        show the properties of the loans in r *)
+        
+
+        destruct (RegionSet.mem r_tgt live1) eqn: LIVE_REG2.
+        -- eapply RegionSet.mem_2 in LIVE_REG2.
+           (* exploit REG_SOUND_PH. eauto. *)
+           
+           
+        (** Hard: If r_tgt is not live at live1, it means that ph is a
+        local variable because r_tgt is in ty_tgt. Then we can prove
+        ph is a local variable. Our strategy here is to first show
+        that (id1, phl1) must be the same as ph because fpm1 is
+        constructed after invalidation w.r.t. shallow write on ph, so
+        there must be no path reachable to ph. Then we can prove r =
+        r_tgt so LIVE_REG1 is a contradiction. *)
+        -- admit.
+
+    (** If r is not live at live1, we should prove that ident of ph0
+    must be the same as ph and ph must be a local variable because we
+    do not allow overlapped regions in the types of different local
+    variables. So GET_FP can be reduced to getting fp_ref from fp and
+    then we can use SOUND_FP *)
+    + admit.
       
+        
+      
+
+
+  (* induction fp using strong_footprint_ind; intros; inv WTFP. *)
+  (* (* fp_uninit *) *)
+  (* - inv INIT. *)
+  (* (* fp_scalar: boring case *) *)
+  (* - admit. *)
+  (* (* Tbox *) *)
+  (* - destruct ty_tgt; inv TYEQ. *)
+  (*   (* We can split the set operations into two step. Then use *)
+  (*   sound_loan_analysis_reachable and sound_xxx_refine to add some *)
+  (*   fp_box uninit to fpm1 to satify the premised of I.H. *) *)
+  (*   (* simpl. eapply IHfp; eauto. *) *)
+  (*   (* admit. *) *)
+  (*   (* admit. *) *)
+  (*   (* instantiate (1 := ) *) *)
+  (*   admit. *)
+  (* (* fp_struct *) *)
+  (* - destruct ty_tgt; inv TYEQ.  *)
+  (*   split. *)
+  (*   + red. intros. *)
+  (*     (* how to judge that if fp_struct id fpl cannot reach a children of ph *) *)
+
+
+
 
   (* induction ty_src; intros; simpl. *)
   (* - inv WTFP. split. *)
   (*   + red. intros.  *)
   (*     erewrite fpm_to_orgm_after_set_footprint_map; eauto. *)
   (*     eapply SOUND. *)
-Abort.
+(* Abort. *)
 
 
 (* Properties of Kildall solution *)
