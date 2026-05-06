@@ -62,6 +62,31 @@ Lemma wt_path_has_variance ce: forall ph ty te,
 Admitted.
 
 
+Lemma wt_path_variance_append ce: forall ph phl ty1 ty2 te va1 va2,
+    wt_path_variance ce te ph = OK (ty1, va1) ->
+    wt_projections_variance ce ty1 phl va1 = OK (ty2, va2) ->
+    wt_path_variance ce te (append_projs phl ph) = OK (ty2, va2).
+Admitted.
+
+Lemma wt_path_variance_append_inv ce: forall ph phl ty2 te va2,
+    wt_path_variance ce te (append_projs phl ph) = OK (ty2, va2) ->
+    exists ty1 va1, 
+      wt_path_variance ce te ph = OK (ty1, va1)
+      /\ wt_projections_variance ce ty1 phl va1 = OK (ty2, va2).    
+Admitted.
+
+Lemma wt_projections_variance_imply ce: forall phl ty va ty1 va1,
+    wt_projections_variance ce ty phl va = OK (ty1, va1) ->
+    wt_projections ce ty phl = OK ty1.
+Admitted.
+
+
+Lemma wt_path_variance_imply ce: forall ph ty1 va1 te,
+    wt_path_variance ce te ph = OK (ty1, va1) ->
+    wt_path ce te ph = OK ty1.
+Admitted.
+
+
 Section ADT_ENV.
 
 Context {ame: adt_mem_env}.
@@ -213,12 +238,18 @@ Admitted.
 (** Over-approximation of equality relation in the loans map *)
 
 Definition region_relation_wrt_variance (r1 r2: origin) (va1 va2: variance) (le: LOrgEnv.t) :=
-  match va1, va2 with
-  | _, Invariant
-  | Invariant, _ => UFD.sameclass (LOrgEnv.uf le) r1 r2
-  | _, _ => True
-  end.
+  if variance_eq va1 Covariant && variance_eq va2 Covariant then
+    True
+  else 
+    UFD.sameclass (LOrgEnv.uf le) r1 r2.
 
+
+(* Why not define this soundness of region relations in
+sound_loan_analysis? Because in sound_loan_analysis, we only consider
+the fp_ref can be actually reached, but in the soundness of region
+relations, we need to consider all the possibly reachable Treference
+from the aliased location even if they are not actually reachable in
+the current fpm *)
 Definition sound_region_relations ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) : Prop :=
   forall ph1 ph2 ph vs1 vs2 phl va1 va2 ty1 ty2 r1 r2 mut1 mut2
     (GET_PH1: get_owner_path_map ph1 fpm = OK (ph, vs1))
@@ -982,10 +1013,16 @@ Admitted.
 
 
 (** Important TODO  *)
-Lemma flow_loans_projections_spec: forall phl ty_src ty_tgt le va va1 va2 r1 r2 mut1 mut2 ty1 ty2,
+(** How to prevent we cannot flow r_src to r_tgt twice? For example,
+what if we have type like [&'a mut &'a mut i32]? So we can only know
+the loans in r2 is greater than the joined loans? *)
+Lemma flow_loans_projections_spec: forall phl ty_src ty_tgt le va va1 r1 r2 mut1 mut2 ty1 ty2,
+    type_eq_except_origins ty_src ty_tgt = true ->
     wt_projections_variance ce ty_src phl va = OK (Treference r1 mut1 ty1, va1) ->
-    wt_projections_variance ce ty_tgt phl va = OK (Treference r2 mut2 ty2, va2) ->
-    LOrgSt.eq (LOrgEnv.get r2 (flow_loans le ty_src ty_tgt va)) (LOrgSt.lub (LOrgEnv.get r1 le) (LOrgEnv.get r2 le))
+    (* The variance of target type is not important here because loans
+    flow depends on the variance of source type *)
+    wt_projections ce ty_tgt phl = OK (Treference r2 mut2 ty2) ->
+    LOrgSt.ge (LOrgEnv.get r2 (flow_loans le ty_src ty_tgt va)) (LOrgSt.lub (LOrgEnv.get r1 le) (LOrgEnv.get r2 le))
     /\ match va1 with
       | Invariant =>
           UFD.sameclass (LOrgEnv.uf (flow_loans le ty_src ty_tgt va)) r1 r2
@@ -1014,15 +1051,12 @@ Lemma flow_loans_sound: forall fp le1 ty_src ty_tgt fk va_tgt fpm1 live1 live2 p
     (* type checking result *)
     (* ph_ty is used to relate other types that bypass ph *)
     (WTPH: wt_path ce (fpm_to_tenv fpm1) ph = OK ph_ty)
-    (TYEQ: type_eq_except_origins ph_ty ty_tgt = true)
-    (TYEQ: type_eq_except_origins ty_src ty_tgt = true)
+    (TYEQ1: type_eq_except_origins ph_ty ty_tgt = true)
+    (TYEQ2: type_eq_except_origins ty_src ty_tgt = true)
     (WTFPM: wt_fpm ce fpm1)
     (* Because we are using types to simulate footprint assignment,
     this operation is sound only if the footprint matches the type *)
     (WTFP: wt_footprint ce (fpm_to_tenv fpm1) ty_src fp),
-    (** Very subtle: the soundness of loans-flow analysis relies on
-     move checking result. *)
-    (* (INIT: deep_init fp = true), *)
     sound_loan_analysis ce live2 (flow_loans le1 ty_src ty_tgt fk) fpm2
     /\ sound_region_relations ce live2 (flow_loans le1 ty_src ty_tgt fk) fpm2.
 Proof.
@@ -1076,13 +1110,31 @@ Proof.
         r_tgt by proving some properties of flow_loans; then use
         REG_SOUND_PH to derive the relation between r_tgt and r to
         show the properties of the loans in r *)
-        
-
+        exploit flow_loans_projections_spec. eapply TYEQ2. eauto. eauto. 
+        instantiate (1 := le1).
+        intros (C1 & C2).
         destruct (RegionSet.mem r_tgt live1) eqn: LIVE_REG2.
         -- eapply RegionSet.mem_2 in LIVE_REG2.
-           (* exploit REG_SOUND_PH. eauto. *)
-           
-           
+           erewrite (fpm_to_tenv_after_set_footprint_map fpm1 fpm2 ph) in *; eauto.
+           exploit REG_SOUND_PH. eauto.
+           eapply wt_path_variance_append. eapply WTPH1. eauto.
+           eauto. auto. auto.
+           intros REG_REL.
+           unfold region_relation_wrt_variance in REG_REL.
+           destr_if_with_name REG_REL VAR_EQ.
+        (** Hard: What if both va_tgt' and va2 are Covariant? It only
+        means that phl1 does not contain reference derefernce, so
+        (id1, phl1) is equal to ph. "va_tgt' is Covariant" can further
+        imply that the type [ph] is ty_tgt because if we get [ph] by
+        traversing some deference of reference, we cannot get va_tgt
+        is Covariant. So the only situtation is that the path of the
+        assginee is an owner path. Then we have [ty_tgt = ty1] and
+        then we have [r_tgt = r] *)
+           ++ assert (HARD: r_tgt = r). admit.
+              subst.
+              admit.
+           (* Since repr r_tgt = repr r, then this proof is the same as above *)
+           ++ admit.           
         (** Hard: If r_tgt is not live at live1, it means that ph is a
         local variable because r_tgt is in ty_tgt. Then we can prove
         ph is a local variable. Our strategy here is to first show
@@ -1091,48 +1143,87 @@ Proof.
         there must be no path reachable to ph. Then we can prove r =
         r_tgt so LIVE_REG1 is a contradiction. *)
         -- admit.
-
     (** If r is not live at live1, we should prove that ident of ph0
     must be the same as ph and ph must be a local variable because we
     do not allow overlapped regions in the types of different local
     variables. So GET_FP can be reduced to getting fp_ref from fp and
     then we can use SOUND_FP *)
     + admit.
-      
-        
-      
-
-
-  (* induction fp using strong_footprint_ind; intros; inv WTFP. *)
-  (* (* fp_uninit *) *)
-  (* - inv INIT. *)
-  (* (* fp_scalar: boring case *) *)
-  (* - admit. *)
-  (* (* Tbox *) *)
-  (* - destruct ty_tgt; inv TYEQ. *)
-  (*   (* We can split the set operations into two step. Then use *)
-  (*   sound_loan_analysis_reachable and sound_xxx_refine to add some *)
-  (*   fp_box uninit to fpm1 to satify the premised of I.H. *) *)
-  (*   (* simpl. eapply IHfp; eauto. *) *)
-  (*   (* admit. *) *)
-  (*   (* admit. *) *)
-  (*   (* instantiate (1 := ) *) *)
-  (*   admit. *)
-  (* (* fp_struct *) *)
-  (* - destruct ty_tgt; inv TYEQ.  *)
-  (*   split. *)
-  (*   + red. intros. *)
-  (*     (* how to judge that if fp_struct id fpl cannot reach a children of ph *) *)
-
-
-
-
-  (* induction ty_src; intros; simpl. *)
-  (* - inv WTFP. split. *)
-  (*   + red. intros.  *)
-  (*     erewrite fpm_to_orgm_after_set_footprint_map; eauto. *)
-  (*     eapply SOUND. *)
-(* Abort. *)
+  (* sound_region_relations *)
+  - red. intros.
+    exploit get_owner_path_map_after_set. eauto. eapply GET_PH1.
+    intros G1.
+    exploit get_owner_path_map_after_set. eauto. eapply GET_PH2.
+    intros G2.
+    erewrite (fpm_to_tenv_after_set_footprint_map fpm1 fpm2 ph) in *; eauto.    
+    destruct (RegionSet.mem r1 live1) eqn: LIVE_REG1'.
+    + eapply RegionSet.mem_2 in LIVE_REG1'.
+      destruct (RegionSet.mem r2 live1) eqn: LIVE_REG2'.
+      * eapply RegionSet.mem_2 in LIVE_REG2'.
+        destruct G1 as [G1 | (id1 & phl11 & phl12 & vs11 & A12 & A13 & A14)].
+        -- destruct G2 as [G2 | (id2 & phl21 & phl22 & vs21 & A22 & A23 & A24)].
+           ++ exploit REG_SOUND. eapply G1. eapply G2.
+              eapply WTPH1. eapply WTPH2. auto. auto.
+              intros R.
+              (* flow_loans does not change equality relation *)
+              admit.
+           ++ subst.
+              (* strategy: we need to first establish the regions in
+              the types of (id2, phl21) and the regions in ty_tgt
+              using REG_SOUND_PH; then we can use REG_SOUND_FP to
+              relate regions in (ph1 ++ phl) i.e., region [r1] and the
+              regions in ty_src; then we can use the region relations
+              established in flow_loans between ty_src and ty_tgt to
+              relate regions in both of these types; then we can
+              relate [r2] and its correspondence in ty_tgt *)              
+              (* R1: r2 ~ r_tgt; R2: r1 ~ r_src; R3: r_src ~ r_tgt; 4. r1
+              ~ r2 (derived from 1 to 3) *)
+              assert (GET_FP1: get_reachable_path fpm1 phl22 fp = OK (ph0, vs21)).
+              (** This assertion is the most difficult part in proving the
+                  soundness of setting a footprint in an owner path because it
+                  relies on stack discipline invariant and the effect of shallow
+                  write (which is very subtle). *)              
+              admit.
+              exploit (wt_path_variance_append_inv ce (id2, phl21) (phl22 ++ phl)). 
+              simpl. rewrite app_assoc. eapply WTPH2.
+              intros (ty3 & va3 & WTPH21 & WTPH22).  
+              (* This can be proved by wt_fpm *)
+              assert (TY_EQ1: type_eq_except_origins ty3 ty_tgt = true). admit.
+              (* Since we can project ty1 we can also project ty_tgt and ty_src *)
+              assert (PROJ_TY_TGT: exists r_tgt ty_tgt' va_tgt', wt_projections_variance ce ty_tgt (phl22 ++ phl) va_tgt = OK (Treference r_tgt mut2 ty_tgt', va_tgt')) by admit.
+              destruct PROJ_TY_TGT as (r_tgt & ty_tgt' & va_tgt' & PROJ_TY_TGT).
+              assert (PROJ_TY_SRC: exists r_src ty_src' va_src', wt_projections_variance ce ty_src (phl22 ++ phl) Covariant = OK (Treference r_src mut2 ty_src', va_src')) by admit.
+              destruct PROJ_TY_SRC as (r_src & ty_src' & va_src' & PROJ_TY_SRC). 
+              destruct (RegionSet.mem r_tgt live1) eqn: LIVE_REG_TGT.
+              ** eapply RegionSet.mem_2 in LIVE_REG_TGT.
+                 exploit REG_SOUND_PH. eauto. 
+                 eapply wt_path_variance_append. eapply WTPH21. eauto. eauto. auto. auto.
+                 intros R1.
+                 exploit REG_SOUND_FP. eauto. eauto. eauto. eauto. auto.
+                 intros R2.
+                 exploit flow_loans_projections_spec. eapply TYEQ2. eauto. 
+                 eapply wt_projections_variance_imply; eauto.
+                 instantiate (1 := le1).
+                 intros (GE & R3).
+                 (* We can only consider either va1 or va2 is
+                 Invariant. The difficult case is va_src' = Covariant
+                 then we cannot relate r_src and r_tgt; But we should
+                 prove that if va_src' = Covariant then we can prove
+                 that (phl22 ++ phl) does not contain deref of
+                 reference. *)
+                 admit.
+              (* r_tgt is dead *)
+              ** admit.
+        -- destruct G2 as [G2 | (id2 & phl21 & phl22 & vs21 & A22 & A23 & A24)].
+           (* Similar to above *)
+           ++ admit.
+           (** Hard Two reachable paths pass ph *)
+           ++ admit.
+      (* r2 is dead *)
+      * admit.
+    (* r1 is dead *)
+    + admit.
+Admitted.
 
 
 (* Properties of Kildall solution *)
@@ -1226,9 +1317,27 @@ Proof.
     set (le2:= (kill_loans (transfer_expr loans_env1 e) p)).
     exploit before_write_place_sound; eauto. intros (BORROW_APPRO4 & BORROW_APPRO4_FP).  
     (* soundness w.r.t. flow_loans *)
-    set (le3:= flow_loans le2 (typeof e) (typeof_place p) ByVal).
-        
-    (* assert (BORROW_APPRO5: sound_loan_analysis ce (live!!pc) le3 fpm3). admit. *)
+    set (le3:= flow_loans le2 (typeof e) (typeof_place p) Covariant).    
+    (* type checking result *)
+    assert (WTPH: exists va, wt_path_variance ce (fpm_to_tenv fpm2) p = OK (typeof_place p, va)) by admit.
+    destruct WTPH as (va & WTPH).
+    (* getting path from wt_fpm is well typed *)
+    assert (WT_ASS_PH: exists ty, wt_path ce (fpm_to_tenv fpm2) ph = OK ty /\ type_eq_except_origins ty (typeof_place p) = true). admit.
+    destruct WT_ASS_PH as (ph_ty & WT_ASS_PH & TYEQ1).
+    (** Difficult  *)
+    exploit flow_loans_sound. eauto. eauto.
+    (** TODO: soundness of region relations  *)
+    admit. admit.
+    2: eauto.
+    instantiate (1 := va). instantiate (1 := typeof_place p).
+    admit.                      (* soundness of region relations derived from before_write_place *)
+    admit.                      (* result of clear_footprint *)
+    eapply WT_ASS_PH. auto.
+    admit.                      (* type checking result *)
+    admit.                      (* wt_fpm *)
+    admit.                      (* wt_footprint *)
+    instantiate (1 := Covariant). instantiate (1 := live !! pc).
+    intros (BORROW_APPRO5 & BORROW_REL_APPRO5).
     
     (* Start to prove local sound-approximation of one step transition *)
     exploit loans_flow_analyze_successor; eauto. left. reflexivity.
@@ -1239,7 +1348,8 @@ Proof.
     eapply sound_loan_analysis_liveness_monotonicity.
     2: { eapply region_liveness_analyze_successor; eauto. left. auto. }
     eapply sound_loan_analysis_monotonicity. eapply GE2. eauto.
-Admitted.    
+Admitted.
+    
 
 End BORROW_CHECK.
 
