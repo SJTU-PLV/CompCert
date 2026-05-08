@@ -24,7 +24,7 @@
 //     let tmp3: i32 = *r;
 // }
 
-// This example cannot pass rustc Polonius
+// This example cannot pass rustc Polonius.
 // rustc +nightly 50_region_relations_flow_sensitive.rs -Z polonius=next 
 fn main() {
     let mut x: i32 = 0;

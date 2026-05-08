@@ -1348,6 +1348,21 @@ Proof.
     eapply sound_loan_analysis_liveness_monotonicity.
     2: { eapply region_liveness_analyze_successor; eauto. left. auto. }
     eapply sound_loan_analysis_monotonicity. eapply GE2. eauto.
+          
+  - admit.
+  - admit.
+    (* Sdrop *)
+  - admit.
+  (* storagelive *)
+  - admit.
+  (* storagedead *)
+  - admit.
+  (* Scall *)
+  - unfold generate_call_parameters in REF_OUT.
+    rename phl into cutpoints.
+    monadInv REF_OUT.
+    
+
 Admitted.
     
 

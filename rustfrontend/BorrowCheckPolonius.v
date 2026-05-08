@@ -7,6 +7,7 @@ Require Import Rusttypes Rustlight RustIR RustIRcfg.
 Require Import Rusttyping.
 Require Import Errors.
 Require Import ReplaceOrigins.
+Require Import UnionFindDelete.
 Require Import RegionLiveness BorrowCheckDomain.
 
 Import ListNotations.
@@ -419,6 +420,17 @@ Definition transfer_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: 
 (* Error (error_msg pc ++ [MSG "it is not a function type in check_function_call"])       *)
   end.
 
+(* We enforce all generic regions in the callee do not have node in
+the union-find structure *)
+Fixpoint no_sameclass (uf: UFD.t) (l : list origin) : bool :=
+  match l with
+  | [] => true
+  | x :: xs =>
+      forallb (fun y => negb (peq (UFD.repr uf x) (UFD.repr uf y))) xs
+      && no_sameclass uf xs
+  end.
+
+
 Definition check_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: list expr) : res unit :=
   match (typeof ef) with
   | Tfunction orgs org_rels tyl rty cc =>
@@ -430,10 +442,16 @@ Definition check_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: lis
       let oe2 := transfer_exprlist oe1 args in      
       (* flow the loans from arguments to the parameter types of the function *)
       let oe3 := flow_loans_list oe2 args_tyl sig_tyl Covariant in
-      (* apply the effect of the function call *)
-      let oe4 := after_call oe3 org_rels in
-      (* check the assignment of assigning the return value to p *)
-      check_shallow_write_place oe4 p
+      (** We check that each generic region is a singleton set, i.e.,
+      we do not generate invariant relation for any two regions (which
+      cannot be expressed in the function signature for now) *)
+      if no_sameclass (LOrgEnv.uf oe3) orgs then        
+        (* apply the effect of the function call *)
+        let oe4 := after_call oe3 org_rels in
+        (* check the assignment of assigning the return value to p *)
+        check_shallow_write_place oe4 p
+      else
+        Error [MSG "There is some generic region that may not be a singleton when calling a function"]
   | _ => OK tt
   end.
 
