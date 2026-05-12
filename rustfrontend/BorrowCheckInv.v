@@ -29,7 +29,9 @@ Context {ame: adt_mem_env}.
 Notation footprint := (@footprint ame).
 Notation fp_map := (@fp_map ame).
 Notation fp_graph := (@fp_graph ame).
-Notation get_owner_path_map := (@get_owner_path_map ame).
+Notation fp_frame := (@fp_frame ame).
+Notation fp_graph_frame := (@fp_graph_frame ame).
+Notation get_owner_path_frame := (@get_owner_path_frame ame).
 
 (* Section COMP_ENV. *)
 

@@ -22,6 +22,13 @@ Import ListNotations.
 
 Local Open Scope error_monad_scope.
 
+Fixpoint list_insert {A} (n : nat) (x : A) (l : list A) : list A :=
+  match n, l with
+  | O, _ :: xs => x :: xs
+  | S n', y :: xs => y :: list_insert n' x xs
+  | _, [] => []
+  end.
+
 Section WT_PATH.
 
 Variable ce: composite_env.
@@ -137,7 +144,8 @@ Context {ame: adt_mem_env}.
 
 (* Function environment *)
 
-Definition views := list path.
+Definition spath : Type := nat * path.
+Definition views : Type := list spath.
 
 (* A tree structured footprint (maybe similar to some separation logic
 algebra). *)
@@ -151,7 +159,7 @@ Inductive footprint : Type :=
 | fp_struct (id: ident) (fpl: list (ident * ((Z * Z) * footprint)))
 (* orgs are not used for now but it is used to relate to the type *)
 | fp_enum (id: ident) (tagz: Z) (fid: ident) (fofs: Z) (ffp: footprint)
-| fp_ref (mut: mutkind) (b: block) (ofs: Z) (ph: option path) (vs: views) (* reference to an owner at [phs]. We also record the reborrowed paths
+| fp_ref (mut: mutkind) (b: block) (ofs: Z) (ph: option spath) (vs: views) (* reference to an owner at [phs]. We also record the reborrowed paths
   of ph. If this fp_ref (Some ph) has been converted to fp_ref None,
   it means that it has been invalidated by the dynamic borrow check or
   it has been moved from. The dynamic borrow check should maintian an
@@ -203,25 +211,25 @@ End FP_IND.
 (* It is used to define the invariant for the dynamic borrow check *)
 Definition fp_graph := PTree.t footprint.
 
-(* The [option origin] is used to indicate that this "variable" is
-local var/param (None) or a name for some locations passed by
-reference (Some org where org is the generic region of this location) *)
-Definition fp_map := PTree.t (block * Z * option origin * type * footprint).
+Definition fp_map := PTree.t (block * Z * type * footprint).
 
-Definition empty_fpm := PTree.empty (block * Z * option origin * type * footprint).
+Definition fp_frame := list fp_map.
+
+Definition empty_fpm := PTree.empty (block * Z * type * footprint).
 
 Implicit Type fpm : fp_map.
+Implicit Type fpf : fp_frame.
 
 Definition fpm_to_env (fpm: fp_map) : env := 
-  PTree.map_filter1 (fun '(b, _, optr, ty, _) =>
-                       match optr with
-                       | Some r => None
-                       | None => Some (b, ty)
-                       end) fpm.
+  PTree.map_filter1 (fun '(b, _, ty, _) => Some (b, ty)) fpm.
 
 Coercion fpm_to_fpg (fpm: fp_map) : fp_graph :=
   PTree.map1 snd fpm.
 
+Definition fp_graph_frame := list fp_graph.
+
+Coercion fpf_to_fpgf (fpf: fp_frame) : fp_graph_frame :=
+  map fpm_to_fpg fpf.
 
 (** Shallow init and Deep init which should be statically checked by
 the move checking *)
@@ -406,6 +414,17 @@ Definition set_footprint_map (ps: path) (v: footprint) (fpm: fp_map) : res fp_ma
   | None => Error nil
   end.
 
+
+Definition set_footprint_frame (sph: spath) (v: footprint) (fpf: fp_frame) : res fp_frame :=  
+  let (fid, ph) := sph in
+  match nth_error fpf fid with
+  | Some fpm1 =>
+      do fpm2 <- set_footprint_map ph v fpm1;
+      OK (list_insert fid fpm2 fpf)
+  | None => Error nil
+  end.
+
+
 (* Definition not_fp_emp (fp: footprint) : bool := *)
 (*   match fp with *)
 (*   | fp_emp => false *)
@@ -477,7 +496,7 @@ Fixpoint get_owner_footprint (phl: list projection) (fp: footprint) : res footpr
 Definition get_owner_loc_footprint_map (ps: path) (fpm: fp_map) : res (block * Z * footprint) :=
   let (id, phl) := ps in
   match fpm!id with
-  | Some (b, ofs, ty, _, fp) =>
+  | Some (b, ofs, _, fp) =>
       get_owner_loc_footprint phl fp b ofs
   | _ => Error nil
   end.
@@ -491,6 +510,24 @@ Definition get_owner_footprint_map (ps: path) (fpg: fp_graph) : res footprint :=
   | _ => Error nil
   end
 .
+
+Definition get_owner_loc_footprint_frame (sph: spath) (fpf: fp_frame) : res (block * Z * footprint) :=
+  let (fid, ph) := sph in
+  match nth_error fpf fid with
+  | Some fpm1 =>
+      get_owner_loc_footprint_map ph fpm1
+  | None =>
+      Error nil
+  end.
+
+Definition get_owner_footprint_frame (sph: spath) (fpgf: fp_graph_frame) : res footprint :=
+  let (fid, ph) := sph in
+  match nth_error fpgf fid with
+  | Some fpm1 =>
+      get_owner_footprint_map ph fpm1
+  | None =>
+      Error nil
+  end.
 
 
 (* In our setting, moving from a value is clearing its inner
@@ -531,45 +568,64 @@ Fixpoint clear_footprint_map_list (ce: composite_env) (l: list path) (fpm: fp_ma
       clear_footprint_map_list ce l1 fpm1
   end.
 
+Definition clear_footprint_frame (ce: composite_env) (sph: spath) (fpf: fp_frame) : res fp_frame :=
+  let (fid, ph) := sph in
+  match nth_error fpf fid with
+  | Some fpm1 =>
+      do fpm2 <- clear_footprint_map ce ph fpm1;
+      OK (list_insert fid fpm2 fpf)
+  | None =>
+      Error nil
+  end.
+
+
+Fixpoint clear_footprint_frame_list (ce: composite_env) (sphl: list spath) (fpf: fp_frame) : res fp_frame :=
+  match sphl with
+  | nil => OK fpf
+  | sph :: l1 =>
+      do fpf1 <- clear_footprint_frame ce sph fpf;
+      clear_footprint_frame_list ce l1 fpf1
+  end.
 
 (* Get location and footprint through paths which may contains
 dereference of reference *)
 
-Definition append_proj (pj: projection) (ph: path) :=
-  (fst ph, snd ph ++ [pj]).
+Definition append_proj (pj: projection) (sph: spath) : spath :=
+  let '(f, (i, pjl)) := sph in
+  (f, (i, pjl ++ [pj])).
 
 (* To get the location of arbitary path, we divide it into two steps:
 first we use [get_owner_path] to obtain the path of these projections
 in the tree and second we use [get_owner_loc_footprint] to obtain the
 actual memory address and its footprint. *)
-Fixpoint get_owner_path (fpg: fp_graph) (ph: path) (phl: list projection) (fp: footprint) (alias: list path) : res (path * views) :=
+Fixpoint get_owner_path (fpgf: fp_graph_frame) (sph: spath) (phl: list projection) (fp: footprint) (alias: list spath) : res (spath * views) :=
   match phl with
-  | nil => OK (ph, ph :: alias)
+  | nil => OK (sph, sph :: alias)
   | pj :: l =>
-      let ph1 := append_proj pj ph in
+      let ph1 := append_proj pj sph in
       let alias1 := map (append_proj pj) alias in
       match pj, fp with
       | proj_deref , fp_box _ fp1 =>          
-          get_owner_path fpg ph1 l fp1 alias1
+          get_owner_path fpgf ph1 l fp1 alias1
       | proj_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
           | Some (_, ffp) =>
-              get_owner_path fpg ph1 l ffp alias1
+              get_owner_path fpgf ph1 l ffp alias1
           | None => Error nil
           end
       | proj_field fid, fp_object _ _ fpl =>
           match find_field fid fpl with
           | Some (_, ffp) =>
-              get_owner_path fpg ph1 l ffp alias1
+              get_owner_path fpgf ph1 l ffp alias1
           | None => Error nil
           end
       | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
           if ident_eq fid1 fid2 then
-            get_owner_path fpg ph1 l fp1 alias1
+            get_owner_path fpgf ph1 l fp1 alias1
           else
             Error nil
       | proj_deref, fp_ref mut _ _ (Some ph2) rebor =>
-          do fp2 <- get_owner_footprint_map ph2 fpg;
+          do fp2 <- get_owner_footprint_frame ph2 fpgf;
           (* dynamic computation of reborrow paths based on the
           supporting prefix technique of the borrow checker *)
           let alias2 := match mut with
@@ -579,19 +635,24 @@ Fixpoint get_owner_path (fpg: fp_graph) (ph: path) (phl: list projection) (fp: f
                         paths *)
                         | Immutable => rebor
                         end in
-          get_owner_path fpg ph2 l fp2 alias2
+          get_owner_path fpgf ph2 l fp2 alias2
       | _, _  => Error nil
       end
   end.
 
 (* This actually can be used to define "reachability" *)
-Definition get_owner_path_map (ps: path) (fpg: fp_graph) : res (path * views) :=
-  let (id, phl) := ps in
-  match fpg!id with
-  | Some fp =>
-      get_owner_path fpg (id, nil) phl fp nil
+Definition get_owner_path_frame (sph: spath) (fpgf: fp_graph_frame) : res (spath * views) :=
+  let '(f, (id, phl)) := sph in
+  match nth_error fpgf f with
+  | Some fpg =>
+      match fpg!id with
+      | Some fp =>
+          get_owner_path fpgf (f, (id, nil)) phl fp nil
+      | _ => Error nil
+      end
   | _ => Error nil
   end.
+
 
 (* For temporary footprint, we want to skip this footprint and find a
 reachable path from this footprint to an owner path at fpg *)
@@ -599,33 +660,33 @@ reachable path from this footprint to an owner path at fpg *)
 method to write invariant for temporary footprint and use this
 get_reachable_path to derive the views of reachable path from
 temporary footprint *)
-Fixpoint get_reachable_path (fpg: fp_graph) (phl: list projection) (fp: footprint) : res (path * views) :=
+Fixpoint get_reachable_path (fpgf: fp_graph_frame) (phl: list projection) (fp: footprint) : res (spath * views) :=
   match phl with
   | nil => Error nil
   | pj :: l =>      
       match pj, fp with
       | proj_deref , fp_box _ fp1 =>          
-          get_reachable_path fpg l fp1
+          get_reachable_path fpgf l fp1
       | proj_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
           | Some (_, ffp) =>
-              get_reachable_path fpg l ffp
+              get_reachable_path fpgf l ffp
           | None => Error nil
           end
       | proj_field fid, fp_object _ _ fpl =>
           match find_field fid fpl with
           | Some (_, ffp) =>
-              get_reachable_path fpg l ffp
+              get_reachable_path fpgf l ffp
           | None => Error nil
           end
       | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
           if ident_eq fid1 fid2 then
-            get_reachable_path fpg l fp1
+            get_reachable_path fpgf l fp1
           else
             Error nil
       | proj_deref, fp_ref mut _ _ (Some ph2) rebor =>
-          do fp2 <- get_owner_footprint_map ph2 fpg;
-          get_owner_path fpg ph2 l fp2 rebor
+          do fp2 <- get_owner_footprint_frame ph2 fpgf;
+          get_owner_path fpgf ph2 l fp2 rebor
       | _, _  => Error nil
       end
   end.
@@ -638,42 +699,46 @@ and get_owner_footprint_map. Why we need this function because
 sometime the starting point at [fp] does not belong to any
 local/external variables *)
 
-Fixpoint get_reachable_footprint (fpg: fp_graph) (phl: list projection) (fp: footprint) : res footprint :=
+Fixpoint get_reachable_footprint (fpgf: fp_graph_frame) (phl: list projection) (fp: footprint) : res footprint :=
   match phl with
   | nil => OK fp
   | pj :: l =>
       match pj, fp with
       | proj_deref , fp_box _ fp1 =>          
-          get_reachable_footprint fpg l fp1
+          get_reachable_footprint fpgf l fp1
       | proj_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
           | Some (_, ffp) =>
-              get_reachable_footprint fpg l ffp
+              get_reachable_footprint fpgf l ffp
           | None => Error nil
           end
       | proj_field fid, fp_object _ _ fpl =>
           match find_field fid fpl with
           | Some (_, ffp) =>
-              get_reachable_footprint fpg l ffp
+              get_reachable_footprint fpgf l ffp
           | None => Error nil
           end
       | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
           if ident_eq fid1 fid2 then
-            get_reachable_footprint fpg l fp1
+            get_reachable_footprint fpgf l fp1
           else
             Error nil
       | proj_deref, fp_ref mut _ _ (Some ph2) rebor =>
-          do fp2 <- get_owner_footprint_map ph2 fpg;
-          get_reachable_footprint fpg l fp2
+          do fp2 <- get_owner_footprint_frame ph2 fpgf;
+          get_reachable_footprint fpgf l fp2
       | _, _  => Error nil
       end
   end.
 
-Definition get_reachable_footprint_map (fpg: fp_graph) (ph: path) : res footprint :=
-  let (id, phl) := ph in
-  match fpg!id with
-  | Some fp =>
-      get_reachable_footprint fpg phl fp
+Definition get_reachable_footprint_frame (fpgf: fp_graph_frame) (sph: spath) : res footprint :=
+  let '(f, (id, phl)) := sph in
+  match nth_error fpgf f with
+  | Some fpg =>
+      match fpg!id with
+      | Some fp =>
+          get_reachable_footprint fpgf phl fp
+      | _ => Error nil
+      end
   | _ => Error nil
   end.
 
@@ -715,7 +780,7 @@ Fixpoint get_owner_footprint_type ce (phl: list projection) (ty: type) (fp: foot
 Definition get_owner_footprint_type_map ce (ph: path) (fpm: fp_map) : res (type * footprint) :=
   let (id, pj) := ph in
   match fpm ! id with
-  | Some (_, _, _, ty, fp) =>
+  | Some (_, _, ty, fp) =>
       get_owner_footprint_type ce pj ty fp
   | None =>
       Error nil
@@ -746,16 +811,16 @@ Fixpoint fp_is_dropped (fp: footprint) : bool :=
 (*   | _ => true *)
 (*   end. *)
 
-Definition check_path_is_dropped (fpm: fp_map) (ph: path) : res bool :=
-  do fp <- get_owner_footprint_map ph fpm;
+Definition check_path_is_dropped (fpf: fp_frame) (sph: spath) : res bool :=
+  do fp <- get_owner_footprint_frame sph fpf;
   OK (fp_is_dropped fp).
 
 (* Note that for example we split drop( p where p: Box<Box<i32>>) into
 drop( *p) and drop(p) in the drop elaboration pass, so for fp_box to
 be dropped we should ensure that its point-to footprint has been
 dropped. *)
-Definition check_path_is_droppable (fpm: fp_map) (ph: path) : res bool :=
-  do fp <- get_owner_footprint_map ph fpm;
+Definition check_path_is_droppable (fpf: fp_frame) (sph: spath) : res bool :=
+  do fp <- get_owner_footprint_frame sph fpf;
   match fp with
   | fp_box _ fp1 =>
       (* There is no need to check that fp1 has beed dropped or not
@@ -767,12 +832,12 @@ Definition check_path_is_droppable (fpm: fp_map) (ph: path) : res bool :=
   | _ => OK false
   end.
 
-Fixpoint check_path_is_dropped_list (fpm: fp_map) (l: list path) : res bool :=
+Fixpoint check_path_is_dropped_list (fpf: fp_frame) (l: list spath) : res bool :=
   match l with
   | nil => OK true
   | ph :: l1 =>
-      do fg1 <- check_path_is_dropped fpm ph;
-      do fg2 <- check_path_is_dropped_list fpm l1;
+      do fg1 <- check_path_is_dropped fpf ph;
+      do fg2 <- check_path_is_dropped_list fpf l1;
       OK (fg1 && fg2)
   end.
 
@@ -790,41 +855,56 @@ Definition relevant_path (ph1: path) (am: access_mode_bor) (ph2: path) :=
     | Adeep => is_prefix_path ph1 ph2
     end.
         
+Definition relevant_spath (sph1: spath) (am: access_mode_bor) (sph2: spath) : bool :=
+  let (f1, ph1) := sph1 in
+  let (f2, ph2) := sph2 in
+  Nat.eqb f1 f2 && relevant_path ph1 am ph2.
+
 (* access ph: note that access ph by write/read is irrelevant because
 all the path in views are mutable path *)
-Definition conflict_view (ph: path) (am : access_mode_bor) (vs: views) : bool :=
-  existsb (relevant_path ph am) vs.
+Definition conflict_view (sph: spath) (am : access_mode_bor) (vs: views) : bool :=
+  existsb (relevant_spath sph am) vs.
 
-Fixpoint invalidate_conflict_ref (ph: path) (ak: access_kind) (am : access_mode_bor) (fp: footprint) : footprint :=
+Fixpoint invalidate_conflict_ref (sph: spath) (ak: access_kind) (am : access_mode_bor) (fp: footprint) : footprint :=
   match fp with
   | fp_ref mut b ofs ph1 vs =>
-      let ph1' := if conflict_access ak mut && conflict_view ph am vs then None else ph1 in
+      let ph1' := if conflict_access ak mut && conflict_view sph am vs then None else ph1 in
       fp_ref mut b ofs ph1' vs
   | fp_struct id fpl =>
-      fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, invalidate_conflict_ref ph ak am ffp))) fpl)
+      fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, invalidate_conflict_ref sph ak am ffp))) fpl)
   | fp_enum id tag fid fofs fp1 =>
-      fp_enum id tag fid fofs (invalidate_conflict_ref ph ak am fp1)
+      fp_enum id tag fid fofs (invalidate_conflict_ref sph ak am fp1)
   | fp_box b fp1 =>
-      fp_box b (invalidate_conflict_ref ph ak am fp1)
+      fp_box b (invalidate_conflict_ref sph ak am fp1)
   | _ => fp
   end.
 
-Definition invalidate_conflict_ref_fpm (ph: path) (ak: access_kind) (am : access_mode_bor) (fpm: fp_map) : fp_map :=
-  PTree.map1 (fun '(b, ofs, r, ty, fp) => (b, ofs, r, ty, invalidate_conflict_ref ph ak am fp)) fpm.
+Definition invalidate_conflict_ref_fpm (sph: spath) (ak: access_kind) (am : access_mode_bor) (fpm: fp_map) : fp_map :=
+  PTree.map1 (fun '(b, ofs, ty, fp) => (b, ofs, ty, invalidate_conflict_ref sph ak am fp)) fpm.
 
-Fixpoint invalidate_conflict_ref_fpm_list (l: list path) (ak: access_kind) (am : access_mode_bor) (fpm: fp_map) : fp_map :=
+Definition invalidate_conflict_ref_fpf (sph: spath) (ak: access_kind) (am : access_mode_bor) (fpf: fp_frame) : fp_frame :=
+  map (invalidate_conflict_ref_fpm sph ak am) fpf.
+
+
+Fixpoint invalidate_conflict_ref_fpf_list (l: list spath) (ak: access_kind) (am : access_mode_bor) (fpf: fp_frame) : fp_frame :=
   match l with
-  | nil => fpm
+  | nil => fpf
   | ph :: l1 =>
-      invalidate_conflict_ref_fpm_list l1 ak am (invalidate_conflict_ref_fpm ph ak am fpm)
+      invalidate_conflict_ref_fpf_list l1 ak am (invalidate_conflict_ref_fpf ph ak am fpf)
   end.
 
 (** Kill loans *)
 
+Definition is_prefix_spath (sph1 sph2: spath) : bool :=
+  let (f1, ph1) := sph1 in
+  let (f2, ph2) := sph2 in
+  Nat.eqb f1 f2 && is_prefix_path ph1 ph2.
+  
+
 (* We need to remove set of paths, i.e., views from the current views
 because overwrite a path would kill all the views of this path. *)
 Definition kill_paths (kill: views) (vs: views) : views :=
-  filter (fun ph1 => negb (existsb (fun ph => is_prefix_path ph ph1) kill)) vs.
+  filter (fun ph1 => negb (existsb (fun ph => is_prefix_spath ph ph1) kill)) vs.
 
 
 Fixpoint kill_paths_ref (kill: views) (fp: footprint) : footprint :=
@@ -841,15 +921,18 @@ Fixpoint kill_paths_ref (kill: views) (fp: footprint) : footprint :=
   end.
 
 Definition kill_paths_ref_fpm (kill: views) (fpm: fp_map) : fp_map :=
-  PTree.map1 (fun '(b, ofs, r, ty, fp) => (b, ofs, r, ty, kill_paths_ref kill fp)) fpm.
+  PTree.map1 (fun '(b, ofs, ty, fp) => (b, ofs, ty, kill_paths_ref kill fp)) fpm.
+
+Definition kill_paths_ref_fpf (kill: views) (fpf: fp_frame) : fp_frame :=
+  map (kill_paths_ref_fpm kill) fpf.
 
 (* Only used in function return, to kill the loans reborrowed from
 local variables/parameters *)
-Fixpoint kill_vars_ref_fpm (l: list ident) (fpm: fp_map) : fp_map :=
+Fixpoint kill_vars_ref_fpf (fid: nat) (l: list ident) (fpf: fp_frame) : fp_frame :=
   match l with
-  | nil => fpm
+  | nil => fpf
   | id :: l1 =>
-      kill_vars_ref_fpm l1 (kill_paths_ref_fpm ((id, nil) :: nil) fpm)
+      kill_vars_ref_fpf fid l1 (kill_paths_ref_fpf ((fid, (id, nil)) :: nil) fpf)
   end.
 
 (* Operations for the function call and return *)
@@ -962,6 +1045,7 @@ end.
 
 (** Implementation dependent operations *)
 
+(* 
 
 (* collect the owner paths stored in the leaf nodes that are fp_ref *)
 Fixpoint collect_footprint_ref_paths (fp: footprint) : list path :=
@@ -1285,6 +1369,8 @@ Fixpoint clear_fpm_passed_ref_footprint (fpm: fp_map) (l: list path) : res fp_ma
      clear_fpm_passed_ref_footprint fpm1 phl
   end.
 
+*)
+
 Section SEMANTICS.
 
 (** ** Global environment  *)
@@ -1307,23 +1393,23 @@ Definition access_mode_chunk (ty: type) : res memory_chunk :=
   end.
 
 (* We also do dynamic borrow checking *)
-Fixpoint eval_pexpr (fpm: fp_map) (pe: pexpr) : res (footprint * fp_map) :=
+Fixpoint eval_pexpr (fpf: fp_frame) (pe: pexpr) : res (footprint * fp_frame) :=
   match pe with
-  | Eunit => OK (fp_scalar Mint32 (Vint Int.zero), fpm)               
+  | Eunit => OK (fp_scalar Mint32 (Vint Int.zero), fpf)               
   | Econst_int i ty => 
       do chunk <- access_mode_chunk ty;
-      OK (fp_scalar chunk (Vint i), fpm)
+      OK (fp_scalar chunk (Vint i), fpf)
   | Econst_float f ty => 
       do chunk <- access_mode_chunk ty;
-      OK (fp_scalar chunk (Vfloat f), fpm)
+      OK (fp_scalar chunk (Vfloat f), fpf)
   | Econst_single f ty => 
       do chunk <- access_mode_chunk ty;
-      OK (fp_scalar chunk (Vsingle f), fpm)
+      OK (fp_scalar chunk (Vsingle f), fpf)
   | Econst_long i ty => 
       do chunk <- access_mode_chunk ty;
-      OK (fp_scalar chunk (Vlong i), fpm)
+      OK (fp_scalar chunk (Vlong i), fpf)
   | Eunop op a t =>
-      do (v1, fpm1) <- eval_pexpr fpm a;
+      do (v1, fpm1) <- eval_pexpr fpf a;
       match v1 with
       | fp_scalar _ v2 =>
           match sem_unary_operation op v2 t with
@@ -1336,14 +1422,14 @@ Fixpoint eval_pexpr (fpm: fp_map) (pe: pexpr) : res (footprint * fp_map) :=
       | _ => Error nil
       end
   | Ebinop op a1 a2 t =>
-      do (v1, fpm1) <- eval_pexpr fpm a1;
-      do (v2, fpm2) <- eval_pexpr fpm1 a2;
+      do (v1, fpf1) <- eval_pexpr fpf a1;
+      do (v2, fpf2) <- eval_pexpr fpf1 a2;
       match v1, v2 with
       | fp_scalar _ v1', fp_scalar _ v2' =>
           match sem_binary_operation_rust op v1' (typeof_pexpr a1) v2' (typeof_pexpr a2) with
           | Some v =>
               do chunk <- access_mode_chunk t;
-              OK (fp_scalar chunk v, fpm2)
+              OK (fp_scalar chunk v, fpf2)
           | None =>
               Error nil
           end
@@ -1352,33 +1438,39 @@ Fixpoint eval_pexpr (fpm: fp_map) (pe: pexpr) : res (footprint * fp_map) :=
   | Eplace p ty =>
       (* We first do invalidation and then get the footprint because
       we do not want to do invalidate on the footprint we get. *)
-      let fpm1 := invalidate_conflict_ref_fpm p ARead Adeep fpm in
-      do (ph, _) <- get_owner_path_map p fpm1;
-      do (_, fp) <- get_owner_loc_footprint_map ph fpm1;
-      OK (fp, fpm1)
+      let p := path_of_place p in
+      let fidx := (length fpf - 1)%nat in
+      let fpf1 := invalidate_conflict_ref_fpf (fidx, p) ARead Adeep fpf in
+      do (ph, _) <- get_owner_path_frame (fidx, p) fpf1;
+      do (_, fp) <- get_owner_loc_footprint_frame ph fpf1;
+      OK (fp, fpf1)
   | Ecktag p fid =>
-      let fpm1 := invalidate_conflict_ref_fpm p ARead Ashallow fpm in
-      do (ph, _) <- get_owner_path_map p fpm1;
-      do (_, fp) <- get_owner_loc_footprint_map ph fpm1;
+      let p := path_of_place p in
+      let fidx := (length fpf - 1)%nat in
+      let fpf1 := invalidate_conflict_ref_fpf (fidx, p) ARead Ashallow fpf in
+      do (ph, _) <- get_owner_path_frame (fidx, p) fpf1;
+      do (_, fp) <- get_owner_loc_footprint_frame ph fpf1;
       match fp with
       | fp_enum _ _ fid1 _ _ =>
           (* refer to how rustc handles Discriminant operation
           (rustc_borrowck/src/lib.rs#L1550) *)
-          OK (fp_scalar Mint8unsigned (Val.of_bool (ident_eq fid fid1)), fpm1)
+          OK (fp_scalar Mint8unsigned (Val.of_bool (ident_eq fid fid1)), fpf1)
       | _ => Error nil
       end
   | Eref _ mut p _ =>
       let ak := mut_to_access_kind mut in
-      let fpm1 := invalidate_conflict_ref_fpm p ak Adeep fpm in
-      do (ph, vs) <- get_owner_path_map p fpm1;
-      do (bofs, _) <- get_owner_loc_footprint_map ph fpm1;
+      let p := path_of_place p in
+      let fidx := (length fpf - 1)%nat in
+      let fpf1 := invalidate_conflict_ref_fpf (fidx, p) ak Adeep fpf in
+      do (ph, vs) <- get_owner_path_frame (fidx, p) fpf1;
+      do (bofs, _) <- get_owner_loc_footprint_frame ph fpf1;
       let (b, ofs) := bofs in
-      OK (fp_ref mut b ofs (Some ph) vs, fpm1)
+      OK (fp_ref mut b ofs (Some ph) vs, fpf1)
   | _ => Error nil
   end.
 
 
-Definition eval_expr (ce: composite_env) (fpm: fp_map) (e: expr) : res (footprint * fp_map) :=
+Definition eval_expr (ce: composite_env) (fpf: fp_frame) (e: expr) : res (footprint * fp_frame) :=
   match e with
   | Emoveplace p _ =>
       (* The main reason we first do invalidation and then get the
@@ -1389,12 +1481,14 @@ Definition eval_expr (ce: composite_env) (fpm: fp_map) (e: expr) : res (footprin
       [fp]? Maybe in the static borrow checking, we can show that all
       reachable path of [p] is live so we cannot invalidate their
       fp_ref? No matter whether the fp_ref is reachable from [p]? *)
-      let fpm1 := invalidate_conflict_ref_fpm p AWrite Adeep fpm in
-      do (_, fp) <- get_owner_loc_footprint_map p fpm1;
-      do fpm2 <- clear_footprint_map ce p fpm1;
-      OK (fp, fpm2)
+      let p := path_of_place p in
+      let fidx := (length fpf - 1)%nat in
+      let fpf1 := invalidate_conflict_ref_fpf (fidx, p) AWrite Adeep fpf in
+      do (_, fp) <- get_owner_loc_footprint_frame (fidx, p) fpf1;
+      do fpf2 <- clear_footprint_frame ce (fidx, p) fpf1;
+      OK (fp, fpf2)
   | Epure pe =>
-      eval_pexpr fpm pe
+      eval_pexpr fpf pe
   end.
 
 
@@ -1410,16 +1504,16 @@ Definition eval_expr (ce: composite_env) (fpm: fp_map) (e: expr) : res (footprin
 (*   | _, _ => Error nil *)
 (*   end. *)
 
-Fixpoint eval_exprlist ce (fpm: fp_map) (al: list expr) (* (tyl: typelist) *) : res (list footprint * fp_map) :=
+Fixpoint eval_exprlist ce (fpf: fp_frame) (al: list expr) (* (tyl: typelist) *) : res (list footprint * fp_frame) :=
   match al with
-  | nil => OK (nil, fpm)
+  | nil => OK (nil, fpf)
   | a :: al1 =>
-      do (fp1, fpm1) <- eval_expr ce fpm a;
+      do (fp1, fpf1) <- eval_expr ce fpf a;
       (** We do not support sem_cast for now to simplify the proof, may
       be we need to do some restricted type checking *)
       (* do v1' <- sem_cast v1 (typeof a) ty; *)
-      do (fpl, fpm2) <- eval_exprlist ce fpm1 al1;
-      OK (fp1 :: fpl, fpm2)
+      do (fpl, fpf2) <- eval_exprlist ce fpf1 al1;
+      OK (fp1 :: fpl, fpf2)
   (* | _ => Error nil *)
   end.
 
@@ -1432,7 +1526,7 @@ Inductive cont : Type :=
 | Kstop: cont
 | Kseq: statement -> cont -> cont
 | Kloop: statement -> cont -> cont
-| Kcall: place -> function -> list (ident * (path * (views * origin * type))) -> PTree.t ident -> fp_map -> cont -> cont
+| Kcall: place -> function -> cont -> cont
 .
 
 
@@ -1448,14 +1542,14 @@ Fixpoint call_cont (k: cont) : option cont :=
 Definition is_call_cont (k: cont) : Prop :=
   match k with
   | Kstop => True
-  | Kcall _ _ _ _ _ _ => True
+  | Kcall _ _ _ => True
   | _ => False
   end.
 
 
 Fixpoint typeof_cont_call (ttop: type) (k: cont) : type :=
   match k with
-  | Kcall p _ _ _ _ _ =>
+  | Kcall p  _ _ =>
       typeof_place p
   | Kstop => ttop
   | Kseq _ k
@@ -1467,23 +1561,17 @@ Inductive state: Type :=
     (f: function)
     (s: statement)
     (k: cont)
-    (alpha: PTree.t ident)         (* used to record the new idents for the in-out parameters *)
-    (fpm: fp_map)
+    (fpf: fp_frame)
     (sup: Mem.sup) : state
 | Callstate
     (fun_id: ident)
     (args: list footprint)
-    (* (inout: list (block * Z * origin * type * footprint)) *)
-    (inout: fp_map)
+    (fpf: fp_frame)
     (sup: Mem.sup)
     (k: cont): state
 | Returnstate
     (retv: footprint)
-    (* (rety: type)   *)
-    (* The return type may contain generic regions of the returned
-    function *)
-    (* (inout: list (block * Z * origin * type * footprint)) *)
-    (inout: fp_map)
+    (fpf: fp_frame)
     (sup: Mem.sup)
     (k: cont): state.
 
@@ -1510,7 +1598,7 @@ Fixpoint alloc_vars ce (fpm: fp_map) (l: list (ident * type)) (sup: Mem.sup) : (
   | nil => (fpm, sup)
   | (id, ty) :: l1 =>
       let b := Mem.fresh_block sup in
-      alloc_vars ce (PTree.set id (b, 0, None, ty, type_to_uninit_footprint ce ty) fpm) l1 (Mem.sup_incr sup)
+      alloc_vars ce (PTree.set id (b, 0, ty, type_to_uninit_footprint ce ty) fpm) l1 (Mem.sup_incr sup)
   end.
 
 Fixpoint bind_params (fpm: fp_map) (l: list (ident * type)) (vl: list footprint) : res fp_map :=
@@ -1522,48 +1610,50 @@ Fixpoint bind_params (fpm: fp_map) (l: list (ident * type)) (vl: list footprint)
   | _, _ => Error nil
   end.
 
-Fixpoint bind_inout_params (fpm: fp_map) (l: list ident) (vl: list (block * Z * origin * type * footprint)) : res fp_map :=
-  match l, vl with
-  | nil, nil => OK fpm
-  | id :: l1, (b, ofs, r, ty, v) :: vl1 =>
-      let fpm1 := PTree.set id (b, ofs, Some r, ty, v) fpm in
-      bind_inout_params fpm1 l1 vl1
-  | _, _ => Error nil
-  end.
+
+Definition function_entry ce (f: function) (args: list footprint) (sup: Mem.sup) : res (fp_map * Mem.sup) :=
+  (* allocate the variables and paramters *)
+  let (fpm1, sup1) := alloc_vars ce empty_fpm (f.(fn_params) ++ f.(fn_vars)) sup in  
+  (* set the value to the map *)
+  do fpm2 <- bind_params fpm1 (fn_params f) args;
+  (* do fpm3 <- bind_inout_params fpm2 fresh_vars inout_params1; *)
+  OK (fpm2, sup1).
+
 
 (* We should assume that the types in inout_params contain generic
 regions instead of the local regions from the caller. *)
-Definition function_entry ce (f: function) (args: list footprint) (inout_fpm: fp_map) (sup: Mem.sup) : res (PTree.t ident * fp_map * Mem.sup) :=
-  let names := field_idents (fn_params f ++ fn_vars f) in
-  let fresh_var := Pos.succ (find_max_pos names) in
-  let inout_params := PTree.elements inout_fpm in
-  let fresh_vars := npos (length inout_params) fresh_var in
-  let substs1 := PTree_Properties.of_list (combine fresh_vars (map fst inout_params)) in
-  let substs2 := PTree_Properties.of_list (combine (map fst inout_params) fresh_vars) in
-  (* Substitute the old name in args and in_params with the fresh names *)
-  (* let fresh_paths := map (fun id => (id, (id, nil))) fresh_vars in *)
-  do (args1, inout_fpm1) <- receive_incoming_params substs2 args inout_fpm;
-  (* allocate the variables and paramters *)
-  let (fpm1, sup1) := alloc_vars ce inout_fpm1 (f.(fn_params) ++ f.(fn_vars)) sup in
-  (* set the value to the map *)
-  do fpm2 <- bind_params fpm1 (fn_params f) args1;
-  (* do fpm3 <- bind_inout_params fpm2 fresh_vars inout_params1; *)
-  OK (substs1, fpm2, sup1).
+(* Definition function_entry ce (f: function) (args: list footprint) (inout_fpm: fp_map) (sup: Mem.sup) : res (PTree.t ident * fp_map * Mem.sup) := *)
+(*   let names := field_idents (fn_params f ++ fn_vars f) in *)
+(*   let fresh_var := Pos.succ (find_max_pos names) in *)
+(*   let inout_params := PTree.elements inout_fpm in *)
+(*   let fresh_vars := npos (length inout_params) fresh_var in *)
+(*   let substs1 := PTree_Properties.of_list (combine fresh_vars (map fst inout_params)) in *)
+(*   let substs2 := PTree_Properties.of_list (combine (map fst inout_params) fresh_vars) in *)
+(*   (* Substitute the old name in args and in_params with the fresh names *) *)
+(*   (* let fresh_paths := map (fun id => (id, (id, nil))) fresh_vars in *) *)
+(*   do (args1, inout_fpm1) <- receive_incoming_params substs2 args inout_fpm; *)
+(*   (* allocate the variables and paramters *) *)
+(*   let (fpm1, sup1) := alloc_vars ce inout_fpm1 (f.(fn_params) ++ f.(fn_vars)) sup in *)
+(*   (* set the value to the map *) *)
+(*   do fpm2 <- bind_params fpm1 (fn_params f) args1; *)
+(*   (* do fpm3 <- bind_inout_params fpm2 fresh_vars inout_params1; *) *)
+(*   OK (substs1, fpm2, sup1). *)
 
-Definition var_to_path (v: ident * type) : path := (fst v, nil).
+Definition var_to_spath (f: nat) (v: ident * type) : spath := (f, (fst v, nil)).
 
-Definition vars_to_paths (l: list (ident * type)) : list path :=
-  map var_to_path l.
+Definition vars_to_spaths f (l: list (ident * type)) : list spath :=
+  map (var_to_spath f) l.
 
 
-
-Definition before_write_place ce (fpm1: fp_map) (p: place) : res (path * views * fp_map) :=
-  do (ph, vs) <- get_owner_path_map p fpm1;
+Definition before_write_place ce (fpf1: fp_frame) (p: place) : res (spath * views * fp_frame) :=
+  let fidx := (length fpf1 - 1)%nat in 
+  let p := path_of_place p in
+  do (ph, vs) <- get_owner_path_frame (fidx, p) fpf1;
   (* This property should be guaranteed by the correct insertion of
     drop. Since we have no way to express this guarantee provided by
     RustIRgen/Drop Elaboration, we must encode it into the
     semantics. *)
-  do is_dropped <- check_path_is_dropped fpm1 ph;
+  do is_dropped <- check_path_is_dropped fpf1 ph;
   if is_dropped then
     (* Before overwrite the target location, we should first set it to
     fp_uninit so that the original fp_ref in this location is removed
@@ -1571,40 +1661,42 @@ Definition before_write_place ce (fpm1: fp_map) (p: place) : res (path * views *
     value. Maybe in high-level spec without views at fp_ref, we can
     remove this extra operation because the cleared place would be
     immediately assigned with value. *)
-    do fpm2 <- clear_footprint_map ce ph fpm1;
+    do fpf2 <- clear_footprint_frame ce ph fpf1;
     (* To make the views at each reference precise. Note that we
     should also kill the loans in the evaluated value (e.g., consider
     x = &mut *x. Therefore we return the views of p. *)
-    OK (ph, vs, kill_paths_ref_fpm vs fpm2)
+    OK (ph, vs, kill_paths_ref_fpf vs fpf2)
   else Error nil.
 
-Definition eval_assign ce (fpm1: fp_map) (p: place) (e: expr) : res (path * footprint * fp_map) :=
-  do (vfp, fpm2) <- eval_expr ce fpm1 e;
-  let fpm3 := invalidate_conflict_ref_fpm p AWrite Ashallow fpm2 in
-  do (ph_vs, fpm4) <- before_write_place ce fpm3 p;
-  let (ph, vs) := ph_vs in
+Definition eval_assign ce (fpf1: fp_frame) (p: place) (e: expr) : res (spath * footprint * fp_frame) :=
+  let fidx := (length fpf1 - 1)%nat in 
+  let ph := path_of_place p in
+  do (vfp, fpf2) <- eval_expr ce fpf1 e;
+  let fpf3 := invalidate_conflict_ref_fpf (fidx, ph) AWrite Ashallow fpf2 in
+  do (ph_vs, fpf4) <- before_write_place ce fpf3 p;
+  let (sph, vs) := ph_vs in
   (* We also need to do invalidation on vfp? I think we cannot create
   some reference which borrows prefix of shallow children parts of the
   written place ,e.g., [*a = &mut a] or [a.f = &mut a]. But anyway,
   the static borrow checking would check this situation, therefore we
   need to do invalidation on the evaluated footprint. *)
-  let vfp1 := invalidate_conflict_ref p AWrite Ashallow vfp in
-  OK (ph, (kill_paths_ref vs vfp1), fpm4).
+  let vfp1 := invalidate_conflict_ref (fidx, ph) AWrite Ashallow vfp in
+  OK (sph, (kill_paths_ref vs vfp1), fpf4).
 
 
 Section SMALLSTEP.
 
 Variable ge: genv.
 
+Definition current_fid (fpf: fp_frame) := (length fpf - 1)%nat.
 
 Inductive step : state -> trace -> state -> Prop :=
-| step_assign: forall f e (p: place) vfp fpm1 fpm2 fpm3 ph ns k sup
-    (EVAL: eval_assign ge fpm1 p e = OK (ph, vfp, fpm2))    
-    (ASS: set_footprint_map ph vfp fpm2 = OK fpm3),
-    step (State f (Sassign p e) k ns fpm1 sup) E0 (State f Sskip k ns fpm3
- sup)
-| step_assign_variant: forall f e (p: place) k fpm1 fpm2 fpm3 vfp co fid enum_id orgs ph fty ns sup fofs tag
-    (EVAL: eval_assign ge fpm1 p e = OK (ph, vfp, fpm2))
+| step_assign: forall f e (p: place) vfp fpf1 fpf2 fpf3 sph k sup
+    (EVAL: eval_assign ge fpf1 p e = OK (sph, vfp, fpf2))    
+    (ASS: set_footprint_frame sph vfp fpf2 = OK fpf3),
+    step (State f (Sassign p e) k fpf1 sup) E0 (State f Sskip k fpf3 sup)
+| step_assign_variant: forall f e (p: place) k fpf1 fpf2 fpf3 vfp co fid enum_id orgs sph fty sup fofs tag
+    (EVAL: eval_assign ge fpf1 p e = OK (sph, vfp, fpf2))
     (* necessary for clightgen simulation *)
     (TYP: typeof_place p = Tvariant orgs enum_id)
     (CO: ge.(genv_cenv) ! enum_id = Some co)
@@ -1612,19 +1704,19 @@ Inductive step : state -> trace -> state -> Prop :=
     (TAG: field_tag fid co.(co_members) = Some tag)
     (FOFS: variant_field_offset ge fid co.(co_members) = OK fofs)
     (* (CAST: sem_cast v (typeof e) fty = OK v1) *)
-    (ASS: set_footprint_map ph (fp_enum enum_id tag fid fofs vfp) fpm2 = OK fpm3),
-    step (State f (Sassign_variant p enum_id fid e) k ns fpm1 sup) E0 (State f Sskip k ns fpm3 sup)
-| step_box: forall f e (p: place) k ty fpm1 fpm2 fpm3 vfp ph ns sup
-    (EVAL: eval_assign ge fpm1 p e = OK (ph, vfp, fpm2))
+    (ASS: set_footprint_frame sph (fp_enum enum_id tag fid fofs vfp) fpf2 = OK fpf3),
+    step (State f (Sassign_variant p enum_id fid e) k fpf1 sup) E0 (State f Sskip k fpf3 sup)
+| step_box: forall f e (p: place) k ty fpf1 fpf2 fpf3 vfp sph sup
+    (EVAL: eval_assign ge fpf1 p e = OK (sph, vfp, fpf2))
     (TYP: typeof_place p = Tbox ty)
     (* (CAST: sem_cast v (typeof e) ty = OK v1) *)
-    (ASS: set_footprint_map ph (fp_box (Mem.fresh_block sup) vfp) fpm2 = OK fpm3),
-    step (State f (Sbox p e) k ns fpm1 sup) E0 (State f Sskip k ns fpm3 (Mem.sup_incr sup))
+    (ASS: set_footprint_frame sph (fp_box (Mem.fresh_block sup) vfp) fpf2 = OK fpf3),
+    step (State f (Sbox p e) k fpf1 sup) E0 (State f Sskip k fpf3 (Mem.sup_incr sup))
 (* big-step drop semantics: just like a move operation. But we need to
 check that the footprint in the dropped place is deeply owned, which
 encodes the guarantee provided by the Drop elaboration, i.e., it only
 keeps the drop statement for the place that is init. *)
-| step_drop: forall fpm1 fpm2 fpm3 k f (p: place) ns sup
+| step_drop: forall fpf1 fpf2 fpf3 k f (p: place) sph sup
     (* We must ensure that p is an owner, otherwise dropping [*p where
     p:&mut Box<i32>] and then not reassigning a new value into [*p]
     would break memory safety. Because [p] may be created from
@@ -1632,53 +1724,54 @@ keeps the drop statement for the place that is init. *)
     reassignment. We should use [drop_and_replace( *p, v)] to perform
     drop on [*p]. *)
     (* (EVALP: get_owner_loc p fpm1 = OK (ph, vs)) *)
-    (INVP: invalidate_conflict_ref_fpm p AWrite Adeep fpm1 = fpm2)
+    (SPH: sph = ((length fpf1 - 1)%nat, path_of_place p))
+    (INVP: invalidate_conflict_ref_fpf sph AWrite Adeep fpf1 = fpf2)
     (* Properties ensured by Drop elaboration, which we encode into
     the semantics *)
-    (DEEP_INIT: check_path_is_droppable fpm2 p = OK true)
-    (DROP: clear_footprint_map ge p fpm2 = OK fpm3),
-    step (State f (Sdrop p) k ns fpm1 sup) E0 (State f Sskip k ns fpm3 sup)
-| step_storagelive: forall f k ns fpm id sup,
-    step (State f (Sstoragelive id) k ns fpm sup) E0 (State f Sskip k ns fpm sup)
-| step_storagedead: forall f k ns fpm1 fpm2 id sup
+    (DEEP_INIT: check_path_is_droppable fpf2 sph = OK true)
+    (DROP: clear_footprint_frame ge sph fpf2 = OK fpf3),
+    step (State f (Sdrop p) k fpf1 sup) E0 (State f Sskip k fpf3 sup)
+| step_storagelive: forall f k fpf id sup,
+    step (State f (Sstoragelive id) k fpf sup) E0 (State f Sskip k fpf sup)
+| step_storagedead: forall f k fpf1 fpf2 id sup sph
     (* The insertion of drop should ensure that before storagedead,
     the resource of variable is released. But why do we need this? Is
     it necessary to the proof? Or is it because we will set it to
     uninit and kill the loans related to this variable so there should
     not be memory leak? *)
-    (CKDROP: check_path_is_dropped fpm1 (id, nil) = OK true)
+    (SPH: sph = ((length fpf1 - 1)%nat, (id, nil)))
+    (CKDROP: check_path_is_dropped fpf1 sph = OK true)
     (* To maintain the invariant, we need to clear all the dead
     sv_ref, so we set it to sv_bot. *)
-    (CLR: clear_footprint_map ge (id, nil) fpm1 = OK fpm2),
-    step (State f (Sstoragedead id) k ns fpm1 sup) E0 (State f Sskip k ns fpm2 sup)
-| step_call: forall f ty al k tyargs fd cconv tyres p orgs org_rels fun_id fpm1 fpm2 args args1 inout_params ns phl sup
+    (CLR: clear_footprint_frame ge sph fpf1 = OK fpf2),
+    step (State f (Sstoragedead id) k fpf1 sup) E0 (State f Sskip k fpf2 sup)
+| step_call: forall f ty al k tyargs fd cconv tyres p orgs org_rels fun_id fpf1 fpf2 args sup
     (CASE: classify_fun ty = fun_case_f tyargs tyres cconv)
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun fd))
     (TYF: type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv)
-    (EVAL: eval_exprlist ge fpm1 al = OK (args, fpm2))
-    (NOT_DROP: function_not_drop_glue fd)
-    (* Collect the footprint that is passed via reference *)
-    (REF_OUT: generate_call_parameters ge fpm2 (combine (type_list_of_typelist tyargs) args) = OK (args1, inout_params, phl)),
-    step (State f (Scall p (Eglobal fun_id ty) al) k ns fpm1 sup) E0 (Callstate fun_id args1 inout_params sup (Kcall p f phl ns fpm2 k))
-| step_internal_function: forall fun_id vargs inout_params k fpm1 f ns sup1 sup2
+    (EVAL: eval_exprlist ge fpf1 al = OK (args, fpf2))
+    (NOT_DROP: function_not_drop_glue fd),
+    step (State f (Scall p (Eglobal fun_id ty) al) k fpf1 sup) E0 (Callstate fun_id args fpf2 sup (Kcall p f k))
+| step_internal_function: forall fun_id vargs k fpf1 fpm1 f sup1 sup2
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun (Internal f)))
     (NORMAL: f.(fn_drop_glue) = None)
-    (ENTRY: function_entry ge f vargs inout_params sup1 = OK (ns, fpm1, sup2)),
-    step (Callstate fun_id vargs inout_params sup1 k) E0 (State f f.(fn_body) k ns fpm1 sup2)
+    (ENTRY: function_entry ge f vargs sup1 = OK (fpm1, sup2)),
+    step (Callstate fun_id vargs fpf1 sup1 k) E0 (State f f.(fn_body) k (fpf1 ++ [fpm1]) sup2)
 
-| step_return_1: forall p vfp vfp1 vfp2 fpm1 fpm2 fpm3 fpm4 f k ck ns out_params sup
+| step_return_1: forall p vfp vfp1 fpf1 fpf2 fpf3 fpf4 fpf5 f k ck sup fidx
+    (FIDX: fidx = current_fid fpf1)
     (CONT: call_cont k = Some ck)
     (* Should we move out the return varibales so that the borrow
     check can tell that the inout params cannot point to this return
     variable's reachable locations? *)
-    (EVAL: eval_expr ge fpm1 (Emoveplace p (typeof_place p)) = OK (vfp, fpm2))
+    (EVAL: eval_expr ge fpf1 (Emoveplace p (typeof_place p)) = OK (vfp, fpf2))
     (* perform shallow write for variables/parameters *)
-    (FREE: invalidate_conflict_ref_fpm_list (map (fun '(id, _) => (id,nil)) (f.(fn_vars) ++ f.(fn_params))) AWrite Ashallow fpm1 = fpm2)
+    (FREE: invalidate_conflict_ref_fpf_list (map (fun '(id, _) => (fidx, (id,nil))) (f.(fn_vars) ++ f.(fn_params))) AWrite Ashallow fpf2 = fpf3)
     (* kill loans reborrowed from variables/parameters *)
-    (KILL: kill_paths_ref_fpm (vars_to_paths (f.(fn_vars) ++ f.(fn_params))) fpm2 = fpm3)
+    (KILL: kill_paths_ref_fpf (vars_to_spaths fidx (f.(fn_vars) ++ f.(fn_params))) fpf3 = fpf4)
     (* set all the variables/parameters to fp_uninit to align with the
     operation of kill loans *)
-    (CLR: clear_footprint_map_list ge (vars_to_paths (f.(fn_vars) ++ f.(fn_params))) fpm3 = OK fpm4)
+    (CLR: clear_footprint_frame_list ge (vars_to_spaths fidx (f.(fn_vars) ++ f.(fn_params))) fpf4 = OK fpf5)
     (* (CAST: sem_cast v (typeof_place p) f.(fn_return) = OK v1) *)
     (* Rename the external footprint to match the use of the names
     passed in this function. How to ensure that all the above
@@ -1686,51 +1779,45 @@ keeps the drop statement for the place that is init. *)
     created from reborrowing the variables/parameters in the return
     value (e.g., consider [return &mut *x] where x points to an in-out
     parameters *)
-    (RETV: (kill_paths_ref (vars_to_paths (f.(fn_vars) ++ f.(fn_params))) vfp) = vfp1)
-    (NORMALIZE: generate_return_parameters fpm4 vfp1 ns = OK (vfp2, out_params)),
-    (** How to know in advance that all the reference in out
-    parameters are not fp_uninit? It is ensured by check_dangle? *)
-    step (State f (Sreturn p) k ns fpm1 sup) E0 (Returnstate vfp2 out_params sup ck)
+    (RETV: (kill_paths_ref (vars_to_spaths fidx (f.(fn_vars) ++ f.(fn_params))) vfp) = vfp1),
+    step (State f (Sreturn p) k fpf1 sup) E0 (Returnstate vfp1 fpf5 sup ck)
 
-| step_returnstate: forall (p: place) v v1 fpm1 fpm2 fpm3 fpm4 f k inout_fpm phl ph ns vs sup
-    (* We need to first putback the ref-passed location and the do the
-    assignment because p may locate in those ref-passed locations *)
-    (PUTBACK: receive_return_footprint fpm1 (map (fun '(id, (ph, (vs, _, _))) => (id, ph, vs)) phl) v inout_fpm = OK (v1, fpm2))
-    (EVALP: before_write_place ge fpm2 p = OK (ph, vs, fpm3))    
+| step_returnstate: forall (p: place) v v1 fpf1 fpf2 fpf3 f k sph vs sup
+    (EVALP: before_write_place ge fpf1 p = OK (sph, vs, fpf2))
     (* (CASTED: sval_casted v1 (typeof_place p)) *)
-    (ASS: set_footprint_map ph (kill_paths_ref vs v1) fpm3 = OK fpm4),
-    step (Returnstate v inout_fpm sup (Kcall p f phl ns fpm1 k)) E0 (State f Sskip k ns fpm4 sup)
+    (ASS: set_footprint_frame sph (kill_paths_ref vs v1) fpf2 = OK fpf3),
+    step (Returnstate v fpf1 sup (Kcall p f k)) E0 (State f Sskip k fpf3 sup)
 
 (* Control flow statements *)
-| step_seq:  forall f s1 s2 k e m sup,
-    step (State f (Ssequence s1 s2) k e m sup)
-      E0 (State f s1 (Kseq s2 k) e m sup)
-| step_skip_seq: forall f s k e m sup,
-    step (State f Sskip (Kseq s k) e m sup)
-      E0 (State f s k e m sup)
-| step_continue_seq: forall f s k e m sup,
-    step (State f Scontinue (Kseq s k) e m sup)
-      E0 (State f Scontinue k e m sup)
-| step_break_seq: forall f s k e m sup,
-    step (State f Sbreak (Kseq s k) e m sup)
-      E0 (State f Sbreak k e m sup)
-| step_ifthenelse:  forall f a s1 s2 k e m m1 v1 b sup
+| step_seq:  forall f s1 s2 k m sup,
+    step (State f (Ssequence s1 s2) k m sup)
+      E0 (State f s1 (Kseq s2 k) m sup)
+| step_skip_seq: forall f s k m sup,
+    step (State f Sskip (Kseq s k) m sup)
+      E0 (State f s k m sup)
+| step_continue_seq: forall f s k m sup,
+    step (State f Scontinue (Kseq s k) m sup)
+      E0 (State f Scontinue k m sup)
+| step_break_seq: forall f s k m sup,
+    step (State f Sbreak (Kseq s k) m sup)
+      E0 (State f Sbreak k m sup)
+| step_ifthenelse:  forall f a s1 s2 k m m1 v1 b sup
     (* there is no receiver for the moved place, so it must be a pure
     expression *)
     (EVAL: eval_pexpr m a = OK (fp_scalar Mint8unsigned v1, m1)),
     bool_val v1 (typeof a) = Some b ->
-    step (State f (Sifthenelse (Epure a) s1 s2) k e m sup)
-      E0 (State f (if b then s1 else s2) k e m1 sup)
-| step_loop: forall f s k e m sup,
-    step (State f (Sloop s) k e m sup)
-      E0 (State f s (Kloop s k) e m sup)
-| step_skip_or_continue_loop:  forall f s k e m x sup,
+    step (State f (Sifthenelse (Epure a) s1 s2) k m sup)
+      E0 (State f (if b then s1 else s2) k m1 sup)
+| step_loop: forall f s k m sup,
+    step (State f (Sloop s) k m sup)
+      E0 (State f s (Kloop s k) m sup)
+| step_skip_or_continue_loop:  forall f s k m x sup,
     x = Sskip \/ x = Scontinue ->
-    step (State f x (Kloop s k) e m sup)
-      E0 (State f s (Kloop s k) e m sup)
-| step_break_loop:  forall f s k e m sup,
-    step (State f Sbreak (Kloop s k) e m sup)
-      E0 (State f Sskip k e m sup)
+    step (State f x (Kloop s k) m sup)
+      E0 (State f s (Kloop s k) m sup)
+| step_break_loop:  forall f s k m sup,
+    step (State f Sbreak (Kloop s k) m sup)
+      E0 (State f Sskip k m sup)
 .
 
 (** Language interfaces for the RustIR specification *)
@@ -1740,7 +1827,7 @@ Record rust_spec_query :=
     rspec_fid: ident;
     rspec_sg: rust_signature;
     rspec_args: list footprint;
-    rspec_in_fpm: fp_map;
+    rspec_q_fpf: fp_frame;
     rspec_q_sup: Mem.sup;
   }.
 
@@ -1748,7 +1835,7 @@ Record rust_spec_reply :=
   rspec_r {
     rspec_retval: footprint;
     (* rspec_rety: type; *)
-    rspec_out_fpm: fp_map;
+    rspec_r_fpf: fp_frame;
     rspec_r_sup: Mem.sup;
   }.
 
@@ -1763,7 +1850,7 @@ Definition li_rs_spec : language_interface :=
 (** Open semantics *)
 
 Inductive initial_state: (query li_rs_spec) -> state -> Prop :=
-| initial_state_intro: forall f targs tres tcc vargs orgs org_rels fun_id inout_fpm sup
+| initial_state_intro: forall f targs tres tcc vargs orgs org_rels fun_id fpf sup
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun (Internal f)))
     (TYF: type_of_function f = Tfunction orgs org_rels targs tres tcc)
     (* This function must not be drop glue *)
@@ -1771,25 +1858,25 @@ Inductive initial_state: (query li_rs_spec) -> state -> Prop :=
     (* how to prove it? *)
     (* (CAST: sval_casted_list vargs targs), *)
     (* Mem.sup_include (Genv.genv_sup ge) (Mem.support m) -> *)
-    initial_state (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs inout_fpm sup)
-      (Callstate fun_id vargs inout_fpm sup Kstop).
+    initial_state (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres tcc ge) vargs fpf sup)
+      (Callstate fun_id vargs fpf sup Kstop).
 
 
 Inductive at_external: state -> (query li_rs_spec) -> Prop :=
-| at_external_intro: forall fun_id name args k targs tres cconv orgs org_rels in_params sup
+| at_external_intro: forall fun_id name args k targs tres cconv orgs org_rels fpf sup
     (FINDF: ge.(genv_defmap) ! fun_id = Some (Gfun (External orgs org_rels (EF_external name (signature_of_type targs tres cconv)) targs tres cconv))),
-    at_external (Callstate fun_id args in_params sup k) (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres cconv ge) args in_params sup).
+    at_external (Callstate fun_id args fpf sup k) (rspec_q fun_id (mksignature orgs org_rels (type_list_of_typelist targs) tres cconv ge) args fpf sup).
 
 Inductive after_external: state -> (reply li_rs_spec) -> state -> Prop:=
-| after_external_intro: forall fun_id args k in_params out_params v sup1 sup2,
+| after_external_intro: forall fun_id args k fpf1 fpf2 v sup1 sup2,
     after_external
-      (Callstate fun_id args in_params sup1 k)
-      (rspec_r v out_params sup2)
-      (Returnstate v out_params sup2 k).
+      (Callstate fun_id args fpf1 sup1 k)
+      (rspec_r v fpf2 sup2)
+      (Returnstate v fpf2 sup2 k).
 
 Inductive final_state: state -> (reply li_rs_spec) -> Prop:=
-| final_state_intro: forall v out_params sup,
-    final_state (Returnstate v out_params sup Kstop) (rspec_r v out_params sup).
+| final_state_intro: forall v fpf sup,
+    final_state (Returnstate v fpf sup Kstop) (rspec_r v fpf sup).
 
 End SMALLSTEP.
 
@@ -1831,27 +1918,27 @@ Inductive wt_cont : typenv -> function -> cont -> Prop :=
     (WT1: wt_stmt te ge s)
     (WT2: wt_cont te f k),
     wt_cont te f (Kloop s k)
-| wt_Kcall: forall k p f f' fpm te substs inout_paths
-    (WT1: wt_call_cont (Kcall p f' inout_paths substs fpm k) f.(fn_return)),
-    wt_cont te f (Kcall p f' inout_paths substs fpm k)
+| wt_Kcall: forall k p f f' te
+    (WT1: wt_call_cont (Kcall p f' k) f.(fn_return)),
+    wt_cont te f (Kcall p f' k)
 
 with wt_call_cont : cont -> type -> Prop :=
 | wt_call_Kstop:
   wt_call_cont Kstop (rs_sig_res sg)
-| wt_call_Kcall: forall p f (fpm: fp_map) substs inout_paths k rty
+| wt_call_Kcall: forall p f (fpm: fp_map) k rty
     (WT1: wt_cont (fpm_to_env fpm) f k)
     (WT2: wt_place (fpm_to_env fpm) ge p)
     (WT3: type_eq_except_origins rty (typeof_place p) = true),
     (* For simplicity, we do not consider casting in function call *)
-  wt_call_cont (Kcall p f inout_paths substs fpm k) rty
+  wt_call_cont (Kcall p f k) rty
 .
 
 
 Inductive wt_state : state -> Prop :=
-| wt_regular_state: forall f s k substs fpm sup
+| wt_regular_state: forall f s k (fpf: fp_frame) (fpm: fp_map) sup
     (WT1: wt_stmt (fpm_to_env fpm) ge s)
     (WT2: wt_cont (fpm_to_env fpm) f k),
-    wt_state (State f s k substs fpm sup)
+    wt_state (State f s k (fpf ++ [fpm]) sup)
 | wt_callstate: forall fid fd orgs rels tyl rty cc k fpl inout_fpm sup
     (FINDF: ge.(genv_defmap) ! fid = Some (Gfun fd))
     (FTY: type_of_fundef fd = Tfunction orgs rels tyl rty cc)

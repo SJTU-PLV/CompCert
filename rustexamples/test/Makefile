@@ -2,11 +2,11 @@
 SRCS=$(wildcard *.rs)
 
 # Files whose comilation is expected to be failed
-FAIL_EXPECTED := 01.rs 03.rs 11.rs 12.rs 13.rs 15.rs 16.rs 17.rs 18.rs 22dangle.rs 32.rs 34.rs 36.rs 41.rs 43_self_ref.rs 48_shr_ref_invariant.rs 49_mut_ref_invariant_imprecise.rs 51_callsite_invariance.rs
+FAIL_EXPECTED := 01.rs 03.rs 11.rs 12.rs 13.rs 15.rs 16.rs 17.rs 18.rs 22dangle.rs 32.rs 34.rs 36.rs 41.rs 43_self_ref.rs 48_shr_ref_invariant.rs 49_mut_ref_invariant_imprecise.rs 51_callsite_invariance.rs 52_callsite_same_region_invariance.rs
 # Files whose comilation would be failed. Compared to FAIL_EXPECTED,
 # it addtionaly contains 21struct_enum_generic.rs whose syntax is not
 # supported now.
-FAIL_SRCS := 01.rs 03.rs 11.rs 12.rs 13.rs 15.rs 16.rs 17.rs 18.rs 22dangle.rs 21struct_enum_generic.rs 32.rs 34.rs 36.rs 41.rs 43_self_ref.rs 48_shr_ref_invariant.rs 49_mut_ref_invariant_imprecise.rs 51_callsite_invariance.rs
+FAIL_SRCS := 01.rs 03.rs 11.rs 12.rs 13.rs 15.rs 16.rs 17.rs 18.rs 22dangle.rs 21struct_enum_generic.rs 32.rs 34.rs 36.rs 41.rs 43_self_ref.rs 48_shr_ref_invariant.rs 49_mut_ref_invariant_imprecise.rs 51_callsite_invariance.rs 52_callsite_same_region_invariance.rs
 
 SUCCESS_EXPECTED := $(filter-out $(FAIL_SRCS),$(SRCS))
 
