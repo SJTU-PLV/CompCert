@@ -52,21 +52,48 @@ Module LoanSetFacts := FSetFacts.WFacts(LoanSet).
 
 Module LoanSetL := LFSet(LoanSet).
 
+(* Lattice for state access path *)
+
+Definition spath_mut : Type := spath * mutkind.
+
+Lemma spath_mut_eq_dec: forall (l1 l2: spath_mut), {l1 = l2} + {l1 <> l2}.
+Proof.
+  generalize Pos.eq_dec spath_eq_dec. intros.
+  decide equality.
+  decide equality.
+Defined.
+
+
+Module SPathMut <: DecidableType.DecidableType.
+  Definition t := spath_mut.
+  Definition eq := @eq t.
+  Definition eq_dec :=  spath_mut_eq_dec.
+  Definition eq_refl: forall x, eq x x := (@eq_refl t).
+  Definition eq_sym: forall x y, eq x y -> eq y x := (@eq_sym t).
+  Definition eq_trans: forall x y z, eq x y -> eq y z -> eq x z := (@eq_trans t).
+End SPathMut.
+
+Module SPathSet := FSetWeakList.Make(SPathMut).
+
+Module SPathSetFacts := FSetFacts.WFacts(SPathSet).
+
+Module SPathSetL := LFSet(SPathSet).
+
 (** Origin state *)
 
+(* Origin state is a lattice parametric in the set of loans (or views) lattice *)
+
+Module LOrgSt(LS: SEMILATTICE) <: SEMILATTICE.
+
 Inductive origin_state : Type :=
-| Live (ls: LoanSetL.t)
+| Live (ls: LS.t)
 | Dead.
-
-(* Origin state is a lattice *)
-
-Module LOrgSt <: SEMILATTICE.
   
 Definition t := origin_state.
 
 Definition eq (x y: t) :=
   match x, y with
-  | Live ls1, Live ls2 => LoanSetL.eq ls1 ls2
+  | Live ls1, Live ls2 => LS.eq ls1 ls2
   | Dead, Dead => True
   | _, _ => False
   end.
@@ -74,27 +101,27 @@ Definition eq (x y: t) :=
 Lemma eq_refl: forall x, eq x x.
 Proof.
   intros. red. destruct x; auto.
-  apply LoanSet.eq_refl.
+  apply LS.eq_refl.
 Qed.
 
 Lemma eq_sym: forall x y, eq x y -> eq y x.
 Proof.
   intros. red in *.
   destruct x, y; auto.
-  apply LoanSet.eq_sym. auto.
+  apply LS.eq_sym. auto.
 Qed.
 
 Lemma eq_trans: forall x y z, eq x y -> eq y z -> eq x z.
 Proof.
   intros; red in *.
   destruct x, y, z; auto.
-  eapply LoanSet.eq_trans; eauto.
+  eapply LS.eq_trans; eauto.
   contradiction.
 Qed.
   
 Definition beq (s1 s2 : t) : bool :=
   match s1, s2 with
-  | Live ls1, Live ls2 => LoanSetL.beq ls1 ls2
+  | Live ls1, Live ls2 => LS.beq ls1 ls2
   | Dead, Dead => true
   | _, _ => false
   end.
@@ -102,27 +129,27 @@ Definition beq (s1 s2 : t) : bool :=
 Lemma beq_correct: forall x y, beq x y = true -> eq x y.
 Proof.
   intros. destruct x, y; red; simpl in *; auto; try congruence.
-  eapply LoanSetL.beq_correct. auto.
+  eapply LS.beq_correct. auto.
 Qed.  
   
 Definition ge (x y: t) : Prop :=
   match x, y with
   | _, Dead => True
   | Dead, _ => False                
-  | Live ls1, Live ls2 => LoanSetL.ge ls1 ls2
+  | Live ls1, Live ls2 => LS.ge ls1 ls2
   end.
 
 Lemma ge_refl: forall x y, eq x y -> ge x y.
 Proof.
   intros; red in *; destruct x,y; auto.
-  eapply LoanSetL.ge_refl. auto.
+  eapply LS.ge_refl. auto.
 Qed.
 
 Lemma ge_trans: forall x y z, ge x y -> ge y z -> ge x z.
 Proof.
   intros. red in *.
   destruct x, y, z; auto.
-  eapply LoanSetL.ge_trans; eauto.
+  eapply LS.ge_trans; eauto.
   contradiction.
 Qed.
 
@@ -150,39 +177,48 @@ Definition lub (x y: t) :=
   match x, y with
   | Dead, _ => y
   | _, Dead => x
-  | Live ls1, Live ls2 => Live(LoanSetL.lub ls1 ls2)
+  | Live ls1, Live ls2 => Live(LS.lub ls1 ls2)
   end.
 
 Lemma ge_lub_left: forall x y, ge (lub x y) x.
 Proof.
   intros. destruct x, y; simpl; auto.
-  apply LoanSetL.ge_lub_left.
-  eapply LoanSetL.ge_refl.
-  eapply LoanSetL.eq_refl.
+  apply LS.ge_lub_left.
+  eapply LS.ge_refl.
+  eapply LS.eq_refl.
 Qed.
 
 Lemma ge_lub_right: forall x y, ge (lub x y) y.
 Proof.
   intros. destruct x, y; simpl; auto.
-  apply LoanSetL.ge_lub_right.
-  eapply LoanSetL.ge_refl.
-  eapply LoanSetL.eq_refl.
+  apply LS.ge_lub_right.
+  eapply LS.ge_refl.
+  eapply LS.eq_refl.
 Qed.
 
 End LOrgSt.
 
-Global Instance LOrgSt_eq_equiv: 
-  Equivalence (LOrgSt.eq).
+(** Two instances of LOrgSt: one is for static Polonius analysis where
+we instantiate LS as loan sets and the other is for sound
+approximation where we instantiate LS as set of access paths *)
+
+Module LOrgLnSt := LOrgSt(LoanSetL).
+
+Module LOrgPhSt := LOrgSt(SPathSetL).
+Module LOrgPhOptSt := LOption(LOrgPhSt).
+
+Global Instance LOrgLnSt_eq_equiv: 
+  Equivalence (LOrgLnSt.eq).
 Proof.
   split.
-  red. eapply LOrgSt.eq_refl.
-  red. eapply LOrgSt.eq_sym.
-  red. eapply LOrgSt.eq_trans.
+  red. eapply LOrgLnSt.eq_refl.
+  red. eapply LOrgLnSt.eq_sym.
+  red. eapply LOrgLnSt.eq_trans.
 Defined.
 
 
-Global Instance LOrgSt_lub_Proper:
-  Proper (LOrgSt.eq ==> LOrgSt.eq ==> LOrgSt.eq) LOrgSt.lub.
+Global Instance LOrgLnSt_lub_Proper:
+  Proper (LOrgLnSt.eq ==> LOrgLnSt.eq ==> LOrgLnSt.eq) LOrgLnSt.lub.
 Proof.
   intros ls1 ls2 A ls3 ls4 B.
   destruct ls1; destruct ls3; destruct ls2; destruct ls4; simpl in *.
@@ -603,8 +639,10 @@ End LUFMap.
   
 (** Origin environment *)
 
-Module LOrgEnv := LUFMap(LOrgSt).
+Module LOrgEnv := LUFMap(LOrgLnSt).
 
+(* Only abstract regions (or origins) *)
+Module LOrgPhEnv := LUFMap(LOrgPhOptSt).
 
 (** Auxilary defintions and functions used for updating origin environment *)
 
@@ -645,12 +683,12 @@ Definition conflict p (ls: LoanSet.t) am ak :=
 
 
 (* Invalidate an origin *)
-Definition illegal_access_in_origin_state (p: place) (am: access_mode_bor) (ak: access_kind) (r: origin) (os: origin_state) : bool :=
+Definition illegal_access_in_origin_state (p: place) (am: access_mode_bor) (ak: access_kind) (r: origin) (os: LOrgLnSt.origin_state) : bool :=
   match os with
-  | Live ls =>
+  | LOrgLnSt.Live ls =>
       if conflict p ls am ak then true
       else false
-  | Dead => false
+  | LOrgLnSt.Dead => false
   end.
 
 (* Check whether we should invalidate each origin in the origin *)
@@ -766,7 +804,7 @@ Module LoansEnv <: SEMILATTICE.
 
 End LoansEnv.
 
-Global Instance LOrgEnv_set_Proper: Proper (eq ==> LOrgSt.eq ==> LOrgEnv.eq ==> LOrgEnv.eq) LOrgEnv.set.
+Global Instance LOrgEnv_set_Proper: Proper (eq ==> LOrgLnSt.eq ==> LOrgEnv.eq ==> LOrgEnv.eq) LOrgEnv.set.
 Proof.
   intros r1 r2 A ls1 ls2 B le1 le2 C. subst.
   inv C. 
@@ -781,54 +819,188 @@ Proof.
     auto.
 Qed.  
 
+(* One-to-one correspondence between (positive * positive) and
+positive, which is used to construct whole-module loans
+environment. This code is mainly copied from stdpp.countable. *)
 
+Definition omap {A B : Type} (f : A -> B) (o : option A) : option B :=
+  match o with
+  | Some x => Some (f x)
+  | None => None
+  end.
 
-(* (* Update Alias graph *) *)
+Fixpoint prod_encode_fst (p : positive) : positive :=
+  match p with
+  | xH => xH
+  | xO p => xO (xO (prod_encode_fst p))
+  | xI p => xI (xO (prod_encode_fst p))
+  end.
 
-(* Definition set_alias (org1 org2: origin) (g: LAliasGraph.t) : LAliasGraph.t := *)
-(*   match g!org1, g!org2 with *)
-(*   | Some ls1, Some ls2 => *)
-(*       (* merge two cliques *) *)
-(*       let ls := OriginSet.add org2 (OriginSet.add org1 (OriginSet.union ls1 ls2)) in *)
-(*       PTree.map (fun id ls' => if OriginSet.mem id ls then *)
-(*                               OriginSet.union ls' (OriginSet.remove id ls) *)
-(*                             else ls') g *)
-(*   | Some ls1, None => *)
-(*       let ls := OriginSet.add org2 (OriginSet.add org1 ls1) in *)
-(*       let g0 := PTree.set org2 OriginSet.empty g in *)
-(*       PTree.map (fun id ls' => if OriginSet.mem id ls then *)
-(*                               OriginSet.union ls' (OriginSet.remove id ls) *)
-(*                             else ls') g0                           *)
-(*   | None, Some ls2 => *)
-(*       let ls := OriginSet.add org2 (OriginSet.add org1 ls2) in *)
-(*       let g0 := PTree.set org1 OriginSet.empty g in *)
-(*       PTree.map (fun id ls' => if OriginSet.mem id ls then *)
-(*                               OriginSet.union ls' (OriginSet.remove id ls) *)
-(*                             else ls') g0 *)
-(*   | None, None => *)
-(*       let g0 := PTree.set org1 (OriginSet.singleton org2) g in *)
-(*       PTree.set org2 (OriginSet.singleton org1) g0 *)
-(*   end. *)
+Fixpoint prod_encode_snd (p : positive) : positive :=
+  match p with
+  | xH => xO xH
+  | xO p => xO (xO (prod_encode_snd p))
+  | xI p => xO (xI (prod_encode_snd p))
+  end.
 
-(* (* Set loans to an origin and then update all the alias origin *) *)
+Fixpoint prod_encode (p q : positive) : positive :=
+  match p, q with
+  | xH, xH => xI xH
+  | xO p, xH => xO (xI (prod_encode_fst p))
+  | xI p, xH => xI (xI (prod_encode_fst p))
+  | xH, xO q => xI (xO (prod_encode_snd q))
+  | xH, xI q => xI (xI (prod_encode_snd q))
+  | xO p, xO q => xO (xO (prod_encode p q))
+  | xO p, xI q => xO (xI (prod_encode p q))
+  | xI p, xO q => xI (xO (prod_encode p q))
+  | xI p, xI q => xI (xI (prod_encode p q))
+  end.
 
-(* Definition set_loans_with_alias (org: origin) (ls: LoanSet.t) (oe: LOrgEnv.t) (a: LAliasGraph.t) : LOrgEnv.t := *)
-(*   let os := Live ls in *)
-(*   let oe1 := LOrgEnv.set org os oe in *)
-(*   match a!org with *)
-(*   | Some orgs => *)
-(*       OriginSet.fold (fun elt oe' => LOrgEnv.set elt os oe') orgs oe1 *)
-(*   | None => *)
-(*       oe1 *)
-(*   end. *)
-  
-(* (* Remove alias of org in the alias graph, i.e., remove a node in a clique *) *)
-(* Definition remove_alias (org: origin) (g: LAliasGraph.t) : LAliasGraph.t := *)
-(*   match g!org with *)
-(*   | Some orgs => *)
-(*       let g' := PTree.map (fun id s => if OriginSet.mem id orgs then *)
-(*                                       OriginSet.remove org s *)
-(*                                     else s) g in *)
-(*       PTree.remove org g' *)
-(*   | _ => g *)
-(*   end. *)
+Fixpoint prod_decode_fst (p : positive) : option positive :=
+  match p with
+  | xO (xO p) => omap xO (prod_decode_fst p)
+  | xI (xO p) =>
+      Some
+        match prod_decode_fst p with
+        | Some q => xI q
+        | None => xH
+        end
+  | xO (xI p) => omap xO (prod_decode_fst p)
+  | xI (xI p) =>
+      Some
+        match prod_decode_fst p with
+        | Some q => xI q
+        | None => xH
+        end
+  | xO xH => None
+  | xI xH => Some xH
+  | xH => Some xH
+  end.
+
+Fixpoint prod_decode_snd (p : positive) : option positive :=
+  match p with
+  | xO (xO p) => omap xO (prod_decode_snd p)
+  | xI (xO p) => omap xO (prod_decode_snd p)
+  | xO (xI p) =>
+      Some
+        match prod_decode_snd p with
+        | Some q => xI q
+        | None => xH
+        end
+  | xI (xI p) =>
+      Some
+        match prod_decode_snd p with
+        | Some q => xI q
+        | None => xH
+        end
+  | xO xH => Some xH
+  | xI xH => Some xH
+  | xH => None
+  end.
+
+Definition encode_pos_pair (pq : positive * positive) : positive :=
+  let '(p, q) := pq in
+  prod_encode p q.
+
+Definition decode_pos_pair (r : positive) : option (positive * positive) :=
+  match prod_decode_fst r, prod_decode_snd r with
+  | Some p, Some q => Some (p, q)
+  | _, _ => None
+  end.
+
+Lemma prod_decode_encode_fst_fst :
+  forall p,
+    prod_decode_fst (prod_encode_fst p) = Some p.
+Proof.
+  induction p; simpl; rewrite ?IHp; reflexivity.
+Qed.
+
+Lemma prod_decode_fst_encode_snd :
+  forall p,
+    prod_decode_fst (prod_encode_snd p) = None.
+Proof.
+  induction p; simpl; rewrite ?IHp; reflexivity.
+Qed.
+
+Lemma prod_decode_encode_snd_snd :
+  forall p,
+    prod_decode_snd (prod_encode_snd p) = Some p.
+Proof.
+  induction p; simpl; rewrite ?IHp; reflexivity.
+Qed.
+
+Lemma prod_decode_snd_encode_fst :
+  forall p,
+    prod_decode_snd (prod_encode_fst p) = None.
+Proof.
+  induction p; simpl; rewrite ?IHp; reflexivity.
+Qed.
+
+Lemma prod_decode_encode_fst :
+  forall p q,
+    prod_decode_fst (prod_encode p q) = Some p.
+Proof.
+  induction p; intros q; destruct q; simpl;
+    repeat
+      match goal with
+      | |- context [prod_decode_fst (prod_encode ?p ?q)] =>
+          rewrite (IHp q)
+      | |- context [prod_decode_fst (prod_encode_fst ?p)] =>
+          rewrite prod_decode_encode_fst_fst
+      | |- context [prod_decode_fst (prod_encode_snd ?p)] =>
+          rewrite prod_decode_fst_encode_snd
+      end;
+    reflexivity.
+Qed.
+
+Lemma prod_decode_encode_snd :
+  forall p q,
+    prod_decode_snd (prod_encode p q) = Some q.
+Proof.
+  induction p; intros q; destruct q; simpl;
+    repeat
+      match goal with
+      | |- context [prod_decode_snd (prod_encode ?p ?q)] =>
+          rewrite (IHp q)
+      | |- context [prod_decode_snd (prod_encode_snd ?p)] =>
+          rewrite prod_decode_encode_snd_snd
+      | |- context [prod_decode_snd (prod_encode_fst ?p)] =>
+          rewrite prod_decode_snd_encode_fst
+      end;
+    reflexivity.
+Qed.
+
+Lemma decode_encode_pos_pair :
+  forall pq,
+    decode_pos_pair (encode_pos_pair pq) = Some pq.
+Proof.
+  intros [p q].
+  unfold encode_pos_pair, decode_pos_pair.
+  rewrite prod_decode_encode_fst.
+  rewrite prod_decode_encode_snd.
+  reflexivity.
+Qed.
+
+Lemma encode_pos_pair_inj :
+  forall pq1 pq2,
+    encode_pos_pair pq1 = encode_pos_pair pq2 ->
+    pq1 = pq2.
+Proof.
+  intros pq1 pq2 H.
+  apply (f_equal decode_pos_pair) in H.
+  rewrite !decode_encode_pos_pair in H.
+  injection H as H.
+  exact H.
+Qed.
+
+Lemma encode_pos_pair_inj' :
+  forall p1 q1 p2 q2,
+    encode_pos_pair (p1, q1) = encode_pos_pair (p2, q2) ->
+    p1 = p2 /\ q1 = q2.
+Proof.
+  intros p1 q1 p2 q2 H.
+  apply encode_pos_pair_inj in H.
+  inversion H; subst.
+  split; reflexivity.
+Qed.
+

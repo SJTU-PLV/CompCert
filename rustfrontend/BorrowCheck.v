@@ -42,6 +42,12 @@ a place that is not nested within some reference) is initialized;
 Definition check_region_uniqueness (f: function) : res unit :=
   OK tt.
 
+Definition check_no_live_local_regions_at_entry (live: RegionLiveness.RegionSet.t) (f: function) : res unit :=
+  let regs := concat (map origins_of_type (map snd (f.(fn_vars) ++ f.(fn_params)))) in
+  if forallb (fun r => negb (RegionLiveness.RegionSet.mem r live)) regs then
+    OK tt
+  else
+    Error (msg "There is some region of local variables/parameters that are live at the function entry (which means it is used without initialization)").
 
 Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res unit :=
   do (entry, cfg) <- generate_cfg f.(fn_body);
@@ -70,10 +76,13 @@ Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res 
   (** TODO: add the checking for mutability *)
   (** * 3. Borrow checking *)
   (* 3.1. Loans-flow analysis *)
-  do loans_flow_res <- loans_flow_analyze ce f cfg entry;
+  do (live, loansEnv) <- loans_flow_analyze ce f cfg entry;
   (* 3.2. check illegal access of active loans *)
   let generic_regions := RegionLiveness.live_generic_regions (fn_generic_origins f) in
-  collect_borrow_check_result generic_regions f cfg loans_flow_res.
+  (* There should be no local regions that are live at the entry
+  (which means that it is used without initialization) *)
+  do _ <- check_no_live_local_regions_at_entry (live !! entry) f;
+  collect_borrow_check_result generic_regions f cfg (live, loansEnv).
 
 Definition borrow_check_fundef (ce : composite_env) (id : ident) (fd : fundef) : Errors.res fundef :=
   match fd with

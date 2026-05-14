@@ -37,8 +37,8 @@ Definition support_origins (p: place) : list origin :=
                           | _ => acc
                           end) nil support_prefixes.
 
-Definition aggregate_origin_states (e: LOrgEnv.t) (orgs: list origin) : LOrgSt.t :=
-  fold_left (fun acc elt => LOrgSt.lub acc (LOrgEnv.get elt e)) orgs LOrgSt.bot.
+Definition aggregate_origin_states (e: LOrgEnv.t) (orgs: list origin) : LOrgLnSt.t :=
+  fold_left (fun acc elt => LOrgLnSt.lub acc (LOrgEnv.get elt e)) orgs LOrgLnSt.bot.
 
 Definition borrowed_place_error (action site: string) (p: place) : errmsg :=
   [MSG action; MSG " place "]
@@ -49,8 +49,8 @@ Definition borrowed_place_error (action site: string) (p: place) : errmsg :=
 Definition map_loan_set (f: loan -> loan) (ls: LoanSet.t) : LoanSet.t :=
   LoanSet.fold (fun ln acc => LoanSet.add (f ln) acc) ls LoanSet.empty.
 
-Definition loan_env_add (le: LOrgEnv.t) (r: origin) (ls: LOrgSt.t) : LOrgEnv.t :=
-  LOrgEnv.set r (LOrgSt.lub ls (LOrgEnv.get r le)) le.
+Definition loan_env_add (le: LOrgEnv.t) (r: origin) (ls: LOrgLnSt.t) : LOrgEnv.t :=
+  LOrgEnv.set r (LOrgLnSt.lub ls (LOrgEnv.get r le)) le.
 
 (* Transition of pure expression *)
 
@@ -62,7 +62,7 @@ Fixpoint transfer_pure_expr (e: LOrgEnv.t) (pe: pexpr) : LOrgEnv.t :=
       let support_orgs := support_origins p in
       (* aggregate the loans in the support origins *)
       let org_st := aggregate_origin_states e support_orgs in
-      let s' := LOrgSt.lub org_st (Live (LoanSet.singleton (Lintern mut p))) in
+      let s' := LOrgLnSt.lub org_st (LOrgLnSt.Live (LoanSet.singleton (Lintern mut p))) in
       (** Simplification: we choose not to overwrite the e[org] to
       simplfy the proof because we do not need to prove that org does
       not appear in e. This simplification is OK because (1) it does
@@ -151,7 +151,7 @@ Fixpoint check_exprlist (oe: LOrgEnv.t) (l: list expr) : res unit :=
 Definition flow_loans_by_regions (e: LOrgEnv.t) (org_src org_tgt: origin) (va: variance) : LOrgEnv.t :=
   match va with
   | Covariant =>
-      let st := LOrgSt.lub (LOrgEnv.get org_src e) (LOrgEnv.get org_tgt e) in
+      let st := LOrgLnSt.lub (LOrgEnv.get org_src e) (LOrgEnv.get org_tgt e) in
       LOrgEnv.set org_tgt st e
   | Invariant =>
       LOrgEnv.union org_src org_tgt e
@@ -208,17 +208,17 @@ Definition check_shallow_write_place (e: LOrgEnv.t) (p: place) : res unit :=
 
 (* Auxilary functions for transition of statements *)
 
-Definition kill_place_related_loans (p: place) (st: LOrgSt.t) : LOrgSt.t :=
+Definition kill_place_related_loans (p: place) (st: LOrgLnSt.t) : LOrgLnSt.t :=
   match st with
-  | Live ls =>
-      Live (LoanSet.filter (fun elt => match elt with
+  | LOrgLnSt.Live ls =>
+      LOrgLnSt.Live (LoanSet.filter (fun elt => match elt with
                               (* Note that we also clear p, so
                               clear_dead_loans should be perfomed
                               after check_shallow_write_place *)
                               | Lintern _ p' => negb (is_prefix p p')
                               | _ => true
                               end) ls)
-  | Dead => Dead
+  | LOrgLnSt.Dead => LOrgLnSt.Dead
   end.
 
 (* When some loan [p] is overwritten, it should be cleared *)
@@ -304,7 +304,7 @@ Fixpoint bind_type_origins_list (tyl: list (type * type)) :=
   end.
 
 Definition flow_loans_origin_to_origin (se te: LOrgEnv.t) (src tgt: origin) : LOrgEnv.t :=
-  LOrgEnv.set tgt (LOrgSt.lub (LOrgEnv.get src se) (LOrgEnv.get tgt te)) te.
+  LOrgEnv.set tgt (LOrgLnSt.lub (LOrgEnv.get src se) (LOrgEnv.get tgt te)) te.
 
 
 Fixpoint flow_loans_bind (se: LOrgEnv.t) (te: LOrgEnv.t) (rels: list origin_rel) (l: list (origin * origin * flow_kind)) : LOrgEnv.t * list origin_rel :=
@@ -381,7 +381,7 @@ Definition after_call (fe: LOrgEnv.t) (rels: list origin_rel) : LOrgEnv.t :=
 
 
 Definition flow_loans_origin_to_origin_with_alias (fe e: LOrgEnv.t) (forg org: origin) : LOrgEnv.t :=
-  LOrgEnv.set org (LOrgSt.lub (LOrgEnv.get forg fe) (LOrgEnv.get org e)) e.
+  LOrgEnv.set org (LOrgLnSt.lub (LOrgEnv.get forg fe) (LOrgEnv.get org e)) e.
 
 (* Flow back the loans based on the invariant relation established by
 the bind_params_origins *)
@@ -484,15 +484,15 @@ Definition check_drop (oe1: LOrgEnv.t) (p: place) : res unit :=
 (** All the relations between the generic origins after the function
 call must be declared in the function sigature *)
 
-Definition live_origin (st: origin_state) : bool :=
+Definition live_origin (st: LOrgLnSt.origin_state) : bool :=
   match st with
-  | Live _ => true
-  | Dead => false
+  | LOrgLnSt.Live _ => true
+  | LOrgLnSt.Dead => false
   end.
 
-Definition absence_of_internal_loans (st: LOrgSt.t) : bool :=
+Definition absence_of_internal_loans (st: LOrgLnSt.t) : bool :=
   match st with
-  | Live ls =>
+  | LOrgLnSt.Live ls =>
       LoanSet.for_all (fun ln => match ln with
                               | Lintern _ _ => false
                               | Lextern _ => true
@@ -515,7 +515,7 @@ Definition check_generic_origins_relations (f: function) (e: LOrgEnv.t) : bool :
              forallb (fun org2 =>
                         if Pos.eqb org1 org2 then true
                         else match LOrgEnv.get org1 e, LOrgEnv.get org2 e with
-                             | Live ls1, Live ls2 =>
+                             | LOrgLnSt.Live ls1, LOrgLnSt.Live ls2 =>
                                  if LoanSet.subset ls1 ls2 then
                                    in_dec origin_rel_eq_dec (org1, org2) f.(fn_origins_relation)
                                  else if LoanSet.subset ls2 ls1 then
@@ -651,7 +651,7 @@ that appear in the arguments? *)
 Definition init_function (f: function) : LOrgEnv.t :=
   (* initialize the loans of generic regions *)
   let oe1 := fold_left (fun acc elt =>
-                          let os := Live (LoanSet.singleton (Lextern elt)) in
+                          let os := LOrgLnSt.Live (LoanSet.singleton (Lextern elt)) in
                           LOrgEnv.set elt os acc) f.(fn_generic_origins) LOrgEnv.bot in
   (* flow the loans from the function arguments to the parameters *)
   flow_loans_list oe1 f.(fn_param_types) (map snd f.(fn_params)) Covariant.

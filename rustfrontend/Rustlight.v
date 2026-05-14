@@ -930,6 +930,18 @@ Definition is_shallow_prefix_path (ph1 ph2: path) : bool :=
 (*   ident_eq id1 id2 && projections_support_contain phl1 phl2. *)
 
 
+(** State path (frame id, path). It is used in defining RustIRspec *)
+
+Definition spath : Type := nat * path.
+
+Lemma spath_eq_dec: forall (sph1 sph2: spath), {sph1 = sph2} + {sph1 <> sph2}.
+Proof.
+  intros. destruct sph1. destruct sph2.
+  destruct (Nat.eq_dec n n0).
+  destruct (path_eq p p0); subst; auto.
+  all: right; congruence.
+Defined.
+
 (*
 
 Definition is_prefix (p1 p2: place) : bool :=

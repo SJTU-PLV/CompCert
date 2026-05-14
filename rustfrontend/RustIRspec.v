@@ -29,6 +29,7 @@ Fixpoint list_insert {A} (n : nat) (x : A) (l : list A) : list A :=
   | _, [] => []
   end.
 
+
 Section WT_PATH.
 
 Variable ce: composite_env.
@@ -80,6 +81,25 @@ Definition wt_path_variance (te: typenv) (phs: path) : res (type * variance) :=
   | None =>
       Error (msg "no local type")
   end.
+
+Definition wt_spath (te: list typenv) (sph: spath) : res type :=
+  let (fid, ph) := sph in
+  match nth_error te fid with
+  | Some te1 =>
+      wt_path te1 ph
+  | None =>
+      Error (msg "no frame type env")
+  end.
+
+Definition wt_spath_variance (te: list typenv) (sph: spath) : res (type * variance) :=
+  let (fid, ph) := sph in
+  match nth_error te fid with
+  | Some te1 =>
+      wt_path_variance te1 ph
+  | None =>
+      Error (msg "no frame type env")
+  end.
+
 
 End WT_PATH.
 
@@ -144,7 +164,6 @@ Context {ame: adt_mem_env}.
 
 (* Function environment *)
 
-Definition spath : Type := nat * path.
 Definition views : Type := list spath.
 
 (* A tree structured footprint (maybe similar to some separation logic

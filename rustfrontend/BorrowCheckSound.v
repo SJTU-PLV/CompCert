@@ -26,6 +26,9 @@ Import ListNotations.
 Local Open Scope error_monad_scope.
 Local Open Scope Z_scope.
 
+Definition enc_frame_reg (frame: nat) (r: origin) :=
+  prod_encode (Pos.of_succ_nat frame) r.
+
 Definition append_projs (phl: list projection) (ph: path) :=
   (fst ph, snd ph ++ phl).
 
@@ -94,9 +97,11 @@ Context {ame: adt_mem_env}.
 Notation footprint := (@footprint ame).
 Notation fp_map := (@fp_map ame).
 Notation fp_graph := (@fp_graph ame).
-Notation get_owner_path_map := (@get_owner_path_map ame).
 Notation cont := (@cont ame).
 Notation state := (@state ame).
+Notation fp_frame := (@fp_frame ame).
+Notation fp_graph_frame := (@fp_graph_frame ame).
+Notation get_owner_path_frame := (@get_owner_path_frame ame).
 
 Section BORROW_CHECK.
 
@@ -145,7 +150,7 @@ use, e.g., NLL or Polonius, because we just use their final result of
 the compuation, i.e., both of them compute active loans at each point
 of the program. *)
 
-(* We also need to know that generic region this path locates
+(* Unused. We also need to know that generic region this path locates
 at....  *)
 Definition extern_loc_region (orgm: PTree.t (option origin)) (ph: path) : option origin :=
   let (id, pj) := ph in
@@ -164,30 +169,53 @@ Definition mutability_match (ref_mut loan_mut: mutkind) : Prop :=
   | _, _ => False
   end.
 
-Definition loan_approx (orgm: PTree.t (option origin)) (ln: loan) (ref_mut: mutkind) (ph: path) : Prop :=
-  match ln, extern_loc_region orgm ph with
-  | Lintern loan_mut p, None =>
-      (** Note: mut is the precise mutability of the reference we are focusing. *)
-      (* TODO: maybe we should use path uniformly *)
-      let (id1, pj1) := path_of_place p in
-      let (id2, pj2) := ph in
-      id1 = id2 /\ projections_contain pj1 pj2 = true /\ mutability_match ref_mut loan_mut
-  | Lextern org1, Some org2 =>
-      org1 = org2 
-  | _, _ => False
-  end.
+Definition ext_views_map := PTree.t SPathSet.t.
 
-Definition loans_approx_views (orgm: PTree.t (option origin)) (ls: LoanSet.t) (ref_mut: mutkind) (vs: views) : Prop :=
-  forall vph, In vph vs ->
-         exists ln, LoanSet.In ln ls /\ loan_approx orgm ln ref_mut vph.
+Definition loan_approx (frame: nat) (orgm: ext_views_map) (ln: loan) (mut: mutkind) (sph: spath) : Prop :=
+  let (fid, ph) := sph in
+  if Nat.eqb fid frame then
+    match ln with
+    | Lintern loan_mut p =>
+        path_of_place p = ph /\ loan_mut = mut
+      (* (** Note: mut is the precise mutability of the reference we are focusing. *) *)
+      (* (* TODO: maybe we should use path uniformly *) *)
+      (* let (id1, pj1) := path_of_place p in *)
+      (* let (id2, pj2) := ph in *)
+      (* id1 = id2 /\ projections_contain pj1 pj2 = true /\ mut = loan_mut *)
+    | _ => False
+    end
+  else
+    (* The state path starts from other frames so it should be abstracted by an extern loan *)
+    match ln with
+    | Lextern org =>
+        exists vs, orgm ! org = Some vs 
+              (* Since there is not way for us to make sph more
+              precise (in dynamic transfer function, we do not compute
+              actual spath), we do not need to say that there is a
+              prefix of sph in vs *)
+              /\ SPathSet.In (sph, mut) vs
+    | _ => False
+    end.
 
-Definition fpm_to_orgm (fpm: fp_map) : PTree.t (option origin) :=
-  PTree.map1 (fun '(_,_,r,_,_) => r) fpm.
+Definition loans_approx_views (frame: nat) (orgm: ext_views_map) (ls: LoanSet.t) (vs: SPathSet.t) : Prop :=
+  forall mut sph, SPathSet.In (sph, mut) vs ->
+         exists ln, LoanSet.In ln ls /\ loan_approx frame orgm ln mut sph.
 
+(* Definition fpm_to_orgm (fpm: fp_map) : PTree.t (option origin) := *)
+(*   PTree.map1 (fun '(_,_,r,_,_) => r) fpm. *)
 
 (* Why do we need region liveness here? *)
-Definition sound_loan_analysis ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) : Prop :=
-  forall ph opt_ph vs mut b ofs r ty
+Definition sound_loan_approx (frame: nat) (live: RegionSet.t) (le: LOrgEnv.t) (orgm: ext_views_map) (sphm: LOrgPhEnv.t) : Prop :=
+  forall r (LIVE_REG: RegionSet.In r live),
+    exists vs ls, 
+      LOrgPhOptSt.eq (LOrgPhEnv.get (enc_frame_reg frame r) sphm) (Some (LOrgPhSt.Live vs))
+      /\ LOrgLnSt.eq (LOrgEnv.get r le) (LOrgLnSt.Live ls)
+      /\ loans_approx_views frame orgm ls vs.
+
+Definition sound_region_approx ce (sphm: LOrgPhEnv.t) (fpf: fp_frame) : Prop :=
+  forall fid ph opt_ph vs mut b ofs r ty
+    
+    
     (* If we make these two get_xxx as assumptions, how can we use
     this approximation property to prove progress, i.e., how to prove
     these two assumptions. For example, when we prove the progress in
@@ -196,8 +224,8 @@ Definition sound_loan_analysis ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_m
     property about "all owners pointed by reference is init" *)
     (* (GET_FP: get_owner_path_map ph fpm = OK (owner_ph, vs1)) *)
     (* (GET_FP: get_owner_footprint_map owner_ph fpm = OK (fp_ref mut b ofs opt_ph vs2)) *)
-    (GET_FP: get_reachable_footprint_map fpm ph = OK (fp_ref mut b ofs opt_ph vs))
-    (WTPH: wt_path ce (fpm_to_tenv fpm) ph = OK (Treference r mut ty))
+    (GET_FP: get_reachable_footprint_frame fpf (fid, ph) = OK (fp_ref mut b ofs opt_ph vs))
+    (WTPH: wt_spath ce (fpf_to_tenv fpm) ph = OK (Treference r mut ty))
     (LIVE_REG: RegionSet.In r live),
     (* live region contains valid loans *)
     exists ls, LOrgSt.eq (LOrgEnv.get r le) (Live ls)
@@ -206,6 +234,29 @@ Definition sound_loan_analysis ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_m
     (* Approximation: all (mutable) paths in the vs2 are approximated
     in the loans map *)
     /\ loans_approx_views (fpm_to_orgm fpm) ls mut vs.
+
+
+(* (* Why do we need region liveness here? *) *)
+(* Definition sound_loan_analysis ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) : Prop := *)
+(*   forall ph opt_ph vs mut b ofs r ty *)
+(*     (* If we make these two get_xxx as assumptions, how can we use *)
+(*     this approximation property to prove progress, i.e., how to prove *)
+(*     these two assumptions. For example, when we prove the progress in *)
+(*     eval_pexpr on Eplace, the two get functions can be proved to make *)
+(*     progress by using induciton, this approximation property and *)
+(*     property about "all owners pointed by reference is init" *) *)
+(*     (* (GET_FP: get_owner_path_map ph fpm = OK (owner_ph, vs1)) *) *)
+(*     (* (GET_FP: get_owner_footprint_map owner_ph fpm = OK (fp_ref mut b ofs opt_ph vs2)) *) *)
+(*     (GET_FP: get_reachable_footprint_map fpm ph = OK (fp_ref mut b ofs opt_ph vs)) *)
+(*     (WTPH: wt_path ce (fpm_to_tenv fpm) ph = OK (Treference r mut ty)) *)
+(*     (LIVE_REG: RegionSet.In r live), *)
+(*     (* live region contains valid loans *) *)
+(*     exists ls, LOrgSt.eq (LOrgEnv.get r le) (Live ls) *)
+(*     (* Safety: this reference is not invalidated *) *)
+(*     /\ (exists rph, opt_ph = Some rph) *)
+(*     (* Approximation: all (mutable) paths in the vs2 are approximated *)
+(*     in the loans map *) *)
+(*     /\ loans_approx_views (fpm_to_orgm fpm) ls mut vs. *)
 
 
 (* For temporary values *)

@@ -75,35 +75,35 @@ Notation get_owner_path_frame := (@get_owner_path_frame ame).
 
 (* End COMP_ENV. *)
 
-Fixpoint mutable_path_footprint (fpg: fp_graph) (phl: list projection) (fp: footprint) : res bool :=
+Fixpoint mutable_path_footprint (fpgf: fp_graph_frame) (phl: list projection) (fp: footprint) : res bool :=
   match phl with
   | nil => OK true
   | pj :: l =>
       match pj, fp with
       | proj_deref , fp_box _ fp1 =>          
-          mutable_path_footprint fpg l fp1
+          mutable_path_footprint fpgf l fp1
       | proj_field fid, fp_struct _ fpl =>
           match find_field fid fpl with
           | Some (_, ffp) =>
-              mutable_path_footprint fpg l ffp
+              mutable_path_footprint fpgf l ffp
           | None => Error nil
           end
       | proj_field fid, fp_object _ _ fpl =>
           match find_field fid fpl with
           | Some (_, ffp) =>
-              mutable_path_footprint fpg l ffp
+              mutable_path_footprint fpgf l ffp
           | None => Error nil
           end
       | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
           if ident_eq fid1 fid2 then
-            mutable_path_footprint fpg l fp1
+            mutable_path_footprint fpgf l fp1
           else
             Error nil
       | proj_deref, fp_ref mut _ _ (Some ph2) rebor =>
           match mut with
           | Mutable =>
-              do fp2 <- get_owner_footprint_map ph2 fpg;
-              mutable_path_footprint fpg l fp2
+              do fp2 <- get_owner_footprint_frame ph2 fpgf;
+              mutable_path_footprint fpgf l fp2
           | Immutable =>
               OK false
           end
@@ -112,11 +112,15 @@ Fixpoint mutable_path_footprint (fpg: fp_graph) (phl: list projection) (fp: foot
   end.
 
 
-Definition mutable_path (ph: path) (fpg: fp_graph) : res bool :=
-  let (id, phl) := ph in
-  match fpg!id with
-  | Some fp =>
-      mutable_path_footprint fpg phl fp
+Definition mutable_spath (sph: spath) (fpgf: fp_graph_frame) : res bool :=
+  let '(fid, (id, phl)) := sph in
+  match nth_error fpgf fid with
+  | Some fpg =>
+      match fpg!id with
+      | Some fp =>
+          mutable_path_footprint fpgf phl fp
+      | _ => Error nil
+      end
   | _ => Error nil
   end.
 
@@ -150,20 +154,20 @@ Definition dominators_of_owner_projections (l: list projection) : list (list pro
   filter (fun '(_, s) => in_dec projection_eq proj_deref s) (all_splits l).
 
 
-Inductive reachable_from_dominators (fpg: fp_graph) : path -> path -> Prop :=
-| reachable_from_dominators_intro: forall id1 pjl1 id2 pjl dom_pjl suf_pjl vs,
+Inductive reachable_from_dominators (fpgf: fp_graph_frame) : spath -> spath -> Prop :=
+| reachable_from_dominators_intro: forall fid1 fid2 id1 pjl1 id2 pjl dom_pjl suf_pjl vs,
     In (dom_pjl, suf_pjl) (dominators_of_owner_projections pjl) ->
-    get_owner_path_map (id1, pjl1) fpg = OK ((id2, dom_pjl), vs) ->
-    reachable_from_dominators fpg (id1, pjl1 ++ suf_pjl) (id2, pjl).
+    get_owner_path_frame (fid1, (id1, pjl1)) fpgf = OK ((fid2, (id2, dom_pjl)), vs) ->
+    reachable_from_dominators fpgf (fid1, (id1, pjl1 ++ suf_pjl)) (fid2, (id2, pjl)).
     
-Definition fp_ref_views_adequate (fpg: fp_graph) (tgt: path) (vs: views) : Prop := 
-  forall ph1, reachable_from_dominators fpg ph1 tgt ->
-         mutable_path ph1 fpg = OK true ->
+Definition fp_ref_views_adequate (fpgf: fp_graph_frame) (tgt: spath) (vs: views) : Prop := 
+  forall ph1, reachable_from_dominators fpgf ph1 tgt ->
+         mutable_spath ph1 fpgf = OK true ->
          In ph1 vs.
 
 (* Note that the precision is conditional. It only holds for the valid
 path. *)
-Definition fp_ref_views_precise (fpg: fp_graph) (tgt: path) (vs: views) : Prop := 
+Definition fp_ref_views_precise (fpgf: fp_graph_frame) (tgt: spath) (vs: views) : Prop := 
   forall ph1 tgt1 vs1,
     In ph1 vs ->
     (* If it reaches a target? Consider invalidate some mutable
@@ -176,40 +180,39 @@ Definition fp_ref_views_precise (fpg: fp_graph) (tgt: path) (vs: views) : Prop :
     (* Actually, it is not definable because we need to do something
     like when invalidating a reference, we need to kill the loans
     related to this reference for other reference.  *)
-    get_owner_path_map ph1 fpg = OK (tgt1, vs1) ->
-    tgt = tgt1 /\ mutable_path ph1 fpg = OK true.
+    get_owner_path_frame ph1 fpgf = OK (tgt1, vs1) ->
+    tgt = tgt1 /\ mutable_spath ph1 fpgf = OK true.
 
 (* We cannot define stack discipline in the context of fp_map because
 we need to show that all the temporary footprint does not point to the
 same location? We need to define this property in the whole fp_graph
 with temporary values. *)
 
-
-Inductive views_order (fpg: fp_graph) (ph1 ph2: path) (vs1 vs2: views) : Prop :=
+Inductive views_order (fpgf: fp_graph_frame) (sph1 sph2: spath) (vs1 vs2: views) : Prop :=
 | views_order_immut_mut
-    (IMMUTL: mutable_path ph1 fpg = OK false)
-    (MUT: mutable_path ph2 fpg = OK true)
+    (IMMUTL: mutable_spath sph1 fpgf = OK false)
+    (MUT: mutable_spath sph2 fpgf = OK true)
     (INCL: incl vs2 vs1)
     (NEQ: ~ list_equiv vs1 vs2):
-  views_order fpg ph1 ph2 vs1 vs2
+  views_order fpgf sph1 sph2 vs1 vs2
 | views_order_mut_immut
-    (IMMUTL: mutable_path ph2 fpg = OK false)
-    (MUT: mutable_path ph1 fpg = OK true)
+    (IMMUTL: mutable_spath sph2 fpgf = OK false)
+    (MUT: mutable_spath sph1 fpgf = OK true)
     (INCL: incl vs1 vs2)
     (NEQ: ~ list_equiv vs1 vs2):
-  views_order fpg ph1 ph2 vs1 vs2
+  views_order fpgf sph1 sph2 vs1 vs2
 | views_order_mut_mut
-    (IMMUTL: mutable_path ph1 fpg = OK true)
-    (MUT: mutable_path ph2 fpg = OK true)
+    (IMMUTL: mutable_spath sph1 fpgf = OK true)
+    (MUT: mutable_spath sph2 fpgf = OK true)
     (INCL: incl vs1 vs2 \/ incl vs2 vs1)
     (NEQ: ~ list_equiv vs1 vs2):
-  views_order fpg ph1 ph2 vs1 vs2
+  views_order fpgf sph1 sph2 vs1 vs2
 | views_order_immut_immut
-    (IMMUTL: mutable_path ph1 fpg = OK false)
-    (MUT: mutable_path ph2 fpg = OK false):
+    (IMMUTL: mutable_spath sph1 fpgf = OK false)
+    (MUT: mutable_spath sph2 fpgf = OK false):
   (* The relation between two immutable paths are not important?
   Because they cannot invalidate each other. *)
-  views_order fpg ph1 ph2 vs1 vs2.
+  views_order fpgf sph1 sph2 vs1 vs2.
 
   
 (* The paths that reach the same location should form a total order
@@ -217,13 +220,13 @@ chain. Should we enforce that the views of mutable path must be
 smaller than those of immutable path? Because we have an invariant say
 that all paths in the view is mutable path, then there must be no
 mutable path whose views are greater than some immutable path? *)
-Definition fp_graph_views_inv (fpg: fp_graph) : Prop :=
+Definition fp_graph_views_inv (fpgf: fp_graph_frame) : Prop :=
   forall ph1 ph2 tgt vs1 vs2,
     ph1 <> ph2 ->
     (* How to distinguish mutable and immutable path? *)
-    get_owner_path_map ph1 fpg = OK (tgt, vs1) ->
-    get_owner_path_map ph2 fpg = OK (tgt, vs2) ->
-    views_order fpg ph1 ph2 vs1 vs2.
+    get_owner_path_frame ph1 fpgf = OK (tgt, vs1) ->
+    get_owner_path_frame ph2 fpgf = OK (tgt, vs2) ->
+    views_order fpgf ph1 ph2 vs1 vs2.
 
     (* (** In fact, there is no need to compare the views between two *)
     (* immutable path because they cannot affect each other.  *) *)
@@ -287,9 +290,9 @@ point-to owner path. The second is that the views stored in each
 reference must contain all the paths which reach to the point-to
 target via a dominator path. *)
 
-Section FPM_ENV.
+Section FPF_ENV.
 
-Variable fpm: fp_map.
+Variable fpf: fp_frame.
 
 (* We define a new field_offset which returns the starting offset of a
 field that does not consider the alignment. *)
@@ -315,7 +318,7 @@ Inductive fp_ref_loc_wf : footprint -> Prop :=
     fp_ref_loc_wf (fp_enum id tag fid fofs ffp)
 | fp_ref_some_wf: forall ph b ofs fp vs mut 
     (* Reference consistency property *)
-    (GLOC: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp))
+    (GLOC: get_owner_loc_footprint_frame ph fpf = OK (b, ofs, fp))
     (*TODO: there should be also an invariant about fp which says that fp is fully init, but it is unclear whether we should put it here. *)
     (* It is OK to just say that the views are adequate in fpm instead
     of fp_graph which contains the temporary value, because there
@@ -325,8 +328,8 @@ Inductive fp_ref_loc_wf : footprint -> Prop :=
     (* This adequate property may be redundant for temporary value
     since the fp_ref_views_inv is stronger than this adequacy. But
     this proeprty is required for the reference inside the fp_map.  *)
-    (ADEQUATE: fp_ref_views_adequate fpm ph vs)
-    (PRECISE: fp_ref_views_precise fpm ph vs)
+    (ADEQUATE: fp_ref_views_adequate fpf ph vs)
+    (PRECISE: fp_ref_views_precise fpf ph vs)
     (** TODO: we need to show that all path in vs are valid in fpm *),
     fp_ref_loc_wf (fp_ref mut b ofs (Some ph) vs)
 | fp_ref_none_wf: forall b ofs vs mut,
@@ -338,12 +341,13 @@ Inductive fp_ref_loc_wf : footprint -> Prop :=
 Definition fp_ref_loc_wf_list fpl :=
   Forall fp_ref_loc_wf fpl.
 
-End FPM_ENV.
+End FPF_ENV.
 
-Definition fp_ref_loc_wf_fpm (fpm: fp_map) : Prop :=
-  forall id b ofs r ty fp,
-    fpm ! id = Some (b, ofs, r, ty, fp) ->
-    fp_ref_loc_wf fpm fp.
+Definition fp_ref_loc_wf_fpf (fpf: fp_frame) : Prop :=
+  forall fid id b ofs ty fp fpm,
+    nth_error fpf fid = Some fpm ->
+    fpm ! id = Some (b, ofs, ty, fp) ->
+    fp_ref_loc_wf fpf fp.
 
 
 (* Definition fpg_ref_type_inv ce (fpg: fp_graph) : Prop := *)
@@ -364,15 +368,15 @@ the expression and fpm to compute the address.  *)
 
 
 (* The invariant established and preserved by the borrow checking *)
-Record borrow_check_inv (fpm: fp_map) : Prop :=
-  { borrowck_views_inv: fp_graph_views_inv (fpm_to_fpg fpm);
+Record borrow_check_inv (fpf: fp_frame) : Prop :=
+  { borrowck_views_inv: fp_graph_views_inv (fpf_to_fpgf fpf);
     (** One alternative is to encode the location invariant of fp_ref
     into views invariant: for all reachable path, if we can compute
     its reached memory location, then this location must be equal to
     the owner location? One (big) problem is that get_owner_path is
     defined on fp_graph instead of fp_map, we cannot compute the
     target location of arbitary path? *)
-    borrowck_fp_ref_loc_inv: fp_ref_loc_wf_fpm fpm; }.
+    borrowck_fp_ref_loc_inv: fp_ref_loc_wf_fpf fpf; }.
 
 
 (* Useful in the proof to store the evaluated value in a fresh temp *)
@@ -384,32 +388,37 @@ Definition fresh_PTree_idents {A: Type} (m: PTree.t A) (n: nat) : list ident :=
   let fresh_id := fresh_PTree_ident m in
   npos n fresh_id.
 
+(** TODO: there may be no need to generate fresh id for temporary
+value? We can divide this invariant into three parts: invariant of
+fpm, invariant of temp fp w.r.t. fpm and invariant of "for any two
+temp fp, there reachable views must be disjoint" *)
 (* We need to establish invariant for some intermediate state which
 contains some computed values (e.g., creating a reference) *)
-Record borrow_check_inv_snapshot (fpm: fp_map) (fpg: fp_graph) (fpl: list footprint) : Prop :=
-  { borrowck_views_inv_snapshot: fp_graph_views_inv fpg;
-    borrowck_fp_ref_loc_inv_snapshot: fp_ref_loc_wf_fpm fpm;
-    borrowck_fpl_wf: fp_ref_loc_wf_list fpm fpl}.
+Record borrow_check_inv_snapshot (fpf: fp_frame) (fpgf: fp_graph_frame) (fpl: list footprint) : Prop :=
+  { borrowck_views_inv_snapshot: fp_graph_views_inv fpgf;
+    borrowck_fp_ref_loc_inv_snapshot: fp_ref_loc_wf_fpf fpf;
+    borrowck_fpl_wf: fp_ref_loc_wf_list fpf fpl}.
 
-Definition borrow_check_fpm_vals_inv (fpm: fp_map) (vl: list footprint) : Prop :=
-  let idl := fresh_PTree_idents fpm (length vl) in
-  let fpg1 := PTree_Properties.of_list ((PTree.elements (fpm_to_fpg fpm)) ++ (combine idl vl)) in
-  borrow_check_inv_snapshot fpm fpg1 vl.
+(** TODO  *)
+Definition borrow_check_fpm_vals_inv (fpf: fp_frame) (vl: list footprint) : Prop :=
+  (* let idl := fresh_PTree_idents fpm (length vl) in *)
+  (* let fpg1 := PTree_Properties.of_list ((PTree.elements (fpm_to_fpg fpm)) ++ (combine idl vl)) in *)
+  borrow_check_inv_snapshot fpf fpf vl.
 
-Lemma borrow_check_fpg_vals_inv_empty: forall fpm,
-    borrow_check_fpm_vals_inv fpm nil ->
-    borrow_check_inv fpm.
-Admitted.
+(* Lemma borrow_check_fpg_vals_inv_empty: forall fpm, *)
+(*     borrow_check_fpm_vals_inv fpm nil -> *)
+(*     borrow_check_inv fpm. *)
+(* Admitted. *)
 
 (** ** Typing of the footprint: used to make sure the footprint is well-formed *)
 
 Definition fpm_to_tenv (fpm: fp_map) : typenv :=
-  PTree.map1 (fun '(b, ofs, r, ty, fp) => ty) fpm.
+  PTree.map1 (fun '(b, ofs, ty, fp) => ty) fpm.
 
 Section COMP_ENV.
 
 Variable ce: composite_env.
-Variable te: typenv.
+Variable te: list typenv.
 (** Move it to Rusttypes.v  *)
 
 (* We define a new field_offset which returns the starting offset of a
@@ -478,7 +487,7 @@ callee. In a well-formed footprint/fp_map, it should not appear. *)
 (*     (LOCEQ: get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp)),     *)
 (*     wt_footprint (Treference org mut ty) (fp_ref mut b ofs (Some ph) vs) *)
 | wt_fp_ref_some: forall ty b ofs org mut vs ph pty
-    (WTPH: wt_path ce te ph = OK pty)
+    (WTPH: wt_spath ce te ph = OK pty)
     (TYEQ: type_eq_except_origins ty pty = true),
     wt_footprint (Treference org mut ty) (fp_ref mut b ofs (Some ph) vs)
 | wt_fp_ref_none: forall ty b ofs org mut vs,
@@ -497,74 +506,78 @@ Definition wt_footprint_list tyl fpl :=
 
 End COMP_ENV.
 
-Definition wt_fpm ce (fpm: fp_map) : Prop :=
-  forall id b ofs r ty fp,
-    fpm ! id = Some (b, ofs, r, ty, fp) ->
-    wt_footprint ce (fpm_to_tenv fpm) ty fp.
+Definition fpf_to_tenv (fpf: fp_frame) := map fpm_to_tenv fpf.
+
+Definition wt_fpf ce (fpf: fp_frame) : Prop :=
+  forall fid fpm id b ofs ty fp,
+    nth_error fpf fid = Some fpm ->    
+    fpm ! id = Some (b, ofs, ty, fp) ->
+    wt_footprint ce (fpf_to_tenv fpf) ty fp.
 
 
 (** Properties of get/set footprint map  *)
-Lemma get_owner_loc_footprint_map_wt ce: forall phl id fpm b ofs fp,
-    get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, fp) ->
-    wt_fpm ce fpm ->
-    exists ty, wt_path ce (fpm_to_tenv fpm) (id, phl) = OK ty
-          /\ wt_footprint ce (fpm_to_tenv fpm) ty fp
+Lemma get_owner_loc_footprint_frame_wt ce: forall sph fpf b ofs fp,
+    get_owner_loc_footprint_frame sph fpf = OK (b, ofs, fp) ->
+    wt_fpf ce fpf ->
+    exists ty, wt_spath ce (fpf_to_tenv fpf) sph = OK ty
+          /\ wt_footprint ce (fpf_to_tenv fpf) ty fp
           /\ (alignof ce ty | ofs).
 Admitted.
 
-Lemma get_owner_loc_footprint_map_fp_ref_wf: forall phl id fpm b ofs fp,
-    get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, fp) ->
-    fp_ref_loc_wf_fpm fpm ->
-    fp_ref_loc_wf fpm fp.
+Lemma get_owner_loc_footprint_frame_fp_ref_wf: forall sph fpf b ofs fp,
+    get_owner_loc_footprint_frame sph fpf = OK (b, ofs, fp) ->
+    fp_ref_loc_wf_fpf fpf ->
+    fp_ref_loc_wf fpf fp.
 Admitted.
 
 
-Lemma get_owner_path_map_inv: forall id phl (fpg: fp_graph) ph vs,
-    get_owner_path_map (id, phl) fpg = OK (ph, vs) ->
-    exists (fp: footprint),
-      fpg ! id = Some fp
-      /\ get_owner_path fpg (id, nil) phl fp nil = OK (ph, vs).
+Lemma get_owner_path_frame_inv: forall phl fid id (fpgf: fp_graph_frame) ph vs,
+    get_owner_path_frame (fid, (id, phl)) fpgf = OK (ph, vs) ->
+    exists fpm (fp: footprint),
+      nth_error fpgf fid = Some fpm
+      /\ fpm ! id = Some fp
+      /\ get_owner_path fpgf (fid, (id, nil)) phl fp nil = OK (ph, vs).
 Admitted.
 
 (* If a path can be reached via (phl1 ++ phl2) then this reachable
 path can be divided into two parts: one is reached from phl1 and one
 is reach from phl2 *)
-Lemma get_owner_path_app_inv: forall phl1 phl2 ph1 ph3 sv1 vs1 vs3 (fpm: fp_map),
-    get_owner_path fpm ph1 (phl1 ++ phl2) sv1 vs1 = OK (ph3, vs3) ->
+Lemma get_owner_path_app_inv: forall phl1 phl2 ph1 ph3 sv1 vs1 vs3 (fpf: fp_frame),
+    get_owner_path fpf ph1 (phl1 ++ phl2) sv1 vs1 = OK (ph3, vs3) ->
     exists ph2 vs2 sv2,
-      get_owner_path fpm ph1 phl1 sv1 vs1 = OK (ph2, vs2) 
-      /\ get_owner_footprint_map ph2 fpm = OK sv2 
-      /\ get_owner_path fpm ph2 phl2 sv2 vs2 = OK (ph3, vs3).
+      get_owner_path fpf ph1 phl1 sv1 vs1 = OK (ph2, vs2) 
+      /\ get_owner_footprint_frame ph2 fpf = OK sv2 
+      /\ get_owner_path fpf ph2 phl2 sv2 vs2 = OK (ph3, vs3).
 Admitted.
 
-Lemma get_owner_path_for_owner: forall (fpm: fp_map) ph fp,
-    get_owner_footprint_map ph fpm = OK fp ->
+Lemma get_owner_path_for_owner: forall (fpf: fp_frame) ph fp,
+    get_owner_footprint_frame ph fpf = OK fp ->
     (* Since ph is an owner path, vs must only contain [ph] itself *)
-    get_owner_path_map ph fpm = OK (ph, ph :: nil).
+    get_owner_path_frame ph fpf = OK (ph, ph :: nil).
 Admitted.
 
-Lemma get_owner_loc_footprint_map_eq: forall (fpm: fp_map) ph b ofs fp,
-    get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp) ->
-    get_owner_footprint_map ph fpm = OK fp.
+Lemma get_owner_loc_footprint_frame_eq: forall (fpf: fp_frame) ph b ofs fp,
+    get_owner_loc_footprint_frame ph fpf = OK (b, ofs, fp) ->
+    get_owner_footprint_frame ph fpf = OK fp.
 Admitted.
 
-Lemma get_owner_loc_footprint_map_app: forall id phl1 phl2 b1 ofs1 fp1 b2 ofs2 fp2 (fpm: fp_map),
-    get_owner_loc_footprint_map (id, phl1) fpm = OK (b1, ofs1, fp1) ->
+Lemma get_owner_loc_footprint_frame_app: forall fid id phl1 phl2 b1 ofs1 fp1 b2 ofs2 fp2 (fpf: fp_frame),
+    get_owner_loc_footprint_frame (fid, (id, phl1)) fpf = OK (b1, ofs1, fp1) ->
     get_owner_loc_footprint phl2 fp1 b1 ofs1 = OK (b2, ofs2, fp2) ->         
-    get_owner_loc_footprint_map (id, phl1 ++ phl2) fpm = OK (b2, ofs2, fp2).
+    get_owner_loc_footprint_frame (fid, (id, phl1 ++ phl2)) fpf = OK (b2, ofs2, fp2).
 Admitted.
 
 (** Misc for invalidate_conflict_ref and kill_paths *)
 
-Lemma get_owner_loc_footprint_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ak am b ofs fp,
-    get_owner_loc_footprint_map ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK (b, ofs, fp) ->
-    exists fp', get_owner_loc_footprint_map ph1 fpm = OK (b, ofs, fp')
+Lemma get_owner_loc_footprint_frame_after_invalidate_ref: forall (fpf: fp_frame) ph1 ph2 ak am b ofs fp,
+    get_owner_loc_footprint_frame ph1 (invalidate_conflict_ref_fpf ph2 ak am fpf) = OK (b, ofs, fp) ->
+    exists fp', get_owner_loc_footprint_frame ph1 fpf = OK (b, ofs, fp')
            /\ invalidate_conflict_ref ph2 ak am fp' = fp.
 Admitted.
 
-Lemma get_owner_path_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ak am ph vs,
-    get_owner_path_map ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK (ph, vs) ->
-    get_owner_path_map ph1 fpm = OK (ph, vs).
+Lemma get_owner_path_frame_after_invalidate_ref: forall (fpf: fp_frame) ph1 ph2 ak am ph vs,
+    get_owner_path_frame ph1 (invalidate_conflict_ref_fpf ph2 ak am fpf) = OK (ph, vs) ->
+    get_owner_path_frame ph1 fpf = OK (ph, vs).
 Admitted.
 
 
@@ -585,33 +598,33 @@ Let ce := ge.(genv_cenv).
 
 Let wt_state := @wt_state ame prog se sg.
 
-Inductive borrowck_inv_cont: cont -> Prop :=
-| borrowck_inv_cont_Kstop: borrowck_inv_cont Kstop
-| borrowck_inv_cont_Kseq: forall s k
-    (CONT: borrowck_inv_cont k),
-    borrowck_inv_cont (Kseq s k)
-| borrowck_inv_cont_Kloop: forall s k
-    (CONT: borrowck_inv_cont k),
-    borrowck_inv_cont (Kloop s k)
-| borrowck_inv_cont_Kcall: forall k fpm inout_paths substs p f
-    (CONT: borrowck_inv_cont k)
-    (* We may require some invariant about that all views in
-    inout_paths must cover all reachable path of the inout_path in
-    fpm?  *)
-    (BOR_INV: borrow_check_inv fpm),
-    borrowck_inv_cont (Kcall p f inout_paths substs fpm k).
+(* Inductive borrowck_inv_cont: cont -> Prop := *)
+(* | borrowck_inv_cont_Kstop: borrowck_inv_cont Kstop *)
+(* | borrowck_inv_cont_Kseq: forall s k *)
+(*     (CONT: borrowck_inv_cont k), *)
+(*     borrowck_inv_cont (Kseq s k) *)
+(* | borrowck_inv_cont_Kloop: forall s k *)
+(*     (CONT: borrowck_inv_cont k), *)
+(*     borrowck_inv_cont (Kloop s k) *)
+(* | borrowck_inv_cont_Kcall: forall k fpf p f *)
+(*     (CONT: borrowck_inv_cont k) *)
+(*     (* We may require some invariant about that all views in *)
+(*     inout_paths must cover all reachable path of the inout_path in *)
+(*     fpm?  *) *)
+(*     (BOR_INV: borrow_check_inv fpf), *)
+(*     borrowck_inv_cont (Kcall p f k). *)
 
 
 Inductive borrowck_inv : state -> Prop :=
-| borrowck_inv_regular_states: forall f s k substs fpm sup
-    (BOR_INV: borrow_check_inv fpm)
-    (CONT: borrowck_inv_cont k),
-    borrowck_inv (State f s k substs fpm sup)
+| borrowck_inv_regular_states: forall f s k fpm sup
+    (BOR_INV: borrow_check_inv fpm),
+    (* (CONT: borrowck_inv_cont k), *)
+    borrowck_inv (State f s k fpm sup)
 | borrowck_inv_callstates: forall fid fpl inout_fpm sup k fd orgs org_rels tyargs tyres cconv
     (FINDF: ge.(genv_defmap) ! fid = Some (Gfun fd))
     (TYF: type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv)
-    (BOR_INV: borrow_check_fpm_vals_inv inout_fpm fpl)
-    (CONT: borrowck_inv_cont k),
+    (BOR_INV: borrow_check_fpm_vals_inv inout_fpm fpl),
+    (* (CONT: borrowck_inv_cont k), *)
     (* (WTFP: list_forall2 (wt_footprint ce (fpm_to_tenv inout_fpm)) (type_list_of_typelist tyargs) fpl), *)
     borrowck_inv (Callstate fid fpl inout_fpm sup k)
 | borrowck_inv_returnstates: forall rfp inout_fpm sup k rety
@@ -621,8 +634,8 @@ Inductive borrowck_inv : state -> Prop :=
     over-approximation? *)
     (RETY: typeof_cont_call (rs_sig_res sg) k = rety)
     (* (WTFP: wt_footprint ce (fpm_to_tenv inout_fpm) rety rfp) *)
-    (BOR_INV: borrow_check_fpm_vals_inv inout_fpm [rfp])
-    (CONT: borrowck_inv_cont k),
+    (BOR_INV: borrow_check_fpm_vals_inv inout_fpm [rfp]),
+    (* (CONT: borrowck_inv_cont k), *)
     borrowck_inv (Returnstate rfp inout_fpm sup k).
 
 Ltac unfold_eval_assign :=
@@ -649,8 +662,8 @@ Ltac unfold_before_write_place :=
 
 (** The smallest operations that preserve the borrow check invariant  *)
 
-Definition invalidate_conflict_ref_fpg (ph: path) (ak: access_kind) (am : access_mode_bor) (fpg: fp_graph) : fp_graph :=
-  PTree.map1 (invalidate_conflict_ref ph ak am) fpg.
+(* Definition invalidate_conflict_ref_fpg (ph: path) (ak: access_kind) (am : access_mode_bor) (fpg: fp_graph) : fp_graph := *)
+(*   PTree.map1 (invalidate_conflict_ref ph ak am) fpg. *)
 
 
 (* Definition dummy_origin : ident := 1%positive. *)
@@ -663,12 +676,16 @@ Definition access_kind_to_mut (ak: access_kind) : mutkind :=
 
 Coercion access_kind_to_mut : access_kind >-> mutkind.
 
+(** FIXME *)
+
+(*
+
 (* Thinking of its sufficiency to prove the borrow check invariant:
 the key point is to prove the stack discipline in the invariant. I
 think the two premises about the reachability in the borrow check
 invariant and the stack discipline field can be applied to this
 lemma? *)
-Lemma invalidate_conflict_ref_fpm_views_largest: forall phl1 id1 ak am (fpg1 fpg2: fp_graph)
+Lemma invalidate_conflict_ref_fpf_views_largest: forall phl1 id1 ak am (fpg1 fpg2: fp_graph)
   (* Should we ensure that the mutability of (id1, phl1) (id2, phl2)
   match the access kind? How to dynamically check that all the deep
   path of (id1, phl1) is mutable? Maybe we do not need to check that
@@ -1000,14 +1017,15 @@ RustIRown *)
 (*     econstructor; eauto. *)
 (* Admitted. *)
    
+*) 
 
 End BORROWCK_INV.
 
 End ADT_ENV.
 
-Global Hint Resolve get_owner_loc_footprint_map_wt
-  get_owner_loc_footprint_map_fp_ref_wf
-  get_owner_path_map_inv
+Global Hint Resolve get_owner_loc_footprint_frame_wt
+  get_owner_loc_footprint_frame_fp_ref_wf
+  get_owner_path_frame_inv
   get_owner_path_for_owner
-  get_owner_loc_footprint_map_eq
-  get_owner_loc_footprint_map_app: fpmap.
+  get_owner_loc_footprint_frame_eq
+  get_owner_loc_footprint_frame_app: fpmap.
