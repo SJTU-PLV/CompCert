@@ -24,10 +24,11 @@ Require Import BorrowCheckPolonius BorrowCheck BorrowCheckInv.
 Import ListNotations.
 
 Local Open Scope error_monad_scope.
+Local Open Scope positive_scope.
 Local Open Scope Z_scope.
 
-Definition enc_frame_reg (frame: nat) (r: origin) :=
-  prod_encode (Pos.of_succ_nat frame) r.
+Definition enc_reg (frame: frame_idx) (r: origin) :=
+  prod_encode frame r.
 
 Definition append_projs (phl: list projection) (ph: path) :=
   (fst ph, snd ph ++ phl).
@@ -96,12 +97,9 @@ Context {ame: adt_mem_env}.
 
 Notation footprint := (@footprint ame).
 Notation fp_map := (@fp_map ame).
-Notation fp_graph := (@fp_graph ame).
 Notation cont := (@cont ame).
 Notation state := (@state ame).
-Notation fp_frame := (@fp_frame ame).
-Notation fp_graph_frame := (@fp_graph_frame ame).
-Notation get_owner_path_frame := (@get_owner_path_frame ame).
+Notation get_owner_path_map := (@get_owner_path_map ame).
 
 Section BORROW_CHECK.
 
@@ -150,15 +148,6 @@ use, e.g., NLL or Polonius, because we just use their final result of
 the compuation, i.e., both of them compute active loans at each point
 of the program. *)
 
-(* Unused. We also need to know that generic region this path locates
-at....  *)
-Definition extern_loc_region (orgm: PTree.t (option origin)) (ph: path) : option origin :=
-  let (id, pj) := ph in
-  match orgm ! id with
-  | Some r =>
-      r
-  | _ => None
-  end.
 
 Definition mutability_match (ref_mut loan_mut: mutkind) : Prop :=
   match ref_mut, loan_mut with
@@ -169,11 +158,16 @@ Definition mutability_match (ref_mut loan_mut: mutkind) : Prop :=
   | _, _ => False
   end.
 
-Definition ext_views_map := PTree.t SPathSet.t.
+Definition ext_views_map := PTree.t PathSet.t.
 
-Definition loan_approx (frame: nat) (orgm: ext_views_map) (ln: loan) (mut: mutkind) (sph: spath) : Prop :=
-  let (fid, ph) := sph in
-  if Nat.eqb fid frame then
+Section FRAME.
+
+Variable frame: frame_idx.
+
+(* frame is the current frame id; [ph] is the dynamic access path
+whose id is (fid, var_id) *)
+Definition loan_approx (orgm: ext_views_map) (ln: loan) (mut: mutkind) (fid: frame_idx) (ph: path) : Prop :=  
+  if Pos.eqb fid frame then
     match ln with
     | Lintern loan_mut p =>
         path_of_place p = ph /\ loan_mut = mut
@@ -193,29 +187,36 @@ Definition loan_approx (frame: nat) (orgm: ext_views_map) (ln: loan) (mut: mutki
               precise (in dynamic transfer function, we do not compute
               actual spath), we do not need to say that there is a
               prefix of sph in vs *)
-              /\ SPathSet.In (sph, mut) vs
+              /\ PathSet.In (enc_path fid ph, mut) vs
     | _ => False
     end.
 
-Definition loans_approx_views (frame: nat) (orgm: ext_views_map) (ls: LoanSet.t) (vs: SPathSet.t) : Prop :=
-  forall mut sph, SPathSet.In (sph, mut) vs ->
-         exists ln, LoanSet.In ln ls /\ loan_approx frame orgm ln mut sph.
+Definition loans_approx_views (orgm: ext_views_map) (ls: LoanSet.t) (vs: PathSet.t) : Prop :=
+  forall mut sph, PathSet.In (sph, mut) vs ->
+             exists fid ph, dec_path sph = OK (fid, ph)
+                       /\ exists ln, LoanSet.In ln ls /\ loan_approx orgm ln mut fid ph.
 
 (* Definition fpm_to_orgm (fpm: fp_map) : PTree.t (option origin) := *)
 (*   PTree.map1 (fun '(_,_,r,_,_) => r) fpm. *)
 
 (* Why do we need region liveness here? *)
-Definition sound_loan_approx (frame: nat) (live: RegionSet.t) (le: LOrgEnv.t) (orgm: ext_views_map) (sphm: LOrgPhEnv.t) : Prop :=
+Definition sound_loan_approx (live: RegionSet.t) (le: LOrgEnv.t) (orgm: ext_views_map) (sphm: LOrgPhEnv.t) : Prop :=
   forall r (LIVE_REG: RegionSet.In r live),
     exists vs ls, 
-      LOrgPhOptSt.eq (LOrgPhEnv.get (enc_frame_reg frame r) sphm) (Some (LOrgPhSt.Live vs))
+      LOrgPhOptSt.eq (LOrgPhEnv.get (enc_reg frame r) sphm) (Some (LOrgPhSt.Live vs))
       /\ LOrgLnSt.eq (LOrgEnv.get r le) (LOrgLnSt.Live ls)
-      /\ loans_approx_views frame orgm ls vs.
+      /\ loans_approx_views orgm ls vs.
 
-Definition sound_region_approx ce (sphm: LOrgPhEnv.t) (fpf: fp_frame) : Prop :=
+End FRAME.
+
+Definition views_approx (phs: PathSet.t) (ref_mut: mutkind) (vs: views) : Prop :=
+  forall ph, In ph vs ->
+        exists aph mut, PathSet.In (aph, mut) phs
+                   /\ mutability_match ref_mut mut
+                   /\ is_prefix_path aph ph = true.
+
+Definition sound_region_approx (phm: LOrgPhEnv.t) (fpm: fp_map) : Prop :=
   forall fid ph opt_ph vs mut b ofs r ty
-    
-    
     (* If we make these two get_xxx as assumptions, how can we use
     this approximation property to prove progress, i.e., how to prove
     these two assumptions. For example, when we prove the progress in
@@ -224,18 +225,31 @@ Definition sound_region_approx ce (sphm: LOrgPhEnv.t) (fpf: fp_frame) : Prop :=
     property about "all owners pointed by reference is init" *)
     (* (GET_FP: get_owner_path_map ph fpm = OK (owner_ph, vs1)) *)
     (* (GET_FP: get_owner_footprint_map owner_ph fpm = OK (fp_ref mut b ofs opt_ph vs2)) *)
-    (GET_FP: get_reachable_footprint_frame fpf (fid, ph) = OK (fp_ref mut b ofs opt_ph vs))
-    (WTPH: wt_spath ce (fpf_to_tenv fpm) ph = OK (Treference r mut ty))
-    (LIVE_REG: RegionSet.In r live),
-    (* live region contains valid loans *)
-    exists ls, LOrgSt.eq (LOrgEnv.get r le) (Live ls)
-    (* Safety: this reference is not invalidated *)
-    /\ (exists rph, opt_ph = Some rph)
-    (* Approximation: all (mutable) paths in the vs2 are approximated
-    in the loans map *)
-    /\ loans_approx_views (fpm_to_orgm fpm) ls mut vs.
+    (GET_FP: get_reachable_footprint_map fpm (enc_path fid ph) = OK (fp_ref mut b ofs opt_ph vs))
+    (WTPH: wt_path ce (fpm_to_tenv fpm) (enc_path fid ph) = OK (Treference r mut ty)),
+    match LOrgPhEnv.get (enc_reg fid r) phm with
+    | Some (LOrgPhSt.Live phs) =>
+        exists rph, opt_ph = Some rph
+               /\ views_approx phs mut vs
+    | _ => True
+    end.
+
+Definition sound_region_approx_footprint (fid: frame_idx) (phm: LOrgPhEnv.t) (fpm: fp_map) (fp: footprint) (ty: type) : Prop :=
+  forall phl opt_ph vs mut b ofs r ty1
+    (GET_FP: get_reachable_footprint fpm phl fp = OK (fp_ref mut b ofs opt_ph vs))
+    (WT_PROJS: wt_projections ce ty phl = OK (Treference r mut ty1)),
+    match LOrgPhEnv.get (enc_reg fid r) phm with
+    | Some (LOrgPhSt.Live phs) =>
+        exists rph, opt_ph = Some rph
+               /\ views_approx phs mut vs
+    | _ => True
+    end.
+
+Definition sound_region_approx_footprint_list (fid: frame_idx) (phm: LOrgPhEnv.t) (fpm: fp_map) (fpl: list footprint) (tyl: list type) : Prop :=
+  Forall2 (sound_region_approx_footprint fid phm fpm) fpl tyl.
 
 
+(* Old version of abstraction property *)
 (* (* Why do we need region liveness here? *) *)
 (* Definition sound_loan_analysis ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) : Prop := *)
 (*   forall ph opt_ph vs mut b ofs r ty *)
@@ -260,39 +274,39 @@ Definition sound_region_approx ce (sphm: LOrgPhEnv.t) (fpf: fp_frame) : Prop :=
 
 
 (* For temporary values *)
-Definition sound_loan_analysis_footprint ce (le: LOrgEnv.t) (fpm: fp_map) (fp: footprint) (ty: type) : Prop :=
-  forall phl opt_ph vs mut b ofs r ty1
-    (GET_FP: get_reachable_footprint fpm phl fp = OK (fp_ref mut b ofs opt_ph vs))
-    (WT_PROJS: wt_projections ce ty phl = OK (Treference r mut ty1)),
-    (* live region contains valid loans *)
-    exists ls, LOrgSt.eq (LOrgEnv.get r le) (Live ls)
-    (* Safety: this reference is not invalidated *)
-    /\ (exists rph, opt_ph = Some rph)
-    (* Approximation: all (mutable) paths in the vs are approximated
-    in the loans map *)
-    /\ loans_approx_views (fpm_to_orgm fpm) ls mut vs.
+(* Definition sound_loan_analysis_footprint ce (le: LOrgEnv.t) (fpm: fp_map) (fp: footprint) (ty: type) : Prop := *)
+(*   forall phl opt_ph vs mut b ofs r ty1 *)
+(*     (GET_FP: get_reachable_footprint fpm phl fp = OK (fp_ref mut b ofs opt_ph vs)) *)
+(*     (WT_PROJS: wt_projections ce ty phl = OK (Treference r mut ty1)), *)
+(*     (* live region contains valid loans *) *)
+(*     exists ls, LOrgSt.eq (LOrgEnv.get r le) (Live ls) *)
+(*     (* Safety: this reference is not invalidated *) *)
+(*     /\ (exists rph, opt_ph = Some rph) *)
+(*     (* Approximation: all (mutable) paths in the vs are approximated *)
+(*     in the loans map *) *)
+(*     /\ loans_approx_views (fpm_to_orgm fpm) ls mut vs. *)
  
-Definition sound_loan_analysis_footprint_list ce (le: LOrgEnv.t) (fpm: fp_map) (fpl: list footprint) (tyl: list type) : Prop :=
-  Forall2 (sound_loan_analysis_footprint ce le fpm) fpl tyl.
+(* Definition sound_loan_analysis_footprint_list ce (le: LOrgEnv.t) (fpm: fp_map) (fpl: list footprint) (tyl: list type) : Prop := *)
+(*   Forall2 (sound_loan_analysis_footprint ce le fpm) fpl tyl. *)
 
+(** TODO  *)
+(* Global Instance sound_loan_analysis_Proper: Proper (eq ==> RegionSet.eq ==> LOrgEnv.eq ==> eq ==> iff) sound_loan_analysis. *)
+(* Admitted. *)
 
-Global Instance sound_loan_analysis_Proper: Proper (eq ==> RegionSet.eq ==> LOrgEnv.eq ==> eq ==> iff) sound_loan_analysis.
-Admitted.
+(* Global Instance sound_loan_analysis_footprint_Proper: Proper (eq ==> LOrgEnv.eq ==> eq ==> eq ==> eq ==>iff) sound_loan_analysis_footprint. *)
+(* Admitted. *)
 
-Global Instance sound_loan_analysis_footprint_Proper: Proper (eq ==> LOrgEnv.eq ==> eq ==> eq ==> eq ==>iff) sound_loan_analysis_footprint.
-Admitted.
-
-Global Instance sound_loan_analysis_footprint_list_Proper: Proper (eq ==> LOrgEnv.eq ==> eq ==> eq ==> eq ==>iff) sound_loan_analysis_footprint_list.
-Admitted.
+(* Global Instance sound_loan_analysis_footprint_list_Proper: Proper (eq ==> LOrgEnv.eq ==> eq ==> eq ==> eq ==>iff) sound_loan_analysis_footprint_list. *)
+(* Admitted. *)
 
 
 (** Over-approximation of equality relation in the loans map *)
 
-Definition region_relation_wrt_variance (r1 r2: origin) (va1 va2: variance) (le: LOrgEnv.t) :=
+Definition region_relation_wrt_variance (r1 r2: origin) (va1 va2: variance) (uf: UFD.t) :=
   if variance_eq va1 Covariant && variance_eq va2 Covariant then
     True
   else 
-    UFD.sameclass (LOrgEnv.uf le) r1 r2.
+    UFD.sameclass uf r1 r2.
 
 
 (* Why not define this soundness of region relations in
@@ -301,39 +315,53 @@ the fp_ref can be actually reached, but in the soundness of region
 relations, we need to consider all the possibly reachable Treference
 from the aliased location even if they are not actually reachable in
 the current fpm *)
-Definition sound_region_relations ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) : Prop :=
-  forall ph1 ph2 ph vs1 vs2 phl va1 va2 ty1 ty2 r1 r2 mut1 mut2
-    (GET_PH1: get_owner_path_map ph1 fpm = OK (ph, vs1))
-    (GET_PH2: get_owner_path_map ph2 fpm = OK (ph, vs2))
-    (WTPH1: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl ph1) = OK (Treference r1 mut1 ty1, va1))
-    (WTPH2: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl ph2) = OK (Treference r2 mut2 ty2, va2))
-    (LIVE_REG1: RegionSet.In r1 live)
-    (LIVE_REG2: RegionSet.In r2 live),
-    region_relation_wrt_variance r1 r2 va1 va2 le.
+Definition sound_region_relations (phm: LOrgPhEnv.t) (fpm: fp_map) : Prop :=
+  forall ph1 ph2 fid1 fid2 ph vs1 vs2 phl va1 va2 ty1 ty2 r1 r2 mut1 mut2
+    (* Two paths reach the same locations *)
+    (GET_PH1: get_owner_path_map (enc_path fid1 ph1) fpm = OK (ph, vs1))
+    (GET_PH2: get_owner_path_map (enc_path fid2 ph2) fpm = OK (ph, vs2))    
+    (WTPH1: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl (enc_path fid1 ph1)) = OK (Treference r1 mut1 ty1, va1))
+    (WTPH2: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl (enc_path fid2 ph2)) = OK (Treference r2 mut2 ty2, va2)),
+    (* (LIVE_REG1: RegionSet.In r1 live) *)
+    (* (LIVE_REG2: RegionSet.In r2 live), *)
+    region_relation_wrt_variance (enc_reg fid1 r1) (enc_reg fid2 r2) va1 va2 (LOrgPhEnv.uf phm).
 
 
-Definition sound_region_relations_footprint ce (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) (fp: footprint) (ty: type) : Prop :=
-  forall phl1 ph2 ph vs1 vs2 phl va1 va2 ty1 ty2 r1 r2 mut1 mut2
+Definition sound_region_relations_footprint (fid1: frame_idx) (phm: LOrgPhEnv.t) (fpm: fp_map) (fp: footprint) (ty: type) : Prop :=
+  forall phl1 ph2 ph vs1 vs2 phl va1 va2 ty1 ty2 r1 r2 mut1 mut2 fid2
     (GET_PH1: get_reachable_path fpm phl1 fp = OK (ph, vs1))
-    (GET_PH2: get_owner_path_map ph2 fpm = OK (ph, vs2))
+    (GET_PH2: get_owner_path_map (enc_path fid2 ph2) fpm = OK (ph, vs2))
     (WTPH1: wt_projections_variance ce ty (phl1 ++ phl) Covariant = OK (Treference r1 mut1 ty1, va1))
-    (WTPH2: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl ph2) = OK (Treference r2 mut2 ty2, va2))
-    (LIVE_REG2: RegionSet.In r2 live),
-    region_relation_wrt_variance r1 r2 va1 va2 le.
+    (WTPH2: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl (enc_path fid2 ph2)) = OK (Treference r2 mut2 ty2, va2)),
+    (* (LIVE_REG2: RegionSet.In r2 live), *)
+    region_relation_wrt_variance (enc_reg fid1 r1) (enc_reg fid2 r2) va1 va2 (LOrgPhEnv.uf phm).
+
 
 (* An instance of sound_region_relations where we focus on a specific
    owner path [ph] and we have a reachable path with type [ty1] to
    this owner path (note that this reachable path can be not given
    here) *)
-Definition sound_region_relations_path (live: RegionSet.t) (le: LOrgEnv.t) (fpm: fp_map) (ph: path) (ty1: type) (va1: variance) := 
-  forall ph2 vs2 phl r1 r2 mut1 mut2 va1' va2 ty1' ty2
-    (GET_PH2: get_owner_path_map ph2 fpm = OK (ph, vs2))
-    (WTPH2: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl ph2) = OK (Treference r2 mut2 ty2, va2))
-    (WTPH1: wt_projections_variance ce ty1 phl va1 = OK (Treference r1 mut1 ty1', va1'))
-    (LIVE_REG1: RegionSet.In r1 live)
-    (LIVE_REG2: RegionSet.In r2 live),
-    region_relation_wrt_variance r1 r2 va1' va2 le.
+Definition sound_region_relations_path (fid1: frame_idx) (phm: LOrgPhEnv.t) (fpm: fp_map) (ph: path) (ty1: type) (va1: variance) := 
+  forall ph2 vs2 phl r1 r2 mut1 mut2 va1' va2 ty1' ty2 fid2
+    (GET_PH2: get_owner_path_map (enc_path fid2 ph2) fpm = OK (ph, vs2))
+    (WTPH2: wt_path_variance ce (fpm_to_tenv fpm) (append_projs phl (enc_path fid2 ph2)) = OK (Treference r2 mut2 ty2, va2))
+    (WTPH1: wt_projections_variance ce ty1 phl va1 = OK (Treference r1 mut1 ty1', va1')),
+    (* (LIVE_REG1: RegionSet.In r1 live) *)
+    (* (LIVE_REG2: RegionSet.In r2 live), *)
+    region_relation_wrt_variance (enc_reg fid1 r1) (enc_reg fid2 r2) va1 va2 (LOrgPhEnv.uf phm).
 
+Definition sound_region_relations_approx (generic_regions: list origin) (fid1: frame_idx) (live: RegionSet.t) (le: LOrgEnv.t) (sphm: LOrgPhEnv.t) : Prop :=
+  forall r1 r2 fid2
+    (LIVE_REG: RegionSet.In r1 live)
+    (EQ12: UFD.sameclass (LOrgPhEnv.uf sphm) (enc_reg fid1 r1) (enc_reg fid2 r2)),
+    if Pos.eqb fid1 fid2 then
+      UFD.sameclass (LOrgEnv.uf le) r1 r2
+    else
+      exists gr, In gr generic_regions
+            (** TODO: think carefully why we can say that this generic
+            region is equivalent to (fid2,r2)?  *)
+            /\ UFD.sameclass (LOrgPhEnv.uf sphm) (enc_reg (fid1-1)%positive gr) (enc_reg fid2 r2)
+            /\ UFD.sameclass (LOrgEnv.uf le) r1 r2.
 
 (** Over-approximation of the init analysis *)
 

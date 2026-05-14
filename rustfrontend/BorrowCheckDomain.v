@@ -54,30 +54,30 @@ Module LoanSetL := LFSet(LoanSet).
 
 (* Lattice for state access path *)
 
-Definition spath_mut : Type := spath * mutkind.
+Definition path_mut : Type := path * mutkind.
 
-Lemma spath_mut_eq_dec: forall (l1 l2: spath_mut), {l1 = l2} + {l1 <> l2}.
+Lemma path_mut_eq_dec: forall (l1 l2: path_mut), {l1 = l2} + {l1 <> l2}.
 Proof.
-  generalize Pos.eq_dec spath_eq_dec. intros.
+  generalize Pos.eq_dec path_eq. intros.
   decide equality.
   decide equality.
 Defined.
 
 
-Module SPathMut <: DecidableType.DecidableType.
-  Definition t := spath_mut.
+Module PathMut <: DecidableType.DecidableType.
+  Definition t := path_mut.
   Definition eq := @eq t.
-  Definition eq_dec :=  spath_mut_eq_dec.
+  Definition eq_dec :=  path_mut_eq_dec.
   Definition eq_refl: forall x, eq x x := (@eq_refl t).
   Definition eq_sym: forall x y, eq x y -> eq y x := (@eq_sym t).
   Definition eq_trans: forall x y z, eq x y -> eq y z -> eq x z := (@eq_trans t).
-End SPathMut.
+End PathMut.
 
-Module SPathSet := FSetWeakList.Make(SPathMut).
+Module PathSet := FSetWeakList.Make(PathMut).
 
-Module SPathSetFacts := FSetFacts.WFacts(SPathSet).
+Module PathSetFacts := FSetFacts.WFacts(PathSet).
 
-Module SPathSetL := LFSet(SPathSet).
+Module PathSetL := LFSet(PathSet).
 
 (** Origin state *)
 
@@ -204,7 +204,7 @@ approximation where we instantiate LS as set of access paths *)
 
 Module LOrgLnSt := LOrgSt(LoanSetL).
 
-Module LOrgPhSt := LOrgSt(SPathSetL).
+Module LOrgPhSt := LOrgSt(PathSetL).
 Module LOrgPhOptSt := LOption(LOrgPhSt).
 
 Global Instance LOrgLnSt_eq_equiv: 
