@@ -43,11 +43,14 @@ Definition check_region_uniqueness (f: function) : res unit :=
   OK tt.
 
 Definition check_no_live_local_regions_at_entry (live: RegionLiveness.RegionSet.t) (f: function) : res unit :=
-  let regs := concat (map origins_of_type (map snd (f.(fn_vars) ++ f.(fn_params)))) in
-  if forallb (fun r => negb (RegionLiveness.RegionSet.mem r live)) regs then
-    OK tt
-  else
-    Error (msg "There is some region of local variables/parameters that are live at the function entry (which means it is used without initialization)").
+  (* Parameters can be live at function entry *)
+  let regs := concat (map origins_of_type (map snd f.(fn_vars))) in
+  match find (fun r => (RegionLiveness.RegionSet.mem r live)) regs with
+  | Some r =>
+      Error [MSG "There is some region of local variables that are live at the function entry (which means it is used without initialization). The region is "; CTX r]
+  | None =>
+      OK tt
+  end.
 
 Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res unit :=
   do (entry, cfg) <- generate_cfg f.(fn_body);
@@ -81,7 +84,8 @@ Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res 
   let generic_regions := RegionLiveness.live_generic_regions (fn_generic_origins f) in
   (* There should be no local regions that are live at the entry
   (which means that it is used without initialization) *)
-  do _ <- check_no_live_local_regions_at_entry (live !! entry) f;
+  let live_before_entry := RegionLiveness.transfer f cfg (live !! entry) entry generic_regions in
+  do _ <- check_no_live_local_regions_at_entry live_before_entry f;
   collect_borrow_check_result generic_regions f cfg (live, loansEnv).
 
 Definition borrow_check_fundef (ce : composite_env) (id : ident) (fd : fundef) : Errors.res fundef :=

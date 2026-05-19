@@ -579,6 +579,7 @@ Fixpoint get_owner_path (fpg: fp_map) (ph: path) (phl: list projection) (fp: foo
           (* dynamic computation of reborrow paths based on the
           supporting prefix technique of the borrow checker *)
           let alias2 := match mut with
+                        (** Is ph1 already included in alias1? *)
                         | Mutable => (ph1 :: rebor ++ alias1)
                         (* ph1 and alias1 cannot modify the content in
                         ph2, so they are not added in the reborrow
@@ -829,25 +830,25 @@ Fixpoint invalidate_conflict_ref_fpm_list (l: list path) (ak: access_kind) (am :
 
 (* We need to remove set of paths, i.e., views from the current views
 because overwrite a path would kill all the views of this path. *)
-Definition kill_paths (kill: views) (vs: views) : views :=
+Definition kill_views (kill: views) (vs: views) : views :=
   filter (fun ph1 => negb (existsb (fun ph => is_prefix_path ph ph1) kill)) vs.
 
 
-Fixpoint kill_paths_ref (kill: views) (fp: footprint) : footprint :=
+Fixpoint kill_views_ref (kill: views) (fp: footprint) : footprint :=
   match fp with
   | fp_ref mut b ofs ph1 vs =>
-      fp_ref mut b ofs ph1 (kill_paths kill vs)
+      fp_ref mut b ofs ph1 (kill_views kill vs)
   | fp_struct id fpl =>
-      fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, kill_paths_ref kill ffp))) fpl)
+      fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, kill_views_ref kill ffp))) fpl)
   | fp_enum id tag fid fofs fp1 =>
-      fp_enum id tag fid fofs (kill_paths_ref kill fp1)
+      fp_enum id tag fid fofs (kill_views_ref kill fp1)
   | fp_box b fp1 =>
-      fp_box b (kill_paths_ref kill fp1)
+      fp_box b (kill_views_ref kill fp1)
   | _ => fp
   end.
 
-Definition kill_paths_ref_fpm (kill: views) (fpm: fp_map) : fp_map :=
-  PTree.map1 (fun '(b, ofs, ty, fp) => (b, ofs, ty, kill_paths_ref kill fp)) fpm.
+Definition kill_views_ref_fpm (kill: views) (fpm: fp_map) : fp_map :=
+  PTree.map1 (fun '(b, ofs, ty, fp) => (b, ofs, ty, kill_views_ref kill fp)) fpm.
 
 (* Only used in function return, to kill the loans reborrowed from
 local variables/parameters *)
@@ -855,7 +856,7 @@ Fixpoint kill_vars_ref_fpm (l: list ident) (fpm: fp_map) : fp_map :=
   match l with
   | nil => fpm
   | id :: l1 =>
-      kill_vars_ref_fpm l1 (kill_paths_ref_fpm ((id, nil) :: nil) fpm)
+      kill_vars_ref_fpm l1 (kill_views_ref_fpm ((id, nil) :: nil) fpm)
   end.
 
 (* Unused
@@ -1440,6 +1441,67 @@ Fixpoint eval_exprlist ce (fpm: fp_map) (al: list expr) (* (tyl: typelist) *) : 
   end.
 
 
+(* ph is the accessed path *)
+Definition conflict_PathSet (ph: path) (am : access_mode_bor) (ak: access_kind) (s: PathSet.t) : bool :=
+  PathSet.exists_ (fun '(ph1, mut) => conflict_access ak mut && relevant_path ph am ph1) s.
+
+(* Invalidate an origin: used in purely forward propagation*)
+Definition invalidate_conflict_region (ph: path) (am: access_mode_bor) (ak: access_kind) (st: LOrgPhOptSt.t) : LOrgPhOptSt.t :=
+  match st with
+  | Some (LOrgPhSt.Live phs) =>
+      if conflict_PathSet ph am ak phs then None
+      else st
+  | _ => st
+  end.
+
+(* Check whether we should invalidate each origin in the origin *)
+(* environment *)
+Definition invalidate_conflict_regions (phm: LOrgPhEnv.t) (ph: path) (am: access_mode_bor) (ak: access_kind) : LOrgPhEnv.t :=
+  LOrgPhEnv.map1 (invalidate_conflict_region ph am ak) phm.
+
+Fixpoint eval_pexpr_phm (phm: LOrgPhEnv.t) (pe: pexpr) : LOrgPhEnv.t :=
+  match pe with
+  | Eref org mut p ty =>
+      let ak := mut_to_access_kind mut in
+      let phm1 := invalidate_conflict_regions phm (enc_path frame p) Adeep ak in
+      (* handle reborrow: add all the loans in the support *)
+      (* prefix to org *)
+      let support_orgs := support_origins p in
+      (* aggregate the loans in the support origins *)
+      let org_st := LOrgPhEnv.aggregate_origin_states phm1 support_orgs in
+      let s' := LOrgPhOptSt.lub org_st (Some (LOrgPhSt.Live (PathSet.singleton (enc_path frame p, mut)))) in
+      LOrgPhEnv.add org s' phm1
+  | Eunop _ pe _ =>
+      eval_pexpr_phm phm pe
+  | Ebinop _ pe1 pe2 _ =>
+      let phm1 := eval_pexpr_phm phm pe1 in
+      eval_pexpr_phm phm1 pe2
+  | Ecktag p _ =>
+      invalidate_conflict_regions phm (enc_path frame p) Ashallow ARead
+  | Eplace p _ =>
+      invalidate_conflict_regions phm (enc_path frame p) Adeep ARead
+  (* Other constants *)
+  | _ => phm
+  end.
+
+Definition eval_expr_phm (phm: LOrgPhEnv.t) (e: expr) : LOrgPhEnv.t :=
+  match e with
+  | Emoveplace p _ =>
+      invalidate_conflict_regions phm (enc_path frame p) Adeep AWrite
+  | Epure pe =>
+      eval_pexpr_phm phm pe
+  end.
+
+Definition kill_related_paths (ph: path) (st: LOrgPhOptSt.t) : LOrgPhOptSt.t :=
+  match st with
+  | Some (LOrgPhSt.Live phs) =>
+      Some (LOrgPhSt.Live (PathSet.filter (fun '(elt, _) => negb (is_prefix_path ph elt)) phs))
+  | _ => st
+  end.
+
+Definition kill_paths (ph: path) (m: LOrgPhEnv.t) : LOrgPhEnv.t :=
+  LOrgPhEnv.map1 (kill_related_paths ph) m.
+
 End EXPR.
 
 (** ** Program states *)
@@ -1599,7 +1661,7 @@ Definition before_write_place ce fidx (fpm1: fp_map) (p: place) : res (path * vi
     (* To make the views at each reference precise. Note that we
     should also kill the loans in the evaluated value (e.g., consider
     x = &mut *x. Therefore we return the views of p. *)
-    OK (ph, vs, kill_paths_ref_fpm vs fpm2)
+    OK (ph, vs, kill_views_ref_fpm vs fpm2)
   else Error nil.
 
 Definition eval_assign ce fidx (fpm1: fp_map) (p: place) (e: expr) : res (path * footprint * fp_map) :=
@@ -1614,7 +1676,7 @@ Definition eval_assign ce fidx (fpm1: fp_map) (p: place) (e: expr) : res (path *
   the static borrow checking would check this situation, therefore we
   need to do invalidation on the evaluated footprint. *)
   let vfp1 := invalidate_conflict_ref p AWrite Ashallow vfp in
-  OK (ph, (kill_paths_ref vs vfp1), fpm4).
+  OK (ph, (kill_views_ref vs vfp1), fpm4).
 
 
 Section SMALLSTEP.
@@ -1697,7 +1759,7 @@ keeps the drop statement for the place that is init. *)
     (* perform shallow write for variables/parameters *)
     (FREE: invalidate_conflict_ref_fpm_list (vars_to_paths fidx (f.(fn_vars) ++ f.(fn_params))) AWrite Ashallow fpm2 = fpm3)
     (* kill loans reborrowed from variables/parameters *)
-    (KILL: kill_paths_ref_fpm (vars_to_paths fidx (f.(fn_vars) ++ f.(fn_params))) fpm3 = fpm4)
+    (KILL: kill_views_ref_fpm (vars_to_paths fidx (f.(fn_vars) ++ f.(fn_params))) fpm3 = fpm4)
     (* deallocate all the local variables/parameters *)
     (FREE: pop_stack fpm4 fidx (f.(fn_vars) ++ f.(fn_params)) = fpm5)
     (* (CAST: sem_cast v (typeof_place p) f.(fn_return) = OK v1) *)
@@ -1707,7 +1769,7 @@ keeps the drop statement for the place that is init. *)
     created from reborrowing the variables/parameters in the return
     value (e.g., consider [return &mut *x] where x points to an in-out
     parameters *)
-    (RETV: (kill_paths_ref (vars_to_paths fidx (f.(fn_vars) ++ f.(fn_params))) vfp) = vfp1),
+    (RETV: (kill_views_ref (vars_to_paths fidx (f.(fn_vars) ++ f.(fn_params))) vfp) = vfp1),
     (** How to know in advance that all the reference in out
     parameters are not fp_uninit? It is ensured by check_dangle? *)
     step (State f (Sreturn p) k fpm1 fidx sup) E0 (Returnstate vfp2 out_params (fidx-1)%positive sup ck)
@@ -1717,7 +1779,7 @@ keeps the drop statement for the place that is init. *)
     assignment because p may locate in those ref-passed locations *)
     (EVALP: before_write_place ge fidx fpm1 p = OK (ph, vs, fpm2))
     (* (CASTED: sval_casted v1 (typeof_place p)) *)
-    (ASS: set_footprint_map ph (kill_paths_ref vs v1) fpm2 = OK fpm3),
+    (ASS: set_footprint_map ph (kill_views_ref vs v1) fpm2 = OK fpm3),
     step (Returnstate v fpm1 fidx sup (Kcall p f k)) E0 (State f Sskip k fpm3 fidx sup)
 
 (* Control flow statements *)

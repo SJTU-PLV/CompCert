@@ -47,13 +47,13 @@ let print_origin pp org =
 let print_dead_origin pp (orgs: origin list) =
   fprintf pp "%s: Dead@ " (origin_list_to_string orgs)
 
-let print_origin_state pp (org_st: origin list * LOrgSt.t) =
+let print_origin_state pp (org_st: origin list * LOrgLnSt.t) =
   let (orgs, st) = org_st in
   match st with
   (* | Obot -> fprintf pp "%s: Bot@ " (extern_atom org) *)
-  | Live(ls) ->
+  | LOrgLnSt.Live(ls) ->
     fprintf pp "%s: {@[<hov>%a@]}@ " (origin_list_to_string orgs) print_loanset ls
-  | Dead ->
+  | LOrgLnSt.Dead ->
     print_dead_origin pp orgs
 
 let find_same_set (org: origin) (uf: UFD.unionfind) : origin list =

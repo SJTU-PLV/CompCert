@@ -9,6 +9,6 @@ fn main()
     let mut p: &mut i32 = &mut v1;
     let mut q: &mut i32 = &mut v2;
     test_error(&mut p, &mut q); // 'p1 = 'c and 'p2 = 'c so 'p1 = 'p2
-    // v1 = 2; // error here because we unify p and q
+    v1 = 2; // error here because we unify p and q
     *q = 3;
 }

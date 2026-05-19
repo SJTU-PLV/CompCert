@@ -37,8 +37,8 @@ Definition support_origins (p: place) : list origin :=
                           | _ => acc
                           end) nil support_prefixes.
 
-Definition aggregate_origin_states (e: LOrgEnv.t) (orgs: list origin) : LOrgLnSt.t :=
-  fold_left (fun acc elt => LOrgLnSt.lub acc (LOrgEnv.get elt e)) orgs LOrgLnSt.bot.
+(* Definition aggregate_origin_states (e: LOrgEnv.t) (orgs: list origin) : LOrgLnSt.t := *)
+(*   fold_left (fun acc elt => LOrgLnSt.lub acc (LOrgEnv.get elt e)) orgs LOrgLnSt.bot. *)
 
 Definition borrowed_place_error (action site: string) (p: place) : errmsg :=
   [MSG action; MSG " place "]
@@ -49,8 +49,8 @@ Definition borrowed_place_error (action site: string) (p: place) : errmsg :=
 Definition map_loan_set (f: loan -> loan) (ls: LoanSet.t) : LoanSet.t :=
   LoanSet.fold (fun ln acc => LoanSet.add (f ln) acc) ls LoanSet.empty.
 
-Definition loan_env_add (le: LOrgEnv.t) (r: origin) (ls: LOrgLnSt.t) : LOrgEnv.t :=
-  LOrgEnv.set r (LOrgLnSt.lub ls (LOrgEnv.get r le)) le.
+(* Definition loan_env_add (le: LOrgEnv.t) (r: origin) (ls: LOrgLnSt.t) : LOrgEnv.t := *)
+(*   LOrgEnv.set r (LOrgLnSt.lub ls (LOrgEnv.get r le)) le. *)
 
 (* Transition of pure expression *)
 
@@ -61,14 +61,14 @@ Fixpoint transfer_pure_expr (e: LOrgEnv.t) (pe: pexpr) : LOrgEnv.t :=
       (* prefix to org *)
       let support_orgs := support_origins p in
       (* aggregate the loans in the support origins *)
-      let org_st := aggregate_origin_states e support_orgs in
+      let org_st := LOrgEnv.aggregate_origin_states e support_orgs in
       let s' := LOrgLnSt.lub org_st (LOrgLnSt.Live (LoanSet.singleton (Lintern mut p))) in
       (** Simplification: we choose not to overwrite the e[org] to
       simplfy the proof because we do not need to prove that org does
       not appear in e. This simplification is OK because (1) it does
       not affect the soundness proof and (2) we can ensure that org
       must not appear in e using the ReplaceOrigins.v pass. *)
-      loan_env_add e org s'
+      LOrgEnv.add org s' e
   | Eunop _ pe _ =>
       transfer_pure_expr e pe
   | Ebinop _ pe1 pe2 _ =>
@@ -145,59 +145,6 @@ Fixpoint check_exprlist (oe: LOrgEnv.t) (l: list expr) : res unit :=
       check_exprlist oe' l'
   end.
 
-
-(* Flowing loans from source type to destination type *)
-
-Definition flow_loans_by_regions (e: LOrgEnv.t) (org_src org_tgt: origin) (va: variance) : LOrgEnv.t :=
-  match va with
-  | Covariant =>
-      let st := LOrgLnSt.lub (LOrgEnv.get org_src e) (LOrgEnv.get org_tgt e) in
-      LOrgEnv.set org_tgt st e
-  | Invariant =>
-      LOrgEnv.union org_src org_tgt e
-  end.
-
-(* Subtyping rules of rust borrow checker *)
-Fixpoint flow_loans (e: LOrgEnv.t) (s d: type) (va: variance) : LOrgEnv.t :=
-  match s,d with
-  | Treference org1 mut1 ty1, Treference org2 mut2 ty2 =>
-      let e1 := flow_loans_by_regions e org1 org2 va in
-      (* Rust does not support "types differ in mutability", so we can
-         assume that the type checking has check that mut1 = mut2 *)
-      (** To simplify the proof, we assume all regions nested within
-      reference are invariant. This of course would reduce the
-      precision of the borrow checking, see
-      rustexamples/test/48_shr_ref_invariant.rs for an example. *)
-      (* let fk' := match mut1 with *)
-      (*           | Mutable => ByRef *)
-      (*           | Immutable => ByVal *)
-      (*            end in *)
-      flow_loans e1 ty1 ty2 (join_variance va Invariant)
-  | Tbox ty1, Tbox ty2 =>
-      (* Box is covariant over ty1/ty2*)
-      flow_loans e ty1 ty2 (join_variance va Covariant)
-  | Tstruct orgs1 id1, Tstruct orgs2 id2 
-  | Tvariant orgs1 id1 , Tvariant orgs2 id2 =>
-      (* type checking must ensure that id1 == id2 and len(orgs1) ==
-      len(orgs2). We use id1 below *)
-      (** TODO: for now we simplify the subtyping by assuming that the
-      user defined type is **invariant** over each of the origin. To
-      deal with this restriction, we need to write a function to query
-      that what subtyping rule should be applied for a give origin *)
-      let orgs := combine orgs1 orgs2 in
-      fold_left (fun acc '(o1, o2) => LOrgEnv.union o1 o2 acc) orgs e
-  (* scalar type *)
-  | _, _ => e
-  end.
-          
-Fixpoint flow_loans_list (e: LOrgEnv.t) (ls ld: list type) (va: variance) : LOrgEnv.t :=
-  match ls, ld with
-  | s :: ls', d :: ld' =>
-      flow_loans_list (flow_loans e s d va) ls' ld' va
-  | _, _ =>
-      e
-  end.
-
 (* Shallow write a place *)
 
 Definition check_shallow_write_place (e: LOrgEnv.t) (p: place) : res unit :=
@@ -234,7 +181,7 @@ Definition transfer_assignment (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t 
   let oe1 := transfer_expr oe e in
   (* After checking the evaluation of e *)
   let oe2 := kill_loans oe1 p in
-  flow_loans oe2 ty_src ty_dest Covariant.
+  LOrgEnv.flow_loans oe2 ty_src ty_dest Covariant.
 
 (* The checking function is used for all kinds of assignment *)
 Definition check_assignment (oe: LOrgEnv.t) (p: place) (e: expr) : res unit :=
@@ -259,7 +206,7 @@ Definition transfer_assign_variant (oe: LOrgEnv.t) (p: place) (enum_id: ident) (
               let oe1 := transfer_expr oe e in
               (* After checking the evaluation of e *)
               let oe2 := kill_loans oe1 p in
-              flow_loans oe2 ty_src ty_dest Covariant
+              LOrgEnv.flow_loans oe2 ty_src ty_dest Covariant
           (* It would cause error before borrow checking *)
           | _ => oe
           end
@@ -278,7 +225,7 @@ Definition transfer_Sbox (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t :=
   let oe1 := transfer_expr oe e in
   (* After checking the evaluation of e *)
   let oe2 := kill_loans oe1 p in
-  flow_loans oe2 ty_src ty_dest Covariant.
+  LOrgEnv.flow_loans oe2 ty_src ty_dest Covariant.
 
   
 (* bind the origins in two type *)
@@ -396,7 +343,7 @@ Definition flow_return_after_call (fe e: LOrgEnv.t) (frety tgt_ty: type) : LOrgE
   let l := bind_type_origins frety tgt_ty ByVal in
   fst (flow_loans_bind fe e nil l).
   (* (* we do not care the alias relation *) *)
-  (* do (te', _) <- fold_left (flow_loans_bind_acc pc se) l (OK (te, nil)); *)
+  (* do (te', _) <- fold_left (LOrgEnv.flow_loans_bind_acc pc se) l (OK (te, nil)); *)
   (* OK te'. *)
 
 (** TODO: to make it simpler  *)
@@ -409,13 +356,13 @@ Definition transfer_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: 
       (* transfer the arguments *)
       let oe2 := transfer_exprlist oe1 args in      
       (* flow the loans from arguments to the parameter types of the function *)
-      let oe3 := flow_loans_list oe2 args_tyl sig_tyl Covariant in
+      let oe3 := LOrgEnv.flow_loans_list oe2 args_tyl sig_tyl Covariant in
       (* apply the effect of the function call *)
       let oe4 := after_call oe3 org_rels in
       (* kill loans *)
       let oe5 := kill_loans oe4 p in
       (* assign the return value to p *)
-      flow_loans oe5 rty tgt_rety Covariant
+      LOrgEnv.flow_loans oe5 rty tgt_rety Covariant
   | _ => oe1
 (* Error (error_msg pc ++ [MSG "it is not a function type in check_function_call"])       *)
   end.
@@ -441,7 +388,7 @@ Definition check_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: lis
       (* transfer the arguments *)
       let oe2 := transfer_exprlist oe1 args in      
       (* flow the loans from arguments to the parameter types of the function *)
-      let oe3 := flow_loans_list oe2 args_tyl sig_tyl Covariant in
+      let oe3 := LOrgEnv.flow_loans_list oe2 args_tyl sig_tyl Covariant in
       (** We check that each generic region is a singleton set, i.e.,
       we do not generate invariant relation for any two regions (which
       cannot be expressed in the function signature for now) *)
@@ -548,7 +495,7 @@ Fixpoint kill_loans_list (e: LOrgEnv.t) (l: list (ident * type)) : LOrgEnv.t :=
 return type of this function *)
 Definition transfer_return (f: function) (oe1: LOrgEnv.t) (p: place) : LOrgEnv.t :=
   (** The following code is copied from check_return *)
-  let oe2 := flow_loans oe1 (typeof_place p) f.(fn_return) Covariant in
+  let oe2 := LOrgEnv.flow_loans oe1 (typeof_place p) f.(fn_return) Covariant in
   (* To accept more programs, we clear all the regions except the
     generic ones before checking dangling references. *)
   let generic_regions := regset_fun f in
@@ -565,7 +512,7 @@ Definition check_return (f: function) (oe1: LOrgEnv.t) (p: place) : res unit :=
     regions (except generic regions) after the return statement. *)
     Error (borrowed_place_error "cannot return" "transfer_return" p)
   else
-    let oe2 := flow_loans oe1 (typeof_place p) f.(fn_return) Covariant in
+    let oe2 := LOrgEnv.flow_loans oe1 (typeof_place p) f.(fn_return) Covariant in
     (* To accept more programs, we clear all the regions except the
     generic ones before checking dangling references. *)
     let generic_regions := regset_fun f in
@@ -654,7 +601,7 @@ Definition init_function (f: function) : LOrgEnv.t :=
                           let os := LOrgLnSt.Live (LoanSet.singleton (Lextern elt)) in
                           LOrgEnv.set elt os acc) f.(fn_generic_origins) LOrgEnv.bot in
   (* flow the loans from the function arguments to the parameters *)
-  flow_loans_list oe1 f.(fn_param_types) (map snd f.(fn_params)) Covariant.
+  LOrgEnv.flow_loans_list oe1 f.(fn_param_types) (map snd f.(fn_params)) Covariant.
   
 (** Run Liveness analysis and Loans-flow analysis *)
 

@@ -154,21 +154,6 @@ Qed.
   
 (** * Syntactic type checking  *)
 
-Inductive variance :=
-| Covariant
-| Invariant.
-
-Lemma variance_eq: forall (va1 va2: variance), {va1 = va2} + {va1 <> va2}.
-decide equality.
-Defined.
-
-Definition join_variance (v1 v2: variance) :=
-  match v1, v2 with
-  | Invariant, _
-  | _, Invariant => Invariant
-  | _, _ => Covariant
-  end.
-
 Definition type_deref (ty: type) : res (type * variance) :=
   match ty with
   (* Only support box type to be dereferenced for now *)

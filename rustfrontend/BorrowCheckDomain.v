@@ -244,6 +244,10 @@ Definition set (p: positive) (v: L.t) (x: t) : t :=
   then mk (PTree.remove p' (m x)) (uf x)
   else mk (PTree.set p' v (m x)) (uf x).
 
+Definition add (p: positive) (v: L.t) (x: t) : t :=
+  set p (L.lub v (get p x)) x.
+
+
 Lemma gsspec:
   forall p v x q,
   L.eq (get q (set p v x)) (if peq (UFD.repr (uf x) q) (UFD.repr (uf x) p) then v else get q x).
@@ -634,8 +638,118 @@ Definition apply_liveness (live: RegionSet.t) (dm: t) : t :=
   live set), then it is deleted from the disjoint-set map *)
   remove_dead_regions live region_dom dm.
 
-End LUFMap.
+(* Used in computing loans for reborrow *)
+Definition aggregate_origin_states (m: t) (l: list positive) : L.t :=
+  fold_left (fun acc elt => L.lub acc (get elt m)) l L.bot.
 
+(** Equality properties  *)
+
+Global Instance L_eq_equiv: 
+  Equivalence (L.eq).
+Proof.
+  split.
+  red. eapply L.eq_refl.
+  red. eapply L.eq_sym.
+  red. eapply L.eq_trans.
+Defined.
+
+
+Global Instance set_Proper: Proper (Logic.eq ==> L.eq ==> eq ==> eq) set.
+Proof.
+  intros r1 r2 A ls1 ls2 B le1 le2 C. subst.
+  inv C. 
+  constructor.
+  unfold set.
+  destruct (L.beq ls1 L.bot) eqn: EQ1;
+    destruct (L.beq ls2 L.bot) eqn: EQ2; simpl in *; eauto.
+  intros. rewrite !gsspec.
+  destruct peq.
+  - eapply uf_eq0 in e. rewrite e. rewrite peq_true. auto.
+  - destruct peq.
+    eapply uf_eq0 in e. unfold UFD.sameclass in e. rewrite e in n. congruence.
+    auto.
+Qed.
+
+(** This properties require Lattice module type contain lub_Proper *)
+(* Global Instance L_lub_Proper: *)
+(*   Proper (L.eq ==> L.eq ==> L.eq) L.lub. *)
+(* Proof. *)
+(*   intros ls1 ls2 A ls3 ls4 B. *)
+  
+(*   destruct ls1; destruct ls3; destruct ls2; destruct ls4; simpl in *. *)
+(*   all: try rewrite A; try rewrite B; try reflexivity. *)
+(*   all: try contradiction. *)
+(* Defined.   *)
+
+
+Global Instance add_Proper: 
+  Proper (L.eq ==> L.eq ==> L.eq) L.lub ->
+  Proper (Logic.eq ==> L.eq ==> eq ==> eq) add.
+Proof.
+  intros H r1 r2 A ls1 ls2 B le1 le2 C.
+  unfold add. subst.
+  eapply set_Proper; auto.
+  eapply H; eauto.
+  eapply C.
+Qed.
+
+(** Rust specific operations. TODO: can we make it independent on Rust
+types? *)
+
+(* Flowing loans from source type to destination type *)
+
+Definition flow_loans_by_regions (e: t) (org_src org_tgt: origin) (va: variance) : t :=
+  match va with
+  | Covariant =>
+      let st := L.lub (get org_src e) (get org_tgt e) in
+      set org_tgt st e
+  | Invariant =>
+      union org_src org_tgt e
+  end.
+
+(* Subtyping rules of rust borrow checker *)
+Fixpoint flow_loans (e: t) (s d: type) (va: variance) : t :=
+  match s,d with
+  | Treference org1 mut1 ty1, Treference org2 mut2 ty2 =>
+      let e1 := flow_loans_by_regions e org1 org2 va in
+      (* Rust does not support "types differ in mutability", so we can
+         assume that the type checking has check that mut1 = mut2 *)
+      (** To simplify the proof, we assume all regions nested within
+      reference are invariant. This of course would reduce the
+      precision of the borrow checking, see
+      rustexamples/test/48_shr_ref_invariant.rs for an example. *)
+      (* let fk' := match mut1 with *)
+      (*           | Mutable => ByRef *)
+      (*           | Immutable => ByVal *)
+      (*            end in *)
+      flow_loans e1 ty1 ty2 (join_variance va Invariant)
+  | Tbox ty1, Tbox ty2 =>
+      (* Box is covariant over ty1/ty2*)
+      flow_loans e ty1 ty2 (join_variance va Covariant)
+  | Tstruct orgs1 id1, Tstruct orgs2 id2 
+  | Tvariant orgs1 id1 , Tvariant orgs2 id2 =>
+      (* type checking must ensure that id1 == id2 and len(orgs1) ==
+      len(orgs2). We use id1 below *)
+      (** TODO: for now we simplify the subtyping by assuming that the
+      user defined type is **invariant** over each of the origin. To
+      deal with this restriction, we need to write a function to query
+      that what subtyping rule should be applied for a give origin *)
+      let orgs := combine orgs1 orgs2 in
+      fold_left (fun acc '(o1, o2) => union o1 o2 acc) orgs e
+  (* scalar type *)
+  | _, _ => e
+  end.
+          
+Fixpoint flow_loans_list (e: t) (ls ld: list type) (va: variance) : t :=
+  match ls, ld with
+  | s :: ls', d :: ld' =>
+      flow_loans_list (flow_loans e s d va) ls' ld' va
+  | _, _ =>
+      e
+  end.
+
+
+End LUFMap.
   
 (** Origin environment *)
 
@@ -697,8 +811,7 @@ Definition illegal_access (oe: LOrgEnv.t) (p: place) (am: access_mode_bor) (ak: 
   let m := (LOrgEnv.m oe) in
   PTree_Properties.exists_ m (illegal_access_in_origin_state p am ak).
 
-(* Legacy code *)
-(* (* Invalidate an origin *) *)
+(* (* Invalidate an origin: used *) *)
 (* Definition invalidate_origin (p: place) (am: access_mode_bor) (ak: access_kind) (os: origin_state) : origin_state := *)
 (*   match os with *)
 (*   | Live ls => *)
@@ -803,21 +916,6 @@ Module LoansEnv <: SEMILATTICE.
   Axiom ge_lub_right: forall x y, ge (lub x y) y.
 
 End LoansEnv.
-
-Global Instance LOrgEnv_set_Proper: Proper (eq ==> LOrgLnSt.eq ==> LOrgEnv.eq ==> LOrgEnv.eq) LOrgEnv.set.
-Proof.
-  intros r1 r2 A ls1 ls2 B le1 le2 C. subst.
-  inv C. 
-  constructor.
-  unfold LOrgEnv.set.
-  destruct ls1; destruct ls2; simpl in *; eauto.
-  intros. rewrite !LOrgEnv.gsspec.
-  destruct peq.
-  - eapply uf_eq in e. rewrite e. rewrite peq_true. auto.
-  - destruct peq.
-    eapply uf_eq in e. unfold UFD.sameclass in e. rewrite e in n. congruence.
-    auto.
-Qed.  
 
 (* One-to-one correspondence between (positive * positive) and
 positive, which is used to construct whole-module loans

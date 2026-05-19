@@ -302,9 +302,9 @@ Inductive sem_wt_loc_list : list (block * Z) -> list footprint  -> massert -> Pr
 (* Qed. *)
 
 
-Inductive coherent_var (elt: (ident * (block * Z *  option origin * type * footprint))) : massert -> Prop :=
-| coherent_var_intro: forall id b ofs ty mass fp opt_reg
-    (ELTEQ: elt = (id, (b, ofs, opt_reg, ty, fp)))
+Inductive coherent_var (elt: (ident * (block * Z * type * footprint))) : massert -> Prop :=
+| coherent_var_intro: forall id b ofs ty mass fp
+    (ELTEQ: elt = (id, (b, ofs, ty, fp)))
     (* What if fpm contains more variables than local env? *)
     (MASS: sem_wt_loc fp b ofs mass),
     (* How to express the ownership of external locations passed by reference? *)
@@ -1260,7 +1260,7 @@ Proof.
   do 3 eexists. do 3 (try eapply conj); eauto.
   - instantiate (1 := mp1 ** mp3 ** mp2).
     econstructor. 
-    assert (TODO: PTree.elements (PTree.set id0 (b0, ofs0, opt_reg, ty0, fp2) fpm) = l1 ++ (id0, (b0, ofs0, opt_reg, ty, fp2)) :: l2) by admit.
+    assert (TODO: PTree.elements (PTree.set id0 (b0, ofs0, ty0, fp2) fpm) = l1 ++ (id0, (b0, ofs0, ty, fp2)) :: l2) by admit.
     rewrite TODO.
     eapply Forall_sep_app. exists mp1, (mp3 ** mp2). 
     split; eauto. split. econstructor; eauto.

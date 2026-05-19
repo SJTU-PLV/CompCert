@@ -555,7 +555,7 @@ Lemma get_owner_loc_footprint_map_app: forall id phl1 phl2 b1 ofs1 fp1 b2 ofs2 f
     get_owner_loc_footprint_map (id, phl1 ++ phl2) fpm = OK (b2, ofs2, fp2).
 Admitted.
 
-(** Misc for invalidate_conflict_ref and kill_paths *)
+(** Misc for invalidate_conflict_ref and kill_views *)
 
 Lemma get_owner_loc_footprint_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ak am b ofs fp,
     get_owner_loc_footprint_map ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK (b, ofs, fp) ->
@@ -899,9 +899,9 @@ Lemma borrow_check_inv_shallow_write: forall (fpm1 fpm2 fpm3 fpm4: fp_map) id ph
     check_path_is_dropped fpm2 tgt = OK true ->    
     (* This clearing operation is used to align with the kill loans operation. *)
     clear_footprint_map ce tgt fpm2 = OK fpm3 ->
-    fpm4 = kill_paths_ref_fpm vs fpm3 ->
-    borrow_check_inv_snapshot fpm4 (map (kill_paths_ref vs) (map (invalidate_conflict_ref (id, phl) AWrite BorrowCheckDomain.Ashallow) fpl)).
-    (* /\ wt_footprint_list ce fpm4 tyl (map (kill_paths_ref vs) fpl) *)
+    fpm4 = kill_views_ref_fpm vs fpm3 ->
+    borrow_check_inv_snapshot fpm4 (map (kill_views_ref vs) (map (invalidate_conflict_ref (id, phl) AWrite BorrowCheckDomain.Ashallow) fpl)).
+    (* /\ wt_footprint_list ce fpm4 tyl (map (kill_views_ref vs) fpl) *)
     (* /\ wt_fpm ce fpm4. *)
 Proof.
   intros. subst.
@@ -956,9 +956,9 @@ Lemma clear_footprint_map_is_dropped: forall phl id (fpm1 fpm2: fp_map),
     check_path_is_dropped fpm2 (id, phl) = OK true.
 Admitted.
 
-Lemma kill_paths_ref_fpm_preserve_is_dropped: forall phl id (fpm: fp_map) vs,
+Lemma kill_views_ref_fpm_preserve_is_dropped: forall phl id (fpm: fp_map) vs,
     check_path_is_dropped fpm (id, phl) = OK true ->
-    check_path_is_dropped (kill_paths_ref_fpm vs fpm) (id, phl) = OK true.
+    check_path_is_dropped (kill_views_ref_fpm vs fpm) (id, phl) = OK true.
 Admitted.
 
 
@@ -994,7 +994,7 @@ RustIRown *)
 (*     (* set footprint to the assginee preserves the invariant *) *)
 (*     (* assert (WTPH1: wt_path *) *)
 (*     exploit borrow_check_inv_set_fp; eauto. *)
-(*     eapply kill_paths_ref_fpm_preserve_is_dropped. *)
+(*     eapply kill_views_ref_fpm_preserve_is_dropped. *)
 (*     eapply clear_footprint_map_is_dropped; eauto.     *)
 (*     admit.  (* We cannot prove that the type of the tgt path is *)
 (*     (typeof e) but we can prove that its type is equal to (typeof e) *)

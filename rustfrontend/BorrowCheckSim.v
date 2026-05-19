@@ -52,7 +52,7 @@ Let ce := ge.(genv_cenv).
 
 Variable sg: rust_signature.
 
-Let wt_state := @wt_state ame prog se sg.
+(* Let wt_state := @wt_state ame prog se sg. *)
 Let borrowck_inv := @borrowck_inv ame prog se sg.
 
 (* Definition mod_sg := match w with *)
@@ -569,7 +569,7 @@ Inductive deref_loc_rec_footprint (m: mem) (b: block) (ofs: Z) (fty: type) (fp: 
 (* We return the memory predicate instead of defining coherent_fpf is
 because we do not clear (which is just a design choice) the footprint
 passed via reference to callee. *)
-Inductive match_cont: (@RustIRspec.cont ame) -> cont -> massert -> Prop :=
+Inductive match_cont: RustIRspec.cont -> cont -> massert -> Prop :=
 | match_Kstop:
     match_cont RustIRspec.Kstop Kstop STrue
 | match_Kseq: forall s k tk MP
@@ -582,7 +582,7 @@ Inductive match_cont: (@RustIRspec.cont ame) -> cont -> massert -> Prop :=
     (MSTK: match_stacks (RustIRspec.Kcall p f phl ns fpm k) (Kcall (Some p) f fpm tk) MP),
     match_cont (RustIRspec.Kcall p f phl ns fpm k) (Kcall (Some p) f fpm tk) MP
 
-with match_stacks : (@RustIRspec.cont ame) -> cont -> massert -> Prop :=
+with match_stacks : RustIRspec.cont -> cont -> massert -> Prop :=
 | match_stacks_call: forall f k tk MP1 MP2 phl ns fpm fpm1 p
     (* We should set fp_emp to the inout parameters *)
     (FPM: clear_fpm_passed_ref_footprint fpm (map (fun '(id, (ph, _)) => ph) phl) = OK fpm1)
