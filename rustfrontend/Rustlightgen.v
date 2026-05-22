@@ -411,6 +411,14 @@ Fixpoint generate_lets (l: list (ident * type)) (body: statement) : statement :=
       Slet id ty (generate_lets l' body)
   end.
 
+Fixpoint remove_temp (id: ident) (l: list (ident * type)) : list (ident * type) :=
+  match l with
+  | nil => nil
+  | (id', ty) :: l' =>
+      if ident_eq id id' then remove_temp id l'
+      else (id', ty) :: remove_temp id l'
+  end.
+
 Fixpoint makeseq_rec (s: statement) (l: list statement) : statement :=
   match l with
   | nil => s
@@ -529,8 +537,8 @@ Fixpoint transl_stmt (stmt: Rustsyntax.statement) : mon statement :=
                 do temps <- extract_temps;
                 do arm_stmt <- transl_arm_statements arm_body temp co;
                 (* concat the condition statements and generate let stmts *)
-                let temp_decl_arm := Slet temp_id ty (Ssequence assign_temp arm_stmt) in
-                ret (generate_lets temps temp_decl_arm)
+                let temp_decl_arm := (Ssequence assign_temp arm_stmt) in
+                ret (generate_lets temps (Ssequence eval_cond temp_decl_arm))
               else
                 do (cond_sl, p) <- transl_place_expr e;
                 let eval_cond := makeseq cond_sl in

@@ -1,3 +1,5 @@
+// A Polonius example from https://smallcultfollowing.com/babysteps/blog/2023/09/29/polonius-part-2/
+
 fn main(){
     let mut x: i32 = 22;
     let mut y: i32 = 44;
