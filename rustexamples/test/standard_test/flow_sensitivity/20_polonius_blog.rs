@@ -13,7 +13,5 @@ fn main(){
         // q is not live here, so there should be no error reported
         y = y + 1; 
     }
-    y = y + 1; // If we uncomment the following line, error should be reported here
-    // let mut tmp: i32 = *p;
-    // printf("%d", *p);
+    let mut tmp: i32 = *p;
 }
