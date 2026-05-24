@@ -1,4 +1,9 @@
 #!/bin/zsh
+# Usage: check_flow_sensitivity.sh <source file>
+# Incorrect example: cannot pass borrow check
+# Insensitive example: passes borrow check without flow-sensitivity
+# Sensitive example: bingo
+# 
 # Note by czm: you should compile and install polonius from its git repository as its crates.io version is extremely outdated and not functional (at least on my machine).
 rustc -Znll-facts -o /dev/null $1 > /dev/null 2>&1
 FUNCS=$(find ./nll-facts -maxdepth 1 -mindepth 1)
