@@ -2,7 +2,7 @@
 SRCS := $(shell find . -type f -name '*.rs' | sed 's|^\./||' | sort)
 
 # Files whose compilation is expected to fail.
-FAIL_EXPECTED :=
+FAIL_EXPECTED := ./subtyping/amf-transitive_failure.rs ./subtyping/amf-undeclared_relation.rs ./subtyping/po-missing_bound.rs
 FAIL_SRCS := $(FAIL_EXPECTED)
 
 SUCCESS_EXPECTED := $(filter-out $(FAIL_SRCS),$(SRCS))
