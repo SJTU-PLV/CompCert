@@ -44,7 +44,7 @@ fn get_default<'r>(list: &'r mut List, key: i32, default: &'r mut i32) -> &'r mu
         }
         OptionR::None => {
             insert_into_list(&mut *list, key, *default);
-            // In NLL, this is considered an error because *list is considered be borrowed at the Cons branch and this borrow fact is propagated to this branch due to flow-insensitivity of NLL.
+            // In NLL, this is considered an error because *list is considered be borrowed at the Some branch and this borrow fact is propagated to this branch due to flow-insensitivity of NLL.
             return default;
         }
     }

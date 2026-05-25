@@ -11,5 +11,5 @@ fn main(){
     a.x = &mut a.y;
     let mut p: &mut i32 = &mut *a.x;
     // let mut p: &mut i32 = &mut a.y; // This line also cause error because 'a which contain {a.y} is live and we deeply access a.y
-    let mut b: A = a; // error! If we uncomment this line, there would be no error
+    let mut b: A = a; // error because [a] must be Pinned! If we uncomment this line, there would be no error
 }
