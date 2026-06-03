@@ -1104,7 +1104,6 @@ Lemma meminj_sub_none : forall j a,
 Proof.
   intros. unfold meminj_sub. destruct eq_block; congruence.
 Qed.
-
 (*
 Lemma update_meminj_new: forall s j j' b b' ofs,
   j b = None ->

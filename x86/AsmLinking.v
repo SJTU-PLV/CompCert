@@ -92,11 +92,11 @@ Proof.
 Qed.
 
 Section ASM_LINKING.
-  Context (p1 p2 p: program) (Hp: link p1 p2 = Some p).
+  Context (p1 p2 p: program) (is: instruction -> Z) (Hp: link p1 p2 = Some p).
   (*Context L (HL: link (semantics p1) (semantics p2) = Some L).*)
 
   Let p_ i := match i with true => p1 | false => p2 end.
-  Let L i := semantics (p_ i).
+  Let L i := semantics is (p_ i).
 
   Lemma p_linkorder i:
     linkorder (p_ i) p.
@@ -120,7 +120,7 @@ Section ASM_LINKING.
   Hint Resolve p_linkorder leb_refl leb_true : core.
 
   Section SE.
-    Context (se: Genv.symtbl) (init_sup: sup).
+    Context (se: genv) (init_sup: sup).
 
     (** ** Simulation relation *)
 
@@ -206,8 +206,8 @@ Section ASM_LINKING.
       destruct live; constructor; auto.
     Qed.
 
-    Lemma exec_load_support nb chunk m a rs rd rs' m' live:
-      exec_load se chunk m a rs rd = Next' rs' m' live ->
+    Lemma exec_load_support nb sz chunk m a rs rd rs' m' live:
+      exec_load se sz chunk m a rs rd = Next' rs' m' live ->
       Mem.sup_include nb (Mem.support m) ->
       Mem.sup_include nb (Mem.support m').
     Proof.
@@ -215,16 +215,16 @@ Section ASM_LINKING.
       intro. inv H. auto.
     Qed.
 
-    Lemma exec_load_live chunk m a rs rd rs' m' live live':
-      exec_load se chunk m a rs rd = Next' rs' m' live' ->
+    Lemma exec_load_live sz chunk m a rs rd rs' m' live live':
+      exec_load se sz chunk m a rs rd = Next' rs' m' live' ->
       option_le Bool.le live (Some live').
     Proof.
       unfold exec_load. destruct Mem.loadv; inversion 1.
       destruct live; constructor; auto.
     Qed.
 
-    Lemma exec_store_support nb chunk m a rs rd lr rs' m' live:
-      exec_store se chunk m a rs rd lr = Next' rs' m' live ->
+    Lemma exec_store_support nb sz chunk m a rs rd lr rs' m' live:
+      exec_store se sz chunk m a rs rd lr = Next' rs' m' live ->
       Mem.sup_include nb (Mem.support m) ->
       Mem.sup_include nb (Mem.support m').
     Proof.
@@ -234,29 +234,32 @@ Section ASM_LINKING.
       apply Mem.support_store in Hm'. rewrite Hm'. auto.
     Qed.
 
-    Lemma exec_store_live chunk m a rs r1 rd rs' m' live live':
-      exec_store se chunk m a rs r1 rd = Next' rs' m' live' ->
+    Lemma exec_store_live sz chunk m a rs r1 rd rs' m' live live':
+      exec_store se sz chunk m a rs r1 rd = Next' rs' m' live' ->
       option_le Bool.le live (Some live').
     Proof.
       unfold exec_store. destruct Mem.storev; inversion 1.
       destruct live; constructor; auto.
     Qed.
 
-    Lemma goto_label_support nb f l rs m rs' m' live:
-      goto_label f l rs m = Next' rs' m' live ->
+    Lemma goto_label_support sz nb f l rs m rs' m' live:
+      goto_label sz se f l rs m = Next' rs' m' live ->
       Mem.sup_include nb (Mem.support m) ->
       Mem.sup_include nb (Mem.support m').
     Proof.
       unfold goto_label.
       destruct label_pos, (rs PC); try congruence.
-      intro. inv H. auto.
+      intro.
+      destr_in H; eauto.
+      inv H. auto.
     Qed.
 
-    Lemma goto_label_live b f l rs m rs' m' live:
-      goto_label f l rs m = Next' rs' m' live ->
+    Lemma goto_label_live sz b f l rs m rs' m' live:
+      goto_label sz se f l rs m = Next' rs' m' live ->
       option_le Bool.le b (Some live).
     Proof.
       unfold goto_label. destruct label_pos, (rs PC); inversion 1.
+      destr_in H1; try inv H1.
       destruct b; constructor; auto.
     Qed.
 
@@ -264,12 +267,12 @@ Section ASM_LINKING.
       exec_load_support exec_store_support goto_label_support
       exec_load_live exec_store_live goto_label_live : core.
 
-    Lemma exec_instr_match nb f instr rs m rs' m' live:
+    Lemma exec_instr_match sz nb f instr rs m rs' m' live:
       Mem.sup_include init_sup nb ->
       Mem.sup_include nb (Mem.support m) ->
-      exec_instr nb se f instr rs m = Next' rs' m' live ->
+      exec_instr sz nb se f instr rs m = Next' rs' m' live ->
       exists live',
-        exec_instr init_sup se f instr rs m = Next' rs' m' live' /\
+        exec_instr sz init_sup se f instr rs m = Next' rs' m' live' /\
         match_liveness nb rs'#SP live live' /\
         Mem.sup_include nb (Mem.support m') /\
         option_le Bool.le (inner_sp init_sup (rs' RSP)) (Some live').
@@ -282,44 +285,50 @@ Section ASM_LINKING.
           | Stuck = _ => inv H
           | Next' _ _ _ = _ => inv H
         end;
-      eauto 10 using match_liveness_refl, liveness_top.
+        eauto 10 using match_liveness_refl, liveness_top.
+      - admit.
       - (* Pret *)
         rewrite Pregmap.gso by congruence.
         pose proof (match_inner_sp nb (rs # RSP) Hnb).
         rewrite Heqo in H. inv H. exists y.
-        intuition auto. constructor. reflexivity.
+        intuition auto. admit. admit. (*  constructor. reflexivity. *)
       - (* Pallocframe *)
-        apply Mem.support_store in Heqo0. rewrite Heqo0.
+        admit.
+        (* apply Mem.support_store in Heqo0. rewrite Heqo0.
         apply Mem.support_store in Heqo. rewrite Heqo.
         apply Mem.support_alloc in Heqp0. rewrite Heqp0.
-        eexists. intuition (eauto using liveness_top; extlia).
+        eexists. intuition (eauto using liveness_top; extlia). *)
       - (* Pfreeframe *)
-        assert (Mem.support m' = Mem.support m). {
+        admit.
+        (* assert (Mem.support m' = Mem.support m). {
           unfold free' in Heqo1. destruct zlt; try congruence.
           eapply Mem.support_free; eauto.
         }
         rewrite H.
-        eexists. intuition (eauto using liveness_top; extlia).
-    Qed.
+        eexists. intuition (eauto using liveness_top; extlia). *)
+    Admitted.
 
     (** *** [step] *)
 
     Lemma step_match i nb rs m live1 live2 live1' t rs' m':
-      step nb (Genv.globalenv se (p_ i)) (State rs m live1) t (State rs' m' live1') ->
+      step is nb (Genv.globalenv se (p_ i)) (State rs m live1) t (State rs' m' live1') ->
       match_liveness nb rs#SP live1 live2 ->
       Mem.sup_include init_sup nb ->
       Mem.sup_include nb (Mem.support m) ->
       exists live2',
-        step init_sup (Genv.globalenv se p) (State rs m live2) t (State rs' m' live2') /\
+        step is init_sup (Genv.globalenv se p) (State rs m live2) t (State rs' m' live2') /\
         Mem.sup_include nb (Mem.support m') /\
         match_liveness nb rs'#SP live1' live2' /\
         option_le Bool.le (inner_sp init_sup rs'#SP) (Some live2').
     Proof.
+    Admitted.
+    (*
       intros H Hlive Hnb Hm. inv H; inv Hlive; subst.
       - (* instruction *)
         eapply find_internal_ptr_linkorder in FIND; eauto.
         edestruct exec_instr_match as (? & ? & ? & ? & ?); eauto.
         eauto 10 using exec_step_internal.
+        simpl.
       - (* builtin *)
         eapply find_internal_ptr_linkorder in FIND; eauto. cbn in *.
         exists true. intuition eauto using exec_step_builtin, liveness_top.
@@ -336,7 +345,7 @@ Section ASM_LINKING.
         eexists. intuition eauto using exec_step_external, Some_le_def.
         apply Events.external_call_support in CALL. eauto.
     Qed.
-
+*)
   End SE.
 
   (** The measure we use for the simulation is somewhat subtle.
@@ -371,7 +380,7 @@ Section ASM_LINKING.
   Lemma asm_linking:
     forward_simulation cc_id cc_id
       (SmallstepLinking.semantics L (erase_program p))
-      (semantics p).
+      (semantics is p).
   Proof.
     constructor.
     eapply Forward_simulation with
@@ -441,11 +450,14 @@ Section ASM_LINKING.
       intros s1 t s1' Hstep1 idx [nb s2] [Hidx Hs]. subst. cbn in *.
       destruct Hstep1; inv Hs; cbn in *.
       + (* internal step *)
-        destruct s' as [nb' [rs' m' live1']], H as [? ?]. subst.
-        edestruct step_match as (live2' & Hstep2 & Hs' & Hl' & ?);
+        admit. (*?? todo*)
+        (* destruct s' as [nb' [rs' m' live1']], H as [? ?]. subst.
+        edestruct step_match as (live2' & Hstep2 & Hs' & Hl' & ?).
+        eapply H.
           eauto using match_stack_support.
+        eapply H.
         eexists (_, _), (_, _). repeat apply conj; eauto 10 using plus_one.
-        constructor; eauto.
+        constructor; eauto. *)
       + (* push *)
         destruct s' as [nb' [rs' m' live1']], H1 as [? ?]. subst.
         inv H. inv H1. inv H6.
@@ -471,5 +483,6 @@ Section ASM_LINKING.
           exploit (match_inner_sp nb bk (rs RSP)); eauto using match_stack_support. intro.
           destruct H; inv H9. destruct H1; congruence.
     - apply well_founded_ltof.
-  Qed.
+  Admitted.
+  
 End ASM_LINKING.

@@ -315,7 +315,6 @@ Section PROG.
         match goal with
         | |- regset_inject _ _ _ match ?x with | _ => _ end => destruct x
         end].
-      Locate genv_match.
       admit.
     - eexists. split. rauto.
       repeat first [rstep |

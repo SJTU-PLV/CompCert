@@ -59,5 +59,18 @@ Todos:
 Injp Composition : InjectFootprint.v <- high priority
 leaving passes : SSAsmproof, RealAsmproof, PseudoInstructionsproof.
 semantics: RealAsm, PseudoInstruction.
-Some CKLR 'rel' files : Clightrel, RTLrel, Asmrel, AsmLinking.
+Some CKLR 'rel' files : Clightrel, RTLrel, Asmrel, AsmLinking. :
+(seems doable but verbose, needs to change CKLR, and fix the "oracle semanics changes..")
 Final Composition : CA.v Compiler.v
+
+
+Roadmap: 
+1) injp comp;
+2) 定义RealAsm 和 PseudoInstruction open semantics
+3) 写 leaving passes 的证明框架 (有一个需要injp or ext?)
+4) 完成final composition
+  4.1 RealAsm Linking
+  4.2 底层额外的接口能处理吗
+  4.3 写出final theorem
+5) Fix self-simulation (CKLR)
+6) Fix other admits
