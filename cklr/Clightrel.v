@@ -17,7 +17,7 @@ Require Import LogicalRelations.
 Require Import OptionRel.
 Require Import KLR.
 Require Export Clight.
-(* Require Import SimplLocalsproof. *)
+Require Import SimplLocalsproof.
 Require Import Linking.
 
 Section PROG.
@@ -640,13 +640,13 @@ Qed.
   fun i1 i2 => eq i1 i2.
  *)
 
-Global Instance function_entry1_match fn_stack_requirements R:
+Global Instance function_entry1_match R:
   Monotonic
-    (@function_entry1 fn_stack_requirements)
-    ( |= genv_match R ++> - ==> - ==> k1 list_rel (Val.inject @@ [mi R]) ++> match_mem R ++>
+    (@function_entry1)
+    ( |= - ==> genv_match R ++> - ==> - ==> k1 list_rel (Val.inject @@ [mi R]) ++> match_mem R ++>
      %% k1 set_le (<> env_match R * temp_env_match R * match_mem R)).
 Proof.
-  intros w ge1 ge2 Hge f id vargs1 vargs2 Hvargs m1 m2 Hm [[e1 le] m1''] H.
+  intros w fsr ge1 ge2 Hge f id vargs1 vargs2 Hvargs m1 m2 Hm [[e1 le] m1''] H.
   simpl in *.
   destruct H as [m1' m1a Hfvnr Hm1' Hm1'a Hm1'' Hle].
   pose proof (empty_env_match R w) as Hee.
@@ -654,7 +654,7 @@ Proof.
     as ((e2 & m2') & Hm2' & w' & Hw' & He & Hm').
   eapply genv_match_acc in Hge; [ | eauto].
   simpl in *.
-  assert ( exists w'a m2a, wacc R w' w'a /\ match_mem R w'a m1a m2a /\ Mem.record_frame (Mem.push_stage m2') (mk_frame (Stack 1%positive) (fn_stack_requirements id)) = Some m2a /\ genv_match R w'a ge1 ge2).
+  assert ( exists w'a m2a, wacc R w' w'a /\ match_mem R w'a m1a m2a /\ Mem.record_frame (Mem.push_stage m2') (mk_frame (Stack 1%positive) (fsr id)) = Some m2a /\ genv_match R w'a ge1 ge2).
   admit.
   destruct H as (w'a & m2a & Hw'a & Hm'a & Hre & Hge').
   transport Hm1''.
@@ -672,20 +672,20 @@ Proof.
     + eauto.
 Admitted.
 
-Global Instance function_entry2_match fn_stack_requirements R:
+Global Instance function_entry2_match R:
   Monotonic
-    (@function_entry2 fn_stack_requirements)
-    (|= genv_match R ++> - ==> - ==> k1 list_rel (Val.inject @@ [mi R]) ++> match_mem R ++>
+    (@function_entry2)
+    (|= - ==> genv_match R ++> - ==> - ==> k1 list_rel (Val.inject @@ [mi R]) ++> match_mem R ++>
      %% k1 set_le (<> env_match R * temp_env_match R * match_mem R)).
 Proof.
-  intros w ge1 ge2 Hge f id vargs1 vargs2 Hvargs m1 m2 Hm [[e1 le1] m1''] H.
+  intros w fsr ge1 ge2 Hge f id vargs1 vargs2 Hvargs m1 m2 Hm [[e1 le1] m1''] H.
   simpl in *.
   destruct H as [m1' Hfvnr Hfpnr Hfvpd Hm1' Hre Hle1].
   pose proof (empty_env_match R w) as Hee.
   destruct (alloc_variables_match R w _ _ Hge _ _ Hee _ _ Hm _ (e1, m1') Hm1')
     as ((e2 & m2') & Hm2' & p' & Hp' & He & Hm').
   simpl in *.
-  assert ( exists w'a m2'', wacc R p' w'a /\ match_mem R w'a m1'' m2'' /\ Mem.record_frame (Mem.push_stage m2') (mk_frame (Stack 1%positive) (fn_stack_requirements id)) = Some m2'' /\ genv_match R w'a ge1 ge2).
+  assert ( exists w'a m2'', wacc R p' w'a /\ match_mem R w'a m1'' m2'' /\ Mem.record_frame (Mem.push_stage m2') (mk_frame (Stack 1%positive) (fsr id)) = Some m2'' /\ genv_match R w'a ge1 ge2).
   admit.
   destruct H as (w'a & m2'' & Hw'a & Hm'a & Hre' & Hge').
   transport Hle1.
@@ -762,16 +762,7 @@ Global Instance step1_rel R:
     (@step1)
     (|= - ==> genv_match R ++> state_match R ++> - ==> k1 set_le (<> state_match R)).
 Proof.
-  unfold step1.
-  simpl.
-  intros a b c d e f g H G G1 G2.
-  exploit step_rel; eauto.
-  intros aa bb cc dd ee ff gg kk kkk zz.
-  exists kkk. split. eauto. red in zz. red.
-  Search function_entry1. _match.
-  eexists. econstructor; eauto. eapply zz.
-  intros.
-  rauto.
+  unfold step1. rauto.
 Qed.
 
 Global Instance step1_rel_params:
@@ -780,7 +771,7 @@ Global Instance step1_rel_params:
 Global Instance step2_rel R:
   Monotonic
     (@step2)
-    (|= genv_match R ++> state_match R ++> - ==> k1 set_le (<> state_match R)).
+    (|= - ==> genv_match R ++> state_match R ++> - ==> k1 set_le (<> state_match R)).
 Proof.
   unfold step2. rauto.
 Qed.
@@ -796,8 +787,8 @@ Hint Extern 1 (Transport _ _ _ _ _) =>
 Hint Extern 1 (Transport _ _ _ _ _) =>
   set_le_transport @step2 : typeclass_instances.
 
-Lemma semantics1_rel p R:
-  forward_simulation (cc_c R) (cc_c R) (Clight.semantics1 p) (Clight.semantics1 p).
+Lemma semantics1_rel fsr p R:
+  forward_simulation (cc_c R) (cc_c R) (Clight.semantics1 fsr p) (Clight.semantics1 fsr p).
 Proof.
   constructor. econstructor; eauto. instantiate (1 := fun _ _ _ => _). cbn beta.
   intros se1 se2 w Hse Hse1. cbn -[semantics1] in *.
@@ -825,10 +816,12 @@ Proof.
       eapply (rel_push_rintro (fun se=>globalenv se p) (fun se=>globalenv se p)).
     }
     transport_hyps.
-    exists (Callstate vf2 vargs2 Kstop m2). split.
+    exists (Callstate vf2 vargs2 Kstop m2 id). split.
     + econstructor; eauto.
-      * revert vargs2 H9. clear - H1.
-        induction H1; inversion 1; subst; constructor; eauto.
+      * admit. (* todo: add a sentence in CKLR s.t. f (Global id) = Some (Global id, 0)*)
+        
+      * revert vargs2 H9. clear - H2.
+        induction H2; inversion 1; subst; constructor; eauto.
         eapply val_casted_inject; eauto.
       * eapply match_stbls_support; eauto.
     + exists w; split; try rauto.
@@ -841,13 +834,13 @@ Proof.
       constructor; eauto.
   - intros s1 s2 qx1 (w' & Hw' & Hge & Hs) Hq1.
     destruct Hq1. cbn [fst snd] in *. inv Hs.
-    assert (vf <> Vundef) by (destruct vf; cbn in *; congruence).
+    (* assert (vf <> Vundef) by (destruct vf; cbn in *; congruence). *)
     transport_hyps.
     eexists w', _. repeat apply conj.
-    + econstructor.
-      eassumption.
+    + econstructor; eauto.
+      admit. (*same as above: f Global*)
     + econstructor; simpl; eauto.
-      clear -H6. induction H6; constructor; eauto.
+      clear -H8. induction H8; constructor; eauto. congruence.
     + rauto.
     + intros r1 r2 s1' (w'' & Hw'' & Hr) Hs1'. destruct Hr. inv Hs1'.
       eexists. split.
@@ -860,4 +853,4 @@ Proof.
     exists w''. split; repeat rstep.
     eapply genv_match_acc; eauto.
   - apply well_founded_ltof.
-Qed.
+Admitted.

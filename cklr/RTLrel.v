@@ -67,7 +67,7 @@ Inductive state_rel R w: relation state :=
         (@Callstate)
         (list_rel (stackframe_inject (mi R w)) ++>
          Val.inject (mi R w) ==> Val.inject_list (mi R w) ++>
-         match_mem R w ++> state_rel R w)
+         match_mem R w ++> - ==> state_rel R w)
   | Returnstate_rel:
       Monotonic
         (@Returnstate)
@@ -220,13 +220,28 @@ Proof.
   cbn in *. congruence.
 Qed.
 
+(*
+Lemma block_inject_glob R w m1 m2 id b2:
+  match_mem R w m1 m2 ->
+  block_inject (mi R w) (Block.glob id) b2 ->
+  b2 = Block.glob id.
+Proof.
+  intros Hm [delta Hb].
+  apply cklr_wf in Hm as [INCR _].
+  specialize (INCR (Block.glob id)). unfold Mem.flat_inj in INCR.
+  destruct Block.lt_dec.
+  - specialize (INCR _ _ eq_refl). congruence.
+  - elim n. apply Block.lt_glob_init.
+Qed.
+ *)
+
 Global Instance step_rel R:
   Monotonic
     (@step)
-    (|= genv_match R ++> state_rel R ++> - ==>
+    (|= - ==> genv_match R ++> state_rel R ++> - ==>
      k1 set_le (<> state_rel R)).
 Proof.
-  intros w ge tge Hge s1 s2 Hs t s1' H1.
+  intros w fsr ge tge Hge s1 s2 Hs t s1' H1.
   assert (Hse: match_stbls R w ge tge) by (destruct Hge; eauto).
   assert (Hse': Genv.match_stbls (mi R w) ge tge) by (apply match_stbls_proj; eauto).
   deconstruct H1 ltac:(fun x => pose (c := x)); inv Hs.
@@ -236,31 +251,38 @@ Proof.
   - transport_hyps. eexists. split; [ eapply c; eauto; fail | ].
     exists w'. split; rauto.
   - subst vf.
-    transport_hyps; eexists; split; [ eapply c; eauto; fail | rauto ].
+    transport_hyps. eexists; split.
+    eapply c; eauto. red in r. red. destruct ros; eauto.
+    admit. (* f Global *)
+    eexists. split. reflexivity. admit.
   - subst vf. inv H8.
-    transport_hyps; eexists; split; [ eapply c; eauto; fail | ].
+    transport_hyps; eexists; split. eapply c; eauto. admit. admit.
     exists w'; split; [rauto | ].
     repeat rstep. eapply match_stbls_proj. rauto.
-  - transport_hyps; eexists; split; [ eapply c; eauto; fail | ].
-    exists w'. split; rauto.
+  - transport_hyps; eexists; split. eapply c; eauto.
+    admit. (*push_stage*)
+    admit.
   - transport_hyps; eexists; split; [ eapply c; eauto; fail | rauto ].
   - transport_hyps; eexists; split; [ eapply c; eauto | rauto ].
     + specialize (H9 arg). destruct H9; congruence.
   - inv H8.
-    transport_hyps; eexists; split; [ eapply c; eauto; fail | ].
+    transport_hyps; eexists; split. eapply c; eauto. admit.
     exists w'; split; rauto.
   - edestruct cklr_alloc as (w' & Hw' & Halloc); eauto.
     transport e. clear Halloc. transport FIND.
-    eexists; split. eapply c; eauto; fail.
+    (* todo: transport e0. *)
+    eexists; split. eapply c; eauto. admit.
     exists w'; split. rauto.
     repeat rstep.
-    clear - H7 Hw'.
-    induction H7; constructor; rauto.
+    clear - H8 Hw'.
+    induction H8; constructor; rauto. admit.
   - transport_hyps; eexists; split; [ eapply c; eauto; fail | ].
     exists w'; split; rauto.
   - inv H3. inv H2.
-    transport_hyps; eexists; split; [ eapply c; eauto; fail | rauto ].
-Qed.
+    transport_hyps; eexists; split.
+    eapply c; eauto. admit. (*pop_stage*)
+    admit.
+Admitted.
 
 (*
 Lemma block_inject_glob R w m1 m2 id b2:
@@ -282,8 +304,8 @@ End PROG.
 Hint Extern 1 (Transport _ _ _ _ _) =>
   set_le_transport @step : typeclass_instances.
 
-Global Instance semantics_rel R:
-  Monotonic (@RTL.semantics) (- ==> forward_simulation (cc_c R) (cc_c R)).
+Global Instance semantics_rel fsr R:
+  Monotonic (@RTL.semantics fsr) (- ==> forward_simulation (cc_c R) (cc_c R)).
 Proof.
   intros p. constructor. econstructor; auto.
   intros se1 se2 w Hse1 Hse. cbn -[semantics] in *.
@@ -298,25 +320,28 @@ Proof.
     eassert (Hge: genv_match p R w _ _) by (red; rauto).
     transport H.
     eexists; split.
-    + econstructor; eauto.
-    + rauto.
-  - intros s1 s2 r1 (w' & Hw' & Hs) Hr1. inv Hr1. inv Hs. inv H2.
-    eexists. simpl. split.
-    + constructor.
-    + exists w'. split; [rauto | ]. constructor; auto.
+    + econstructor; eauto. admit.
+    + eexists. split. reflexivity.  econstructor; eauto. constructor.
+      admit. (*push_stage*)
+  - intros s1 s2 r1 (w' & Hw' & Hs) Hr1. inv Hr1. inv Hs. inv H3.
+    (*cklr_pop_stage*)
+    admit.
+   (* eexists. simpl. split.
+    + constructor. admit.
+    + exists w'. split; [rauto | ]. constructor; auto. eauto. *)
   - intros s1 s2 qx1 (w' & Hw' & Hs) Hqx1.
     eassert (Hge: genv_match p R w' _ _) by (red; rauto).
     destruct Hqx1. inv Hs.
-    assert (vf <> Vundef) by (destruct vf; discriminate).
+    (* assert (vf <> Vundef) by (destruct vf; discriminate). *)
     transport H.
     eexists w', (LanguageInterface.cq _ _ y1 _). split.
-    + econstructor; simpl; eauto.
+    + econstructor; simpl; eauto. admit.
     + split.
-      * econstructor; auto.
+      * econstructor; auto. congruence.
       * split. cbn; rauto.
         intros r1 [vres2 m2'] s1' (w'' & Hw'' & Hr) HAE. inv HAE. inv Hr.
         eexists. split.
-        -- constructor.
+        -- constructor. admit.
         -- exists w''. split; rauto.
   - intros s1 t s1' Hstep1 s2 (w' & Hw' & Hs).
     eassert (Hge: genv_match p R w' _ _) by (red; rauto).
@@ -324,4 +349,4 @@ Proof.
     transport Hstep1.
     eexists. split; eauto. rauto.
   - auto using well_founded_ltof.
-Qed.
+Admitted.

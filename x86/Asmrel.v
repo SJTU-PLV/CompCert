@@ -179,7 +179,7 @@ Section PROG.
   Global Instance nextinstr_inject R w:
     Monotonic
       nextinstr
-      (regset_inject R w ++> regset_inject R w).
+      (- ==> regset_inject R w ++> regset_inject R w).
   Proof.
     unfold nextinstr. rauto.
   Qed.
@@ -197,7 +197,7 @@ Section PROG.
   Global Instance nextinstr_nf_inject R w:
     Monotonic
       nextinstr_nf
-      (regset_inject R w ++> regset_inject R w).
+      ( - ==> regset_inject R w ++> regset_inject R w).
   Proof.
     unfold nextinstr_nf. rauto.
   Qed.
@@ -205,23 +205,23 @@ Section PROG.
   Global Instance eval_addrmode32_inject R w:
     Monotonic
       eval_addrmode32
-      (Genv.match_stbls (mi R w) ++> - ==> regset_inject R w ++> Val.inject (mi R w)).
+      (genv_match R w ++> - ==> regset_inject R w ++> Val.inject (mi R w)).
   Proof.
-    unfold eval_addrmode32. rauto.
-  Qed.
+    unfold eval_addrmode32. admit.
+  Admitted.
 
   Global Instance eval_addrmode64_inject R w:
     Monotonic
       eval_addrmode64
-      (Genv.match_stbls (mi R w) ++> - ==> regset_inject R w ++> Val.inject (mi R w)).
+      (genv_match R w ++> - ==> regset_inject R w ++> Val.inject (mi R w)).
   Proof.
-    unfold eval_addrmode64. rauto.
-  Qed.
+    unfold eval_addrmode64. admit.
+  Admitted.
 
   Global Instance eval_addrmode_inject R w:
     Monotonic
       eval_addrmode
-      (Genv.match_stbls (mi R w) ++> - ==> regset_inject R w ++> Val.inject (mi R w)).
+      (genv_match R w ++> - ==> regset_inject R w ++> Val.inject (mi R w)).
   Proof.
     unfold eval_addrmode. rauto.
   Qed.
@@ -229,7 +229,7 @@ Section PROG.
   Global Instance exec_load_match R:
     Monotonic
       exec_load
-      (|= Genv.match_stbls @@ [mi R] ++> - ==> match_mem R ++>
+      (|= genv_match R ++> - ==> - ==> match_mem R ++>
        - ==> regset_inject R ++> - ==> <> outcome_match R).
   Proof.
     unfold exec_load. rauto.
@@ -244,7 +244,7 @@ Section PROG.
   Global Instance exec_store_match R:
     Monotonic
       exec_store
-      (|= Genv.match_stbls @@ [mi R] ++> - ==> match_mem R ++>
+      (|= genv_match R ++> - ==> - ==> match_mem R ++>
        - ==> regset_inject R ++> - ==> - ==> <> outcome_match R).
   Proof.
     unfold exec_store. repeat rstep.
@@ -263,14 +263,18 @@ Section PROG.
   Global Instance goto_label_inject R w:
     Monotonic
       goto_label
-      (- ==> - ==> regset_inject' R w ++> match_mem R w ++> outcome_match R w).
+      ( - ==> genv_match R w ==> - ==> - ==> regset_inject' R w ++> match_mem R w ++> outcome_match R w).
   Proof.
     pose proof rdestruct_remember_intro.
     unfold goto_label. repeat rstep.
+    admit. (*find_funct_genv_match*)
+    (* eapply H0.
+    eapply Next_match.
+    constructor.
     specialize (H0 PC) as [? Hpc]. destruct Hpc; try congruence.
     apply block_sameofs_ptrbits_inject.
-    inv H5. inv H6. split; auto.
-  Qed.
+    inv H5. inv H6. split; auto. *)
+  Admitted.
 
   Definition init_nb_match R w: rel sup sup :=
     (Val.inject (mi R w) ++> option_le eq) @@ inner_sp.
@@ -298,11 +302,11 @@ Section PROG.
   Global Instance exec_instr_match R:
     Monotonic
       (@exec_instr)
-      (|= init_nb_match R ++> Genv.match_stbls @@ [mi R] ++>
+      (|= - ==> init_nb_match R ++> genv_match R ++>
        - ==> - ==> regset_inject' R ++> match_mem R ++>
        (<> outcome_match R)).
   Proof.
-    intros w b1 b2 Hb ge1 ge2 Hge f i rs1 rs2 Hrs' m1 m2 Hm.
+    intros w fsr b1 b2 Hb ge1 ge2 Hge f i rs1 rs2 Hrs' m1 m2 Hm.
     destruct i; cbn; apply regset_inj_subrel in Hrs' as Hrs;
       unfold compare_ints, compare_longs, compare_floats, compare_floats32, undef_regs;
       repeat rstep.
@@ -311,6 +315,8 @@ Section PROG.
         match goal with
         | |- regset_inject _ _ _ match ?x with | _ => _ end => destruct x
         end].
+      Locate genv_match.
+      admit.
     - eexists. split. rauto.
       repeat first [rstep |
         match goal with
@@ -318,6 +324,9 @@ Section PROG.
         end].
     - eexists. split. rauto.
       rstep; auto.
+      admit.
+      Admitted.
+(*      (*To fix*)
       apply set_inject'; [discriminate | auto | ].
       apply set_inject'; [discriminate | auto | auto ].
     - destruct m as [m1' b1']. destruct n as [m2' b2'].
@@ -343,7 +352,7 @@ Section PROG.
         unfold free'. repeat rewrite zlt_false by lia.
         exists w. split; rauto.
   Qed.
-
+*)
   Lemma reg_inj_strengthen R w ge1 ge2 rs1 rs2 b ofs f:
     genv_match R w ge1 ge2 ->
     rs1 PC = Vptr b ofs ->
@@ -360,8 +369,8 @@ Section PROG.
     rewrite H3 in *. rewrite Ptrofs.add_zero. constructor. auto.
   Qed.
 
-  Lemma step_reg_inj_strengthen R w nb ge1 ge2 rs1 rs2 rs1' m1 m1' live1 live1' t:
-    step nb ge1 (State rs1 m1 live1) t (State rs1' m1' live1') ->
+  Lemma step_reg_inj_strengthen R w nb ge1 ge2 rs1 rs2 rs1' m1 m1' live1 live1' t is:
+    step is nb ge1 (State rs1 m1 live1) t (State rs1' m1' live1') ->
     genv_match R w ge1 ge2 ->
     regset_inject R w rs1 rs2 ->
     regset_inject' R w rs1 rs2.
@@ -437,13 +446,13 @@ Section PROG.
     destruct (_ || _); eauto.
   Qed.
 
-  Global Instance exec_instr_transport R w b1 b2 se1 se2 rs1 rs2 m1 m2 f i o:
+  Global Instance exec_instr_transport R w b1 b2 se1 se2 rs1 rs2 m1 m2 f i o is:
     Transport
-      (init_nb_match R w * Genv.match_stbls (mi R w) * regset_inject' R w * match_mem R w)%rel
+      (init_nb_match R w * genv_match R w * regset_inject' R w * match_mem R w)%rel
       (b1, se1, rs1, m1)
       (b2, se2, rs2, m2)
-      (exec_instr b1 se1 f i rs1 m1 = o)
-      (exists o', exec_instr b2 se2 f i rs2 m2 = o' /\ (<> outcome_match R)%klr w o o' ).
+      (exec_instr is b1 se1 f i rs1 m1 = o)
+      (exists o', exec_instr is b2 se2 f i rs2 m2 = o' /\ (<> outcome_match R)%klr w o o' ).
   Proof.
     intros Hrel H.
     edestruct exec_instr_match; try apply Hrel.
@@ -454,10 +463,10 @@ Section PROG.
   Global Instance step_rel R:
     Monotonic
       (@step)
-      (|= init_nb_match R ==> genv_match R ++>
+      (|= - ==> init_nb_match R ==> genv_match R ++>
           state_match R ++> - ==> k1 set_le (<> state_match R)).
   Proof.
-    intros w b1 b2 Hb ge1 ge2 Hge [rs1 m1 live1] [rs2 m2 live2] Hs t [rs1' m1' live1'] H1.
+    intros w is b1 b2 Hb ge1 ge2 Hge [rs1 m1 live1] [rs2 m2 live2] Hs t [rs1' m1' live1'] H1.
     inversion Hs as [? ? Hrs ? ? Hm]. subst.
     assert (Hrs': regset_inject' R w rs1 rs2) by eauto using step_reg_inj_strengthen.
     assert (Genv.match_stbls (mi R w) ge1 ge2) by now apply genv_genv_match.
@@ -476,8 +485,10 @@ Section PROG.
     - transport FIND. transport ARGS. transport CALL. transport ISP.
       eexists. split.
       + eapply exec_step_external; eauto. congruence.
+        destruct (rs2 RSP); inv H8; econstructor; eauto.
+        admit. admit. admit. admit.
       + eexists. split; rauto.
-  Qed.
+  Admitted.
  
 End PROG.
 
@@ -512,8 +523,8 @@ Inductive init_nb_state_match R w: rel (sup * state) (sup * state) :=
     Mem.sup_include nb2 (Mem.support m2) ->
     init_nb_state_match R w (nb1, State rs1 m1 live) (nb2, State rs2 m2 live).
 
-Lemma step_support se p nb rs1 m1 live1 t rs2 m2 live2:
-  step nb (Genv.globalenv se p) (State rs1 m1 live1) t (State rs2 m2 live2) ->
+Lemma step_support se p nb rs1 m1 live1 t rs2 m2 live2 is:
+  step is nb (Genv.globalenv se p) (State rs1 m1 live1) t (State rs2 m2 live2) ->
   Mem.sup_include (Mem.support m1) (Mem.support m2).
 Proof.
   inversion 1; subst; intros.
@@ -522,8 +533,8 @@ Proof.
   - eapply external_call_support; eauto.
 Qed.
 
-Lemma semantics_asm_rel p R:
-  forward_simulation (cc_asm R) (cc_asm R) (Asm.semantics p) (Asm.semantics p).
+Lemma semantics_asm_rel p R is:
+  forward_simulation (cc_asm R) (cc_asm R) (Asm.semantics is p) (Asm.semantics is p).
 Proof.
   constructor. econstructor; eauto. instantiate (1 := fun _ _ _ => _). cbn beta.
   intros se1 se2 w Hse Hse1. cbn -[semantics] in *.
