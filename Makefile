@@ -295,7 +295,7 @@ latexdoc:
 %.vo: %.v
 	@rm -f doc/$(*F).glob
 	@echo "COQC $*.v"
-	@$(COQC) -dump-glob doc/$(*F).glob $*.v || true
+	@$(COQC) -dump-glob doc/$(*F).glob $*.v
 
 %.v: %.vp tools/ndfun
 	@rm -f $*.v

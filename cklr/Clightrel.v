@@ -635,49 +635,70 @@ Proof.
   repeat rstep; try (destruct ident_eq; repeat rstep).
 Qed.
 
+
+(* Definition match_ident : relation ident :=
+  fun i1 i2 => eq i1 i2.
+ *)
+
 Global Instance function_entry1_match fn_stack_requirements R:
   Monotonic
     (@function_entry1 fn_stack_requirements)
-    (|= genv_match R ++> - ==> k1 list_rel (Val.inject @@ [mi R]) ++> match_mem R ++>
-     %% k1 set_le (<> env_match R * temp_env_match R * match_mem R * k eq)).
+    ( |= genv_match R ++> - ==> - ==> k1 list_rel (Val.inject @@ [mi R]) ++> match_mem R ++>
+     %% k1 set_le (<> env_match R * temp_env_match R * match_mem R)).
 Proof.
-  intros w ge1 ge2 Hge f vargs1 vargs2 Hvargs m1 m2 Hm [[e1 le] m1''] H.
+  intros w ge1 ge2 Hge f id vargs1 vargs2 Hvargs m1 m2 Hm [[e1 le] m1''] H.
   simpl in *.
-  destruct H as [m1' Hfvnr Hm1' Hm1'' Hle].
+  destruct H as [m1' m1a Hfvnr Hm1' Hm1'a Hm1'' Hle].
   pose proof (empty_env_match R w) as Hee.
   destruct (alloc_variables_match R w _ _ Hge _ _ Hee _ _ Hm _ (e1, m1') Hm1')
     as ((e2 & m2') & Hm2' & w' & Hw' & He & Hm').
   eapply genv_match_acc in Hge; [ | eauto].
+  simpl in *.
+  assert ( exists w'a m2a, wacc R w' w'a /\ match_mem R w'a m1a m2a /\ Mem.record_frame (Mem.push_stage m2') (mk_frame (Stack 1%positive) (fn_stack_requirements id)) = Some m2a /\ genv_match R w'a ge1 ge2).
+  admit.
+  destruct H as (w'a & m2a & Hw'a & Hm'a & Hre & Hge').
   transport Hm1''.
   exists (e2, le, x).
   cbn [fst snd] in *.
   split.
   - econstructor; eauto.
-  - assert (temp_env_match R w'' le le).
+  - assert (temp_env_match R w'a' le le).
     { subst le. generalize (fn_temps f). clear. unfold temp_env_match.
       induction l; cbn; rauto. }
-    exists w''. split; rauto.
-Qed.
+    exists w'a'. split. etransitivity. eauto. etransitivity. eauto. eauto.
+    repeat split; simpl. eauto.
+    + eapply env_match_acc; eauto. eapply env_match_acc; eauto.
+    + eauto.
+    + eauto.
+Admitted.
 
-Global Instance function_entry2_match R:
+Global Instance function_entry2_match fn_stack_requirements R:
   Monotonic
-    (@function_entry2)
-    (|= genv_match R ++> - ==> k1 list_rel (Val.inject @@ [mi R]) ++> match_mem R ++>
+    (@function_entry2 fn_stack_requirements)
+    (|= genv_match R ++> - ==> - ==> k1 list_rel (Val.inject @@ [mi R]) ++> match_mem R ++>
      %% k1 set_le (<> env_match R * temp_env_match R * match_mem R)).
 Proof.
-  intros w ge1 ge2 Hge f vargs1 vargs2 Hvargs m1 m2 Hm [[e1 le1] m1'] H.
+  intros w ge1 ge2 Hge f id vargs1 vargs2 Hvargs m1 m2 Hm [[e1 le1] m1''] H.
   simpl in *.
-  destruct H as [Hfvnr Hfpnr Hfvpd Hm1' Hle1].
+  destruct H as [m1' Hfvnr Hfpnr Hfvpd Hm1' Hre Hle1].
   pose proof (empty_env_match R w) as Hee.
   destruct (alloc_variables_match R w _ _ Hge _ _ Hee _ _ Hm _ (e1, m1') Hm1')
     as ((e2 & m2') & Hm2' & p' & Hp' & He & Hm').
+  simpl in *.
+  assert ( exists w'a m2'', wacc R p' w'a /\ match_mem R w'a m1'' m2'' /\ Mem.record_frame (Mem.push_stage m2') (mk_frame (Stack 1%positive) (fn_stack_requirements id)) = Some m2'' /\ genv_match R w'a ge1 ge2).
+  admit.
+  destruct H as (w'a & m2'' & Hw'a & Hm'a & Hre' & Hge').
   transport Hle1.
-  exists (e2, x, m2').
+  exists (e2, x, m2'').
   simpl in *.
   split.
-  - constructor; eauto.
-  - rauto.
-Qed.
+  - econstructor; eauto.
+  - exists w'a. split. etransitivity; eauto.
+    repeat split; simpl; eauto. eapply env_match_acc; eauto.
+    eapply temp_env_match_acc; eauto.
+    eapply temp_env_match_acc; eauto.
+Admitted. 
+
 
 Hint Extern 1 (Transport _ _ _ _ _) =>
   rel_curry2_set_le_transport @function_entry2 : typeclass_instances.
@@ -697,8 +718,8 @@ Qed.
 Global Instance step_rel R:
   Monotonic
     (@step)
-    (|= genv_match R ++> 
-        (- ==> k1 list_rel (Val.inject @@ [mi R]) ++> match_mem R ++>
+    (|= genv_match R ++>
+        (- ==> - ==> k1 list_rel (Val.inject @@ [mi R]) ++> match_mem R ++>
          %% k1 set_le (<> env_match R * temp_env_match R * match_mem R)) ++>
         state_match R ++> - ==> k1 set_le (<> state_match R)).
 Proof.
@@ -720,7 +741,13 @@ Proof.
        eexists; split;
          [ eapply c; eauto; fail
          | eexists; split; rauto ]).
-  - eapply @transport in f0; [ | rel_curry2_set_le_transport fe1 | rauto].
+  - admit.
+  - admit.
+  - admit.
+  - admit.
+  -
+
+    eapply @transport in f0; [ | rel_curry2_set_le_transport fe1 | rauto].
     destruct f0 as (? & ? & ? & ? & ? & ? & ?).
     rinversion H2. inv H2l. inv H2r.
     rinversion H3. inv H3l. inv H3r.
@@ -728,14 +755,23 @@ Proof.
     eexists; split.
     + eapply c; eauto.
     + eexists; split; rauto.
-Qed.
+Admitted.
 
 Global Instance step1_rel R:
   Monotonic
     (@step1)
-    (|= genv_match R ++> state_match R ++> - ==> k1 set_le (<> state_match R)).
+    (|= - ==> genv_match R ++> state_match R ++> - ==> k1 set_le (<> state_match R)).
 Proof.
-  unfold step1. rauto.
+  unfold step1.
+  simpl.
+  intros a b c d e f g H G G1 G2.
+  exploit step_rel; eauto.
+  intros aa bb cc dd ee ff gg kk kkk zz.
+  exists kkk. split. eauto. red in zz. red.
+  Search function_entry1. _match.
+  eexists. econstructor; eauto. eapply zz.
+  intros.
+  rauto.
 Qed.
 
 Global Instance step1_rel_params:

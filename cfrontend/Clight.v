@@ -593,7 +593,7 @@ Qed.
   parameter binding semantics, then instantiate it later to give the two
   semantics described above. *)
 
-Variable function_entry: function -> list val -> mem -> env -> temp_env -> mem -> ident -> Prop.
+Variable function_entry: function -> ident -> list val -> mem -> env -> temp_env -> mem -> Prop.
 
 (** Transition relation *)
 
@@ -705,9 +705,9 @@ Inductive step: state -> trace -> state -> Prop :=
       step (State f (Sgoto lbl) k e le m)
         E0 (State f s' k' e le m)
 
-  | step_internal_function: forall vf f vargs k m e le m1 id,
+  | step_internal_function: forall vf f id vargs k m e le m1,
       forall FIND: Genv.find_funct ge vf = Some (Internal f),
-      function_entry f vargs m e le m1 id ->
+      function_entry f id vargs m e le m1 ->
       step (Callstate vf vargs k m id)
         E0 (State f f.(fn_body) k e le m1)
 
@@ -765,20 +765,20 @@ End SEMANTICS.
 
 (** The two semantics for function parameters.  First, parameters as local variables. *)
 
-Inductive function_entry1 (ge: genv) (f: function) (vargs: list val) (m: mem) (e: env) (le: temp_env) (m': mem) (id:ident) : Prop :=
+Inductive function_entry1 (ge: genv) (f: function) (id:ident) (vargs: list val) (m: mem) (e: env) (le: temp_env) (m': mem) : Prop :=
   | function_entry1_intro: forall m1 m2,
       list_norepet (var_names f.(fn_params) ++ var_names f.(fn_vars)) ->
       alloc_variables ge empty_env m (f.(fn_params) ++ f.(fn_vars)) e m1 ->
       Mem.record_frame (Mem.push_stage m1) (Memory.mk_frame (Stack 1%positive)(fn_stack_requirements id )) = Some m2 ->
       bind_parameters ge e m2 f.(fn_params) vargs m' ->
       le = create_undef_temps f.(fn_temps) ->
-      function_entry1 ge f vargs m e le m' id.
+      function_entry1 ge f id vargs m e le m'.
 
 Definition step1 (ge: genv) := step ge (function_entry1 ge).
 
 (** Second, parameters as temporaries. *)
 
-Inductive function_entry2 (ge: genv)  (f: function) (vargs: list val) (m: mem) (e: env) (le: temp_env) (m'': mem) (id:ident): Prop :=
+Inductive function_entry2 (ge: genv) (f: function) (id: ident) (vargs: list val) (m: mem) (e: env) (le: temp_env) (m'': mem): Prop :=
   | function_entry2_intro: forall m',
       list_norepet (var_names f.(fn_vars)) ->
       list_norepet (var_names f.(fn_params)) ->
@@ -786,7 +786,7 @@ Inductive function_entry2 (ge: genv)  (f: function) (vargs: list val) (m: mem) (
       alloc_variables ge empty_env m f.(fn_vars) e m' ->
       Mem.record_frame (Mem.push_stage m') (Memory.mk_frame ((Stack 1%positive)) (fn_stack_requirements id )) = Some m'' ->
       bind_parameter_temps f.(fn_params) vargs (create_undef_temps f.(fn_temps)) = Some le ->
-      function_entry2 ge f vargs m e le m'' id.
+      function_entry2 ge f id vargs m e le m''.
 
 Definition step2 (ge: genv) := step ge (function_entry2 ge).
 
