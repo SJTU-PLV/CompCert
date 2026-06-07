@@ -8,7 +8,7 @@ FAIL_EXPECTED := drop_move/amf-break_drops_borrowed_local.rs drop_move/amf-conti
 				 drop_move/amf-move_parent_then_access_child.rs drop_move/amf-move_same_field_twice.rs drop_move/amf-move_whole_then_access_field.rs \
 				 drop_move/amf-partial_move_use_whole.rs drop_move/amf-use_of_moved_variable.rs \
 				 drop_move/po-drop_prevents_mutation.rs \
-				 subtyping/amf-transitive_failure.rs subtyping/amf-undeclared_relation.rs subtyping/po-missing_bound.rs \
+				 subtyping/amf-transitive_failure.rs subtyping/amf-undeclared_relation.rs subtyping/po-missing_bound.rs subtyping/amf-undeclared_relation_no_return.rs \
 				 normal/amf-call_mut_under_shared_borrow.rs normal/amf-loan_cannot_outlive_lifetime_fail.rs normal/amf-mutable_ref_prevents_mutation.rs \
 				 normal/amf-shared_ref_prevents_mutation.rs normal/amf-struct_conflicting_field_borrows.rs normal/amf-struct_construction_with_borrowed_local.rs \
 				 normal/amf-struct_with_mutable_reference_locks_local.rs normal/amf-uninitialized_return.rs normal/amf-use_of_uninitialized_variable.rs \
