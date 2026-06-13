@@ -14,7 +14,27 @@ FAIL_EXPECTED := drop_move/amf-break_drops_borrowed_local.rs drop_move/amf-conti
 				 normal/amf-struct_with_mutable_reference_locks_local.rs normal/amf-uninitialized_return.rs normal/amf-use_of_uninitialized_variable.rs \
 				 normal/amf-write_to_borrowed_before_continue.rs normal/amf-write_to_borrowed_before_zero_iteration_loop.rs normal/po-conditional_init.rs \
 				 normal/po-return_ref_to_local.rs normal/po-use_while_mut.rs normal/po-use_while_mut_fr.rs normal/po-vec_push_fail1.rs \
-				 normal/po-vec_push_fail2.rs normal/po-well_formed_function_inputs.rs
+				 normal/po-vec_push_fail2.rs normal/po-well_formed_function_inputs.rs \
+				 normal/rtb-access-permissions.rs normal/rtb-anon-fields-struct.rs normal/rtb-anon-fields-variant.rs \
+				 normal/rtb-assign-imm-local-twice.rs normal/rtb-assign-comp.rs normal/rtb-assign-to-andmut-in-aliasable-loc.rs normal/rtb-assign-to-andmut-in-borrowed-loc.rs \
+				 normal/rtb-assign-to-immutable-ref.rs normal/rtb-bad-nested-calls-move.rs normal/rtb-borrow-checker-lifetime-error-46471.rs \
+				 normal/rtb-borrowck-return.rs normal/rtb-borrowck-uninit.rs normal/rtb-auto-mut-ref-to-immut-var.rs \
+				 normal/rtb-bad-nested-calls-free.rs normal/rtb-borrowed-uniq-rvalue.rs normal/rtb-borrow-from-owned-ptr.rs \
+				 normal/rtb-borrow-from-stack-variable.rs normal/rtb-borrow-immutable-deref-box.rs normal/rtb-borrow-immut-deref-of-box-as-mut.rs \
+				 normal/rtb-borrow-mut-base-ptr-in-aliasable-loc.rs normal/rtb-break-uninit.rs normal/rtb-break-uninit-2.rs \
+				 normal/rtb-field-sensitivity-box.rs normal/rtb-for-loop-uninit.rs normal/rtb-if-no-else.rs normal/rtb-if-with-else.rs \
+				 normal/rtb-imm-ref-to-mut-rec-field-issue-3162-c.rs normal/rtb-immutable-arg.rs normal/rtb-immut-function-arguments.rs \
+				 normal/rtb-init-op-equal.rs normal/rtb-init-plus-equal.rs normal/rtb-issue-14498.rs normal/rtb-issue-2657-1.rs normal/rtb-issue-2657-2.rs \
+				 normal/rtb-issue-33819.rs normal/rtb-issue-45199.rs normal/rtb-issue-46471.rs normal/rtb-issue-48962.rs \
+				 normal/rtb-issue-52713-bug.rs normal/rtb-issue-92015.rs normal/rtb-lend-flow-if.rs normal/rtb-lend-flow-loop.rs normal/rtb-lend-flow-match.rs \
+				 normal/rtb-lend-flow.rs normal/rtb-loan-blocks-move.rs normal/rtb-local-borrow-outlives-fn.rs normal/rtb-match-already-borrowed.rs \
+				 normal/rtb-move-from-subpath-of-borrowed-path.rs normal/rtb-move-mut-base-ptr.rs normal/rtb-mut-addr-of-imm-var.rs normal/rtb-mut-borrow-of-mut-base-ptr.rs \
+				 normal/rtb-mut-borrow-outside-loop.rs normal/rtb-no-cycle-in-exchange-heap.rs normal/rtb-pat-reassign-binding.rs \
+				 normal/rtb-reassignment-immutable-fields-twice.rs normal/rtb-reborrow-from-mut.rs normal/rtb-reborrow-from-shorter-lived-andmut.rs \
+				 normal/rtb-reinit.rs normal/rtb-return-ref-to-temporary.rs normal/rtb-storage-dead.rs normal/rtb-swap-mut-base-ptr.rs normal/rtb-tuple-fields.rs \
+				 normal/rtb-uninit-after-item.rs normal/rtb-uninit-field-access.rs normal/rtb-uninit-ref-chain.rs normal/rtb-uniq-via-lend.rs \
+				 normal/rtb-use-mut-borrow.rs normal/rtb-while-break.rs normal/rtb-while-cond.rs normal/rtb-while.rs normal/rtb-unary-move.rs
+
 
 FAIL_SRCS := $(FAIL_EXPECTED)
 

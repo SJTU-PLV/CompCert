@@ -6,8 +6,8 @@ fn main() {
     let p: &i32 = &a;
     a = 23; //~ ERROR cannot assign to `a` because it is borrowed
     loop {
-        let _: &i32 = &b;
+        let _u1: &i32 = &b;
         break;
     }
-    let _: i32 = *p;
+    let _u2: i32 = *p;
 }

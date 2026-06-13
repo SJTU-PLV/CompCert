@@ -9,6 +9,6 @@ fn main() {
     let s: &mut i32 = &mut val;
     let r: &mut i32 = &mut *s;
     let tmp: &i32 = foo(&r);
-    let _: i32 = *s; //~ ERROR cannot use `*s` because it was mutably borrowed
-    let _: i32 = *tmp;
+    let _u1: i32 = *s; //~ ERROR cannot use `*s` because it was mutably borrowed
+    let _u2: i32 = *tmp;
 }
