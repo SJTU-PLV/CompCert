@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-borrow-mut-base-ptr-in-aliasable-loc.rs
 // Test that attempt to reborrow an `&mut` pointer in an aliasable
 // location yields an error.

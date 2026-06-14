@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-while-break.rs
 
 fn test(cond: bool) -> i32 {

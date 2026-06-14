@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/reference-carried-through-struct-field.rs
 // E0503: cannot use `x` because it was mutably borrowed through struct field
 

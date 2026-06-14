@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-borrow-from-owned-ptr.rs
 // Field-level borrow tests through Box<Foo>: same field twice, different fields,
 // subpath vs ancestor path conflicts with Box indirection.

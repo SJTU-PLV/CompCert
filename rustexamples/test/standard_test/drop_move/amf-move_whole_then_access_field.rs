@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (move_whole_then_access_field test)
 
 struct Datum { value: i32 }

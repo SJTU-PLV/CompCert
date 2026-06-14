@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-unary-move.rs
 // E0505: cannot move out of Box because it is borrowed
 

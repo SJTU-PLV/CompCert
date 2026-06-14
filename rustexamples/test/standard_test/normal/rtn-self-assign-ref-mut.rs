@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/self-assign-ref-mut.rs
 // Check that `*y` isn't borrowed after `y = y`.
 

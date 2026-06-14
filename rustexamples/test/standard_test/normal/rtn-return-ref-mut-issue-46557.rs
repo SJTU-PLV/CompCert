@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/return-ref-mut-issue-46557.rs
 // Cannot return value referencing temporary value
 

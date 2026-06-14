@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-reinit.rs
 // E0382: use of moved value after reinitialization and second move
 

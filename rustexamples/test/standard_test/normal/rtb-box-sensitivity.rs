@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-box-sensitivity.rs
 // Test that `Box<T>` is treated specially by borrow checking.
 

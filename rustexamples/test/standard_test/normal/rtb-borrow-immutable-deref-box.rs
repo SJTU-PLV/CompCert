@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrow-immutable-deref-box.rs
 // E0596: cannot borrow `*x` as mutable because `x` is an immutable Box
 

@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (partial_move_use_whole test)
 
 struct Datum { value: i32 }

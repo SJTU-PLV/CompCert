@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (struct_construction_with_borrowed_local test)
 
 struct Wrapper { value: i32 }

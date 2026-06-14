@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-assign-to-andmut-in-aliasable-loc.rs
 // Test that assignments to an `&mut` pointer which is found in a
 // borrowed (but otherwise non-aliasable) location is illegal.

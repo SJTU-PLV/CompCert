@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-uninit.rs
 // Simplest case: use of uninitialized variable
 

@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (reinit_after_move test)
 
 struct Datum { value: i32 }

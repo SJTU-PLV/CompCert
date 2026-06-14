@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-move-from-subpath-of-borrowed-path.rs
 // verify that an error is raised when trying to move out of a
 // borrowed path.

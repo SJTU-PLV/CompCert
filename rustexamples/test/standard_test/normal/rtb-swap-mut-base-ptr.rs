@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-swap-mut-base-ptr.rs
 // Test that attempt to swap `&mut` pointer while pointee is borrowed
 // yields an error.

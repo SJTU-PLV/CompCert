@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowed-pointer-in-struct-5884.rs
 // Positive test: struct with Box field and reference field, borrowing through Box
 

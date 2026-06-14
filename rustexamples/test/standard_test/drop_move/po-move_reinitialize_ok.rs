@@ -1,3 +1,4 @@
+// Repo: rust-lang/polonius
 // Source: inputs/smoke-test/polonius-smoke-test.rs (move_reinitialize_ok test)
 
 struct Datum { value: i32 }

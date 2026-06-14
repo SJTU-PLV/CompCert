@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-anon-fields-variant.rs
 // Enum variant borrow: borrowing one field of a variant blocks all access
 

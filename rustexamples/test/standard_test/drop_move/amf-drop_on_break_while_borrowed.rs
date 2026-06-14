@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (drop_on_break_while_borrowed test)
 
 fn main() {

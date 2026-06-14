@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/outlives-suggestion-simple.rs
 // 'a may not be 'static
 

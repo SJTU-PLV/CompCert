@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-reborrow-from-mut.rs
 // Removed: borrow_both_mut_pattern, borrow_var_and_pattern (struct patterns not supported).
 

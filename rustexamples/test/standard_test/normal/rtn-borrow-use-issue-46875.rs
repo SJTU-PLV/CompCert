@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/borrow-use-issue-46875.rs
 // Borrow that ends before mutation is OK
 

@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/guarantor-issue-46974.rs
 // Test that NLL analysis propagates lifetimes correctly through
 // field accesses, Box accesses, etc.

@@ -1,3 +1,4 @@
+// Repo: rust-lang/polonius
 // Source: inputs/smoke-test/polonius-smoke-test.rs (conditional_init function)
 
 fn random() -> bool { true }

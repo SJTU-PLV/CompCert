@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (loan_cannot_outlive_lifetime_pass test)
 
 fn main() {

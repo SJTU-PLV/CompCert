@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/assignment-to-immutable-ref.rs
 // Regression test for issue <https://github.com/rust-lang/rust/issues/51515>
 // Test that assigning through an immutable reference (`&`) correctly yields

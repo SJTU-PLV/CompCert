@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/issue-17263.rs
 
 struct Foo { a: i32, b: i32 }

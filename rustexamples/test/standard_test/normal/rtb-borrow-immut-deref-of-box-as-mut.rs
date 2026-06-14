@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-borrow-immut-deref-of-box-as-mut.rs
 
 struct A {

@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-uniq-via-lend.rs
 
 fn borrow(_v: &i32) {}

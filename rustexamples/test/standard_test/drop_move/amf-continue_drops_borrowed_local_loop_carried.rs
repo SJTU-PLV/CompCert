@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (continue_drops_borrowed_local_loop_carried test)
 
 fn main() {

@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-assign-comp.rs
 // Multiple scenarios of struct borrow vs. assignment conflicts
 

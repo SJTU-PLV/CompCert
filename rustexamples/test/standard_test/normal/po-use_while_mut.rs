@@ -1,3 +1,4 @@
+// Repo: rust-lang/polonius
 // Source: inputs/smoke-test/polonius-smoke-test.rs (use_while_mut function)
 
 fn main() {

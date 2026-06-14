@@ -1,3 +1,4 @@
+// Repo: rust-lang/polonius
 // Source: inputs/issue-47680/issue-47680.rs
 
 enum MyOption<'a> { Some(&'a mut i32), None }

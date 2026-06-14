@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-uninit-after-item.rs
 
 fn baz(x: i32) {}

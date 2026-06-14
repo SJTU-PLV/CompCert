@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/loan_ends_mid_block_pair.rs
 // Mut borrow of struct field ends mid-block after capitalize, then mutation OK
 

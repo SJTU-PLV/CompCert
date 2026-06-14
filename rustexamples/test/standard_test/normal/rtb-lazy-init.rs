@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/lazy-init.rs
 // Both branches initialize the variable — should compile successfully
 

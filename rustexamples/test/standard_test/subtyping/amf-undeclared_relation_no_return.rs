@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (undeclared_universal_region_relationship_no_return test)
 
 fn foo<'a, 'b>(x: &'a i32, y: &'b i32) {

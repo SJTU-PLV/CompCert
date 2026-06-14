@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (use_of_uninitialized_variable test)
 
 fn main() {

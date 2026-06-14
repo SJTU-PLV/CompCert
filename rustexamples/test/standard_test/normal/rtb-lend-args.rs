@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-lend-args.rs
 // Positive test: borrowing through Box from function arguments
 

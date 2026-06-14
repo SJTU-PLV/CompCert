@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/polonius/polonius-smoke-test.rs
 // Polonius: mutably borrowed variable used while borrow is live
 

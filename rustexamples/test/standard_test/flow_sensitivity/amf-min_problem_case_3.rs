@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (min_problem_case_3 test)
 
 struct Map { v: i32 }

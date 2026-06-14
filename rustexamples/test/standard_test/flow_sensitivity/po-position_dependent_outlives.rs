@@ -1,3 +1,4 @@
+// Repo: rust-lang/polonius
 // Source: inputs/smoke-test/polonius-smoke-test.rs (position_dependent_outlives function)
 
 fn position_dependent_outlives(x: &mut i32) -> &mut i32 {

@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/borrowed-universal-error.rs
 // Cannot return value referencing temporary value
 

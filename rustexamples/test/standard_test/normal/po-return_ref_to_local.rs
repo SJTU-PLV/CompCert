@@ -1,3 +1,4 @@
+// Repo: rust-lang/polonius
 // Source: inputs/smoke-test/polonius-smoke-test.rs (return_ref_to_local function)
 
 fn return_ref_to_local<'a>() -> &'a i32 {

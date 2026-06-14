@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-init-plus-equal.rs
 // E0381: using uninitialized variable in binary operation
 

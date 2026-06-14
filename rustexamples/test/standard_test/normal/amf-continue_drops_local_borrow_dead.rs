@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (continue_drops_local_borrow_dead test)
 
 fn main() {

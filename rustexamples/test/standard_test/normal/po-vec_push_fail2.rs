@@ -1,3 +1,4 @@
+// Repo: rust-lang/polonius
 // Source: inputs/vec-push-ref/vec-push-ref.rs (foo2 function)
 
 enum MyOption<'a> { Some(&'a i32), None }

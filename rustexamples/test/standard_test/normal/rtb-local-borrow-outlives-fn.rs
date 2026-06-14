@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-local-borrow-outlives-fn.rs
 
 fn cplusplus_mode(x: i32) -> &'static i32 {

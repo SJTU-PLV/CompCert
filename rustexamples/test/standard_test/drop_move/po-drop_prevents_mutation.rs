@@ -1,3 +1,4 @@
+// Repo: rust-lang/polonius
 // Source: inputs/maybe-initialized-drop/maybe-initialized-drop.rs
 
 struct Wrap<'p> { p: &'p mut i32 }

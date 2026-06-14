@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-issue-14498.rs
 // Box<&mut T> borrow interactions: immutable Box prevents mutation,
 // mutable Box allows mutation but borrow blocks it

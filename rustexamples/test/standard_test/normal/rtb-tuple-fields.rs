@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrow-tuple-fields.rs
 // Removed: tuple-based tests (tuples unsupported), kept struct-based tests.
 

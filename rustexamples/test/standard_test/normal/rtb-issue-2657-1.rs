@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-issue-2657-1.rs
 
 enum MyOption {

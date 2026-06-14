@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-for-loop-uninitialized-binding.rs
 // for loop body may not execute — variable may be uninitialized (adapted to while)
 

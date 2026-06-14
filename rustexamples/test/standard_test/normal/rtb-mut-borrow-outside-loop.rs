@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/mut-borrow-outside-loop.rs
 // ensure borrowck messages are correct outside special case
 

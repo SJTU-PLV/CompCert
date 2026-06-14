@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-imm-ref-to-mut-rec-field-issue-3162-c.rs
 // Reborrow of &mut through &*b blocks mutation of original variable
 

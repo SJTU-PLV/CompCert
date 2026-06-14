@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-mut-borrow-of-mut-base-ptr.rs
 // Test that attempt to mutably borrow `&mut` pointer while pointee is
 // borrowed yields an error.

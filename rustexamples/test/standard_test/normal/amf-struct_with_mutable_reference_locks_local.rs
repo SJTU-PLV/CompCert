@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (struct_with_mutable_reference_locks_local test)
 
 struct Wrapper<'a> { value: &'a mut i32 }

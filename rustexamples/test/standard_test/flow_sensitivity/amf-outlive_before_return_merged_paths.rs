@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (outlive_before_return_does_not_affect_merged_paths test)
 
 fn reborrow<'a>(a: &'a mut i32) -> &'a mut i32 {

@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-uninit-ref-chain.rs
 
 struct S {

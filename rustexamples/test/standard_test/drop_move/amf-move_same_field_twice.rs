@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (move_same_field_twice test)
 
 struct Datum { value: i32 }

@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (call_pass_ref test)
 
 fn foo<'a>(x: &'a i32) -> i32 {

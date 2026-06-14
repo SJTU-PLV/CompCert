@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/issue-92015.rs
 // E0594: cannot assign through & reference (immutable reference mutation)
 

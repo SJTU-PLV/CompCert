@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (loan_before_return_does_not_affect_dead_code_after test)
 
 fn reborrow<'a>(a: &'a mut i32) -> &'a mut i32 {

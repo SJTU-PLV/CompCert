@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-anon-fields-struct.rs
 // Disjoint borrows of struct fields: different fields OK, same field errors
 

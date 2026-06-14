@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-borrowed-uniq-rvalue.rs
 
 fn store_ref<'a>(dst: &mut &'a i32, src: &'a i32) {

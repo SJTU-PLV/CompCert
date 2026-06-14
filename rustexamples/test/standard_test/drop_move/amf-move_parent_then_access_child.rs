@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (move_parent_then_access_child test)
 
 struct Inner { bar: i32 }

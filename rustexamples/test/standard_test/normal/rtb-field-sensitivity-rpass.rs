@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-field-sensitivity-rpass.rs
 // Positive tests: field-level sensitivity with Box — borrowing/moving one field
 // does not block using other fields

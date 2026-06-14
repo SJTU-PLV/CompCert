@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-uniq-via-ref.rs
 // Positive test: borrowing through Box via various reference paths (&mut -> &imm OK)
 

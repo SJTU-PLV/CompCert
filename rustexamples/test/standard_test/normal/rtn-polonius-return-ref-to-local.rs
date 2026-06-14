@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/polonius/polonius-smoke-test.rs
 
 fn return_ref_to_local() -> &'static i32 {

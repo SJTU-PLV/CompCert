@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/reassignment_immutable_fields_twice.rs
 // This should never be allowed -- since `x` is not `mut`, so `x.fst` cannot be assigned twice.
 

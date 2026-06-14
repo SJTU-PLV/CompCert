@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-borrow-from-stack-variable.rs
 // Extensive field-level borrow tests: same field twice, different fields,
 // subpath vs ancestor path conflicts

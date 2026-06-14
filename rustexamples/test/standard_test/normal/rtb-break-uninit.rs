@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-break-uninit.rs
 
 fn foo() -> i32 {

@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-pat-reassign-no-binding.rs
 // Positive test: reassign in match arm where no borrow exists is OK
 

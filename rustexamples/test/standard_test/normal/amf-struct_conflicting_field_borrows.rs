@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (struct_conflicting_field_borrows test)
 
 struct Point { x: i32, y: i32 }

@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-borrow-of-mut-base-ptr-safe.rs
 // Test that freezing an `&mut` pointer while referent is
 // frozen is legal.

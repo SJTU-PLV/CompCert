@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-access-permissions.rs
 // E0596: cannot borrow as mutable through various access paths
 

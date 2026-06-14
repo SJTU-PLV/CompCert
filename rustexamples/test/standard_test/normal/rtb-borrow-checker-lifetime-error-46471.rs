@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrow-checker-lifetime-error-46471.rs
 // E0597: `z` does not live long enough — reference outlives inner block
 

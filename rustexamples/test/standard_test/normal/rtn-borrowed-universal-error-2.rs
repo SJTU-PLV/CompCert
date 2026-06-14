@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/borrowed-universal-error-2.rs
 
 struct ISingle { fst: i32 }

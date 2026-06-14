@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (integer_in_outer_scope test)
 
 fn main() {

@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/borrowed-local-error.rs
 
 struct ISingle { fst: i32 }

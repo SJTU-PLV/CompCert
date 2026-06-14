@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (assign_field_of_uninitialized test)
 
 struct Pair { first: i32, second: i32 }

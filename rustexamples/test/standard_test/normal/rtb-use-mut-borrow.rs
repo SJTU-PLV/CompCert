@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-use-mut-borrow.rs
 // Mut borrow conflicts: use of variable/field while mutably borrowed (with Box)
 

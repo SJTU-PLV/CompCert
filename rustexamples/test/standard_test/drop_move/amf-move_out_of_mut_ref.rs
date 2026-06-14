@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (move_out_of_mut_ref test)
 
 struct Datum { value: i32 }

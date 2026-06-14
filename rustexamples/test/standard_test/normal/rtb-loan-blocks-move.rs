@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-loan-blocks-move.rs
 
 fn take(_v: Box<i32>) {

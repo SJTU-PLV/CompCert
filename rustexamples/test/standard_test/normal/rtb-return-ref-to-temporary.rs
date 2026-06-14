@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/return-ref-to-temporary.rs
 // E0515: cannot return reference to temporary value
 

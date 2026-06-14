@@ -1,3 +1,4 @@
+// Repo: rust-lang/polonius
 // Source: inputs/smoke-test/polonius-smoke-test.rs (well_formed_function_inputs test)
 
 fn foo<'a, 'b>(p: &'b &'a mut i32) -> &'b i32 {

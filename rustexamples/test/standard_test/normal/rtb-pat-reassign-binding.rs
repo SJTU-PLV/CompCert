@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-pat-reassign-binding.rs
 // E0506: match arm with ref borrow prevents reassignment of matched variable
 

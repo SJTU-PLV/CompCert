@@ -1,3 +1,4 @@
+// Repo: rust-lang/a-mir-formality
 // Source: borrowck.rs (uninitialized_return test)
 
 fn foo() -> i32 {

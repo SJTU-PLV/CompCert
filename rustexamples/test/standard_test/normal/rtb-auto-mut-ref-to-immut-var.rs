@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-auto-mut-ref-to-immut-var.rs
 // Tests that auto-ref can't create mutable aliases to immutable memory.
 

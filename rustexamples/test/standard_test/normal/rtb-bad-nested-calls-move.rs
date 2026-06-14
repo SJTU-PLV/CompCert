@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-bad-nested-calls-move.rs
 // Nested calls that move pointers: immutable borrow of `a` for first arg
 // conflicts with move of `a` in second arg

@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-move-mut-base-ptr.rs
 // Test that attempt to move `&mut` pointer while pointee is borrowed
 // yields an error.

@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-use-mut-borrow-rpass.rs
 // Positive test: borrowing one field of struct with Box does not block
 // using other fields (field-level sensitivity)

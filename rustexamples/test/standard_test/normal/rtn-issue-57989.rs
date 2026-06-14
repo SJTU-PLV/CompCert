@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/issue-57989.rs
 // Two errors: assign through & reference, AND assign because it is borrowed
 

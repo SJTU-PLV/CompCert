@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/issue-46471.rs
 
 fn foo() -> &'static i32 {

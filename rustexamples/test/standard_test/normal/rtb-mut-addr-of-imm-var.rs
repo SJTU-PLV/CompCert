@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-mut-addr-of-imm-var.rs
 
 fn main() {

@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/issue-52713-bug.rs
 // Regression test for a bug in #52713: this was an optimization for
 // computing liveness that wound up accidentally causing the program

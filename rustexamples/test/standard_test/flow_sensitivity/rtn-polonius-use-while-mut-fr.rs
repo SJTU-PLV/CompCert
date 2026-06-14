@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/polonius/polonius-smoke-test.rs
 
 fn use_while_mut_fr(x: &mut i32) -> &mut i32 {

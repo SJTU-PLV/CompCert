@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-scope-of-deref-issue-4666.rs
 // Tests that the scope of the pointer returned from `get()` is
 // limited to the deref operation itself, and does not infect the

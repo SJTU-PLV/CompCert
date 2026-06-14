@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/assign-imm-local-twice.rs
 // Check that we do not allow assigning twice to an immutable variable. This test also checks a
 // few pieces of borrowck diagnostics:

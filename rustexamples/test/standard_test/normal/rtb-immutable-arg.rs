@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/immutable-arg.rs
 
 fn foo(x: i32) {

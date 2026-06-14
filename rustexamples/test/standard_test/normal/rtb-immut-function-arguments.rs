@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/immut-function-arguments.rs
 // E0594: cannot assign to `*y` because argument is immutable
 

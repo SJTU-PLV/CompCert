@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-uninit-field-access.rs
 // Check that we do not allow access to fields of uninitialized or moved structs.
 

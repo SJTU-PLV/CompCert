@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/issue-48803.rs
 // Borrow chain through flatten prevents mutation
 

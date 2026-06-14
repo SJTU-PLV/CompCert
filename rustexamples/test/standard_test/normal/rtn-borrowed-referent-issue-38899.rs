@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: nll/borrowed-referent-issue-38899.rs
 // Regression test for issue #38899
 

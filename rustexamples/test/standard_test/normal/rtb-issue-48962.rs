@@ -1,3 +1,4 @@
+// Repo: rust-lang/rust
 // Source: borrowck/borrowck-issue-48962.rs
 // After moving a &mut reference, cannot assign through its field
 
