@@ -33,7 +33,15 @@ FAIL_EXPECTED := drop_move/amf-break_drops_borrowed_local.rs drop_move/amf-conti
 				 normal/rtb-reassignment-immutable-fields-twice.rs normal/rtb-reborrow-from-mut.rs normal/rtb-reborrow-from-shorter-lived-andmut.rs \
 				 normal/rtb-reinit.rs normal/rtb-return-ref-to-temporary.rs normal/rtb-storage-dead.rs normal/rtb-swap-mut-base-ptr.rs normal/rtb-tuple-fields.rs \
 				 normal/rtb-uninit-after-item.rs normal/rtb-uninit-field-access.rs normal/rtb-uninit-ref-chain.rs normal/rtb-uniq-via-lend.rs \
-				 normal/rtb-use-mut-borrow.rs normal/rtb-while-break.rs normal/rtb-while-cond.rs normal/rtb-while.rs normal/rtb-unary-move.rs
+				 normal/rtb-use-mut-borrow.rs normal/rtb-while-break.rs normal/rtb-while-cond.rs normal/rtb-while.rs normal/rtb-unary-move.rs \
+				 normal/rtn-borrowed-local-error.rs normal/rtn-borrowed-match-issue-45045.rs normal/rtn-borrowed-referent-issue-38899.rs \
+				 normal/rtn-borrowed-temporary-error.rs normal/rtn-borrowed-universal-error-2.rs normal/rtn-borrowed-universal-error.rs \
+				 normal/rtn-guarantor-issue-46974.rs normal/rtn-issue-48803.rs normal/rtn-issue-57989.rs \
+				 normal/rtn-loan-ends-mid-block-pair.rs normal/rtn-polonius-return-ref-to-local.rs normal/rtn-polonius-well-formed-inputs.rs \
+				 normal/rtn-reference-carried-through-struct-field.rs normal/rtn-region-ends-after-if-condition.rs normal/rtn-return-ref-mut-issue-46557.rs \
+				 flow_sensitivity/rtn-issue-46036.rs flow_sensitivity/rtn-polonius-use-while-mut-fr.rs flow_sensitivity/rtn-polonius-use-while-mut.rs \
+				 subtyping/rtn-anon-to-static.rs subtyping/rtn-outlives-foo1.rs subtyping/rtn-outlives-foo2.rs subtyping/rtn-outlives-foo3.rs \
+				 subtyping/rtn-outlives-foo4.rs subtyping/rtn-subset-missing.rs
 
 
 FAIL_SRCS := $(FAIL_EXPECTED)
