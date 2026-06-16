@@ -25,13 +25,13 @@ FAIL_EXPECTED := drop_move/amf-break_drops_borrowed_local.rs drop_move/amf-conti
 				 normal/rtb-field-sensitivity-box.rs normal/rtb-for-loop-uninit.rs normal/rtb-if-no-else.rs normal/rtb-if-with-else.rs \
 				 normal/rtb-imm-ref-to-mut-rec-field-issue-3162-c.rs normal/rtb-immutable-arg.rs normal/rtb-immut-function-arguments.rs \
 				 normal/rtb-init-op-equal.rs normal/rtb-init-plus-equal.rs normal/rtb-issue-14498.rs normal/rtb-issue-2657-1.rs normal/rtb-issue-2657-2.rs \
-				 normal/rtb-issue-33819.rs normal/rtb-issue-45199.rs normal/rtb-issue-46471.rs normal/rtb-issue-48962.rs \
+				 normal/rtb-issue-33819.rs normal/rtb-issue-45199.rs normal/rtb-issue-46471.rs drop_move/rtb-issue-48962.rs \
 				 normal/rtb-issue-52713-bug.rs normal/rtb-issue-92015.rs normal/rtb-lend-flow-if.rs normal/rtb-lend-flow-loop.rs normal/rtb-lend-flow-match.rs \
 				 normal/rtb-lend-flow.rs normal/rtb-loan-blocks-move.rs normal/rtb-local-borrow-outlives-fn.rs normal/rtb-match-already-borrowed.rs \
 				 normal/rtb-move-from-subpath-of-borrowed-path.rs normal/rtb-move-mut-base-ptr.rs normal/rtb-mut-addr-of-imm-var.rs normal/rtb-mut-borrow-of-mut-base-ptr.rs \
 				 normal/rtb-mut-borrow-outside-loop.rs normal/rtb-no-cycle-in-exchange-heap.rs normal/rtb-pat-reassign-binding.rs \
 				 normal/rtb-reassignment-immutable-fields-twice.rs normal/rtb-reborrow-from-mut.rs normal/rtb-reborrow-from-shorter-lived-andmut.rs \
-				 normal/rtb-reinit.rs normal/rtb-return-ref-to-temporary.rs normal/rtb-storage-dead.rs normal/rtb-swap-mut-base-ptr.rs normal/rtb-tuple-fields.rs \
+				 drop_move/rtb-reinit.rs normal/rtb-return-ref-to-temporary.rs normal/rtb-storage-dead.rs normal/rtb-swap-mut-base-ptr.rs normal/rtb-tuple-fields.rs \
 				 normal/rtb-uninit-after-item.rs normal/rtb-uninit-field-access.rs normal/rtb-uninit-ref-chain.rs normal/rtb-uniq-via-lend.rs \
 				 normal/rtb-use-mut-borrow.rs normal/rtb-while-break.rs normal/rtb-while-cond.rs normal/rtb-while.rs normal/rtb-unary-move.rs \
 				 normal/rtn-borrowed-local-error.rs normal/rtn-borrowed-match-issue-45045.rs normal/rtn-borrowed-referent-issue-38899.rs \
