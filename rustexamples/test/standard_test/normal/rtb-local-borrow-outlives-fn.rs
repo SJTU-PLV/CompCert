@@ -1,7 +1,7 @@
 // Repo: rust-lang/rust
 // Source: borrowck/borrowck-local-borrow-outlives-fn.rs
 
-fn cplusplus_mode(x: i32) -> &'static i32 {
+fn cplusplus_mode<'a>(x: i32) -> &'a i32 {
     return &x; //~ ERROR cannot return reference to function parameter `x` [E0515]
 }
 
