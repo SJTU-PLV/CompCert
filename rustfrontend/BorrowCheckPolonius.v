@@ -227,124 +227,16 @@ Definition transfer_Sbox (oe: LOrgEnv.t) (p: place) (e: expr) : LOrgEnv.t :=
   let oe2 := kill_loans oe1 p in
   LOrgEnv.flow_loans oe2 ty_src ty_dest Covariant.
 
-  
-(* bind the origins in two type *)
-Fixpoint bind_type_origins (ty1 ty2: type) (fk: flow_kind) : list (origin * origin * flow_kind) :=
-  match ty1, ty2 with
-  | Treference org1 _ ty1, Treference org2 _ ty2 =>
-      (org1, org2, fk) :: bind_type_origins ty1 ty2 ByRef
-  | Tbox ty1, Tbox ty2 =>
-      bind_type_origins ty1 ty2 ByRef
-  | Tstruct orgs1 id1, Tstruct orgs2 id2
-  | Tvariant orgs1 id1, Tvariant orgs2 id2 =>
-      (* TODO: support covariant *)
-      let len := length orgs1 in
-      (combine (combine orgs1 orgs2) (repeat ByRef len))
-  | _, _ => []
-  end.
-
-Fixpoint bind_type_origins_list (tyl: list (type * type)) :=
-  match tyl with
-  | nil => nil
-  | (ty1, ty2) :: tyl =>
-      bind_type_origins ty1 ty2 ByVal ++ (bind_type_origins_list tyl)
-  end.
 
 Definition flow_loans_origin_to_origin (se te: LOrgEnv.t) (src tgt: origin) : LOrgEnv.t :=
   LOrgEnv.set tgt (LOrgLnSt.lub (LOrgEnv.get src se) (LOrgEnv.get tgt te)) te.
 
 
-Fixpoint flow_loans_bind (se: LOrgEnv.t) (te: LOrgEnv.t) (rels: list origin_rel) (l: list (origin * origin * flow_kind)) : LOrgEnv.t * list origin_rel :=
-  match l with
-  | nil => (te, rels)
-  | (src, tgt, fk) :: l' =>
-      let te' := flow_loans_origin_to_origin se te src tgt in
-      let rels' := 
-        match fk with
-        | ByRef =>
-            (src, tgt) :: rels
-        | ByVal =>
-            rels
-        end in
-      flow_loans_bind se te' rels' l'
-  end.
-
-(* flow the loans from parameter to callee arguments and return the
-pair of origins for which we should generate invariant constrain *)
-Definition bind_param_origins (e: LOrgEnv.t) (fe: LOrgEnv.t) (ptyl ftyl: list type) : (LOrgEnv.t * list origin_rel) :=
-  let bind_pairs := bind_type_origins_list (combine ptyl ftyl) in
-  flow_loans_bind e fe nil bind_pairs.
-  (* else *)
-  (*   Error (error_msg pc ++ [MSG "mismatch between the lengths of types (bind_param_origins)"]). *)
-
-(** The parser sorts the signature relations by SCC-topological order on the
-left-hand origin of each relation. *)
-Fixpoint origin_reaches_fuel (fuel: nat) (rels: list origin_rel) (src tgt: origin) : bool :=
-  if Pos.eqb src tgt then
-    true
-  else
-    match fuel with
-    | O => false
-    | S fuel' =>
-        existsb
-          (fun '(org1, org2) =>
-             if Pos.eqb src org1 then
-               origin_reaches_fuel fuel' rels org2 tgt
-             else
-               false)
-          rels
-    end.
-
-Definition origin_reaches (rels: list origin_rel) (src tgt: origin) : bool :=
-  origin_reaches_fuel (length rels) rels src tgt.
-
-Definition origin_strictly_precedes (rels: list origin_rel) (src tgt: origin) : bool :=
-  origin_reaches rels src tgt && negb (origin_reaches rels tgt src).
-
-Fixpoint check_topologically_sorted_origin_relations_aux
-    (rels seen pending: list origin_rel) : bool :=
-  match pending with
-  | nil => true
-  | (src, tgt) :: pending' =>
-      forallb
-        (fun '(prev_src, _) =>
-           negb (origin_strictly_precedes rels src prev_src))
-        seen
-      && check_topologically_sorted_origin_relations_aux rels ((src, tgt) :: seen) pending'
-  end.
-
-Definition check_topologically_sorted_origin_relations (rels: list origin_rel) : bool :=
-  check_topologically_sorted_origin_relations_aux rels nil rels.
-
-(** Assumption: the relations of origin given by the function
-signature has been sorted topologically, to ensure that we just need
-to flow the origins in one round instead of flowing it until reaching
-a fixed point. [check_topologically_sorted_origin_relations] checks this
-ordering convention, but it is not used for now. *)
 Definition after_call (fe: LOrgEnv.t) (rels: list origin_rel) : LOrgEnv.t :=
   fold_left (fun acc '(src, tgt) =>
                (* it may be less efficient *)
-               flow_loans_origin_to_origin acc acc src tgt) rels fe.
+               flow_loans_origin_to_origin fe acc src tgt) rels fe.
 
-
-Definition flow_loans_origin_to_origin_with_alias (fe e: LOrgEnv.t) (forg org: origin) : LOrgEnv.t :=
-  LOrgEnv.set org (LOrgLnSt.lub (LOrgEnv.get forg fe) (LOrgEnv.get org e)) e.
-
-(* Flow back the loans based on the invariant relation established by
-the bind_params_origins *)
-Fixpoint flow_alias_after_call (rels: list origin_rel) (fe e: LOrgEnv.t) : LOrgEnv.t :=
-  match rels with
-  | nil => e
-  | (org, forg) :: rels' =>
-      flow_alias_after_call rels' fe (flow_loans_origin_to_origin_with_alias fe e forg org)
-  end.
-
-Definition flow_return_after_call (fe e: LOrgEnv.t) (frety tgt_ty: type) : LOrgEnv.t :=
-  let l := bind_type_origins frety tgt_ty ByVal in
-  fst (flow_loans_bind fe e nil l).
-  (* (* we do not care the alias relation *) *)
-  (* do (te', _) <- fold_left (LOrgEnv.flow_loans_bind_acc pc se) l (OK (te, nil)); *)
-  (* OK te'. *)
 
 (** TODO: to make it simpler  *)
 Definition transfer_function_call (oe1: LOrgEnv.t) (p: place) (ef: expr) (args: list expr) : LOrgEnv.t :=
@@ -458,20 +350,21 @@ Definition check_generic_origins_relations (f: function) (e: LOrgEnv.t) : bool :
   generic origin must not be dead otherwise we are returing a dangling
   pointer *)
   (* forallb (fun org => live_origin (LOrgEnv.get org e)) f.(fn_generic_origins) && *)
-  forallb (fun org1 =>
-             forallb (fun org2 =>
-                        if Pos.eqb org1 org2 then true
-                        else match LOrgEnv.get org1 e, LOrgEnv.get org2 e with
-                             | LOrgLnSt.Live ls1, LOrgLnSt.Live ls2 =>
-                                 if LoanSet.subset ls1 ls2 then
-                                   in_dec origin_rel_eq_dec (org1, org2) f.(fn_origins_relation)
-                                 else if LoanSet.subset ls2 ls1 then
-                                        in_dec origin_rel_eq_dec (org2, org1) f.(fn_origins_relation)
-                                      else true
-                             (* generic origins must be live which
-                             should be already checked *)
-                             | _, _ => false
-                             end) f.(fn_generic_origins)) f.(fn_generic_origins).
+  forallb (fun org1 => 
+             forallb 
+               (fun org2 =>
+                  if Pos.eqb org1 org2 then true
+                  else match LOrgEnv.get org1 e with
+                       | LOrgLnSt.Live ls1 =>
+                           if LoanSet.mem (Lextern org2) ls1 then
+                             in_dec origin_rel_eq_dec (org2, org1) f.(fn_origins_relation)
+                           (* else if LoanSet.subset ls2 ls1 then *)
+                           (*        in_dec origin_rel_eq_dec (org2, org1) f.(fn_origins_relation) *)
+                           else true
+                       (* generic origins must be live which *)
+                       (*                 should be already checked *)
+                       | _ => false
+                       end) f.(fn_generic_origins)) f.(fn_generic_origins).
   
 
 (* We use it to ensure that we cannot return the address of stack blocks of the parameters *)
