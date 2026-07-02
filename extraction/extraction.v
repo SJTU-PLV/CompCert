@@ -116,6 +116,8 @@ Extract Constant Compopts.thumb =>
   "fun _ -> !Clflags.option_mthumb".
 Extract Constant Compopts.debug =>
   "fun _ -> !Clflags.option_g".
+Extract Constant Compopts.borrowck_forward =>
+  "fun _ -> !Clflags.option_fborrowck_forward".
 
 (* Compiler *)
 Extract Constant Compiler.print_Clight => "PrintClight.print_if".

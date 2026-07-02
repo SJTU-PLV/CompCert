@@ -44,3 +44,6 @@ Parameter thumb: unit -> bool.
 
 (** Flag -g.  For insertion of debugging information. *)
 Parameter debug: unit -> bool.
+
+(** Flag -fborrowck-forward.  Selects the forward Rust borrow checker. *)
+Parameter borrowck_forward: unit -> bool.

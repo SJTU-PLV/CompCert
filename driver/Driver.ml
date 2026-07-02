@@ -195,6 +195,7 @@ Processing options:
   -fconst-prop   Perform global constant propagation  [on]
   -ffloat-const-prop <n>  Control constant propagation of floats
                    (<n>=0: none, <n>=1: limited, <n>=2: full; default is full)
+  -fborrowck-forward Use the forward Rust borrow checker [off]
   -fcse          Perform common subexpression elimination [on]
   -fredundancy   Perform redundancy elimination [on]
   -finline       Perform inlining of functions [on]
@@ -314,6 +315,7 @@ let cmdline_actions =
   Exact "-falign-branch-targets", Integer(fun n -> check_align n; option_falignbranchtargets := n);
   Exact "-falign-cond-branches", Integer(fun n -> check_align n; option_faligncondbranchs := n);] @
       f_opt "common" option_fcommon @
+      f_opt "borrowck-forward" option_fborrowck_forward @
 (* Target processor options *)
   (if Configuration.arch = "arm" then
     if Configuration.model = "armv6" then

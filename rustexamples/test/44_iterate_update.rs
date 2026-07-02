@@ -36,9 +36,11 @@ fn conditional() {
                 break;
             }
             OptionX::Some(ref mut now) => {
+                // 'p: {b}, 'now: {*p}
                 if true {
-                    p = &mut (**now).next;
+                    p = &mut (**now).next; // 'p: {(**now).next, b}, 'now: {b}
                 }
+                // 'p: {(**now).next, b}, 'now: {*p, b}
                 // At this point, loan(*p) is not killed because the else branch does not kill it.
             }
         }

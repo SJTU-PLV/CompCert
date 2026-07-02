@@ -203,9 +203,12 @@ we instantiate LS as loan sets and the other is for sound
 approximation where we instantiate LS as set of access paths *)
 
 Module LOrgLnSt := LOrgSt(LoanSetL).
+Module LOrgLnOptSt := LOption(LOrgLnSt). (** Used in the abstract
+interpreter version of the borrow checking *)
 
 Module LOrgPhSt := LOrgSt(PathSetL).
 Module LOrgPhOptSt := LOption(LOrgPhSt).
+
 
 Global Instance LOrgLnSt_eq_equiv: 
   Equivalence (LOrgLnSt.eq).
@@ -754,6 +757,7 @@ End LUFMap.
 (** Origin environment *)
 
 Module LOrgEnv := LUFMap(LOrgLnSt).
+Module LOrgOptEnv := LUFMap(LOrgLnOptSt). (* Used in the abstract interpreter *)
 
 (* Only abstract regions (or origins) *)
 Module LOrgPhEnv := LUFMap(LOrgPhOptSt).
@@ -916,6 +920,77 @@ Module LoansEnv <: SEMILATTICE.
   Axiom ge_lub_right: forall x y, ge (lub x y) y.
 
 End LoansEnv.
+
+
+Module LoansOptEnv <: SEMILATTICE.
+  
+  Inductive t' := | Bot | State (org_env: LOrgOptEnv.t) (log: errmsg).
+  
+  Definition t := t'.
+ 
+  Definition eq (x y: t) : Prop :=
+    match x, y with
+    | Bot, Bot => True
+    | State oe1 _ , State oe2 _ =>
+        LOrgOptEnv.eq oe1 oe2
+    (* | Err pc1 msg1, Err pc2 msg2 => *)
+    (*     Pos.eq pc1 pc2 /\ list_forall2 eq msg1 msg2 *)
+    | _, _ => False
+    end.
+
+  Definition beq (x y: t) : bool :=
+    match x, y with
+    | Bot, Bot => false
+    | State oe1 _, State oe2 _ =>
+        LOrgOptEnv.beq oe1 oe2
+    (* | Err pc1 msg1, Err pc2 msg2 => *)
+    (*     Pos.eqb pc1 pc2 && List.list_eq_dec errcode_eq msg1 msg2 *)
+    | _, _ => false
+    end.
+
+  Definition ge (x y: t) : Prop :=
+    match x, y with
+    | _, Bot => True
+    | Bot, _ => False
+    (* Err is the top *)
+    (* | Err pc1 _, Err pc2 _ => Pos.ge pc1 pc2 *)
+    (* | Err _ _, _ => True *)
+    (* | _, Err _ _ => False *)
+    | State oe1 _, State oe2 _ =>
+        LOrgOptEnv.ge oe1 oe2
+    end.
+
+  Definition bot := Bot.
+
+  Definition lub (x y: t) :=
+    match x,y with
+    | _, Bot => x
+    | Bot, _ => y
+    (* | Err pc1 msg1, Err pc2 msg2 => *)
+    (*     if Pos.ltb pc1 pc2 then Err pc2 msg2 else Err pc1 msg1 *)
+    (* | Err _ _, State _ => x *)
+    (* | State _, Err _ _ => y *)
+    | State oe1 _, State oe2 _ =>
+        State (LOrgOptEnv.lub oe1 oe2) nil
+    end.
+
+  (** TODO  *)
+  Axiom eq_refl: forall x, eq x x.
+  Axiom eq_sym: forall x y, eq x y -> eq y x.
+  Axiom eq_trans: forall x y z, eq x y -> eq y z -> eq x z.
+
+  Axiom beq_correct: forall x y, beq x y = true -> eq x y.
+
+  Axiom ge_refl: forall x y, eq x y -> ge x y.
+  Axiom ge_trans: forall x y z, ge x y -> ge y z -> ge x z.
+
+  Axiom ge_bot: forall x, ge x bot.
+
+  Axiom ge_lub_left: forall x y, ge (lub x y) x.
+  Axiom ge_lub_right: forall x y, ge (lub x y) y.
+
+End LoansOptEnv.
+
 
 (* One-to-one correspondence between (positive * positive) and
 positive, which is used to construct whole-module loans
@@ -1101,4 +1176,3 @@ Proof.
   inversion H; subst.
   split; reflexivity.
 Qed.
-

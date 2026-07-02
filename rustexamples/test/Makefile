@@ -16,8 +16,8 @@ ifneq ($(filter dump,$(MAKECMDGOALS)),)
 DUMP_FLAGS += -drust_all
 endif
 
-CCOMP_ASM_FLAGS=-dclight -S $(DUMP_FLAGS)
-CCOM_EXE_FLAGS=-dclight $(DUMP_FLAGS)
+CCOMP_ASM_FLAGS=-dclight -fborrowck-forward -S $(DUMP_FLAGS)
+CCOM_EXE_FLAGS=-dclight -fborrowck-forward $(DUMP_FLAGS)
 
 GREEN=\033[32m
 RED=\033[31m

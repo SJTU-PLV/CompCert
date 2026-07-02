@@ -56,6 +56,7 @@ let option_dalloctrace = ref false
 let option_dmach = ref false
 let option_dborrowck = ref false
 let option_dasm = ref false
+let option_fborrowck_forward = ref false
 let option_sdump = ref false
 let option_g = ref false
 let option_gdwarf = ref (if Configuration.system = "diab" then 2 else 3)
