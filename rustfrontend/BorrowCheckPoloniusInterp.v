@@ -358,33 +358,60 @@ Definition transfer_return (f: function) (oe1: LOrgEnv.t) (p: place) : Log.mon L
   Log.with_log oe4 (msg0 ++ msg1 ++ msg2 ++ msg3).
 
 Definition transfer_stmt ce f oe s : LOrgEnv.t * errmsg :=
-  let finish_transfer (st: Log.mon LOrgEnv.t) := ((Log.value st), (Log.log st)) in
   match s with
   | Sassign p e =>
-      finish_transfer (transfer_assignment oe p e)
+      transfer_assignment oe p e
   | Sassign_variant p enum_id fid e =>
-      finish_transfer (transfer_assign_variant ce oe p enum_id fid e)
+      transfer_assign_variant ce oe p enum_id fid e
   | Sbox p e =>
-      finish_transfer (transfer_Sbox oe p e)
+      transfer_Sbox oe p e
   | Scall p e l =>
-      finish_transfer (transfer_function_call oe p e l)
+      transfer_function_call oe p e l
   | Sstoragedead id =>
-      finish_transfer (transfer_storagedead f oe id)
+      transfer_storagedead f oe id
   | Sdrop p =>
-      finish_transfer (transfer_drop oe p)
+      transfer_drop oe p
   | Sreturn p =>
-      finish_transfer (transfer_return f oe p)
+      transfer_return f oe p
   | _ => (oe, nil)
   end.
 
-Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap.t RegionSet.t) (generic_regions: RegionSet.t) (pc: node) (before: LoansLogEnv.t) : LoansLogEnv.t :=
+Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: liveness_info) (pc: node) (before: LoansLogEnv.t) : LoansLogEnv.t :=
   match before with
   | LoansLogEnv.Bot => before
   | LoansLogEnv.State oe _ =>
-      let live_after := PMap.get pc live in
-      let live_before := RegionLiveness.transfer f cfg generic_regions pc live_after in
+      (* apply liveness result before transfer *)
+      (** Should we clear dead loans before the transfer? *)
+      let '(live_before, live_after) := PMap.get pc live in
       let oe := LOrgEnv.apply_liveness live_before oe in
-      let finish_transfer (st: Log.mon LOrgEnv.t) := LoansLogEnv.State (Log.value st) (Log.log st) in
+      (* Why should we apply liveness before and after the transfer
+      function? Consider a snapshot of CFG like this:
+
+                            N1
+                          N2   N3
+                            N4
+
+      (1) we need to apply liveness before the transfer because for
+      the transfer on N2 and N3, if we do not apply liveness, then we
+      just use the liveness result of N1 (the result of applying
+      live_after on N1), which is imprecise because this liveness
+      result is the join of N2 and N3. So we need to separately apply
+      liveness before the transfer. This is also required in the
+      checking;
+
+      (2) we need to apply liveness after the transfer. Consider the
+      transfer result of N2 and N3, if we do not apply live_after to
+      them, then the result of N4 is the join result of N2 and N3 and
+      then be applied to liveness. This case may cause imprecision
+      because the merged node may join two equality into one equality
+      (e.g., a=b and b=c would become a=b=c, if b is dead, then we
+      still get a=c which is imprecise.
+
+     Related test cases: 20.rs, 26.rs, 30.rs, 33.rs, 35.rs,
+     46_aeneas_example.rs
+ *)
+      let finish_transfer (st: Log.mon LOrgEnv.t) := LoansLogEnv.State (LOrgEnv.apply_liveness live_after (Log.value st)) (Log.log st) in
+      (* let finish_transfer oe := (LoansEnv.State oe) in *)
       match cfg ! pc with
       | None => LoansLogEnv.Bot
       | Some (Inop _) => before
@@ -394,8 +421,7 @@ Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap
           match select_stmt f.(fn_body) sel with
           | None => LoansLogEnv.Bot
           | Some s =>
-              let (oe, msg) := transfer_stmt ce f oe s in
-              LoansLogEnv.State oe msg
+              finish_transfer (transfer_stmt ce f oe s)
           end
       end
   end.
@@ -408,12 +434,13 @@ Definition init_function (f: function) : LOrgEnv.t :=
                           LOrgEnv.set elt os acc) f.(fn_generic_origins) LOrgEnv.bot in
   LOrgEnv.flow_loans_list oe1 f.(fn_param_types) (map snd f.(fn_params)) Covariant.
 
-Definition loans_flow_analyze (ce: composite_env) (f: function) (cfg: rustcfg) (entry: node) : Errors.res (PMap.t RegionSet.t * (PMap.t LoansLogEnv.t)) :=
+Definition loans_flow_analyze (ce: composite_env) (f: function) (cfg: rustcfg) (entry: node) : Errors.res (liveness_info * (PMap.t LoansLogEnv.t)) :=
   let generic_regions := regset_fun f in
   match RegionLiveness.analyze f cfg with
-  | Some live =>
+  | Some live_after =>
+      let live := build_liveness_info f cfg generic_regions live_after in
       let init_oe := init_function f in
-      match LoansFlowInterp.fixpoint cfg successors_instr (transfer ce f cfg live generic_regions) entry (LoansLogEnv.State init_oe nil) with
+      match LoansFlowInterp.fixpoint cfg successors_instr (transfer ce f cfg live) entry (LoansLogEnv.State init_oe nil) with
       | Some m => OK (live, m)
       | None =>
           Error [MSG "The loans-flow analysis fails with unknown reason"]
@@ -448,25 +475,29 @@ Definition borrow_check_cond_expr (ce: composite_env) (le: LoansLogEnv.t) (e: ex
   | _ => OK tt
   end.
 
-Definition get_borck_result generic_regions f cfg (live_loan_env: (PMap.t RegionSet.t * (PMap.t LoansLogEnv.t))) (pc: node) : LoansLogEnv.t :=
+Definition get_borck_result (live_loan_env: (liveness_info * (PMap.t LoansLogEnv.t))) (pc: node) : LoansLogEnv.t :=
   let (live, loan_env) := live_loan_env in
   match loan_env !! pc with
   | LoansLogEnv.Bot => LoansLogEnv.Bot
   | LoansLogEnv.State oe _ =>
-      let live_after := PMap.get pc live in
-      let live_before := RegionLiveness.transfer f cfg generic_regions pc live_after in
+      (* Why do we need to apply liveness here to do transfer?
+      Transfer function already applies liveness, isn't it? Because we
+      do not invoke transfer in the checking phase, we apply
+      transfer_stmt due to the limitation of transl_on_cfg. So we need
+      to ad-hocly simulate how transfer is implemented *)
+      let '(live_before, live_after) := PMap.get pc live in
       LoansLogEnv.State (LOrgEnv.apply_liveness live_before oe) nil
   end.
 
-Definition collect_borrow_check_result ce generic_region (f: function) (cfg: rustcfg) (loans_flow_res: (PMap.t RegionSet.t * (PMap.t LoansLogEnv.t))) : res unit :=
-  do _ <- transl_on_cfg (get_borck_result generic_region f cfg) (loans_flow_res) (borrow_check_stmt ce f) (borrow_check_cond_expr ce) f.(fn_body) cfg;
+Definition collect_borrow_check_result ce (f: function) (cfg: rustcfg) (loans_flow_res: (liveness_info * (PMap.t LoansLogEnv.t))) : res unit :=
+  do _ <- transl_on_cfg get_borck_result (loans_flow_res) (borrow_check_stmt ce f) (borrow_check_cond_expr ce) f.(fn_body) cfg;
   OK tt.
 
 Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res unit :=
   do (entry, cfg) <- generate_cfg f.(fn_body);
   let generic_regions := regset_fun f in
   do loans_flow_res <- loans_flow_analyze ce f cfg entry;
-  collect_borrow_check_result ce generic_regions f cfg loans_flow_res.
+  collect_borrow_check_result ce f cfg loans_flow_res.
 
 Definition transf_fundef (ce: composite_env) (id: ident) (fd: fundef) : Errors.res fundef :=
   match fd with

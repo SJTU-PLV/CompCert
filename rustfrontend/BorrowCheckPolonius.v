@@ -428,21 +428,21 @@ Definition check_return (f: function) (oe1: LOrgEnv.t) (p: place) : res unit :=
 
 (* Transition of statements *)
 
-Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: PMap.t RegionSet.t) (generic_regions: RegionSet.t) (pc: node) (before: LoansEnv.t) : LoansEnv.t :=
+Definition transfer (ce: composite_env) (f: function) (cfg: rustcfg) (live: liveness_info) (pc: node) (before: LoansEnv.t) : LoansEnv.t :=
   match before with
   | LoansEnv.Bot => before
   | LoansEnv.State oe =>
       (* apply liveness result before transfer *)
-      let live_after := PMap.get pc live in
-      let live_before := RegionLiveness.transfer f cfg generic_regions pc live_after in
+      let '(live_before, live_after) := PMap.get pc live in
       let oe := LOrgEnv.apply_liveness live_before oe in
       (* Why should we apply liveness here? Because if the next node
       is a merge node, then if we do not apply liveness here to clear
       some dead invariant relation, then at the next node we would
       first merge loan env which would introduce imprecision due to
-      this unclear invariant relation. However, I cannot imagine an
-      example related to this imprecision, so we do not apply liveness
-      here. *)
+      this unclear invariant relation. This case may cause imprecision
+      because the merged node may join two equality into one equality
+      (e.g., a=b and b=c would become a=b=c, if b is dead, then we
+      still get a=c which is imprecise *)
       (* let finish_transfer oe := (LoansEnv.State (LOrgEnv.apply_liveness live_after oe)) in *)
       let finish_transfer oe := (LoansEnv.State oe) in
       match cfg ! pc with
@@ -498,13 +498,14 @@ Definition init_function (f: function) : LOrgEnv.t :=
   
 (** Run Liveness analysis and Loans-flow analysis *)
 
-Definition loans_flow_analyze (ce: composite_env) (f: function) (cfg: rustcfg) (entry: node) : Errors.res (PMap.t RegionSet.t * (PMap.t LoansEnv.t)) :=
+Definition loans_flow_analyze (ce: composite_env) (f: function) (cfg: rustcfg) (entry: node) : Errors.res (liveness_info * (PMap.t LoansEnv.t)) :=
   (* Liveness analysis for regions *)
   let generic_regions := regset_fun f in
   match RegionLiveness.analyze f cfg with
-  | Some live =>
+  | Some live_after =>
+      let live := build_liveness_info f cfg generic_regions live_after in
       let init_oe := init_function f in
-      match LoansFlow.fixpoint cfg successors_instr (transfer ce f cfg live generic_regions) entry (LoansEnv.State init_oe) with
+      match LoansFlow.fixpoint cfg successors_instr (transfer ce f cfg live) entry (LoansEnv.State init_oe) with
       (* For now we return liveness result for debug purpose *)
       | Some m => OK (live, m)
       | None =>
@@ -559,7 +560,7 @@ Definition borrow_check_cond_expr (le: LoansEnv.t) (e: expr) : res unit :=
 should apply the liveness again here because Kildall only keep the
 most approximated (consider lub operation) result in the loans
 environments. *)
-Definition get_borck_result generic_regions f cfg (live_loan_env: (PMap.t RegionSet.t * (PMap.t LoansEnv.t))) (pc: node) : LoansEnv.t :=
+Definition get_borck_result (live_loan_env: (liveness_info * (PMap.t LoansEnv.t))) (pc: node) : LoansEnv.t :=
   let (live, loan_env) := live_loan_env in
   match loan_env !! pc with
   | LoansEnv.Bot => LoansEnv.Bot
@@ -568,15 +569,14 @@ Definition get_borck_result generic_regions f cfg (live_loan_env: (PMap.t Region
       because we want the checking procedure to align with the
       transfer function. It is also because if we do not apply
       liveness information to le, there may be some imprecision *)
-      let live_after := PMap.get pc live in
-      let live_before := RegionLiveness.transfer f cfg generic_regions pc live_after in
+      let '(live_before, live_after) := PMap.get pc live in
       LoansEnv.State (LOrgEnv.apply_liveness live_before oe)
   end.
 
 (* After calling borrow_check, we should find if there is any borrow
 check error *)
-Definition collect_borrow_check_result generic_region (f: function) (cfg: rustcfg) (loans_flow_res: (PMap.t RegionSet.t * (PMap.t LoansEnv.t))) : res unit :=
-  do _ <- transl_on_cfg (get_borck_result generic_region f cfg) (loans_flow_res) (borrow_check_stmt f) borrow_check_cond_expr f.(fn_body) cfg;
+Definition collect_borrow_check_result (f: function) (cfg: rustcfg) (loans_flow_res: (liveness_info * (PMap.t LoansEnv.t))) : res unit :=
+  do _ <- transl_on_cfg get_borck_result (loans_flow_res) (borrow_check_stmt f) borrow_check_cond_expr f.(fn_body) cfg;
   OK tt.
 
 
@@ -589,7 +589,7 @@ Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res 
   (** 1. Loans-flow analysis *)
   do loans_flow_res <- loans_flow_analyze ce f cfg entry;
   (** 2. Collect result of the borrow checking ! *)
-  collect_borrow_check_result generic_regions f cfg loans_flow_res.
+  collect_borrow_check_result f cfg loans_flow_res.
 
 Definition transf_fundef (ce: composite_env) (id: ident) (fd: fundef) : Errors.res fundef :=
   match fd with

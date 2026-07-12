@@ -128,13 +128,17 @@ let print_forward_ae pp ae =
     | _ -> fprintf pp "@ Diagnostics: %a" Driveraux.print_error log);
     fprintf pp "@.@."
 
-let print_live_regions pp live =
+let print_region_set pp live =
   let orgs = RegionSet.elements live in
-  fprintf pp "Live regions (after this node): %s@." (origin_list_to_string orgs) 
+  fprintf pp "%s" (origin_list_to_string orgs)
 
-let print_instruction_debug pp prog (pc, (i, (live, ae))) =
+let print_liveness_info pp (live_before, live_after) =
+  fprintf pp "Live regions (before this node): %a@." print_region_set live_before;
+  fprintf pp "Live regions (after this node): %a@." print_region_set live_after
+
+let print_instruction_debug pp prog (pc, (i, (live_info, ae))) =
   PrintRustIR.print_instruction pp prog (pc,i);
-  print_live_regions pp live;
+  print_liveness_info pp live_info;
   print_ae pp ae
 
 let print_instruction_forward_debug pp prog (pc, (i, ae)) =

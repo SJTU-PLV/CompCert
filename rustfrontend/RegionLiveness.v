@@ -130,3 +130,17 @@ Definition analyze (f: function) (cfg: rustcfg) : option (PMap.t RegionSet.t) :=
   (* All the generic regions are live at all points *)  
   let generic_regions := live_generic_regions f.(fn_generic_origins) in
   RegionLive.fixpoint cfg successors_instr (transfer f cfg generic_regions).
+
+Definition liveness_info : Type := PMap.t (RegionSet.t * RegionSet.t).
+
+Definition empty_liveness_info : liveness_info :=
+  PMap.init (RegionSet.empty, RegionSet.empty).
+
+Definition add_liveness_info (f: function) (cfg: rustcfg) (generic_regions: RegionSet.t) (live: PMap.t RegionSet.t)
+           (acc: liveness_info) (pc: positive) (instr: instruction) : liveness_info :=
+  let live_after := PMap.get pc live in
+  let live_before := transfer f cfg generic_regions pc live_after in
+  PMap.set pc (live_before, live_after) acc.
+
+Definition build_liveness_info (f: function) (cfg: rustcfg) (generic_regions: RegionSet.t) (live: PMap.t RegionSet.t) : liveness_info :=
+  PTree.fold (add_liveness_info f cfg generic_regions live) cfg empty_liveness_info.

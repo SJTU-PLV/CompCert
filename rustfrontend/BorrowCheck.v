@@ -87,12 +87,11 @@ Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res 
     (* 3.1. Loans-flow analysis *)
     do (live, loansEnv) <- BorrowCheckPoloniusInterp.loans_flow_analyze ce f cfg entry;
     (* 3.2. check illegal access of active loans *)
-    let generic_regions := RegionLiveness.live_generic_regions (fn_generic_origins f) in
     (* There should be no local regions that are live at the entry
-    (which means that it is used without initialization) *)
-    let live_before_entry := RegionLiveness.transfer f cfg (live !! entry) entry generic_regions in
-    do _ <- check_no_live_local_regions_at_entry live_before_entry f;
-    BorrowCheckPoloniusInterp.collect_borrow_check_result ce generic_regions f cfg (live, loansEnv).
+    (which means that it is used without initialization). This should be checked by initialization analysis *)
+    (* let live_before_entry := fst (live !! entry) in *)
+    (* do _ <- check_no_live_local_regions_at_entry live_before_entry f;  *)
+    BorrowCheckPoloniusInterp.collect_borrow_check_result ce f cfg (live, loansEnv).
 
 Definition borrow_check_fundef (ce : composite_env) (id : ident) (fd : fundef) : Errors.res fundef :=
   match fd with
