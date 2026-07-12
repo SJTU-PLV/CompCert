@@ -12,7 +12,7 @@ open BorrowCheckDomain
 open UnionFindDelete
 open RegionLiveness
 
-module Old = BorrowCheckPolonius
+module Old = BorrowCheckPoloniusInterp
 module Fwd = BorrowCheckPoloniusForward
 
 let print_mutkind pp (mut: mutkind) =
@@ -108,11 +108,14 @@ let print_live_loans pp (ls: LoanSet.t) =
 
 let print_ae pp ae =
   match ae with
-  | LoansEnv.Bot ->
+  | Old.LoansLogEnv.Bot ->
     fprintf pp "Unreachable point@.@."
-  | LoansEnv.State(org_env) ->
-    (* TODO: print alias graph *)
-    fprintf pp "%a@.@." print_origin_env org_env
+  | Old.LoansLogEnv.State(org_env, log) ->
+    fprintf pp "%a" print_origin_env org_env;
+    (match log with
+    | [] -> ()
+    | _ -> fprintf pp "@ Diagnostics: %a" Driveraux.print_error log);
+    fprintf pp "@.@."
 
 let print_forward_ae pp ae =
   match ae with

@@ -8,7 +8,7 @@ Require Import Errors.
 Require Import Rusttyping.
 Require Import MoveChecking.
 Require Import Compopts.
-Require Import BorrowCheckPolonius.
+Require Import BorrowCheckPoloniusInterp.
 Require BorrowCheckPoloniusForward.
 
 Import ListNotations.
@@ -85,14 +85,14 @@ Definition borrow_check_function (ce: composite_env) (f: function) : Errors.res 
     BorrowCheckPoloniusForward.collect_borrow_check_result ce f cfg abs_env
   else
     (* 3.1. Loans-flow analysis *)
-    do (live, loansEnv) <- loans_flow_analyze ce f cfg entry;
+    do (live, loansEnv) <- BorrowCheckPoloniusInterp.loans_flow_analyze ce f cfg entry;
     (* 3.2. check illegal access of active loans *)
     let generic_regions := RegionLiveness.live_generic_regions (fn_generic_origins f) in
     (* There should be no local regions that are live at the entry
     (which means that it is used without initialization) *)
     let live_before_entry := RegionLiveness.transfer f cfg (live !! entry) entry generic_regions in
     do _ <- check_no_live_local_regions_at_entry live_before_entry f;
-    collect_borrow_check_result generic_regions f cfg (live, loansEnv).
+    BorrowCheckPoloniusInterp.collect_borrow_check_result ce generic_regions f cfg (live, loansEnv).
 
 Definition borrow_check_fundef (ce : composite_env) (id : ident) (fd : fundef) : Errors.res fundef :=
   match fd with
