@@ -362,9 +362,14 @@ Definition transfer_function_call (oe1: LOrgOptEnv.t) (p: place) (ef: expr) (arg
       cannot be expressed in the function signature for now) *)
       let msg := 
         if no_sameclass (LOrgOptEnv.uf oe3) orgs then        
-          nil
+          (* all generic regions must be valid *)
+          if existsb (invalidated_region_access oe3) orgs then
+            [MSG "There is some generic region that is invalid at function call"]
+          else
+            nil
         else
-          [MSG "There is some generic region that may not be a singleton when calling a function"] in
+          [MSG "There is some generic region that may not be a singleton when calling a function"] 
+      in
       logdo oe3 <- Log.with_log oe3 msg;
       (* apply the effect of the function call *)
       let oe4 := after_call oe3 org_rels in
