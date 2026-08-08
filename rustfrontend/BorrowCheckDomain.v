@@ -904,20 +904,62 @@ Module LoansEnv <: SEMILATTICE.
         State (LOrgEnv.lub oe1 oe2) 
     end.
 
-  (** TODO  *)
-  Axiom eq_refl: forall x, eq x x.
-  Axiom eq_sym: forall x y, eq x y -> eq y x.
-  Axiom eq_trans: forall x y z, eq x y -> eq y z -> eq x z.
+  Lemma eq_refl: forall x, eq x x.
+  Proof.
+    destruct x; simpl; auto using LOrgEnv.eq_refl.
+  Qed.
 
-  Axiom beq_correct: forall x y, beq x y = true -> eq x y.
+  Lemma eq_sym: forall x y, eq x y -> eq y x.
+  Proof.
+    destruct x, y; simpl; auto using LOrgEnv.eq_sym.
+  Qed.
 
-  Axiom ge_refl: forall x y, eq x y -> ge x y.
-  Axiom ge_trans: forall x y z, ge x y -> ge y z -> ge x z.
+  Lemma eq_trans: forall x y z, eq x y -> eq y z -> eq x z.
+  Proof.
+    destruct x, y, z; simpl; try tauto.
+    intros. eapply LOrgEnv.eq_trans; eauto.
+  Qed.
 
-  Axiom ge_bot: forall x, ge x bot.
+  Lemma beq_correct: forall x y, beq x y = true -> eq x y.
+  Proof.
+    destruct x, y; simpl; intros; try congruence.
+    eapply LOrgEnv.beq_correct; eauto.
+  Qed.
 
-  Axiom ge_lub_left: forall x y, ge (lub x y) x.
-  Axiom ge_lub_right: forall x y, ge (lub x y) y.
+  Lemma ge_refl: forall x y, eq x y -> ge x y.
+  Proof.
+    destruct x, y; simpl; try tauto.
+    intros. eapply LOrgEnv.ge_refl; eauto.
+  Qed.
+
+  Lemma ge_trans: forall x y z, ge x y -> ge y z -> ge x z.
+  Proof.
+    destruct x, y, z; simpl; try tauto.
+    intros. eapply LOrgEnv.ge_trans; eauto.
+  Qed.
+
+  Lemma ge_bot: forall x, ge x bot.
+  Proof.
+    destruct x; simpl; auto.
+  Qed.
+
+  Lemma ge_lub_left: forall x y, ge (lub x y) x.
+  Proof.
+    destruct x, y.
+    - apply ge_refl; apply eq_refl.
+    - simpl; auto.
+    - apply ge_refl; apply eq_refl.
+    - simpl; apply LOrgEnv.ge_lub_left.
+  Qed.
+
+  Lemma ge_lub_right: forall x y, ge (lub x y) y.
+  Proof.
+    destruct x, y.
+    - apply ge_refl; apply eq_refl.
+    - apply ge_refl; apply eq_refl.
+    - simpl; auto.
+    - simpl; apply LOrgEnv.ge_lub_right.
+  Qed.
 
 End LoansEnv.
 
@@ -974,20 +1016,62 @@ Module LoansOptEnv <: SEMILATTICE.
         State (LOrgOptEnv.lub oe1 oe2) nil
     end.
 
-  (** TODO  *)
-  Axiom eq_refl: forall x, eq x x.
-  Axiom eq_sym: forall x y, eq x y -> eq y x.
-  Axiom eq_trans: forall x y z, eq x y -> eq y z -> eq x z.
+  Lemma eq_refl: forall x, eq x x.
+  Proof.
+    destruct x; simpl; auto using LOrgOptEnv.eq_refl.
+  Qed.
 
-  Axiom beq_correct: forall x y, beq x y = true -> eq x y.
+  Lemma eq_sym: forall x y, eq x y -> eq y x.
+  Proof.
+    destruct x, y; simpl; auto using LOrgOptEnv.eq_sym.
+  Qed.
 
-  Axiom ge_refl: forall x y, eq x y -> ge x y.
-  Axiom ge_trans: forall x y z, ge x y -> ge y z -> ge x z.
+  Lemma eq_trans: forall x y z, eq x y -> eq y z -> eq x z.
+  Proof.
+    destruct x, y, z; simpl; try tauto.
+    intros. eapply LOrgOptEnv.eq_trans; eauto.
+  Qed.
 
-  Axiom ge_bot: forall x, ge x bot.
+  Lemma beq_correct: forall x y, beq x y = true -> eq x y.
+  Proof.
+    destruct x, y; simpl; intros; try congruence.
+    eapply LOrgOptEnv.beq_correct; eauto.
+  Qed.
 
-  Axiom ge_lub_left: forall x y, ge (lub x y) x.
-  Axiom ge_lub_right: forall x y, ge (lub x y) y.
+  Lemma ge_refl: forall x y, eq x y -> ge x y.
+  Proof.
+    destruct x, y; simpl; try tauto.
+    intros. eapply LOrgOptEnv.ge_refl; eauto.
+  Qed.
+
+  Lemma ge_trans: forall x y z, ge x y -> ge y z -> ge x z.
+  Proof.
+    destruct x, y, z; simpl; try tauto.
+    intros. eapply LOrgOptEnv.ge_trans; eauto.
+  Qed.
+
+  Lemma ge_bot: forall x, ge x bot.
+  Proof.
+    destruct x; simpl; auto.
+  Qed.
+
+  Lemma ge_lub_left: forall x y, ge (lub x y) x.
+  Proof.
+    destruct x, y.
+    - apply ge_refl; apply eq_refl.
+    - simpl; auto.
+    - apply ge_refl; apply eq_refl.
+    - simpl; apply LOrgOptEnv.ge_lub_left.
+  Qed.
+
+  Lemma ge_lub_right: forall x y, ge (lub x y) y.
+  Proof.
+    destruct x, y.
+    - apply ge_refl; apply eq_refl.
+    - apply ge_refl; apply eq_refl.
+    - simpl; auto.
+    - simpl; apply LOrgOptEnv.ge_lub_right.
+  Qed.
 
 End LoansOptEnv.
 
