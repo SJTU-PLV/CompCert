@@ -141,10 +141,12 @@ Definition adt_mem_env : Type := ident -> Adt_mem.
 
 Section SPEC.
 
-(* I think this environment is a premise for the whole borrow checking
-proof and the RustIRspec. When we want to use the borow checking
-proof, we must provide its instance. *)
+(* Object support currently disabled.
+I think this environment is a premise for the whole borrow checking
+proof and the RustIRspec. When we want to use the borrow checking
+proof, we must provide its instance.
 Context {ame: adt_mem_env}.
+*)
 
 (** RustIR functional specification. *)
 
@@ -173,7 +175,8 @@ Inductive footprint : Type :=
   fp_uninit like move operation does is because if we convert it to
   fp_uninit, then some deep_init footprint would become not
   deep_init. *)
-| fp_object (id: ident) (obj: (mem_repr (ame id))) (exposed: list (ident * ((block * Z) * type * footprint)))
+(* | fp_object (id: ident) (obj: (mem_repr (ame id)))
+     (exposed: list (ident * ((block * Z) * type * footprint))) *)
 .
 
 (* Induction principle for footprint *)
@@ -186,8 +189,10 @@ Variable (P: footprint -> Prop)
   (HPbox: forall (b : block) (fp : footprint), P fp -> P (fp_box b fp))
   (HPstruct: forall id fpl, (forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl -> P ffp) -> P (fp_struct id fpl))
   (HPenum: forall id (tag : Z) fid fofs (ffp : footprint), P ffp -> P (fp_enum id tag fid fofs ffp))
-  (HPref: forall mut b ofs ref_owner vs, P (fp_ref mut b ofs ref_owner vs))
-  (HPobj: forall id obj bors, (forall fid b ofs ffp, In (fid, (b, ofs, ffp)) bors -> P ffp) -> P (fp_object id obj bors)).
+  (HPref: forall mut b ofs ref_owner vs, P (fp_ref mut b ofs ref_owner vs)).
+  (* (HPobj: forall id obj bors,
+       (forall fid b ofs ffp, In (fid, (b, ofs, ffp)) bors -> P ffp) ->
+       P (fp_object id obj bors)). *)
 
 Fixpoint strong_footprint_ind t: P t.
 Proof.
@@ -203,12 +208,14 @@ Proof.
         (* now subst. *)
       * apply (IHfpl fid base fofs ffp H). 
   - apply HPenum. apply strong_footprint_ind.
-  - apply HPref. 
-  - eapply HPobj. induction exposed.
+  - apply HPref.
+  (* - eapply HPobj. induction exposed.
     + intros. inv H.
-    + intros. destruct a as (fid1 & ((b1 & ofs1) & fp1)). simpl in H. destruct H.
-      * specialize (strong_footprint_ind fp1). inv H. apply strong_footprint_ind.
-      * apply (IHexposed fid b ofs ffp H). 
+    + intros. destruct a as (fid1 & ((b1 & ofs1) & fp1)).
+      simpl in H. destruct H.
+      * specialize (strong_footprint_ind fp1). inv H.
+        apply strong_footprint_ind.
+      * apply (IHexposed fid b ofs ffp H). *)
 Qed.
     
 End FP_IND.
@@ -273,7 +280,7 @@ Definition sizeof_footprint ce (fp: footprint) : Z :=
   | fp_enum id _ _ _ _ => sizeof_comp ce id
   | fp_struct id _ => sizeof_comp ce id
   | fp_ref _ _ _ _ _ => size_chunk Mptr
-  | fp_object id _ _ => adt_size (ame id)
+  (* | fp_object id _ _ => adt_size (ame id) *)
   end.
 
 Definition alignof_footprint ce (fp: footprint) : Z :=
@@ -285,7 +292,7 @@ Definition alignof_footprint ce (fp: footprint) : Z :=
   | fp_enum id _ _ _ _ => alignof_comp ce id
   | fp_struct id _ => alignof_comp ce id
   | fp_ref _ _ _ _ _ => align_chunk Mptr
-  | fp_object id _ _ => adt_align (ame id)
+  (* | fp_object id _ _ => adt_align (ame id) *)
   end.
 
 
@@ -386,13 +393,13 @@ Fixpoint set_footprint (phl: list projection) (v: footprint) (fp: footprint) : r
               OK (fp_struct id (set_field_fp fid ffp1 fpl)) 
           | None => Error nil
           end
-      | proj_field fid, fp_object id obj exposed =>
+      (* | proj_field fid, fp_object id obj exposed =>
           match find_field fid exposed with
           | Some ((b, ofs), ffp) =>
               do ffp1 <- set_footprint l v ffp;
               OK (fp_object id obj (set_field_fp fid ffp1 exposed))
           | None => Error nil
-          end                  
+          end *)
       | proj_downcast fid, fp_enum id tagz fid1 fofs1 fp1 =>
           (** Type safe checking *)
           if ident_eq fid fid1 then
@@ -436,12 +443,12 @@ Fixpoint get_owner_loc_footprint (phl: list projection) (fp: footprint) (b: bloc
               get_owner_loc_footprint l fp1 b (ofs + fofs)
           | None => Error nil
           end
-      | proj_field fid, fp_object id obj fpl =>
+      (* | proj_field fid, fp_object id obj fpl =>
           match find_field fid fpl with
           | Some (b, ofs, ty, fp1) =>
               get_owner_loc_footprint l fp1 b ofs
           | None => Error nil
-          end
+          end *)
       | proj_downcast fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
           if ident_eq fid1 fid2  then
             get_owner_loc_footprint l fp1 b (ofs + fofs)
@@ -465,12 +472,12 @@ Fixpoint get_owner_footprint (phl: list projection) (fp: footprint) : res footpr
               get_owner_footprint l fp1
           | None => Error nil
           end
-      | proj_field fid, fp_object id obj fpl =>
+      (* | proj_field fid, fp_object id obj fpl =>
           match find_field fid fpl with
           | Some (b, ofs, fp1) =>
               get_owner_footprint l fp1
           | None => Error nil
-          end
+          end *)
       | proj_downcast fid1 (* fty1 *), fp_enum id _ fid2 fofs fp1 =>
           if ident_eq fid1 fid2 then
             get_owner_footprint l fp1
@@ -563,12 +570,12 @@ Fixpoint get_owner_path (fpg: fp_map) (ph: path) (phl: list projection) (fp: foo
               get_owner_path fpg ph1 l ffp alias1
           | None => Error nil
           end
-      | proj_field fid, fp_object _ _ fpl =>
+      (* | proj_field fid, fp_object _ _ fpl =>
           match find_field fid fpl with
           | Some (_, ffp) =>
               get_owner_path fpg ph1 l ffp alias1
           | None => Error nil
-          end
+          end *)
       | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
           if ident_eq fid1 fid2 then
             get_owner_path fpg ph1 l fp1 alias1
@@ -619,12 +626,12 @@ Fixpoint get_reachable_path (fpg: fp_map) (phl: list projection) (fp: footprint)
               get_reachable_path fpg l ffp
           | None => Error nil
           end
-      | proj_field fid, fp_object _ _ fpl =>
+      (* | proj_field fid, fp_object _ _ fpl =>
           match find_field fid fpl with
           | Some (_, ffp) =>
               get_reachable_path fpg l ffp
           | None => Error nil
-          end
+          end *)
       | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
           if ident_eq fid1 fid2 then
             get_reachable_path fpg l fp1
@@ -658,12 +665,12 @@ Fixpoint get_reachable_footprint (fpg: fp_map) (phl: list projection) (fp: footp
               get_reachable_footprint fpg l ffp
           | None => Error nil
           end
-      | proj_field fid, fp_object _ _ fpl =>
+      (* | proj_field fid, fp_object _ _ fpl =>
           match find_field fid fpl with
           | Some (_, ffp) =>
               get_reachable_footprint fpg l ffp
           | None => Error nil
-          end
+          end *)
       | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
           if ident_eq fid1 fid2 then
             get_reachable_footprint fpg l fp1
@@ -701,13 +708,13 @@ Fixpoint get_owner_footprint_type ce (phl: list projection) (ty: type) (fp: foot
               get_owner_footprint_type ce l fty fp1
           | None => Error nil
           end
-      (* Get the object's exposed borrowable value *)
+      (* Get the object's exposed borrowable value.
       | proj_field fid, fp_object _ _ fpl =>
           match find_field fid fpl with
           | Some (_, fty1, fp1) =>
               get_owner_footprint_type ce l fty1 fp1
           | None => Error nil
-          end
+          end *)
       | proj_downcast fid1, fp_enum _ _ fid2 _ fp1 =>
           if ident_eq fid1 fid2 then
               do fty <- type_field ce ty fid1;
@@ -1064,11 +1071,12 @@ Fixpoint generate_new_suffix_path_footprint (process_views: path -> views -> vie
   | fp_enum id tag fid fofs ffp =>
       do ffp1 <- generate_new_suffix_path_footprint process_views l ffp;
       OK (fp_enum id tag fid fofs ffp1)
-  | fp_object id obj fpl =>
-      do fpl1 <- (mmap (fun '(fid, (r, ffp)) => 
-                            do ffp1 <- generate_new_suffix_path_footprint process_views l ffp;
-                            OK (fid, (r, ffp1))) fpl);
-      OK (fp_object id obj fpl1)
+  (* | fp_object id obj fpl =>
+      do fpl1 <- mmap (fun '(fid, (r, ffp)) =>
+                        do ffp1 <- generate_new_suffix_path_footprint
+                                     process_views l ffp;
+                        OK (fid, (r, ffp1))) fpl;
+      OK (fp_object id obj fpl1) *)
   | _ => OK fp
   end.
 
@@ -1121,11 +1129,11 @@ Fixpoint rename_path_footprint (substs: PTree.t ident) (fp: footprint) : res foo
   | fp_enum id tag fid fofs ffp =>
       do ffp1 <- rename_path_footprint substs ffp;
       OK (fp_enum id tag fid fofs ffp1)
-  | fp_object id obj fpl =>
-      do fpl1 <- (mmap (fun '(fid, (r, ffp)) => 
-                            do ffp1 <- rename_path_footprint substs ffp;
-                            OK (fid, (r, ffp1))) fpl);
-      OK (fp_object id obj fpl1)
+  (* | fp_object id obj fpl =>
+      do fpl1 <- mmap (fun '(fid, (r, ffp)) =>
+                        do ffp1 <- rename_path_footprint substs ffp;
+                        OK (fid, (r, ffp1))) fpl;
+      OK (fp_object id obj fpl1) *)
   | _ => OK fp
   end.
 
@@ -1241,11 +1249,12 @@ Fixpoint recover_footprint_ref_paths (process_views: views -> views) (l: list (i
   | fp_enum id tag fid fofs ffp =>
       do ffp1 <- recover_footprint_ref_paths process_views l ffp;
       OK (fp_enum id tag fid fofs ffp1)
-  | fp_object id obj fpl =>
-      do fpl1 <- mmap (fun '(fid, (r, ffp)) => 
-                        do ffp1 <- recover_footprint_ref_paths process_views l ffp;
+  (* | fp_object id obj fpl =>
+      do fpl1 <- mmap (fun '(fid, (r, ffp)) =>
+                        do ffp1 <- recover_footprint_ref_paths
+                                     process_views l ffp;
                         OK (fid, (r, ffp1))) fpl;
-      OK (fp_object id obj fpl1)
+      OK (fp_object id obj fpl1) *)
   | _ =>
       OK fp
   end.

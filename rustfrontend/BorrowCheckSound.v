@@ -30,9 +30,6 @@ Local Open Scope Z_scope.
 Definition enc_reg (frame: frame_idx) (r: origin) :=
   prod_encode frame r.
 
-Definition append_projs (phl: list projection) (ph: path) :=
-  (fst ph, snd ph ++ phl).
-
 (** Move to other files. Properties of wt_path  *)
 
 Lemma wt_projections_append ce: forall phl1 phl2 ty1 ty2 ty3,
@@ -93,12 +90,14 @@ Admitted.
 
 Section ADT_ENV.
 
+(* Object support currently disabled.
 Context {ame: adt_mem_env}.
 
 Notation footprint := (@footprint ame).
 Notation fp_map := (@fp_map ame).
 Notation state := (@state ame).
 Notation get_owner_path_map := (@get_owner_path_map ame).
+*)
 
 Section BORROW_CHECK.
 
@@ -106,7 +105,7 @@ Variable prog: program.
 (* Variable w: rs_own_world. *)
 Variable se: Genv.symtbl.
 Hypothesis VALIDSE: Genv.valid_for (erase_program prog) se.
-Let L := @semantics ame prog se.
+Let L := @semantics prog se.
 Let ge := globalenv se prog.
 
 (* composite environment *)
@@ -540,7 +539,64 @@ Lemma get_reachable_footprint_append: forall phl1 phl2 fp1 fp2 fp3 (fpm: fp_map)
     get_reachable_footprint fpm phl1 fp1 = OK fp2 ->
     get_reachable_footprint fpm phl2 fp2 = OK fp3 ->
     get_reachable_footprint fpm (phl1 ++ phl2) fp1 = OK fp3.
-Admitted.
+Proof using Type.
+  induction phl1 as [|pj phl1 IH]; simpl; intros.
+  - inv H. auto.
+  - destruct pj; destruct fp1; simpl in *; try congruence.
+    + eapply IH; eauto.
+    + destruct ph as [ph|]; simpl in *; try congruence.
+      destruct (get_owner_footprint_map ph fpm) as [fp|err] eqn:GET;
+        simpl in *; try congruence.
+      eapply IH; eauto.
+    + destruct (find_field fid fpl) as [[ofs fp]|] eqn:FIND;
+        simpl in *; try congruence.
+      eapply IH; eauto.
+    (* + destruct (find_field fid exposed) as [[ofs fp]|] eqn:FIND;
+         simpl in *; try congruence.
+       eapply IH; eauto. *)
+    + destruct (ident_eq fid fid0); simpl in *; try congruence.
+      eapply IH; eauto.
+Qed.
+
+
+Lemma get_owner_path_reachable_footprint: forall (fpm: fp_map)
+    ph phl fp aliases ph1 aliases1 fp1,
+    get_owner_footprint_map ph fpm = OK fp ->
+    get_owner_path fpm ph phl fp aliases = OK (ph1, aliases1) ->
+    get_owner_footprint_map ph1 fpm = OK fp1 ->
+    get_reachable_footprint fpm phl fp = OK fp1.
+Proof using Type.
+  intros fpm ph phl. revert ph.
+  induction phl as [|pj phl IH]; simpl; intros.
+  - inv H0. congruence.
+  - destruct pj; destruct fp; simpl in *; try congruence.
+    + eapply IH; eauto.
+      unfold append_proj.
+      eapply get_owner_footprint_map_append; eauto.
+    + destruct ph0 as [ph2|]; simpl in *; try congruence.
+      destruct (get_owner_footprint_map ph2 fpm) as [fp2|err] eqn:GET;
+        simpl in *; try congruence.
+      eapply IH; eauto.
+    + destruct (find_field fid fpl) as [[ofs fp]|] eqn:FIND;
+        simpl in *; try congruence.
+      eapply IH; eauto.
+      unfold append_proj.
+      eapply get_owner_footprint_map_append; eauto.
+      simpl. rewrite FIND. reflexivity.
+    (* + destruct (find_field fid exposed) as [[ofs fp]|] eqn:FIND;
+         simpl in *; try congruence.
+       eapply IH; eauto.
+       unfold append_proj.
+       eapply get_owner_footprint_map_append; eauto.
+       destruct ofs as [[b ofs] ty]; simpl in *.
+       rewrite FIND. reflexivity. *)
+    + destruct (ident_eq fid fid0); simpl in *; try congruence.
+      subst fid0.
+      eapply IH; eauto.
+      unfold append_proj.
+      eapply get_owner_footprint_map_append; eauto.
+      simpl. rewrite dec_eq_true. reflexivity.
+Qed.
 
   
 (* get_reachable_footprint_map can be divided into get_owner_path_map
@@ -550,33 +606,66 @@ Lemma get_reachable_footprint_map_append: forall (fpm: fp_map) ph phl ph1 vs fp 
     get_owner_footprint_map ph1 fpm = OK fp ->
     get_reachable_footprint fpm phl fp = OK fp1 ->
     get_reachable_footprint_map fpm (append_projs phl ph) = OK fp1.
-Admitted.
-
-
-Lemma get_owner_footprint_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ak am fp,
-    get_owner_footprint_map ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK fp ->
-    exists fp', get_owner_footprint_map ph1 fpm = OK fp'
-           /\ invalidate_conflict_ref ph2 ak am fp' = fp.
-Admitted.
-
-Lemma get_owner_path_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ph vs ak am,
-    get_owner_path_map ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK (ph, vs) ->
-    get_owner_path_map ph1 fpm = OK (ph, vs).    
-Admitted.
+Proof using Type.
+  intros fpm [id prefix] phl ph1 vs fp fp1 GET_PATH GET_FP GET_REACH.
+  unfold get_owner_path_map in GET_PATH; simpl in GET_PATH.
+  unfold append_projs, get_reachable_footprint_map; simpl.
+  destruct (fpm ! id) as [entry|] eqn:FPM; try congruence.
+  destruct entry as [[[b ofs] ty] root]; simpl in GET_PATH |- *.
+  assert (GET_ROOT:
+      get_owner_footprint_map (id, nil) fpm = OK root).
+  { unfold get_owner_footprint_map. simpl. rewrite FPM. reflexivity. }
+  assert (GET_PREFIX:
+      get_reachable_footprint fpm prefix root = OK fp).
+  { eapply get_owner_path_reachable_footprint; eauto. }
+  eapply get_reachable_footprint_append; eauto.
+Qed.
 
 
 Lemma get_reachable_footprint_after_invalidate_ref: forall phl (fpm: fp_map) ph ak am fp fp1,
     get_reachable_footprint (invalidate_conflict_ref_fpm ph ak am fpm) phl (invalidate_conflict_ref ph ak am fp) = OK fp1 ->
     exists fp2, get_reachable_footprint fpm phl fp = OK fp2
            /\ invalidate_conflict_ref ph ak am fp2 = fp1.
-Admitted.
+Proof using Type.
+  induction phl as [|pj phl IH]; simpl; intros.
+  - inv H. eauto.
+  - destruct pj; destruct fp;
+      cbn [invalidate_conflict_ref get_reachable_footprint] in H |- *;
+      try congruence.
+    + eapply IH; eauto.
+    + destruct (conflict_access ak mut && conflict_view ph am vs)
+        eqn:CONFLICT; simpl in H; try congruence.
+      destruct ph0 as [target|]; simpl in H |- *; try congruence.
+      destruct (get_owner_footprint_map target
+        (invalidate_conflict_ref_fpm ph ak am fpm))
+        as [invalid_fp|err] eqn:GET; simpl in H; try congruence.
+      destruct (get_owner_footprint_map_after_invalidate_ref
+        fpm target ph ak am invalid_fp GET)
+        as (original_fp & GET_ORIGINAL & INVALID).
+      rewrite GET_ORIGINAL. simpl.
+      eapply IH. rewrite INVALID. exact H.
+    + rewrite find_field_invalidate_conflict_ref in H.
+      destruct (find_field fid fpl) as [[ofs ffp]|] eqn:FIND;
+        simpl in H |- *; try congruence.
+      eapply IH; eauto.
+    + destruct (ident_eq fid fid0); simpl in H |- *; try congruence.
+      eapply IH; eauto.
+Qed.
 
 
 Lemma get_reachable_footprint_map_after_invalidate_ref: forall (fpm: fp_map) ph1 ph2 ak am fp,
     get_reachable_footprint_map (invalidate_conflict_ref_fpm ph2 ak am fpm) ph1 = OK fp ->
     exists fp', get_reachable_footprint_map fpm ph1 = OK fp'
            /\ invalidate_conflict_ref ph2 ak am fp' = fp.
-Admitted.
+Proof using Type.
+  intros fpm [id phl] ph2 ak am fp GET.
+  unfold get_reachable_footprint_map in GET |- *. simpl in GET |- *.
+  unfold invalidate_conflict_ref_fpm in GET.
+  rewrite PTree.gmap1 in GET.
+  destruct (fpm ! id) as [entry|] eqn:FPM; simpl in GET; try congruence.
+  destruct entry as [[[b ofs] ty] root]; simpl in GET.
+  eapply get_reachable_footprint_after_invalidate_ref; eauto.
+Qed.
 
 
 Ltac destr_fp_map_elt p :=
@@ -593,7 +682,7 @@ Ltac destr_fp_map_elt p :=
 
 Lemma fpm_to_tenv_after_invalidate_ref: forall (fpm: fp_map) ph ak am,
     fpm_to_tenv (invalidate_conflict_ref_fpm ph ak am fpm) = fpm_to_tenv fpm.
-Proof.
+Proof using Type.
   intros. unfold fpm_to_tenv, invalidate_conflict_ref_fpm. 
   eapply PTree.extensionality.
   intros. erewrite ! PTree.gmap1.
@@ -609,8 +698,20 @@ Qed.
 Lemma fpm_to_tenv_after_set_footprint_map: forall (fpm1 fpm2: fp_map) ph fp,
     set_footprint_map ph fp fpm1 = OK fpm2 ->
     fpm_to_tenv fpm2 = fpm_to_tenv fpm1.
-Proof.
-Admitted.
+Proof using Type.
+  intros fpm1 fpm2 [id phl] fp SET.
+  unfold set_footprint_map in SET. simpl in SET.
+  destruct (fpm1 ! id) as [entry|] eqn:FPM; try congruence.
+  destruct entry as [[[b ofs] ty] old_fp].
+  destruct (set_footprint phl fp old_fp) as [new_fp|err] eqn:SET_FP;
+    simpl in SET; try congruence.
+  inv SET.
+  unfold fpm_to_tenv. eapply PTree.extensionality. intros key.
+  rewrite ! PTree.gmap1. rewrite PTree.gsspec.
+  destruct (peq key id).
+  - subst key. rewrite FPM. reflexivity.
+  - reflexivity.
+Qed.
 
 
 Hint Resolve get_owner_footprint_map_after_invalidate_ref
@@ -893,8 +994,8 @@ Fixpoint fp_not_contain_ref (fp: footprint) : bool :=
   | fp_enum _ _ _ _ ffp =>
       fp_not_contain_ref ffp 
   | fp_ref _ _ _ _ _ => false
-  | fp_object _ _ fpl =>
-      forallb (fun '(_, (_, _, _, ffp)) => fp_not_contain_ref ffp) fpl
+  (* | fp_object _ _ fpl =>
+      forallb (fun '(_, (_, _, _, ffp)) => fp_not_contain_ref ffp) fpl *)
   end.
 
 Lemma sound_loan_analysis_footprint_trivial: forall fp le fpm ty,

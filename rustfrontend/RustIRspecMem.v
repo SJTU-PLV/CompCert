@@ -80,12 +80,14 @@ Fixpoint range_list (l: list (block * Z * Z)) : massert :=
 
 Section ADT_ENV.
 
-(* I think this environment is a premise for the whole borrow checking
-proof. When we want to use the borow checking proof, we must provide
-its instance. *)
+(* Object support currently disabled.
+I think this environment is a premise for the whole borrow checking
+proof. When we want to use the borrow checking proof, we must provide
+its instance.
 Context {ame: adt_mem_env}.
 Notation footprint := (@footprint ame).
 Notation fp_map := (@fp_map ame).
+*)
 
 (* We cannot write Forall (fun ... => sem_wt_loc ... in sem_wt_struct)
 which would report error that sem_wt_loc does not occur positively, so
@@ -181,11 +183,11 @@ say this location is still sem_wt_loc *)
     (ALPERM: padmp = range b (ofs + size_chunk Mint32) (ofs + fofs))
     (EQV: massert_eqv mp (mass1 ** padmp ** mass2 ** (spure (alignof_comp ce id | ofs)))),
     sem_wt_loc (fp_enum id tagz fid fofs fp) b ofs mp
-| sem_wt_object: forall id obj mp1 mp2 mp3 b ofs exposed
+(* | sem_wt_object: forall id obj mp1 mp2 mp3 b ofs exposed
     (PRED: (ame id).(mem_pred) obj b ofs mp1)
     (EXPOSED: exposed_loc_sep sem_wt_loc exposed mp2)
     (EQV: massert_eqv (mp1 ** mp2) mp3),
-    sem_wt_loc (fp_object id obj exposed) b ofs mp3
+    sem_wt_loc (fp_object id obj exposed) b ofs mp3 *)
 .
 
 (* The interpretation of footprint *)
@@ -417,8 +419,9 @@ Proof.
     eapply sepconj_morph_2. reflexivity.
     eapply sepconj_morph_2. 
     eapply IHfp; eauto. reflexivity.
+  (* Object case.
   - subst_dep.
-    admit.
+    admit. *)
 Admitted.
 
 Lemma fields_fp_sep_unique : forall fpl mp1 mp2 (P: footprint -> massert -> Prop)
@@ -854,8 +857,8 @@ Definition fp_match_chunk (fp: footprint) chunk : Prop :=
   | fp_ref _ _ _ _ _ => chunk = Mptr
   | fp_emp
   | fp_struct _ _
-  | fp_enum _ _ _ _ _ 
-  | fp_object _ _ _ => False
+  | fp_enum _ _ _ _ _ => False
+  (* | fp_object _ _ _ => False *)
   end.
 
 
@@ -894,7 +897,8 @@ Inductive fields_fp_well_formed ce : footprint -> Prop :=
 | fp_scalar_wf chunk v: fields_fp_well_formed ce (fp_scalar chunk v)
 | fp_box_wf b fp: fields_fp_well_formed ce (fp_box b fp)
 | fp_ref_wf mut b ofs phs vs: fields_fp_well_formed ce (fp_ref mut b ofs phs vs)
-| fp_object_wf id obj exposed: fields_fp_well_formed ce (fp_object id obj exposed)
+(* | fp_object_wf id obj exposed:
+    fields_fp_well_formed ce (fp_object id obj exposed) *)
 | fp_struct_wf: forall id fpl
      (* This property says that all fields are within the size of this
      footprint *)
@@ -1324,7 +1328,7 @@ Admitted.
 
 Definition pin_footprint (fp: footprint) : bool :=
   match fp with
-  | fp_object _ _ _ => true
+  (* | fp_object _ _ _ => true *)
   | _ => false
   end.
 

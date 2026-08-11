@@ -641,13 +641,22 @@ Ltac destr_find_field H :=
 
 (* Graph properties of sv_map *)
 
-Ltac inv_get_owner_path_app H :=
-  let GPH := fresh "GPH" in
-  let GPH1 := fresh "GPH1" in
-  let GVAL := fresh "GVAL" in
-  let GPH2 := fresh "GPH2" in
-  eapply get_owner_path_app_inv in H as GPH;
-  destruct GPH as (?ph & ?vs & ?fp & GPH1 & GVAL & GPH2).
+Ltac inv_get_owner_path_app H ROOT :=
+  match type of H with
+  | get_owner_path ?fpm ?ph1 (?phl1 ++ ?phl2) ?fp ?aliases =
+      OK (?ph3, ?views) =>
+      let GET_ROOT := fresh "GET_ROOT" in
+      assert (GET_ROOT: get_owner_footprint_map ph1 fpm = OK fp) by
+        (unfold get_owner_footprint_map; simpl; rewrite ROOT; reflexivity);
+      let GPH := fresh "GPH" in
+      let GPH1 := fresh "GPH1" in
+      let GVAL := fresh "GVAL" in
+      let GPH2 := fresh "GPH2" in
+      pose proof
+        (get_owner_path_app_inv phl1 phl2 ph1 ph3 fp aliases views fpm
+          GET_ROOT H) as GPH;
+      destruct GPH as (?ph & ?vs & ?fp & GPH1 & GVAL & GPH2)
+  end.
 
 Ltac inv_get_owner_path_fpm H :=
   let GPH := fresh "GPH" in
@@ -683,7 +692,7 @@ Proof.
   - simpl in GET_PH.
     destr_path_of_place p.
     inv_get_owner_path_fpm GET_PH.
-    inv_get_owner_path_app G2.
+    inv_get_owner_path_app G2 G1.
     inv WTP.    
     exploit IHp. 1-6: eauto.
     simpl. rewrite G1. eauto.
@@ -703,7 +712,7 @@ Proof.
   - simpl in GET_PH.
     destr_path_of_place p.
     inv_get_owner_path_fpm GET_PH.
-    inv_get_owner_path_app G2.
+    inv_get_owner_path_app G2 G1.
     inv WTP.
     exploit IHp; eauto.
     simpl. rewrite G1. eauto.
