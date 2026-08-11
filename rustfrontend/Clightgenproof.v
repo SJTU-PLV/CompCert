@@ -626,17 +626,37 @@ Inductive match_states: state -> Clight.state -> Prop :=
 
 
 (* Type preservation in translation *)
+Lemma type_typelist_eq_except_origins_to_ctype:
+  (forall ty1 ty2,
+      type_eq_except_origins ty1 ty2 = true ->
+      to_ctype ty1 = to_ctype ty2)
+  /\ (forall tyl1 tyl2,
+      typelist_eq_except_origins tyl1 tyl2 = true ->
+      to_ctypelist tyl1 = to_ctypelist tyl2).
+Proof.
+  apply type_typelist_mut_ind; intros;
+    lazymatch goal with
+    | [ |- to_ctypelist _ = to_ctypelist ?tyl2 ] => destruct tyl2
+    | [ |- to_ctype _ = to_ctype ?ty2 ] => destruct ty2
+    end;
+    simpl in *; try congruence.
+  all: try match goal with
+           | H : proj_sumbool (type_eq _ _) = true |- _ =>
+               apply proj_sumbool_true in H; congruence
+           end.
+  - InvBooleans. f_equal; auto.
+  - f_equal. eauto.
+  - destruct m; destruct m0; simpl in *; try discriminate; f_equal; eauto.
+  - InvBooleans. subst. reflexivity.
+  - InvBooleans. subst. reflexivity.
+  - InvBooleans. f_equal; auto.
+Qed.
+
 Lemma type_eq_except_origins_to_ctype: forall ty1 ty2,
     type_eq_except_origins ty1 ty2 = true ->
     to_ctype ty1 = to_ctype ty2.
 Proof.
-  induction ty1; destruct ty2;simpl; try congruence;
-    intros TYEQ; try eapply proj_sumbool_true in TYEQ; try congruence.
-    erewrite IHty1. eauto. auto.
-    destruct m; destruct m0; auto.
-    1-3: erewrite IHty1; eauto; auto.
-    congruence. congruence.
-    erewrite IHty1; eauto; auto.
+  apply type_typelist_eq_except_origins_to_ctype.
 Qed.
 
 Lemma place_to_cexpr_type: forall p e,

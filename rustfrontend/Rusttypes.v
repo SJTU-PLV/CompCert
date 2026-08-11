@@ -138,6 +138,10 @@ Global Opaque type_eq typelist_eq.
 
 Fixpoint type_eq_except_origins (ty1 ty2: type) : bool :=
   match ty1, ty2 with
+  | Tfunction _ _ tyl1 rty1 cc1, Tfunction _ _ tyl2 rty2 cc2 =>
+      typelist_eq_except_origins tyl1 tyl2
+      && type_eq_except_origins rty1 rty2
+      && calling_convention_eq cc1 cc2
   | Treference _ mut1 ty1, Treference _ mut2 ty2 =>
       match mut1, mut2 with
       | Mutable, Mutable => type_eq_except_origins ty1 ty2
@@ -149,22 +153,62 @@ Fixpoint type_eq_except_origins (ty1 ty2: type) : bool :=
   | Tvariant _ id1, Tvariant _ id2 =>
       ident_eq id1 id2
   | _, _ => type_eq ty1 ty2
+  end
+
+with typelist_eq_except_origins (tyl1 tyl2: typelist) : bool :=
+  match tyl1, tyl2 with
+  | Tnil, Tnil => true
+  | Tcons ty1 tyl1, Tcons ty2 tyl2 =>
+      type_eq_except_origins ty1 ty2
+      && typelist_eq_except_origins tyl1 tyl2
+  | _, _ => false
   end.
+
+Scheme type_mut_ind := Induction for type Sort Prop
+with typelist_mut_ind := Induction for typelist Sort Prop.
+Combined Scheme type_typelist_mut_ind from type_mut_ind, typelist_mut_ind.
+
+Lemma type_typelist_eq_except_origins_sym:
+  (forall ty1 ty2,
+      type_eq_except_origins ty1 ty2 = type_eq_except_origins ty2 ty1)
+  /\ (forall tyl1 tyl2,
+      typelist_eq_except_origins tyl1 tyl2 =
+      typelist_eq_except_origins tyl2 tyl1).
+Proof.
+  apply type_typelist_mut_ind; intros;
+    lazymatch goal with
+    | [ |- typelist_eq_except_origins _ ?tyl2 = _ ] => destruct tyl2
+    | [ |- type_eq_except_origins _ ?ty2 = _ ] => destruct ty2
+    end;
+    simpl; try auto.
+  all: try unfold proj_sumbool; try eapply dec_eq_sym.
+  - rewrite (H t1), (H0 ty2).
+    f_equal. unfold proj_sumbool. apply dec_eq_sym.
+  - destruct m; destruct m0; auto.
+  - rewrite (H t1), (H0 tyl2). reflexivity.
+Qed.
 
 Lemma type_eq_except_origins_sym: forall ty1 ty2,
     type_eq_except_origins ty1 ty2 = type_eq_except_origins ty2 ty1.
 Proof.
-  induction ty1; destruct ty2; simpl; try auto.
-  all: try unfold proj_sumbool; try eapply dec_eq_sym.
-  destruct m; destruct m0; auto.
+  apply type_typelist_eq_except_origins_sym.
+Qed.
+
+Lemma type_typelist_eq_except_origins_refl:
+  (forall ty, type_eq_except_origins ty ty = true)
+  /\ (forall tyl, typelist_eq_except_origins tyl tyl = true).
+Proof.
+  apply type_typelist_mut_ind; simpl; intros; auto.
+  all: try unfold proj_sumbool; try rewrite dec_eq_true; auto.
+  - rewrite H, H0. auto.
+  - destruct m; auto.
+  - rewrite H, H0. auto.
 Qed.
 
 Lemma type_eq_except_origins_refl: forall ty,
     type_eq_except_origins ty ty = true.
 Proof.
-  induction ty; simpl; auto.
-  all: try unfold proj_sumbool; try eapply dec_eq_true.
-  destruct m; auto.
+  apply type_typelist_eq_except_origins_refl.
 Qed.
 
 Fixpoint origins_of_type (ty: type) : list origin :=
@@ -258,10 +302,26 @@ with replace_origin_in_typelist (tyl: typelist) (rels: list (origin * origin)) :
        end
 .
 
+Lemma replace_origin_in_type_eq_mut:
+  (forall ty rels,
+      type_eq_except_origins ty (replace_origin_in_type ty rels) = true)
+  /\ (forall tyl rels,
+      typelist_eq_except_origins tyl (replace_origin_in_typelist tyl rels) = true).
+Proof.
+  apply type_typelist_mut_ind; simpl; intros; auto.
+  all: try unfold proj_sumbool; try rewrite dec_eq_true; auto.
+  - rewrite (H rels), (H0 rels). auto.
+  - destruct m; auto.
+  - rewrite (H rels), (H0 rels). auto.
+Qed.
+
 Lemma replace_origin_in_type_eq: forall ty1 ty2 rels,
     replace_origin_in_type ty1 rels = ty2 ->
     type_eq_except_origins ty1 ty2 = true.
-Admitted.
+Proof.
+  intros ty1 ty2 rels H. subst ty2.
+  apply replace_origin_in_type_eq_mut.
+Qed.
 
 
 (* Definition attr_of_type (ty: type) := *)
@@ -2761,14 +2821,30 @@ Definition place_field_type (co: composite) (fid: ident) (orgs: list origin) : r
 Lemma place_field_type_res: forall co fid orgs fty,
     place_field_type co fid orgs = OK fty ->
     exists fty', field_type fid (co_members co) = OK fty' /\ type_eq_except_origins fty fty' = true.
-Admitted.
+Proof.
+  intros co fid orgs fty H.
+  unfold place_field_type in H.
+  destruct (field_type fid (co_members co)) as [fty'|err] eqn:FIELD;
+    simpl in H; try discriminate.
+  inv H. exists fty'. split; auto.
+  rewrite type_eq_except_origins_sym.
+  apply replace_origin_in_type_eq with
+      (rels := combine (co_generic_origins co) orgs).
+  reflexivity.
+Qed.
 
 Lemma place_field_type_inv: forall co fid orgs fty,
     place_field_type co fid orgs = OK fty ->
     exists fty', 
       field_type fid (co_members co) = OK fty' 
       /\ fty = replace_origin_in_type fty' (combine (co_generic_origins co) orgs).
-Admitted.
+Proof.
+  intros co fid orgs fty H.
+  unfold place_field_type in H.
+  destruct (field_type fid (co_members co)) as [fty'|err] eqn:FIELD;
+    simpl in H; try discriminate.
+  inv H. exists fty'. auto.
+Qed.
 
 
 Lemma field_offset_in_max_range ce: forall ofs fofs co fty fid,
