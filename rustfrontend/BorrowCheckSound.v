@@ -36,20 +36,67 @@ Lemma wt_projections_append ce: forall phl1 phl2 ty1 ty2 ty3,
     wt_projections ce ty1 phl1 = OK ty2 ->
     wt_projections ce ty2 phl2 = OK ty3 ->
     wt_projections ce ty1 (phl1 ++ phl2) = OK ty3.
-Admitted.
+Proof using Type.
+  induction phl1 as [|pj phl1 IH]; simpl; intros.
+  - inv H. exact H0.
+  - destruct pj.
+    + destruct (type_deref ty1) as [[next_ty variance]|err] eqn:DEREF;
+        simpl in H |- *; try congruence.
+      eapply IH; eauto.
+    + destruct (type_field ce ty1 fid) as [next_ty|err] eqn:FIELD;
+        simpl in H |- *; try congruence.
+      eapply IH; eauto.
+    + destruct (type_downcast ce ty1 fid) as [next_ty|err] eqn:DOWNCAST;
+        simpl in H |- *; try congruence.
+      eapply IH; eauto.
+Qed.
+
+
+Lemma wt_projections_append_inv ce: forall phl1 phl2 ty1 ty3,
+    wt_projections ce ty1 (phl1 ++ phl2) = OK ty3 ->
+    exists ty2,
+      wt_projections ce ty1 phl1 = OK ty2
+      /\ wt_projections ce ty2 phl2 = OK ty3.
+Proof using Type.
+  induction phl1 as [|pj phl1 IH]; simpl; intros.
+  - exists ty1. split; auto.
+  - destruct pj.
+    + destruct (type_deref ty1) as [[next_ty variance]|err] eqn:DEREF;
+        simpl in H; try congruence.
+      destruct (IH _ _ _ H) as (ty2 & PREFIX & SUFFIX).
+      exists ty2. split; simpl; eauto.
+    + destruct (type_field ce ty1 fid) as [next_ty|err] eqn:FIELD;
+        simpl in H; try congruence.
+      destruct (IH _ _ _ H) as (ty2 & PREFIX & SUFFIX).
+      exists ty2. split; simpl; eauto.
+    + destruct (type_downcast ce ty1 fid) as [next_ty|err] eqn:DOWNCAST;
+        simpl in H; try congruence.
+      destruct (IH _ _ _ H) as (ty2 & PREFIX & SUFFIX).
+      exists ty2. split; simpl; eauto.
+Qed.
 
 
 Lemma wt_path_append ce: forall ph phl ty1 ty2 te,
     wt_path ce te ph = OK ty1 ->
     wt_projections ce ty1 phl = OK ty2 ->
     wt_path ce te (append_projs phl ph) = OK ty2.
-Admitted.
+Proof using Type.
+  intros [id prefix] phl ty1 ty2 te PATH SUFFIX.
+  unfold wt_path in *. unfold append_projs. simpl in *.
+  destruct (te ! id) as [root_ty|] eqn:TENV; try congruence.
+  eapply wt_projections_append; eauto.
+Qed.
 
 Lemma wt_path_append_inv ce: forall ph phl ty2 te,
     wt_path ce te (append_projs phl ph) = OK ty2 ->
     exists ty1,  wt_path ce te ph = OK ty1 
             /\ wt_projections ce ty1 phl = OK ty2.
-Admitted.
+Proof using Type.
+  intros [id prefix] phl ty2 te PATH.
+  unfold wt_path in *. unfold append_projs in PATH. simpl in *.
+  destruct (te ! id) as [root_ty|] eqn:TENV; try congruence.
+  eapply wt_projections_append_inv; eauto.
+Qed.
 
 Lemma wt_projections_has_variance ce: forall phl ty1 ty2 va1,
     wt_projections ce ty1 phl = OK ty2 ->
@@ -1235,34 +1282,642 @@ Lemma before_write_place_sound: forall fpm1 fpm2 le1 live fp ty p ph vs sphm1 sp
 Admitted.
 
 
+(* No valid reference in [fpm] points to a strict descendant of [ph].
+   References that point to [ph] itself are allowed.  For assignment,
+   this property should follow from shallow invalidation together with
+   the domination invariant. *)
+Definition no_ref_points_to_internal (fpm: fp_map) (ph: path) : Prop :=
+  forall src mut b ofs target views,
+    get_owner_footprint_map src fpm =
+      OK (fp_ref mut b ofs (Some target) views) ->
+    is_prefix_strict_path ph target = false.
+
+
+(* Adapted from the field-update analysis in MoveCheckingSafe.v, which
+   uses the corresponding [find_fields_*] lemmas from
+   MoveCheckingFootprint.v. *)
+(* AI-generated. *)
+Lemma find_field_set_field_same: forall (A: Type) fid (f: A -> A) l a,
+    find_field fid l = Some a ->
+    find_field fid (set_field fid f l) = Some (f a).
+Proof using Type.
+  intros A fid f l. induction l as [|[id x] l IH]; intros a FIND.
+  - unfold find_field in FIND. simpl in FIND. congruence.
+  - simpl. destruct (ident_eq fid id) as [EQ|NEQ].
+    + subst id. rewrite find_field_cons in FIND. rewrite peq_true in FIND.
+      inv FIND. rewrite find_field_cons, peq_true. auto.
+    + rewrite find_field_cons in FIND. rewrite peq_false in FIND by auto.
+      rewrite find_field_cons, peq_false by auto. eapply IH; eauto.
+Qed.
+
+
+(* AI-generated. *)
+Lemma find_field_set_field_other: forall (A: Type) fid1 fid2
+    (f: A -> A) l,
+    fid1 <> fid2 ->
+    find_field fid1 (set_field fid2 f l) = find_field fid1 l.
+Proof using Type.
+  intros A fid1 fid2 f l. induction l as [|[id x] l IH]; intros NEQ.
+  - auto.
+  - simpl. destruct (ident_eq fid2 id) as [EQ2|NEQ2].
+    + subst id. rewrite ! find_field_cons, ! peq_false by auto. auto.
+    + rewrite ! find_field_cons.
+      destruct (ident_eq fid1 id); auto.
+Qed.
+
+
+(* Reading an owner path after an update has three possible shapes: the
+   read is unchanged, it stops at an ancestor of the update, or it
+   descends strictly into the newly installed footprint. *)
+(* AI-generated. *)
+Lemma get_owner_footprint_after_set: forall update query v old new got,
+    set_footprint update v old = OK new ->
+    get_owner_footprint query new = OK got ->
+    get_owner_footprint query old = OK got
+    \/ (exists suffix old_at_query,
+          update = query ++ suffix
+          /\ get_owner_footprint query old = OK old_at_query
+          /\ set_footprint suffix v old_at_query = OK got)
+    \/ (exists suffix,
+          query = update ++ suffix /\ suffix <> nil).
+Proof using Type.
+  induction update as [|up update IH]; intros query v old new got SET GET.
+  - simpl in SET. inv SET. destruct query as [|qp query].
+    + simpl in GET. inv GET. right; left.
+      exists nil, old. repeat split; auto.
+    + right; right. exists (qp :: query). split; auto. congruence.
+  - destruct up as [|update_fid|update_fid].
+    + destruct old as [|sz al|chunk value|box old_child|sid fields|
+                         eid tag active ofs old_child|
+                         mut block ofs target views];
+        simpl in SET; try congruence.
+      destruct (set_footprint update v old_child) as [new_child|err]
+        eqn:SET_CHILD; simpl in SET; try congruence.
+      inv SET. destruct query as [|qp query].
+      * simpl in GET. inv GET. right; left.
+        exists (proj_deref :: update), (fp_box box old_child).
+        repeat split; auto. simpl. rewrite SET_CHILD. auto.
+      * destruct qp; simpl in GET; try congruence.
+        destruct (IH query v old_child new_child got SET_CHILD GET)
+          as [UNCHANGED|[ANCESTOR|INTERNAL]].
+        -- left. simpl. exact UNCHANGED.
+        -- right; left.
+           destruct ANCESTOR as (suffix & old_query & EQ & OLD & LOCAL).
+           exists suffix, old_query. repeat split; simpl; auto.
+           f_equal; auto.
+        -- right; right.
+           destruct INTERNAL as (suffix & EQ & NONEMPTY).
+           exists suffix. split; simpl; auto. f_equal; auto.
+    + destruct old as [|sz al|chunk value|box old_child|sid fields|
+                         eid tag active ofs old_child|
+                         mut block ofs target views];
+        simpl in SET; try congruence.
+      destruct (find_field update_fid fields) as [[field_loc old_child]|]
+        eqn:FIND_UPDATE; simpl in SET; try congruence.
+      destruct (set_footprint update v old_child) as [new_child|err]
+        eqn:SET_CHILD; simpl in SET; try congruence.
+      inv SET. destruct query as [|qp query].
+      * simpl in GET. inv GET. right; left.
+        exists (proj_field update_fid :: update), (fp_struct sid fields).
+        repeat split; auto. simpl. rewrite FIND_UPDATE, SET_CHILD. auto.
+      * destruct qp as [|query_fid|query_fid]; simpl in GET; try congruence.
+        destruct (ident_eq query_fid update_fid) as [SAME|OTHER].
+        -- subst query_fid. unfold set_field_fp in GET.
+           erewrite find_field_set_field_same in GET; eauto. simpl in GET.
+           destruct (IH query v old_child new_child got SET_CHILD GET)
+             as [UNCHANGED|[ANCESTOR|INTERNAL]].
+           ++ left. simpl. rewrite FIND_UPDATE. exact UNCHANGED.
+           ++ right; left.
+              destruct ANCESTOR as (suffix & old_query & EQ & OLD & LOCAL).
+              exists suffix, old_query. split.
+              ** simpl. f_equal; auto.
+              ** split.
+                 --- simpl. rewrite FIND_UPDATE. exact OLD.
+                 --- exact LOCAL.
+           ++ right; right.
+              destruct INTERNAL as (suffix & EQ & NONEMPTY).
+              exists suffix. split; simpl; auto. f_equal; auto.
+        -- unfold set_field_fp in GET.
+           rewrite find_field_set_field_other in GET by auto.
+           left. simpl. exact GET.
+    + destruct old as [|sz al|chunk value|box old_child|sid fields|
+                         eid tag active ofs old_child|
+                         mut block ofs target views];
+        simpl in SET; try congruence.
+      destruct (ident_eq update_fid active) as [SAME|OTHER]; try congruence.
+      subst update_fid.
+      destruct (set_footprint update v old_child) as [new_child|err]
+        eqn:SET_CHILD; simpl in SET; try congruence.
+      inv SET. destruct query as [|qp query].
+      * simpl in GET. inv GET. right; left.
+        exists (proj_downcast active :: update),
+          (fp_enum eid tag active ofs old_child).
+        repeat split; auto. simpl. destruct (ident_eq active active);
+          try congruence. rewrite SET_CHILD. auto.
+      * destruct qp as [|query_fid|query_fid]; simpl in GET; try congruence.
+        destruct (ident_eq query_fid active) as [SAME|OTHER]; try congruence.
+        subst query_fid.
+        destruct (IH query v old_child new_child got SET_CHILD GET)
+          as [UNCHANGED|[ANCESTOR|INTERNAL]].
+        -- left. simpl. rewrite peq_true. exact UNCHANGED.
+        -- right; left.
+           destruct ANCESTOR as (suffix & old_query & EQ & OLD & LOCAL).
+           exists suffix, old_query. split.
+           ++ simpl. f_equal; auto.
+           ++ split.
+              ** simpl. rewrite peq_true. exact OLD.
+              ** exact LOCAL.
+        -- right; right.
+           destruct INTERNAL as (suffix & EQ & NONEMPTY).
+           exists suffix. split; simpl; auto. f_equal; auto.
+Qed.
+
+
+(* AI-generated. *)
+Lemma get_owner_footprint_map_after_set: forall fpm1 fpm2 ph1 ph2 v got,
+    set_footprint_map ph1 v fpm1 = OK fpm2 ->
+    get_owner_footprint_map ph2 fpm2 = OK got ->
+    get_owner_footprint_map ph2 fpm1 = OK got
+    \/ (exists suffix old_at_query,
+          ph1 = append_projs suffix ph2
+          /\ get_owner_footprint_map ph2 fpm1 = OK old_at_query
+          /\ set_footprint suffix v old_at_query = OK got)
+    \/ (exists suffix,
+          ph2 = append_projs suffix ph1 /\ suffix <> nil).
+Proof using Type.
+  intros fpm1 fpm2 [id1 update] [id2 query] v got SET GET.
+  unfold set_footprint_map in SET. simpl in SET.
+  destruct (fpm1 ! id1) as [entry1|] eqn:FPM1; try congruence.
+  destruct entry1 as [[[b ofs] ty] old].
+  destruct (set_footprint update v old) as [new|err] eqn:SET_FP;
+    simpl in SET; try congruence.
+  inv SET. unfold get_owner_footprint_map in GET |- *. simpl in GET |- *.
+  rewrite PTree.gsspec in GET. destruct (peq id2 id1) as [SAME|OTHER].
+  - subst id2. rewrite FPM1.
+    destruct (get_owner_footprint_after_set _ _ _ _ _ _ SET_FP GET)
+      as [UNCHANGED|[ANCESTOR|INTERNAL]].
+    + left. exact UNCHANGED.
+    + right; left.
+      destruct ANCESTOR as (suffix & old_query & EQ & OLD & LOCAL).
+      exists suffix, old_query. unfold append_projs. simpl.
+      repeat split; auto. congruence.
+    + right; right. destruct INTERNAL as (suffix & EQ & NONEMPTY).
+      exists suffix. unfold append_projs. simpl. split; auto. congruence.
+  - left. exact GET.
+Qed.
+
+
+(* AI-generated. *)
+Lemma is_prefix_strict_path_append_projs: forall ph suffix,
+    suffix <> nil ->
+    is_prefix_strict_path ph (append_projs suffix ph) = true.
+Proof using Type.
+  intros [id projections] suffix NONEMPTY.
+  unfold is_prefix_strict_path, append_projs. simpl.
+  destruct (ident_eq id id); try congruence.
+  eapply projections_contain_strict_app; auto.
+Qed.
+
+
+(* AI-generated. *)
+Lemma get_reachable_footprint_after_set_aux: forall phl fpm1 fpm2 ph1
+    v current aliases current_fp fp,
+    no_ref_points_to_internal fpm1 ph1 ->
+    set_footprint_map ph1 v fpm1 = OK fpm2 ->
+    get_owner_footprint_map current fpm1 = OK current_fp ->
+    get_reachable_footprint fpm2 phl current_fp = OK fp ->
+    get_reachable_footprint fpm1 phl current_fp = OK fp
+    \/ exists prefix suffix ancestor aliases' to_ph1 outer_fp new_fp,
+        phl = prefix ++ suffix
+        /\ get_owner_path fpm1 current prefix current_fp aliases =
+             OK (ancestor, aliases')
+        /\ ph1 = append_projs to_ph1 ancestor
+        /\ get_owner_footprint_map ancestor fpm1 = OK outer_fp
+        /\ set_footprint to_ph1 v outer_fp = OK new_fp
+        /\ get_reachable_footprint fpm2 suffix new_fp = OK fp.
+Proof using Type.
+  induction phl as [|pj phl IH]; intros fpm1 fpm2 ph1 v current aliases
+      current_fp fp NO_INTERNAL SET CURRENT NEW.
+  - simpl in NEW. inv NEW. left. auto.
+  - destruct pj as [|fid|fid].
+    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+                               eid tag active ofs child|
+                               mut block ofs target views];
+        simpl in NEW; try congruence.
+      * assert (CHILD:
+            get_owner_footprint_map (append_proj proj_deref current) fpm1 =
+              OK child).
+        { unfold append_proj. eapply get_owner_footprint_map_append; eauto. }
+        destruct (IH fpm1 fpm2 ph1 v (append_proj proj_deref current)
+                    (map (append_proj proj_deref) aliases) child fp
+                    NO_INTERNAL SET CHILD NEW)
+          as [OLD|SPLIT].
+        -- left. simpl. exact OLD.
+        -- right.
+           destruct SPLIT as (prefix & suffix & ancestor & aliases' &
+             to_ph1 & outer_fp & new_fp & EQ & PATH & UPDATE & OUTER &
+             LOCAL & REST).
+           exists (proj_deref :: prefix), suffix, ancestor, aliases',
+             to_ph1, outer_fp, new_fp. split.
+           ++ simpl. f_equal. exact EQ.
+           ++ repeat split; simpl; auto.
+      * destruct target as [target|]; simpl in NEW; try congruence.
+        destruct (get_owner_footprint_map target fpm2) as [target_new|err]
+          eqn:TARGET_NEW; simpl in NEW; try congruence.
+        destruct (get_owner_footprint_map_after_set
+                    fpm1 fpm2 ph1 target v target_new SET TARGET_NEW)
+          as [TARGET_OLD|[TARGET_ANCESTOR|TARGET_INTERNAL]].
+        -- destruct (IH fpm1 fpm2 ph1 v target
+                       (match mut with
+                        | Mutable =>
+                            append_proj proj_deref current ::
+                              views ++ map (append_proj proj_deref) aliases
+                        | Immutable => views
+                        end)
+                       target_new fp NO_INTERNAL SET TARGET_OLD NEW)
+             as [OLD|SPLIT].
+           ++ left. simpl. rewrite TARGET_OLD. exact OLD.
+           ++ right.
+              destruct SPLIT as (prefix & suffix & ancestor & aliases' &
+                to_ph1 & outer_fp & new_fp & EQ & PATH & UPDATE & OUTER &
+                LOCAL & REST).
+              exists (proj_deref :: prefix), suffix, ancestor, aliases',
+                to_ph1, outer_fp, new_fp. repeat split; simpl; auto.
+              ** f_equal; auto.
+              ** rewrite TARGET_OLD. exact PATH.
+        -- destruct TARGET_ANCESTOR as
+             (to_ph1 & outer_fp & UPDATE & OUTER & LOCAL).
+           right.
+           exists [proj_deref], phl, target,
+             (target ::
+                match mut with
+                | Mutable =>
+                    append_proj proj_deref current ::
+                      views ++ map (append_proj proj_deref) aliases
+                | Immutable => views
+                end),
+             to_ph1, outer_fp, target_new.
+           repeat split; auto.
+           simpl. rewrite OUTER. reflexivity.
+        -- destruct TARGET_INTERNAL as (inside & TARGET_EQ & NONEMPTY).
+           pose proof (NO_INTERNAL current mut block ofs target views CURRENT)
+             as NOT_INTERNAL.
+           subst target.
+           rewrite is_prefix_strict_path_append_projs in NOT_INTERNAL by auto.
+           congruence.
+    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+                               eid tag active ofs child|
+                               mut block ofs target views];
+        simpl in NEW; try congruence.
+      destruct (find_field fid fields) as [[field_loc child]|]
+        eqn:FIND; simpl in NEW; try congruence.
+      assert (CHILD:
+          get_owner_footprint_map (append_proj (proj_field fid) current) fpm1 =
+            OK child).
+      { unfold append_proj. eapply get_owner_footprint_map_append; eauto.
+        simpl. rewrite FIND. reflexivity. }
+      destruct (IH fpm1 fpm2 ph1 v (append_proj (proj_field fid) current)
+                  (map (append_proj (proj_field fid)) aliases) child fp
+                  NO_INTERNAL SET CHILD NEW)
+        as [OLD|SPLIT].
+      * left. simpl. rewrite FIND. exact OLD.
+      * right.
+        destruct SPLIT as (prefix & suffix & ancestor & aliases' &
+          to_ph1 & outer_fp & new_fp & EQ & PATH & UPDATE & OUTER &
+          LOCAL & REST).
+        exists (proj_field fid :: prefix), suffix, ancestor, aliases',
+          to_ph1, outer_fp, new_fp. repeat split; simpl; auto.
+        -- f_equal; auto.
+        -- rewrite FIND. exact PATH.
+    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+                               eid tag active ofs child|
+                               mut block ofs target views];
+        simpl in NEW; try congruence.
+      destruct (ident_eq fid active) as [SAME|OTHER]; try congruence.
+      subst fid.
+      assert (CHILD:
+          get_owner_footprint_map
+            (append_proj (proj_downcast active) current) fpm1 = OK child).
+      { unfold append_proj. eapply get_owner_footprint_map_append; eauto.
+        simpl. destruct (ident_eq active active); congruence. }
+      destruct (IH fpm1 fpm2 ph1 v
+                  (append_proj (proj_downcast active) current)
+                  (map (append_proj (proj_downcast active)) aliases) child fp
+                  NO_INTERNAL SET CHILD NEW)
+        as [OLD|SPLIT].
+      * left. simpl. rewrite peq_true. exact OLD.
+      * right.
+        destruct SPLIT as (prefix & suffix & ancestor & aliases' &
+          to_ph1 & outer_fp & new_fp & EQ & PATH & UPDATE & OUTER &
+          LOCAL & REST).
+        exists (proj_downcast active :: prefix), suffix, ancestor, aliases',
+          to_ph1, outer_fp, new_fp. split.
+        -- simpl. f_equal. exact EQ.
+        -- split.
+           ++ simpl. rewrite peq_true. exact PATH.
+           ++ split; [exact UPDATE|].
+              split; [exact OUTER|].
+              exact (conj LOCAL REST).
+Qed.
+
 (** Important TODO: how can we split a reachable path into two parts
 after setting a new footprint into the map?  *)
-Lemma get_reachable_footprint_map_after_set: forall fpm1 fpm2 ph1 ph2 vfp fp,
+(** A reachable footprint after an update either comes entirely from
+    the old map, or can be read by updating an old ancestor footprint
+    and continuing the traversal from that updated footprint. *)
+(* AI-generated. *)
+Lemma get_reachable_footprint_map_after_set: forall fpm1 fpm2 ph1 ph2
+    vfp fp,
+    (** TODO: we need to ensure that we cannot use a fp_ref from fpm1
+    directly access the footprint in the successor of ph1. We should
+    add two premises: 1. the footprint in ph1 in fpm1 must be the
+    footprint after clearing, i.e., it has the form fp_uninit or
+    fp_struct [fp_uninit]; 2. we have done the shallow invalidation,
+    so their is not reference points to the internal field of ph1; We
+    can combine these two premises into a general one which says that
+    there their is not reference points to the internal field of ph1,
+    i.e., ph1.fid or *ph1. *)
+    (** Howerver, it is not that easy. The shallow invalidation cannot
+    ensure that there is not reference to the internal field of
+    ph1. We need the domination property: all reference to the
+    internal field of ph1 must borrow other references that directly
+    points to ph1 *)
+    no_ref_points_to_internal fpm1 ph1 ->
     set_footprint_map ph1 vfp fpm1 = OK fpm2 ->
     get_reachable_footprint_map fpm2 ph2 = OK fp ->
     get_reachable_footprint_map fpm1 ph2 = OK fp
-    (* We first traverse fpm1 until we reach ph1 and then we start
-    from vfp to traverse fpm2 *)
-    \/ exists id2 phl1 phl2 vs, 
+    (* We first traverse fpm1 until we reach an ancestor of ph1,
+       perform the update locally, and then continue the traversal. *)
+    \/ exists id2 phl1 phl2 ancestor aliases to_ph1 outer_fp new_fp,
         ph2 = (id2, phl1 ++ phl2)
-        /\ get_owner_path_map (id2, phl1) fpm1 = OK (ph1, vs)
-        /\ get_reachable_footprint fpm2 phl2 vfp = OK fp.
-Admitted.
+        /\ get_owner_path_map (id2, phl1) fpm1 = OK (ancestor, aliases)
+        /\ ph1 = append_projs to_ph1 ancestor
+        /\ get_owner_footprint_map ancestor fpm1 = OK outer_fp
+        /\ set_footprint to_ph1 vfp outer_fp = OK new_fp
+        /\ get_reachable_footprint fpm2 phl2 new_fp = OK fp.
+Proof using Type.
+  intros fpm1 fpm2 [id1 update] [id2 query] vfp fp NO_INTERNAL SET GET.
+  unfold set_footprint_map in SET. simpl in SET.
+  destruct (fpm1 ! id1) as [entry1|] eqn:FPM1; try congruence.
+  destruct entry1 as [[[b1 ofs1] ty1] old_root].
+  destruct (set_footprint update vfp old_root) as [new_root|err]
+    eqn:SET_ROOT; simpl in SET; try congruence.
+  inv SET. unfold get_reachable_footprint_map in GET |- *. simpl in GET |- *.
+  rewrite PTree.gsspec in GET. destruct (peq id2 id1) as [SAME|OTHER].
+  - subst id2. right.
+    exists id1, nil, query, (id1, nil), [(id1, nil)], update,
+      old_root, new_root.
+    split; [reflexivity|]. split.
+    + unfold get_owner_path_map. simpl. rewrite FPM1. reflexivity.
+    + split.
+      * unfold append_projs. simpl. auto.
+      * split.
+        -- unfold get_owner_footprint_map. simpl. rewrite FPM1. reflexivity.
+        -- split; auto.
+  - destruct (fpm1 ! id2) as [entry2|] eqn:FPM2; try congruence.
+    destruct entry2 as [[[b2 ofs2] ty2] query_root]. simpl in GET.
+    assert (QUERY_ROOT:
+        get_owner_footprint_map (id2, nil) fpm1 = OK query_root).
+    { unfold get_owner_footprint_map. simpl. rewrite FPM2. reflexivity. }
+    assert (SET_MAP:
+        set_footprint_map (id1, update) vfp fpm1 =
+          OK (PTree.set id1 (b1, ofs1, ty1, new_root) fpm1)).
+    { unfold set_footprint_map. simpl. rewrite FPM1, SET_ROOT. reflexivity. }
+    destruct (get_reachable_footprint_after_set_aux query fpm1
+                (PTree.set id1 (b1, ofs1, ty1, new_root) fpm1)
+                (id1, update) vfp (id2, nil) nil query_root fp
+                NO_INTERNAL SET_MAP QUERY_ROOT GET)
+      as [UNCHANGED|SPLIT].
+    + left. exact UNCHANGED.
+    + right.
+      destruct SPLIT as (prefix & suffix & ancestor & aliases & to_ph1 &
+        outer_fp & new_fp & EQ & PATH & UPDATE & OUTER & LOCAL & REST).
+      exists id2, prefix, suffix, ancestor, aliases, to_ph1, outer_fp,
+        new_fp. split.
+      * f_equal. exact EQ.
+      * split.
+        -- unfold get_owner_path_map. simpl. rewrite FPM2. exact PATH.
+        -- repeat split; auto.
+Qed.
 
 (** TODO: combine get_reachable_footprint and get_reachable_path?  *)
 (* Similar to get_reachable_footprint_map_after_set but we focus on
 the path here *)
+(* AI-generated. *)
+Lemma get_owner_path_after_set_aux: forall phl fpm1 fpm2 ph1 v current
+    aliases current_fp final final_aliases,
+    no_ref_points_to_internal fpm1 ph1 ->
+    set_footprint_map ph1 v fpm1 = OK fpm2 ->
+    get_owner_footprint_map current fpm1 = OK current_fp ->
+    get_owner_path fpm2 current phl current_fp aliases =
+      OK (final, final_aliases) ->
+    get_owner_path fpm1 current phl current_fp aliases =
+      OK (final, final_aliases)
+    \/ exists prefix suffix ancestor prefix_aliases to_ph1 outer_fp new_fp,
+        phl = prefix ++ suffix
+        /\ get_owner_path fpm1 current prefix current_fp aliases =
+             OK (ancestor, ancestor :: prefix_aliases)
+        /\ ph1 = append_projs to_ph1 ancestor
+        /\ get_owner_footprint_map ancestor fpm1 = OK outer_fp
+        /\ set_footprint to_ph1 v outer_fp = OK new_fp
+        /\ get_owner_path fpm2 ancestor suffix new_fp prefix_aliases =
+             OK (final, final_aliases).
+Proof using Type.
+  induction phl as [|pj phl IH]; intros fpm1 fpm2 ph1 v current aliases
+      current_fp final final_aliases NO_INTERNAL SET CURRENT NEW.
+  - left. exact NEW.
+  - destruct pj as [|fid|fid].
+    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+                               eid tag active ofs child|
+                               mut block ofs target views];
+        simpl in NEW; try congruence.
+      * assert (CHILD:
+            get_owner_footprint_map (append_proj proj_deref current) fpm1 =
+              OK child).
+        { unfold append_proj. eapply get_owner_footprint_map_append; eauto. }
+        destruct (IH fpm1 fpm2 ph1 v (append_proj proj_deref current)
+                    (map (append_proj proj_deref) aliases) child final
+                    final_aliases NO_INTERNAL SET CHILD NEW)
+          as [OLD|SPLIT].
+        -- left. simpl. exact OLD.
+        -- right.
+           destruct SPLIT as (prefix & suffix & ancestor & prefix_aliases &
+             to_ph1 & outer_fp & new_fp & EQ & PATH & UPDATE & OUTER &
+             LOCAL & REST).
+           exists (proj_deref :: prefix), suffix, ancestor, prefix_aliases,
+             to_ph1, outer_fp, new_fp. split.
+           ++ simpl. f_equal. exact EQ.
+           ++ repeat split; simpl; auto.
+      * destruct target as [target|]; simpl in NEW; try congruence.
+        destruct (get_owner_footprint_map target fpm2) as [target_new|err]
+          eqn:TARGET_NEW; simpl in NEW; try congruence.
+        destruct (get_owner_footprint_map_after_set
+                    fpm1 fpm2 ph1 target v target_new SET TARGET_NEW)
+          as [TARGET_OLD|[TARGET_ANCESTOR|TARGET_INTERNAL]].
+        -- destruct (IH fpm1 fpm2 ph1 v target
+                       (match mut with
+                        | Mutable =>
+                            append_proj proj_deref current ::
+                              views ++ map (append_proj proj_deref) aliases
+                        | Immutable => views
+                        end)
+                       target_new final final_aliases NO_INTERNAL SET
+                       TARGET_OLD NEW)
+             as [OLD|SPLIT].
+           ++ left. simpl. rewrite TARGET_OLD. exact OLD.
+           ++ right.
+              destruct SPLIT as (prefix & suffix & ancestor &
+                prefix_aliases & to_ph1 & outer_fp & new_fp & EQ & PATH &
+                UPDATE & OUTER & LOCAL & REST).
+              exists (proj_deref :: prefix), suffix, ancestor,
+                prefix_aliases, to_ph1, outer_fp, new_fp. split.
+              ** simpl. f_equal. exact EQ.
+              ** split.
+                 --- simpl. rewrite TARGET_OLD. exact PATH.
+                 --- repeat split; auto.
+        -- destruct TARGET_ANCESTOR as
+             (to_ph1 & outer_fp & UPDATE & OUTER & LOCAL).
+           right.
+           exists [proj_deref], phl, target,
+             (match mut with
+              | Mutable =>
+                  append_proj proj_deref current ::
+                    views ++ map (append_proj proj_deref) aliases
+              | Immutable => views
+              end),
+             to_ph1, outer_fp, target_new.
+           split; [reflexivity|]. split.
+           ++ simpl. rewrite OUTER. reflexivity.
+           ++ repeat split; auto.
+        -- destruct TARGET_INTERNAL as (inside & TARGET_EQ & NONEMPTY).
+           pose proof (NO_INTERNAL current mut block ofs target views CURRENT)
+             as NOT_INTERNAL.
+           subst target.
+           rewrite is_prefix_strict_path_append_projs in NOT_INTERNAL by auto.
+           congruence.
+    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+                               eid tag active ofs child|
+                               mut block ofs target views];
+        simpl in NEW; try congruence.
+      destruct (find_field fid fields) as [[field_loc child]|]
+        eqn:FIND; simpl in NEW; try congruence.
+      assert (CHILD:
+          get_owner_footprint_map (append_proj (proj_field fid) current) fpm1 =
+            OK child).
+      { unfold append_proj. eapply get_owner_footprint_map_append; eauto.
+        simpl. rewrite FIND. reflexivity. }
+      destruct (IH fpm1 fpm2 ph1 v (append_proj (proj_field fid) current)
+                  (map (append_proj (proj_field fid)) aliases) child final
+                  final_aliases NO_INTERNAL SET CHILD NEW)
+        as [OLD|SPLIT].
+      * left. simpl. rewrite FIND. exact OLD.
+      * right.
+        destruct SPLIT as (prefix & suffix & ancestor & prefix_aliases &
+          to_ph1 & outer_fp & new_fp & EQ & PATH & UPDATE & OUTER &
+          LOCAL & REST).
+        exists (proj_field fid :: prefix), suffix, ancestor, prefix_aliases,
+          to_ph1, outer_fp, new_fp. split.
+        -- simpl. f_equal. exact EQ.
+        -- split.
+           ++ simpl. rewrite FIND. exact PATH.
+           ++ repeat split; auto.
+    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+                               eid tag active ofs child|
+                               mut block ofs target views];
+        simpl in NEW; try congruence.
+      destruct (ident_eq fid active) as [SAME|OTHER]; try congruence.
+      subst fid.
+      assert (CHILD:
+          get_owner_footprint_map
+            (append_proj (proj_downcast active) current) fpm1 = OK child).
+      { unfold append_proj. eapply get_owner_footprint_map_append; eauto.
+        simpl. destruct (ident_eq active active); congruence. }
+      destruct (IH fpm1 fpm2 ph1 v
+                  (append_proj (proj_downcast active) current)
+                  (map (append_proj (proj_downcast active)) aliases) child
+                  final final_aliases NO_INTERNAL SET CHILD NEW)
+        as [OLD|SPLIT].
+      * left. simpl. rewrite peq_true. exact OLD.
+      * right.
+        destruct SPLIT as (prefix & suffix & ancestor & prefix_aliases &
+          to_ph1 & outer_fp & new_fp & EQ & PATH & UPDATE & OUTER &
+          LOCAL & REST).
+        exists (proj_downcast active :: prefix), suffix, ancestor,
+          prefix_aliases, to_ph1, outer_fp, new_fp. split.
+        -- simpl. f_equal. exact EQ.
+        -- split.
+           ++ simpl. rewrite peq_true. exact PATH.
+           ++ split; [exact UPDATE|].
+              split; [exact OUTER|].
+              split; [exact LOCAL|exact REST].
+Qed.
+
+
+(* AI-generated. *)
 Lemma get_owner_path_map_after_set: forall fpm1 fpm2 ph1 ph2 vfp ph vs,
+    no_ref_points_to_internal fpm1 ph1 ->
     set_footprint_map ph1 vfp fpm1 = OK fpm2 ->
     get_owner_path_map ph2 fpm2 = OK (ph, vs) ->
     get_owner_path_map ph2 fpm1 = OK (ph, vs)
     (* We first traverse fpm1 until we reach ph1 and then we start
     from vfp to traverse fpm2 *)
-    \/ exists id2 phl1 phl2 vs, 
+    (* More generally, the old traversal reaches an ancestor of ph1,
+       performs the update locally, and then continues in fpm2. *)
+    \/ exists id2 phl1 phl2 ancestor prefix_aliases to_ph1 outer_fp new_fp,
         ph2 = (id2, phl1 ++ phl2)
-        /\ get_owner_path_map (id2, phl1) fpm1 = OK (ph1, vs)
-        /\ get_reachable_path fpm2 phl2 vfp = OK (ph, vs).
-Admitted.
+        /\ get_owner_path_map (id2, phl1) fpm1 =
+             OK (ancestor, ancestor :: prefix_aliases)
+        /\ ph1 = append_projs to_ph1 ancestor
+        /\ get_owner_footprint_map ancestor fpm1 = OK outer_fp
+        /\ set_footprint to_ph1 vfp outer_fp = OK new_fp
+        /\ get_owner_path fpm2 ancestor phl2 new_fp prefix_aliases =
+             OK (ph, vs).
+Proof using Type.
+  intros fpm1 fpm2 [id1 update] [id2 query] vfp ph vs NO_INTERNAL SET GET.
+  unfold set_footprint_map in SET. simpl in SET.
+  destruct (fpm1 ! id1) as [entry1|] eqn:FPM1; try congruence.
+  destruct entry1 as [[[b1 ofs1] ty1] old_root].
+  destruct (set_footprint update vfp old_root) as [new_root|err]
+    eqn:SET_ROOT; simpl in SET; try congruence.
+  inv SET. unfold get_owner_path_map in GET |- *. simpl in GET |- *.
+  rewrite PTree.gsspec in GET. destruct (peq id2 id1) as [SAME|OTHER].
+  - subst id2. right.
+    exists id1, nil, query, (id1, nil), nil, update, old_root, new_root.
+    split; [reflexivity|]. split.
+    + rewrite FPM1. reflexivity.
+    + split.
+      * unfold append_projs. simpl. auto.
+      * split.
+        -- unfold get_owner_footprint_map. simpl. rewrite FPM1. reflexivity.
+        -- split; auto.
+  - destruct (fpm1 ! id2) as [entry2|] eqn:FPM2; try congruence.
+    destruct entry2 as [[[b2 ofs2] ty2] query_root]. simpl in GET.
+    assert (QUERY_ROOT:
+        get_owner_footprint_map (id2, nil) fpm1 = OK query_root).
+    { unfold get_owner_footprint_map. simpl. rewrite FPM2. reflexivity. }
+    assert (SET_MAP:
+        set_footprint_map (id1, update) vfp fpm1 =
+          OK (PTree.set id1 (b1, ofs1, ty1, new_root) fpm1)).
+    { unfold set_footprint_map. simpl. rewrite FPM1, SET_ROOT. reflexivity. }
+    destruct (get_owner_path_after_set_aux query fpm1
+                (PTree.set id1 (b1, ofs1, ty1, new_root) fpm1)
+                (id1, update) vfp (id2, nil) nil query_root ph vs
+                NO_INTERNAL SET_MAP QUERY_ROOT GET)
+      as [UNCHANGED|SPLIT].
+    + left. exact UNCHANGED.
+    + right.
+      destruct SPLIT as (prefix & suffix & ancestor & prefix_aliases &
+        to_ph1 & outer_fp & new_fp & EQ & PATH & UPDATE & OUTER & LOCAL &
+        REST).
+      exists id2, prefix, suffix, ancestor, prefix_aliases, to_ph1, outer_fp,
+        new_fp. split.
+      * f_equal. exact EQ.
+      * split.
+        -- rewrite FPM2. exact PATH.
+        -- split; [exact UPDATE|].
+           split; [exact OUTER|].
+           exact (conj LOCAL REST).
+Qed.
 
 
 (** Important TODO  *)
