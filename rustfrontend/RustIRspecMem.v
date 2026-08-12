@@ -64,10 +64,73 @@ Inductive Forall_sep {A : Type} (P : A -> massert -> Prop) : list A -> massert -
       massert_eqv (mass1 ** mass2) mass3 ->
       Forall_sep P (x :: l) mass3.
 
+(* AI-generated. *)
+Lemma Forall_sep_eqv {A: Type}: forall (P: A -> massert -> Prop) l mass1 mass2,
+    Forall_sep P l mass1 ->
+    massert_eqv mass1 mass2 ->
+    Forall_sep P l mass2.
+Proof.
+  intros P l mass1 mass2 SEP EQV.
+  destruct SEP.
+  - econstructor. etransitivity; eauto.
+  - econstructor; eauto. etransitivity; eauto.
+Qed.
+
+(* AI-generated. *)
+Lemma massert_eqv_STrue_l: forall P,
+    massert_eqv P (STrue ** P).
+Proof.
+  intros. unfold STrue, spure.
+  split.
+  - red; split.
+    + intros. eapply sep_pure; auto.
+    + simpl. intros. destruct H; try contradiction; auto.
+  - red; split.
+    + intros. eapply sep_pure in H. destruct H; auto.
+    + simpl. auto.
+Qed.
+
+(* AI-generated. *)
 Lemma Forall_sep_app {A: Type} : forall (l1 l2: list A) P mass,
     Forall_sep P (l1 ++ l2) mass <-> 
-      (exists mass1 mass2, Forall_sep P l1 mass1 /\ Forall_sep P l2 mass2 /\ mass = mass1 ** mass2).
-Admitted.
+      (exists mass1 mass2,
+          Forall_sep P l1 mass1 /\ Forall_sep P l2 mass2
+          /\ massert_eqv mass (mass1 ** mass2)).
+Proof.
+  induction l1 as [|x l1 IH]; intros l2 P mass; split.
+  - intros SEP. simpl in SEP.
+    exists STrue, mass. split.
+    + econstructor. reflexivity.
+    + split; [exact SEP|]. eapply massert_eqv_STrue_l.
+  - intros (mass1 & mass2 & SEP1 & SEP2 & EQV). simpl.
+    inversion SEP1 as [mass0 EMPTY|]; subst.
+    eapply Forall_sep_eqv; [exact SEP2|].
+    etransitivity.
+    + eapply massert_eqv_STrue_l.
+    + etransitivity.
+      * eapply sepconj_morph_2; [exact EMPTY|reflexivity].
+      * symmetry. exact EQV.
+  - intros SEP. simpl in SEP.
+    inversion SEP as [|x0 l0 head tail whole HEAD TAIL JOIN]; subst.
+    destruct (proj1 (IH l2 P tail) TAIL)
+      as (mass1 & mass2 & SEP1 & SEP2 & TAIL_EQV).
+    exists (head ** mass1), mass2. split.
+    + econstructor; eauto.
+    + split; [exact SEP2|]. etransitivity.
+      * symmetry. exact JOIN.
+      * rewrite TAIL_EQV. rewrite <- sep_assoc. reflexivity.
+  - intros (mass1 & mass2 & SEP1 & SEP2 & EQV). simpl.
+    inversion SEP1 as [|x0 l0 head tail whole HEAD TAIL JOIN]; subst.
+    econstructor; [exact HEAD| |].
+    + eapply (proj2 (IH l2 P (tail ** mass2))).
+      exists tail, mass2. split; [exact TAIL|].
+      split; [exact SEP2|reflexivity].
+    + etransitivity.
+      * symmetry. eapply sep_assoc.
+      * etransitivity.
+        -- eapply sepconj_morph_2; [exact JOIN|reflexivity].
+        -- symmetry. exact EQV.
+Qed.
 
 Fixpoint range_list (l: list (block * Z * Z)) : massert :=
   match l with
@@ -419,10 +482,7 @@ Proof.
     eapply sepconj_morph_2. reflexivity.
     eapply sepconj_morph_2. 
     eapply IHfp; eauto. reflexivity.
-  (* Object case.
-  - subst_dep.
-    admit. *)
-Admitted.
+Qed.
 
 Lemma fields_fp_sep_unique : forall fpl mp1 mp2 (P: footprint -> massert -> Prop)
     (EQVP: forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl ->
@@ -470,16 +530,34 @@ Qed.
 
 (* Properties of fields_sep *)
 
+(* AI-generated. *)
 Lemma fields_loc_sep_split: forall b ofs base fofs fid ffp l mass P,
     fields_loc_sep b ofs P l mass ->
     In (fid, ((base, fofs), ffp)) l ->
     exists mass1 mass2 mass3, 
       P ffp b (ofs + fofs) mass2 
-      /\ mass = mass1 ** mass2 ** mass3.
+      /\ massert_eqv mass (mass1 ** mass2 ** mass3).
   (* use Forall_sep properties to prove fields_sep properties *)
-Admitted.
+Proof.
+  intros b ofs base fofs fid ffp l mass P SEP IN.
+  induction SEP as
+      [mp EMPTY
+      |fid0 base0 fofs0 ffp0 l head tail pad whole
+         TAIL IH HEAD PAD JOIN].
+  - contradiction.
+  - simpl in IN. destruct IN as [SAME|IN].
+    + inv SAME.
+      exists (range b (ofs + base) (ofs + fofs)), head, tail.
+      split; [exact HEAD|exact JOIN].
+    + destruct (IH IN) as (prefix & field & suffix & FIELD & SPLIT).
+      exists (pad ** head ** prefix), field, suffix. split; auto.
+      etransitivity.
+      * exact JOIN.
+      * rewrite SPLIT. rewrite ! sep_assoc. reflexivity.
+Qed.
 
 (* set a found field would update the massert predicate *)
+(* AI-generated. *)
 Lemma Forall_sep_find_set_field {A: Type}: forall mp (l: list (ident * A)) P id a f,
     find_field id l = Some a ->
     Forall_sep P l mp ->
@@ -488,14 +566,30 @@ Lemma Forall_sep_find_set_field {A: Type}: forall mp (l: list (ident * A)) P id 
       /\ Forall_sep P l2 mp2
       /\ P (id, a) mpi
       /\ l = l1 ++ (id, a) :: l2
-      /\ mp = mp1 ** mpi ** mp2
+      /\ massert_eqv mp (mp1 ** mpi ** mp2)
       (* Properties of setting a new footprint into id *)
       /\ (forall mpi', 
             P (id, (f a)) mpi' ->
             Forall_sep P (set_field id f l) (mp1 ** mpi' ** mp2)).
 Proof.
-  Admitted.
+  intros mp l P id a f FIND SEP.
+  destruct (find_field_split _ _ _ _ FIND) as (l1 & l2 & LIST & FRESH).
+  subst l.
+  apply Forall_sep_app in SEP.
+  destruct SEP as (mp1 & tail & SEP1 & SEPTAIL & WHOLE).
+  inversion SEPTAIL as [|id_a l2' mpi mp2 tail' FIELD SEP2 TAIL]; subst.
+  exists mp1, mp2, mpi, l1, l2. split; [exact SEP1|].
+  split; [exact SEP2|]. split; [exact FIELD|]. split; [reflexivity|]. split.
+  - etransitivity; [exact WHOLE|].
+    eapply sepconj_morph_2; [reflexivity|]. symmetry. exact TAIL.
+  - intros mpi' FIELD'. rewrite set_field_split by exact FRESH.
+    eapply Forall_sep_app. exists mp1, (mpi' ** mp2). split; [exact SEP1|].
+    split.
+    + econstructor; [exact FIELD'|exact SEP2|reflexivity].
+    + reflexivity.
+Qed.
 
+(* AI-generated. *)
 Lemma fields_loc_sep_find_set: forall l fid P mp ffp b ofs base fofs,
     find_field fid l = Some ((base,fofs), ffp) ->
     fields_loc_sep b ofs P l mp ->
@@ -512,7 +606,52 @@ Lemma fields_loc_sep_find_set: forall l fid P mp ffp b ofs base fofs,
               fields_loc_sep b ofs P (set_field_fp fid ffp' l) mp'
               /\ massert_eqv mp' (mp1 ** ((range b (ofs + base) (ofs + fofs)) ** mpi') ** mp2)).
 Proof.
-Admitted.
+  intros l fid P mp ffp b ofs base fofs FIND SEP.
+  induction SEP as
+      [mass EMPTY
+      |fid0 base0 fofs0 ffp0 l head tail pad whole
+         TAIL IH HEAD PAD JOIN].
+  - unfold find_field in FIND. simpl in FIND. congruence.
+  - rewrite find_field_cons in FIND.
+    destruct (ident_eq fid fid0) as [SAME|OTHER].
+    + subst fid0. inv FIND.
+      exists STrue, tail, head, nil, l. split.
+      * econstructor. reflexivity.
+      * split; [exact TAIL|]. split; [exact HEAD|]. split; [reflexivity|].
+        split.
+        -- etransitivity; [exact JOIN|]. rewrite sep_assoc.
+           eapply massert_eqv_STrue_l.
+        -- intros ffp' mpi' FIELD.
+           exists (STrue **
+             ((range b (ofs + base) (ofs + fofs) ** mpi') ** tail)).
+           split.
+           ++ unfold set_field_fp. simpl.
+              destruct (ident_eq fid fid); [|congruence].
+              econstructor; [exact TAIL|exact FIELD|reflexivity|].
+              etransitivity.
+              ** symmetry. eapply massert_eqv_STrue_l.
+              ** eapply sep_assoc.
+           ++ reflexivity.
+    + destruct (IH FIND) as
+          (mp1 & mp2 & mpi & l1 & l2 & SEP1 & SEP2 & FIELD & LIST & SPLIT &
+           UPDATE).
+      subst l.
+      exists (pad ** head ** mp1), mp2, mpi,
+        ((fid0, ((base0, fofs0), ffp0)) :: l1), l2.
+      split.
+      * econstructor; [exact SEP1|exact HEAD|exact PAD|reflexivity].
+      * split; [exact SEP2|]. split; [exact FIELD|]. split; [reflexivity|].
+        split.
+        -- etransitivity; [exact JOIN|]. rewrite SPLIT.
+           rewrite ! sep_assoc. reflexivity.
+        -- intros ffp' mpi' FIELD'.
+           destruct (UPDATE ffp' mpi' FIELD') as (tail' & UPDATED & UPDATED_EQV).
+           exists (pad ** head ** tail'). split.
+           ++ unfold set_field_fp in *. simpl.
+              destruct (ident_eq fid fid0); [congruence|].
+              econstructor; [exact UPDATED|exact HEAD|exact PAD|reflexivity].
+           ++ rewrite UPDATED_EQV. rewrite ! sep_assoc. reflexivity.
+Qed.
 
 (** Basic rules for coherent relation (e.g., store and load rules) *)
 
@@ -555,9 +694,22 @@ Proof.
 Qed.  
 
 
+(* AI-generated. *)
 Lemma contains_range: forall chunk b ofs P,
+    ofs + size_chunk chunk <= Ptrofs.modulus ->
     massert_imp (contains chunk b ofs P) (range b ofs (ofs + size_chunk chunk)).
-Admitted.
+Proof.
+  intros chunk b ofs P BOUND. unfold massert_imp. split.
+  - intros m CONTAINS. simpl in CONTAINS |- *.
+    destruct CONTAINS as ((OFS_LO & OFS_HI) & ACCESS & VALUE).
+    destruct ACCESS as (PERMS & ALIGN).
+    split; [lia|]. split; [exact BOUND|].
+    intros i k p IN_RANGE.
+    eapply Mem.perm_implies with (p1 := Freeable).
+    + eapply Mem.perm_cur. eapply PERMS. exact IN_RANGE.
+    + constructor.
+  - intros b' ofs' IN_RANGE. exact IN_RANGE.
+Qed.
 
 Lemma mconj_comm: forall P Q, massert_eqv (mconj P Q) (mconj Q P).
 Proof. 
@@ -596,6 +748,7 @@ Proof.
   - intros. simpl. right. auto.
 Qed.
 
+(* AI-generated. *)
 Lemma store_range_rule: forall chunk m b ofs v (spec: val -> Prop) P,
     m |= range b ofs (ofs + size_chunk chunk) ** P ->
     (align_chunk chunk | ofs) ->
@@ -603,7 +756,10 @@ Lemma store_range_rule: forall chunk m b ofs v (spec: val -> Prop) P,
     exists m',
       Mem.store chunk m b ofs v = Some m' /\ m' |= contains chunk b ofs spec ** P.
 Proof.
-Admitted.
+  intros chunk m b ofs v spec P RANGE ALIGN SPEC.
+  eapply store_rule; [|exact SPEC].
+  eapply range_contains; eauto.
+Qed.
 
 Lemma store_range_unchanged: forall m1 m2 b lo hi chunk b1 ofs1 v,
     m1 |= range b lo hi ->
@@ -1220,12 +1376,13 @@ Proof.
   exploit PTree.elements_remove. eapply B. intros (l1 & l2 & C1 & C2). 
   inv COH. rewrite C1 in ALLSEP. 
   erewrite Forall_sep_app in ALLSEP. 
-  destruct ALLSEP as (mass11 & mass12 & D1 & D2 & D3). subst.
+  destruct ALLSEP as (mass11 & mass12 & D1 & D2 & D3).
   inv D2. inv H1. inv ELTEQ.
   exists l1, l2. exists mass11, mass2, mass1.
   do 4 (try apply conj); eauto.
   econstructor; eauto.
-  rewrite H4. reflexivity.
+  etransitivity; [exact D3|].
+  eapply sepconj_morph_2; [reflexivity|]. symmetry. exact H4.
 Qed.
 
 
