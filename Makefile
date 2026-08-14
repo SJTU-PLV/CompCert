@@ -182,7 +182,7 @@ RUSTFRONTEND=Rusttypes.v Rustsyntax.v Rustlight.v RustIR.v\
   BorrowCheck.v BorrowCheckInv.v BorrowCheckSound.v\
   RustIRspecMem.v\
   Listmisc.v\
-  # BorrowCheckSim.v 
+  BorrowCheckSim.v 
   # BorrowCheckSafe.v
   # StkBorPermission.v RustIRbor.v 
 # RUSTDEMO=LinkedList.v LinkedListSafe.v HashMap.v HashMapSafe.v HashMapCommon.v \

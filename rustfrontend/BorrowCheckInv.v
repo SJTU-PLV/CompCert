@@ -521,11 +521,51 @@ Lemma get_owner_loc_footprint_map_wt ce: forall phl id fpm b ofs fp,
           /\ (alignof ce ty | ofs).
 Admitted.
 
+Lemma fp_ref_loc_wf_find_field: forall fpm fid fpl loc fp,
+    Forall (fp_ref_loc_wf_field (fp_ref_loc_wf fpm)) fpl ->
+    find_field fid fpl = Some (loc, fp) ->
+    fp_ref_loc_wf fpm fp.
+Proof using Type.
+  intros fpm fid fpl loc fp FIELDS FIND.
+  apply find_field_some in FIND.
+  rewrite Forall_forall in FIELDS.
+  specialize (FIELDS _ FIND).
+  inv FIELDS. auto.
+Qed.
+
+
+Lemma get_owner_loc_footprint_fp_ref_wf: forall phl fpm root
+    b ofs b' ofs' fp,
+    get_owner_loc_footprint phl root b ofs = OK (b', ofs', fp) ->
+    fp_ref_loc_wf fpm root ->
+    fp_ref_loc_wf fpm fp.
+Proof using Type.
+  induction phl as [|pj phl IH]; simpl; intros.
+  - inv H. exact H0.
+  - destruct pj; destruct root; simpl in H; try congruence.
+    + inv H0.
+    + destruct (find_field fid fpl) as [[[base fofs] ffp]|] eqn:FIND;
+        simpl in H; try congruence.
+      inv H0. eapply IH; eauto.
+      eapply fp_ref_loc_wf_find_field; eauto.
+    + destruct (ident_eq fid fid0); simpl in H; try congruence.
+      inv H0. eapply IH; eauto.
+Qed.
+
+
 Lemma get_owner_loc_footprint_map_fp_ref_wf: forall phl id fpm b ofs fp,
     get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, fp) ->
     fp_ref_loc_wf_fpm fpm ->
     fp_ref_loc_wf fpm fp.
-Admitted.
+Proof using Type.
+  intros phl id fpm b' ofs' fp' GET WF_FPM.
+  unfold get_owner_loc_footprint_map in GET. simpl in GET.
+  destruct (fpm ! id) as [entry|] eqn:FPM; simpl in GET; try congruence.
+  destruct entry as [[[b ofs] ty] root].
+  eapply get_owner_loc_footprint_fp_ref_wf.
+  - exact GET.
+  - eapply WF_FPM; eauto.
+Qed.
 
 
 Lemma get_owner_path_map_inv: forall id phl (fpg: fp_map) ph vs,
@@ -533,7 +573,13 @@ Lemma get_owner_path_map_inv: forall id phl (fpg: fp_map) ph vs,
     exists b ofs ty (fp: footprint),
       fpg ! id = Some (b, ofs, ty, fp)
       /\ get_owner_path fpg (id, nil) phl fp nil = OK (ph, vs).
-Admitted.
+Proof using Type.
+  intros id phl fpg ph vs GET.
+  unfold get_owner_path_map in GET. simpl in GET.
+  destruct (fpg ! id) as [entry|] eqn:FPG; simpl in GET; try congruence.
+  destruct entry as [[[b ofs] ty] fp].
+  exists b, ofs, ty, fp. split; auto.
+Qed.
 
 
 Definition append_projs (phl: list projection) (ph: path) :=

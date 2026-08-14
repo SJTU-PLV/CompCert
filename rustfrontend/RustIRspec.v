@@ -1678,14 +1678,14 @@ Definition eval_assign ce fidx (fpm1: fp_map) (p: place) (e: expr) : res (path *
   do (vfp, fpm2) <- eval_expr fidx ce fpm1 e;
   let fpm3 := invalidate_conflict_ref_fpm ph AWrite Ashallow fpm2 in
   do (ph_vs, fpm4) <- before_write_place ce fidx fpm3 p;
-  let (ph, vs) := ph_vs in
+  let (ph1, vs) := ph_vs in
   (* We also need to do invalidation on vfp? I think we cannot create
   some reference which borrows prefix of shallow children parts of the
   written place ,e.g., [*a = &mut a] or [a.f = &mut a]. But anyway,
   the static borrow checking would check this situation, therefore we
   need to do invalidation on the evaluated footprint. *)
-  let vfp1 := invalidate_conflict_ref p AWrite Ashallow vfp in
-  OK (ph, (kill_views_ref vs vfp1), fpm4).
+  let vfp1 := invalidate_conflict_ref ph AWrite Ashallow vfp in
+  OK (ph1, (kill_views_ref vs vfp1), fpm4).
 
 
 Section SMALLSTEP.
@@ -1893,21 +1893,19 @@ Definition semantics (p: program) :=
 End SPEC.
 
 
-(*
+
 (* Define here just for simplicity *)
 Section TYPE_PRESERVATION.
 
-Context {ame: adt_mem_env}.
-
-Notation footprint := (@footprint ame).
-Notation fp_map := (@fp_map ame).
+(* Notation footprint := (@footprint ame). *)
+(* Notation fp_map := (@fp_map ame). *)
 
 
 Variable prog: program.
 Hypothesis WTPROG: wt_program prog.
 Variable se: Genv.symtbl.
 Let ge := globalenv se prog.
-Let L := @semantics ame prog se.
+Let L := @semantics prog se.
 
 Variable sg: rust_signature.
 (* Well-typed continuation and state *)
@@ -1941,18 +1939,18 @@ with wt_call_cont : cont -> type -> Prop :=
 
 
 Inductive wt_state : state -> Prop :=
-| wt_regular_state: forall f s k substs fpm sup
+| wt_regular_state: forall f s k fpm sup fidx
     (WT1: wt_stmt (fpm_to_env fpm) ge s)
     (WT2: wt_cont (fpm_to_env fpm) f k),
-    wt_state (State f s k substs fpm sup)
-| wt_callstate: forall fid fd orgs rels tyl rty cc k fpl inout_fpm sup
+    wt_state (State f s k fpm fidx sup)
+| wt_callstate: forall fid fd orgs rels tyl rty cc k fpl fpm sup fidx
     (FINDF: ge.(genv_defmap) ! fid = Some (Gfun fd))
     (FTY: type_of_fundef fd = Tfunction orgs rels tyl rty cc)
     (WT1: wt_call_cont k rty),
-    wt_state (Callstate fid fpl inout_fpm sup k)
-| wt_returnstate: forall k rety inout_fpm sup v
+    wt_state (Callstate fid fpl fpm fidx sup k)
+| wt_returnstate: forall k rety fpm sup v fidx
     (WT1: wt_call_cont k rety),
-    wt_state (Returnstate v inout_fpm sup k)
+    wt_state (Returnstate v fpm fidx sup k)
 .
 
 (* Hint Constructors wt_cont wt_stmt wt_state: spec_ty. *)
@@ -2067,4 +2065,4 @@ Qed.
 
     
 End TYPE_PRESERVATION.
-*)
+

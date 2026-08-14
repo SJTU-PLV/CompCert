@@ -1283,7 +1283,12 @@ Proof.
   exploit get_owner_loc_footprint_sem_wt_split; eauto.
   intros (mp1 & mp1' & mp2 & fp1' & A1 & A2 & A3 & A4 & A5).
   rewrite A4 in MPRED.
-  assert (MPRED1: m|= mp2 ** mass2 ** (mp1 ** mp1' ** MP)) by admit.
+  (* AI-generated. *)
+  assert (MPRED1: m |= mp2 ** mass2 ** (mp1 ** mp1' ** MP)).
+  { rewrite !sep_assoc in MPRED.
+    rewrite (sep_swap3 mp1 mp1' mp2) in MPRED.
+    rewrite (sep_swap3 mp1' mp1 mass2) in MPRED.
+    exact MPRED. }
   exploit store_sem_wt_loc. eapply A3. all: eauto.
   eapply Z.divide_trans; try eapply alignof_by_value; eauto.
   intros (m2 & mass3 & B1 & B2 & B3).

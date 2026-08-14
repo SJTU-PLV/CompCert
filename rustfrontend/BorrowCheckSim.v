@@ -30,11 +30,11 @@ opaque types *)
 
 Section ADT_ENV.
 
-Context {ame: adt_mem_env}.
+(* Context {ame: adt_mem_env}. *)
 
-Notation footprint := (@footprint ame).
-Notation fp_map := (@fp_map ame).
-Notation state_spec := (@RustIRspec.state ame).
+(* Notation footprint := (@footprint ame). *)
+(* Notation fp_map := (@fp_map ame). *)
+(* Notation state_spec := (@RustIRspec.state ame). *)
 
 Section BORROW_CHECK_SIM.
 
@@ -53,7 +53,8 @@ Let ce := ge.(genv_cenv).
 Variable sg: rust_signature.
 
 (* Let wt_state := @wt_state ame prog se sg. *)
-Let borrowck_inv := @borrowck_inv ame prog se sg.
+Let wt_state := RustIRspec.wt_state prog se sg.
+Let borrowck_inv := @borrowck_inv prog se sg.
 
 (* Definition mod_sg := match w with *)
 (*                     | rsw sg _ _ _ => sg *)
@@ -81,7 +82,7 @@ Proof.
   destruct ty; simpl; rewrite maxv; try lia.
   destruct i; lia.
   destruct f; lia.
-  destruct Archi.ptr64; lia.
+  destruct Archi.ptr64; lia. 
   destruct Archi.ptr64; lia.
   congruence.
   destruct (ce ! i) eqn: A; try lia. 
@@ -578,59 +579,59 @@ Inductive match_cont: RustIRspec.cont -> cont -> massert -> Prop :=
 | match_Kloop: forall s k tk MP
    (MCONT: match_cont k tk MP),
     match_cont (RustIRspec.Kloop s k) (Kloop s tk) MP
-| match_Kcall: forall k tk p ns fpm phl MP f
-    (MSTK: match_stacks (RustIRspec.Kcall p f phl ns fpm k) (Kcall (Some p) f fpm tk) MP),
-    match_cont (RustIRspec.Kcall p f phl ns fpm k) (Kcall (Some p) f fpm tk) MP
+| match_Kcall: forall k tk p MP f e
+    (MSTK: match_stacks (RustIRspec.Kcall p f k) (Kcall (Some p) f e tk) MP),
+    match_cont (RustIRspec.Kcall p f  k) (Kcall (Some p) f e tk) MP
 
 with match_stacks : RustIRspec.cont -> cont -> massert -> Prop :=
-| match_stacks_call: forall f k tk MP1 MP2 phl ns fpm fpm1 p
+| match_stacks_call: forall f k tk MP1 MP2 fpm fpm1 p
     (* We should set fp_emp to the inout parameters *)
-    (FPM: clear_fpm_passed_ref_footprint fpm (map (fun '(id, (ph, _)) => ph) phl) = OK fpm1)
+    (* (FPM: clear_fpm_passed_ref_footprint fpm (map (fun '(id, (ph, _)) => ph) phl) = OK fpm1) *)
     (COH: coherent_fpm ge fpm1 MP1)
     (CONT: match_cont k tk MP2),
-    match_stacks (RustIRspec.Kcall p f phl ns fpm k) (Kcall (Some p) f fpm tk) (MP1 ** MP2)
+    match_stacks (RustIRspec.Kcall p f k) (Kcall (Some p) f fpm tk) (MP1 ** MP2)
 .
     
 
-Inductive match_states: state_spec -> state -> Prop :=
-| match_regular_states: forall f fpm MP FMP m k tk s ns
+Inductive match_states: RustIRspec.state -> state -> Prop :=
+| match_regular_states: forall f fpm MP FMP m k tk s fidx
     (COHERENT: coherent_fpm ce fpm MP)
     (MCONT: match_cont k tk FMP)
     (MPRED: m |= MP ** FMP),
-    match_states (RustIRspec.State f s k ns fpm (Mem.support m)) (State f s tk fpm m)
-| match_callstate: forall vf fd m fpl args k MP1 MP2 MP3 inout_fpm tk fun_id
+    match_states (RustIRspec.State f s k fpm fidx (Mem.support m)) (State f s tk fpm m)
+| match_callstate: forall vf fd m fpl args k MP1 MP2 MP3 fpm tk fun_id fidx
     (* TODO: show that fun_id also points to this function *)
     (FUNC: Genv.find_funct ge vf = Some fd)    
     (* arguments are semantics well typed *)
     (WTVAL_LIST: sem_wt_val_list ce fpl args MP1)
-    (INOUT_FPM: coherent_fpm ce inout_fpm MP2)
+    (INOUT_FPM: coherent_fpm ce fpm MP2)
     (* (ANORM: val_casted_list args tyargs) *)
     (MPRED: m |= MP1 ** MP2 ** MP3)
     (STK: match_stacks k tk MP3),
     (* also disjointness of fpl and fpf *)
-    match_states (RustIRspec.Callstate fun_id fpl inout_fpm (Mem.support m) k) (Callstate vf args tk m)
-| match_returnstate: forall m k vfp v MP1 MP2 MP3 tk inout_fpm
+    match_states (RustIRspec.Callstate fun_id fpl fpm fidx (Mem.support m) k) (Callstate vf args tk m)
+| match_returnstate: forall m k vfp v MP1 MP2 MP3 tk fpm fidx
     (WTVAL: sem_wt_val ce vfp v MP1)
     (** inout memory locations are sem_wt_loc *)
-    (INOUT_FPM: coherent_fpm ce inout_fpm MP2)
+    (INOUT_FPM: coherent_fpm ce fpm MP2)
     (MPRED: m |= MP1 ** MP2 ** MP3)    
     (STK: match_stacks k tk MP3),
-    match_states (RustIRspec.Returnstate vfp inout_fpm (Mem.support m) k) (Returnstate v tk m).
+    match_states (RustIRspec.Returnstate vfp fpm fidx (Mem.support m) k) (Returnstate v tk m).
 
 
 (** Properties of evaluating place and expressions  *)
 
-Notation get_owner_loc_footprint_map := (@get_owner_loc_footprint_map ame).
+(* Notation get_owner_loc_footprint_map := (@get_owner_loc_footprint_map ame). *)
 
 Ltac destr_get_fpm fpm id :=
   let GFP := fresh "GFP" in
-  destruct (fpm ! id) as [((((?b & ?ofs) & ?r) & ?ty) & ?fp)|] eqn: GFP;
-  match goal with
-  | [H : context G [fpm_to_fpg] |- _ ] =>
-      setoid_rewrite PTree.gmap1 in H;
-      rewrite GFP in H;
-      simpl in H
-  end.
+  destruct (fpm ! id) as [(((?b & ?ofs) & ?ty) & ?fp)|] eqn: GFP.
+  (* match goal with *)
+  (* | [H : context G [fpm] |- _ ] => *)
+  (*     (* setoid_rewrite PTree.gmap1 in H; *) *)
+  (*     rewrite GFP in H; *)
+  (*     simpl in H *)
+  (* end. *)
 
 Ltac destr_path_of_place p :=
   destruct (path_of_place p) as (?pid & ?phl) eqn: ?POP.
@@ -664,26 +665,56 @@ Ltac inv_get_owner_path_fpm H :=
   destruct GPH as (?fp & ?G1 & ?G2).
 
 
+Lemma get_owner_loc_footprint_get_owner_footprint : forall phl fp b ofs fp',
+    get_owner_footprint phl fp = OK fp' ->
+    exists b' ofs', get_owner_loc_footprint phl fp b ofs = OK (b', ofs', fp').
+Proof using Type.
+  induction phl as [|pj phl IH]; simpl; intros.
+  - inv H. exists b, ofs. reflexivity.
+  - destruct pj as [| fid1 | fid1];
+      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph vs];
+      simpl in H; try congruence.
+    + destruct (IH fp1 b1 0 fp' H) as (b' & ofs' & H1). exists b', ofs'. exact H1.
+    + destruct (find_field fid1 fpl) as [[[base fofs] fp1]|] eqn:FIND;
+        simpl in H; try congruence.
+      destruct (IH fp1 b (ofs + fofs) fp' H) as (b' & ofs' & H1). exists b', ofs'. exact H1.
+    + destruct (ident_eq fid1 fid2) eqn:EQ; simpl in H; try congruence.
+      destruct (IH fp1 b (ofs + fofs) fp' H) as (b' & ofs' & H1). exists b', ofs'. exact H1.
+Qed.
+
+
 Lemma get_owner_footprint_map_loc : forall phl id (fpm: fp_map) fp
     (GET_PH: get_owner_footprint_map (id, phl) fpm = OK fp),
     exists b ofs,
       get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, fp).
-Admitted.
+Proof using Type.
+  intros phl id fpm fp GET_PH.
+  unfold get_owner_footprint_map, get_owner_loc_footprint_map in *.
+  simpl in *.
+  destruct (fpm ! id) as [[[[b ofs] ty] fp0]|] eqn:FPM; simpl in *; try congruence.
+  destruct (get_owner_loc_footprint_get_owner_footprint phl fp0 b ofs fp GET_PH)
+    as (b' & ofs' & H1).
+  exists b', ofs'. exact H1.
+Qed.
 
 
-Lemma get_owner_path_map_eval_place: forall (p: place) fpm vs ph m MP
+Lemma get_owner_path_map_eval_place: forall (frame: frame_idx) (p: place) fpm vs ph m MP
     (COH: coherent_fpm ce fpm MP)
     (MPRED: m |= MP)
     (WT_FPM: wt_fpm ce fpm)
     (WTP: wt_place fpm ce p)
     (REF_WF: fp_ref_loc_wf_fpm fpm)
-    (GET_PH: get_owner_path_map p fpm = OK (ph, vs)),
+    (GET_PH: get_owner_path_map (enc_path frame p) fpm = OK (ph, vs)),
     exists b ofs fp,
       get_owner_loc_footprint_map ph fpm = OK (b, ofs, fp)
       /\ eval_place ce fpm m p b (Ptrofs.repr ofs).
-Proof.  
+Proof.
+(* WIP proof body commented out: it was written against an older
+   version of the helper lemmas (get_owner_path_map_inv,
+   inv_get_owner_path_app) and references the removed [ame] context,
+   so it no longer processes. Kept here for reference:
   induction p; intros.
-  - simpl in *. 
+  - simpl in *.     
     destr_get_fpm fpm i; try congruence. inv GET_PH.
     simpl. rewrite GFP. exists b, ofs, fp. split; auto.
     inv WTP.
@@ -767,7 +798,12 @@ Proof.
       admit.
   (* Pdowncast *)
   - admit.
+ *)
 Admitted.
+
+Section FRAME.
+
+Variable frame: frame_idx.
 
 (* Properties of evaluating expression *)
 
@@ -782,7 +818,7 @@ Lemma eval_pexpr_match: forall (pe: pexpr) vfp (fpm1 fpm2: fp_map) m MP FMP
     (MPRED: m |= MP ** FMP)
     (WTPEXPR: wt_pexpr fpm1 ce pe)
     (WTFPM: wt_fpm ce fpm1)
-    (EVAL: eval_pexpr fpm1 pe = OK (vfp, fpm2)),
+    (EVAL: eval_pexpr frame fpm1 pe = OK (vfp, fpm2)),
     exists v mp,
       Rustlightown.eval_pexpr ce fpm1 m tge pe v
       /\ sem_wt_val ce vfp v mp
@@ -790,6 +826,7 @@ Lemma eval_pexpr_match: forall (pe: pexpr) vfp (fpm1 fpm2: fp_map) m MP FMP
       /\ m |= mp ** MP ** FMP.
 Proof.
 Admitted.
+
 
 (* When we can successfully get the footprint from a path, then we can
 move out this footprint and obtain the new memory predicate *)
@@ -825,56 +862,823 @@ Lemma deref_loc_sem_wt_val: forall (fp: footprint) b ofs mp ty m fpm
 Admitted.
 
 
-Lemma invalidate_conflict_ref_fpm_coherent_unchanged: forall phl id (fpm: fp_map) ak am mp,
-    coherent_fpm ce fpm mp ->
-    coherent_fpm ce (invalidate_conflict_ref_fpm (id, phl) ak am fpm) mp.
-Admitted.
+(** General infrastructure for endomorphisms of [footprint] that
+    preserve its structure.  Both [invalidate_conflict_ref ph ak am]
+    and [kill_views_ref kill] are instances, which lets us prove the
+    preservation of [get_owner_footprint], [get_owner_loc_footprint],
+    [sizeof_footprint], [fp_is_dropped], [sem_wt_loc], [sem_wt_fp],
+    [sem_wt_val], [wt_footprint], and [coherent_fpm] once and for
+    all. *)
 
-Lemma invalidate_conflict_ref_fpm_wt_fpm_unchanged: forall phl id (fpm: fp_map) ak am,
-    wt_fpm ce fpm ->
-    wt_fpm ce (invalidate_conflict_ref_fpm (id, phl) ak am fpm).
-Admitted.
+Definition struct_fp_map (f: footprint -> footprint) : Prop :=
+  f fp_emp = fp_emp
+  /\ (forall sz al, f (fp_uninit sz al) = fp_uninit sz al)
+  /\ (forall chunk v, f (fp_scalar chunk v) = fp_scalar chunk v)
+  /\ (forall b fp1, f (fp_box b fp1) = fp_box b (f fp1))
+  /\ (forall id fpl,
+         f (fp_struct id fpl) =
+         fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, f ffp))) fpl))
+  /\ (forall id tag fid fofs fp1,
+         f (fp_enum id tag fid fofs fp1) = fp_enum id tag fid fofs (f fp1))
+  /\ (forall mut b ofs ph vs,
+         (exists vs', f (fp_ref mut b ofs (Some ph) vs) = fp_ref mut b ofs (Some ph) vs')
+         \/ (exists vs', f (fp_ref mut b ofs (Some ph) vs) = fp_ref mut b ofs None vs'))
+  /\ (forall mut b ofs vs,
+         exists vs', f (fp_ref mut b ofs None vs) = fp_ref mut b ofs None vs').
 
-Lemma invalidate_conflict_ref_fpm_fp_ref_wf_unchanged: forall phl id (fpm: fp_map) ak am,
-    fp_ref_loc_wf_fpm fpm ->
-    fp_ref_loc_wf_fpm (invalidate_conflict_ref_fpm (id, phl) ak am fpm).
-Admitted.
+Lemma invalidate_conflict_ref_struct_fp_map: forall ph ak am,
+    struct_fp_map (invalidate_conflict_ref ph ak am).
+Proof using Type.
+  intros ph ak am. unfold struct_fp_map.
+  repeat split; intros; simpl; try reflexivity.
+  - destruct (BorrowCheckDomain.conflict_access ak mut && conflict_view ph am vs).
+    + right. eexists. reflexivity.
+    + left. eexists. reflexivity.
+  - destruct (BorrowCheckDomain.conflict_access ak mut && conflict_view ph am vs);
+      eexists; reflexivity.
+Qed.
+
+Lemma kill_views_ref_struct_fp_map: forall kill,
+    struct_fp_map (kill_views_ref kill).
+Proof using Type.
+  intros kill. unfold struct_fp_map.
+  repeat split; intros; simpl; try reflexivity.
+  - left. eexists. reflexivity.
+  - eexists. reflexivity.
+Qed.
 
 
-Lemma invalidate_conflict_ref_fpm_wt_footprint_unchanged: forall phl id (fpm: fp_map) ak am ty (fp: footprint),
-    wt_footprint ce (fpm_to_tenv fpm) ty fp ->
-    wt_footprint ce (fpm_to_tenv (invalidate_conflict_ref_fpm (id, phl) ak am fpm)) ty fp.
-Admitted.
+Lemma find_field_map_ffp: forall (f: footprint -> footprint) fid
+    (fpl: list (ident * ((Z * Z) * footprint))),
+    find_field fid (map (fun '(id, (r, ffp)) => (id, (r, f ffp))) fpl) =
+    option_map (fun '(r, ffp) => (r, f ffp)) (find_field fid fpl).
+Proof using Type.
+  intros f fid fpl.
+  induction fpl as [|[id [r ffp]] fpl IH]; auto.
+  simpl. rewrite ! find_field_cons.
+  destruct (ident_eq fid id); simpl; auto.
+Qed.
 
 
-Lemma invalidate_conflict_ref_fpm_wt_place_unchanged: forall phl id (fpm: fp_map) ak am p,
-    wt_place fpm ce p ->
-    wt_place (invalidate_conflict_ref_fpm (id, phl) ak am fpm) ce p.
-Admitted.
+Lemma struct_fp_map_get_owner_footprint: forall f phl fp fp',
+    struct_fp_map f ->
+    get_owner_footprint phl fp = OK fp' ->
+    get_owner_footprint phl (f fp) = OK (f fp').
+Proof using Type.
+  induction phl as [|pj phl IH]; simpl; intros.
+  - inv H0. reflexivity.
+  - destruct pj as [| fid1 | fid1];
+      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
+      simpl in H0; try congruence.
+    + pose proof H as SM'. destruct H as (_ & _ & _ & E4 & _ & _ & _ & _).
+      rewrite E4. simpl. eapply IH; eauto.
+    + pose proof H as SM'. destruct H as (_ & _ & _ & _ & E5 & _ & _ & _).
+      rewrite E5. simpl. rewrite find_field_map_ffp.
+      destruct (find_field fid1 fpl) as [[[base fofs] ffp]|] eqn:FIND;
+        simpl in *; try congruence.
+      eapply IH; eauto.
+    + pose proof H as SM'. destruct H as (_ & _ & _ & _ & _ & E6 & _ & _).
+      rewrite E6. simpl.
+      destruct (ident_eq fid1 fid2); simpl in *; try congruence.
+      eapply IH; eauto.
+Qed.
 
 
-Lemma invalidate_conflict_ref_fpm_env_eq: forall phl id (fpm: fp_map) ak am,
-    (fpm_to_env fpm) = (fpm_to_env (invalidate_conflict_ref_fpm (id, phl) ak am fpm)).
-Admitted.
+Lemma struct_fp_map_get_owner_loc_footprint: forall f phl fp b ofs b' ofs' fp',
+    struct_fp_map f ->
+    get_owner_loc_footprint phl fp b ofs = OK (b', ofs', fp') ->
+    get_owner_loc_footprint phl (f fp) b ofs = OK (b', ofs', f fp').
+Proof using Type.
+  induction phl as [|pj phl IH]; simpl; intros.
+  - inv H0. reflexivity.
+  - destruct pj as [| fid1 | fid1];
+      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
+      simpl in H0; try congruence.
+    + pose proof H as SM'. destruct H as (_ & _ & _ & E4 & _ & _ & _ & _).
+      rewrite E4. simpl. eapply IH; eauto.
+    + pose proof H as SM'. destruct H as (_ & _ & _ & _ & E5 & _ & _ & _).
+      rewrite E5. simpl. rewrite find_field_map_ffp.
+      destruct (find_field fid1 fpl) as [[[base fofs] ffp]|] eqn:FIND;
+        simpl in *; try congruence.
+      eapply IH; eauto.
+    + pose proof H as SM'. destruct H as (_ & _ & _ & _ & _ & E6 & _ & _).
+      rewrite E6. simpl.
+      destruct (ident_eq fid1 fid2); simpl in *; try congruence.
+      eapply IH; eauto.
+Qed.
 
-Lemma invalidate_conflict_ref_fpm_tenv_eq: forall phl id (fpm: fp_map) ak am,
-    (fpm_to_tenv fpm) = (fpm_to_tenv (invalidate_conflict_ref_fpm (id, phl) ak am fpm)).
-Admitted.
 
-Lemma invalidate_conflict_ref_sem_wt_val_eq: forall phl id (fp: footprint) v ak am mp,
+Lemma struct_fp_map_get_owner_footprint_map: forall f ps fpm fp,
+    struct_fp_map f ->
+    get_owner_footprint_map ps fpm = OK fp ->
+    get_owner_footprint_map ps
+      (PTree.map1 (fun '(b, ofs, ty, fp0) => (b, ofs, ty, f fp0)) fpm) = OK (f fp).
+Proof using Type.
+  intros f [id phl] fpm fp SM GET.
+  unfold get_owner_footprint_map in *. simpl in *.
+  rewrite PTree.gmap1 in *.
+  destruct (fpm ! id) as [entry|] eqn:FPM; simpl in *; try congruence.
+  destruct entry as [[[b ofs] ty] fp0]; simpl in *.
+  eapply struct_fp_map_get_owner_footprint; eauto.
+Qed.
+
+
+Lemma struct_fp_map_get_owner_loc_footprint_map: forall f ps fpm b ofs fp,
+    struct_fp_map f ->
+    get_owner_loc_footprint_map ps fpm = OK (b, ofs, fp) ->
+    get_owner_loc_footprint_map ps
+      (PTree.map1 (fun '(b, ofs, ty, fp0) => (b, ofs, ty, f fp0)) fpm) = OK (b, ofs, f fp).
+Proof using Type.
+  intros f [id phl] fpm b ofs fp SM GET.
+  unfold get_owner_loc_footprint_map in *. simpl in *.
+  rewrite PTree.gmap1 in *.
+  destruct (fpm ! id) as [entry|] eqn:FPM; simpl in *; try congruence.
+  destruct entry as [[[b0 ofs0] ty] fp0]; simpl in *.
+  eapply struct_fp_map_get_owner_loc_footprint; eauto.
+Qed.
+
+
+Lemma struct_fp_map_sizeof: forall f fp,
+    struct_fp_map f ->
+    sizeof_footprint ce (f fp) = sizeof_footprint ce fp.
+Proof.
+  intros f fp SM.
+  induction fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid fofs fp1 | mut b1 ofs1 ph0 vs] using strong_footprint_ind.
+  - destruct SM as (E1 & _ & _ & _ & _ & _ & _ & _). rewrite E1. reflexivity.
+  - destruct SM as (_ & E2 & _ & _ & _ & _ & _ & _). rewrite E2. reflexivity.
+  - destruct SM as (_ & _ & E3 & _ & _ & _ & _ & _). rewrite E3. reflexivity.
+  - destruct SM as (_ & _ & _ & E4 & _ & _ & _ & _). rewrite E4. simpl. reflexivity.
+  - destruct SM as (_ & _ & _ & _ & E5 & _ & _ & _). rewrite E5. simpl. reflexivity.
+  - destruct SM as (_ & _ & _ & _ & _ & E6 & _ & _). rewrite E6. simpl. reflexivity.
+  - destruct ph0 as [ph1|].
+    + destruct SM as (_ & _ & _ & _ & _ & _ & E7 & _).
+      destruct (E7 mut b1 ofs1 ph1 vs) as [[vs' H1]|[vs' H1]]; rewrite H1; simpl; reflexivity.
+    + destruct SM as (_ & _ & _ & _ & _ & _ & _ & E8).
+      destruct (E8 mut b1 ofs1 vs) as (vs' & H1); rewrite H1; simpl; reflexivity.
+Qed.
+
+
+Lemma forallb_map_f: forall (A B: Type) (P: A -> bool) (g: B -> A) l,
+    forallb P (map g l) = forallb (fun x => P (g x)) l.
+Proof using Type.
+  intros A B P g l. induction l as [|a l IH]; simpl; auto.
+  rewrite IH. reflexivity.
+Qed.
+
+Lemma forallb_In_ext: forall (A: Type) (P Q: A -> bool) l,
+    (forall x, In x l -> P x = Q x) -> forallb P l = forallb Q l.
+Proof using Type.
+  intros A P Q l H. induction l as [|a l IH]; simpl; auto.
+  assert (HA: P a = Q a) by (eapply H; left; reflexivity).
+  rewrite HA. rewrite IH; [reflexivity | intros x IN; eapply H; right; exact IN].
+Qed.
+
+Lemma struct_fp_map_fp_is_dropped: forall f fp,
+    struct_fp_map f ->
+    fp_is_dropped (f fp) = fp_is_dropped fp.
+Proof using Type.
+  intros f fp SM.
+  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind.
+  - destruct SM as (E1 & _ & _ & _ & _ & _ & _ & _). rewrite E1. reflexivity.
+  - destruct SM as (_ & E2 & _ & _ & _ & _ & _ & _). rewrite E2. reflexivity.
+  - destruct SM as (_ & _ & E3 & _ & _ & _ & _ & _). rewrite E3. reflexivity.
+  - destruct SM as (_ & _ & _ & E4 & _ & _ & _ & _). rewrite E4. simpl. reflexivity.
+  - pose proof SM as SM'. destruct SM as (_ & _ & _ & _ & E5 & _ & _ & _). rewrite E5. simpl.
+    rewrite forallb_map_f. apply forallb_In_ext. intros x IN.
+    destruct x as [fid' [r ffp']]. simpl.
+    destruct r as [base' fofs']. eapply IHfields; eauto.
+  - destruct SM as (_ & _ & _ & _ & _ & E6 & _ & _). rewrite E6. simpl.
+    exact IHenum.
+  - destruct ph0 as [ph1|].
+    + destruct SM as (_ & _ & _ & _ & _ & _ & E7 & _).
+      destruct (E7 mut b1 ofs1 ph1 vs) as [[vs' H1]|[vs' H1]]; rewrite H1; simpl; reflexivity.
+    + destruct SM as (_ & _ & _ & _ & _ & _ & _ & E8).
+      destruct (E8 mut b1 ofs1 vs) as (vs' & H1); rewrite H1; simpl; reflexivity.
+Qed.
+
+
+Lemma fields_loc_sep_struct_fp_map: forall f b ofs fpl mass,
+    (forall fid r ffp b' ofs' mp',
+       In (fid, (r, ffp)) fpl ->
+       sem_wt_loc ce ffp b' ofs' mp' ->
+       sem_wt_loc ce (f ffp) b' ofs' mp') ->
+    fields_loc_sep b ofs (sem_wt_loc ce) fpl mass ->
+    fields_loc_sep b ofs (sem_wt_loc ce)
+      (map (fun '(fid, (r, ffp)) => (fid, (r, f ffp))) fpl) mass.
+Proof.
+  intros f b ofs fpl mass PRES H.
+  induction H as [mass0 EQV | fid base fofs ffp l mass1 mass2 padmp mp IND IHIND FWT ALPERM EQV];
+    simpl.
+  - econstructor; eauto.
+  - econstructor.
+    + eapply IHIND. intros fid' r' ffp' b' ofs' mp' IN' HFFP'.
+      eapply PRES. right. exact IN'. exact HFFP'.
+    + eapply PRES. left. reflexivity. exact FWT.
+    + exact ALPERM.
+    + exact EQV.
+Qed.
+
+
+Lemma sem_wt_loc_struct_fp_map: forall f fp b ofs mp,
+    struct_fp_map f ->
+    sem_wt_loc ce fp b ofs mp ->
+    sem_wt_loc ce (f fp) b ofs mp.
+Proof.
+  intros f fp b ofs mp. revert b ofs mp.
+  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+    intros b ofs mp SM H.
+  - inv H. destruct SM as (E1 & _ & _ & _ & _ & _ & _ & _). rewrite E1. econstructor; eauto.
+  - inv H. destruct SM as (_ & E2 & _ & _ & _ & _ & _ & _). rewrite E2. econstructor; eauto.
+  - inv H. destruct SM as (_ & _ & E3 & _ & _ & _ & _ & _). rewrite E3. econstructor; eauto.
+  - inv H. pose proof SM as SM'. destruct SM as (_ & _ & _ & E4 & _ & _ & _ & _).
+    rewrite E4. econstructor.
+    + eapply IHbox; eauto.
+    + assert (BOXPREQ: box_pred ce (f fp1) b1 nextmp = box_pred ce fp1 b1 nextmp).
+      { unfold box_pred. rewrite (struct_fp_map_sizeof f fp1 SM'). reflexivity. }
+      rewrite BOXPREQ. exact EQV.
+  - inv H. pose proof SM as SM'. destruct SM as (_ & _ & _ & _ & E5 & _ & _ & _).
+    rewrite E5. econstructor.
+    + eapply fields_loc_sep_struct_fp_map.
+      * intros fid' r' ffp' b' ofs' mp' IN' HFFP'. destruct r' as [base' fofs'].
+        eapply IHfields; eauto.
+      * exact FWT.
+    + exact EQV.
+  - inv H. pose proof SM as SM'. destruct SM as (_ & _ & _ & _ & _ & E6 & _ & _).
+    rewrite E6. econstructor; try reflexivity; eauto.
+  - inv H. destruct SM as (_ & _ & _ & _ & _ & _ & E7 & E8).
+    destruct ph0 as [ph1|].
+    + destruct (E7 mut b1 ofs1 ph1 vs) as [[vs' H1]|[vs' H1]]; rewrite H1; econstructor; eauto.
+    + destruct (E8 mut b1 ofs1 vs) as (vs' & H1); rewrite H1; econstructor; eauto.
+Qed.
+
+
+Lemma fields_fp_sep_struct_fp_map: forall f fpl mass,
+    (forall fid r ffp mp, In (fid, (r, ffp)) fpl ->
+       sem_wt_fp ce ffp mp -> sem_wt_fp ce (f ffp) mp)->
+    fields_fp_sep (sem_wt_fp ce) fpl mass ->
+    fields_fp_sep (sem_wt_fp ce)
+      (map (fun '(fid, (r, ffp)) => (fid, (r, f ffp))) fpl) mass.
+Proof.
+  intros f fpl mass PRES H.
+  induction H as [mass0 EQV | fid base fofs ffp l mass1 mass2 mp IND IHIND FWT EQV]; simpl.
+  - econstructor; eauto.
+  - econstructor.
+    + eapply IHIND. intros fid' r' ffp' mp' IN' HFFP'.
+      eapply PRES. right. exact IN'. exact HFFP'.
+    + eapply PRES. left. reflexivity. exact FWT.
+    + exact EQV.
+Qed.
+
+
+Lemma sem_wt_fp_struct_fp_map: forall f fp mp,
+    struct_fp_map f ->
+    sem_wt_fp ce fp mp ->
+    sem_wt_fp ce (f fp) mp.
+Proof.
+  intros f fp mp. revert mp.
+  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+    intros mp SM H.
+  - inv H. destruct SM as (E1 & _ & _ & _ & _ & _ & _ & _). rewrite E1. econstructor; eauto.
+  - inv H. destruct SM as (_ & E2 & _ & _ & _ & _ & _ & _). rewrite E2. econstructor; eauto.
+  - inv H. destruct SM as (_ & _ & E3 & _ & _ & _ & _ & _). rewrite E3. econstructor; eauto.
+  - inv H. pose proof SM as SM'. destruct SM as (_ & _ & _ & E4 & _ & _ & _ & _).
+    rewrite E4. econstructor.
+    + eapply sem_wt_loc_struct_fp_map; eauto.
+    + assert (BOXPREQ: box_pred ce (f fp1) b1 nextmp = box_pred ce fp1 b1 nextmp).
+      { unfold box_pred. rewrite (struct_fp_map_sizeof f fp1 SM'). reflexivity. }
+      rewrite BOXPREQ. exact EQV.
+  - inv H. pose proof SM as SM'. destruct SM as (_ & _ & _ & _ & E5 & _ & _ & _).
+    rewrite E5. econstructor.
+    + eapply fields_fp_sep_struct_fp_map.
+      * intros fid' r' ffp' IN' HFFP'. destruct r' as [base' fofs'].
+        eapply IHfields; eauto.
+      * exact FFP.
+    + exact EQV.
+  - inv H. pose proof SM as SM'. destruct SM as (_ & _ & _ & _ & _ & E6 & _ & _).
+    rewrite E6. econstructor; eauto.
+  - inv H. destruct SM as (_ & _ & _ & _ & _ & _ & E7 & E8).
+    destruct ph0 as [ph1|].
+    + destruct (E7 mut b1 ofs1 ph1 vs) as [[vs' H1]|[vs' H1]]; rewrite H1; econstructor; eauto.
+    + destruct (E8 mut b1 ofs1 vs) as (vs' & H1); rewrite H1; econstructor; eauto.
+Qed.
+
+
+Lemma sem_wt_val_struct_fp_map: forall f fp v mp,
+    struct_fp_map f ->
     sem_wt_val ce fp v mp ->
-    sem_wt_val ce (invalidate_conflict_ref (id, phl) ak am fp) v mp.
-Admitted.   
+    sem_wt_val ce (f fp) v mp.
+Proof.
+  intros f fp v mp. revert v mp.
+  induction fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid fofs fp1 | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+    intros v0 mp SM H1; inv H1.
+  - pose proof SM as SM'. destruct SM as (_ & _ & E3 & _ & _ & _ & _ & _).
+    rewrite E3. econstructor; eauto.
+  - pose proof SM as SM'. destruct SM as (_ & _ & _ & E4 & _ & _ & _ & _).
+    rewrite E4. econstructor. rewrite <- E4. eapply sem_wt_fp_struct_fp_map; eauto.
+  - pose proof SM as SM'. destruct SM as (_ & _ & _ & _ & _ & _ & E7 & E8).
+    destruct ph0 as [ph1|].
+    + destruct (E7 mut b1 ofs1 ph1 vs) as [[vs' H1]|[vs' H1]];
+        rewrite H1; inv MP; econstructor; econstructor; eauto.
+    + destruct (E8 mut b1 ofs1 vs) as (vs' & H1);
+        rewrite H1; inv MP; econstructor; econstructor; eauto.
+Qed.
 
-Lemma invalidate_conflict_ref_fpm_coherent_eq: forall phl id (fpm: fp_map) ak am mp,
+
+Lemma fp_match_field_struct_fp_map: forall f te co fpl members,
+    (forall fid r ffp fty,
+       In (fid, (r, ffp)) fpl ->
+       wt_footprint ce te fty ffp ->
+       wt_footprint ce te fty (f ffp)) ->
+    Forall2 (fp_match_field ce co (wt_footprint ce te)) fpl members ->
+    Forall2 (fp_match_field ce co (wt_footprint ce te))
+      (map (fun '(fid, (r, ffp)) => (fid, (r, f ffp))) fpl) members.
+Proof using ge.
+  intros f te co fpl members PRES MATCH.
+  induction MATCH; simpl.
+  - constructor.
+  - constructor.
+    + inv H. econstructor.
+      * exact FOFS.
+      * eapply PRES. left. reflexivity. exact WTFP.
+    + eapply IHMATCH. intros fid' r' ffp' fty' IN' WTFP'.
+      eapply PRES. right. exact IN'. exact WTFP'.
+Qed.
+
+
+Lemma field_idents_struct_fp_map: forall (f: footprint -> footprint)
+                                          (fpl: list (ident * ((Z * Z) * footprint))),
+    field_idents (map (fun '(fid, (r, ffp)) => (fid, (r, f ffp))) fpl) =
+    field_idents fpl.
+Proof using Type.
+  intros f fpl. unfold field_idents.
+  induction fpl as [|[fid [r ffp]] fpl IH]; simpl; f_equal; auto.
+Qed.
+
+
+Lemma wt_footprint_struct_fp_map: forall f te ty fp,
+    struct_fp_map f ->
+    wt_footprint ce te ty fp ->
+    wt_footprint ce te ty (f fp).
+Proof.
+  intros f te ty fp SM. revert ty.
+  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+    intros ty H.
+  - inv H.
+  - inv H. destruct SM as (_ & E2 & _ & _ & _ & _ & _ & _). rewrite E2. econstructor; eauto.
+  - inv H. destruct SM as (_ & _ & E3 & _ & _ & _ & _ & _). rewrite E3. econstructor; eauto.
+  - inv H. destruct SM as (_ & _ & _ & E4 & _ & _ & _ & _). rewrite E4. econstructor; eauto.
+  - inv H. pose proof SM as SM'. destruct SM as (_ & _ & _ & _ & E5 & _ & _ & _). rewrite E5. econstructor.
+    + exact CO. + exact STRUCT.
+    + eapply fp_match_field_struct_fp_map.
+      * intros fid' r' ffp' fty' IN' WTFP'. destruct r' as [base' fofs'].
+        eapply IHfields; eauto.
+      * exact MATCH.
+    + rewrite field_idents_struct_fp_map. exact FLAT.
+  - inv H. destruct SM as (_ & _ & _ & _ & _ & E6 & _ & _). rewrite E6.
+    econstructor; try reflexivity; eauto.
+  - inv H; destruct SM as (_ & _ & _ & _ & _ & _ & E7 & E8).
+    + destruct (E7 mut b1 ofs1 ph vs) as [[vs' H1]|[vs' H1]];
+        rewrite H1; econstructor; eauto.
+    + destruct (E8 mut b1 ofs1 vs) as (vs' & H1);
+        rewrite H1; econstructor.
+Qed.
+
+
+Lemma map_fst_map_snd_f: forall (A B: Type) (g: A -> B) (l: list (positive * A)),
+    map fst (map (fun '(i, x) => (i, g x)) l) = map fst l.
+Proof using Type.
+  intros A B g l. induction l as [|[i x] l IH]; simpl; f_equal; auto.
+Qed.
+
+Lemma PTree_elements_map1: forall (A B: Type) (g: A -> B) (m: PTree.t A),
+    PTree.elements (PTree.map1 g m) =
+    map (fun '(i, x) => (i, g x)) (PTree.elements m).
+Proof using Type.
+  intros A B g [|m]; simpl; auto.
+  assert (MAP:
+    forall (tr: PTree.tree' A) i k,
+      PTree.xelements' (PTree.map1' g tr) i
+        (map (fun '(j, x) => (j, g x)) k) =
+      map (fun '(j, x) => (j, g x)) (PTree.xelements' tr i k)).
+  { intros tr. induction tr; intros; simpl.
+    - apply IHtr.
+    - reflexivity.
+    - f_equal. apply IHtr.
+    - apply IHtr.
+    - rewrite IHtr2. apply IHtr1.
+    - change ((PTree.prev i, g a) :: map (fun '(j, x) => (j, g x)) k)
+        with (map (fun '(j, x) => (j, g x)) ((PTree.prev i, a) :: k)).
+      apply IHtr.
+    - rewrite IHtr2.
+      change ((PTree.prev i, g a) ::
+                map (fun '(j, x) => (j, g x))
+                  (PTree.xelements' tr2 i~1 k))
+        with (map (fun '(j, x) => (j, g x))
+                ((PTree.prev i, a) :: PTree.xelements' tr2 i~1 k)).
+      apply IHtr1. }
+  specialize (MAP m xH nil). simpl in MAP. exact MAP.
+Qed.
+
+
+Lemma Forall_sep_coherent_var_struct_fp_map: forall f l mass,
+    struct_fp_map f ->
+    Forall_sep (coherent_var ce) l mass ->
+    Forall_sep (coherent_var ce)
+      (map (fun '(id, entry) =>
+              (id, (fun '(b, ofs, ty, fp0) => (b, ofs, ty, f fp0)) entry)) l) mass.
+Proof.
+  intros f l mass SM H.
+  induction H as [mass0 EQV | x l1 mass1 mass2 mass3 HEAD IH TAIL EQV]; simpl.
+  - econstructor; eauto.
+  - inv HEAD. econstructor.
+    + econstructor.
+      * reflexivity.
+      * eapply sem_wt_loc_struct_fp_map; eauto.
+    + exact TAIL.
+    + exact EQV.
+Qed.
+
+
+Lemma coherent_fpm_struct_fp_map: forall f fpm mp,
+    struct_fp_map f ->
     coherent_fpm ce fpm mp ->
-    coherent_fpm ce (invalidate_conflict_ref_fpm (id, phl) ak am fpm) mp.
-Admitted.   
+    coherent_fpm ce (PTree.map1 (fun '(b, ofs, ty, fp0) => (b, ofs, ty, f fp0)) fpm) mp.
+Proof.
+  intros f fpm mp SM COH.
+  inv COH.
+  econstructor.
+  rewrite PTree_elements_map1.
+  eapply Forall_sep_coherent_var_struct_fp_map; eauto.
+Qed.
+
+
+(** Specific traversal lemma for invalidate_conflict_ref, used by
+    check_path_is_dropped preservation. *)
+
+Lemma get_owner_footprint_invalidate_eq: forall phl ph ak am fp,
+    get_owner_footprint phl (invalidate_conflict_ref ph ak am fp) =
+    match get_owner_footprint phl fp with
+    | OK fp' => OK (invalidate_conflict_ref ph ak am fp')
+    | Error e => Error e
+    end.
+Proof using Type.
+  induction phl as [|pj phl IH]; simpl; intros.
+  - reflexivity.
+  - destruct pj as [| fid1 | fid1];
+      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
+      cbn [invalidate_conflict_ref get_owner_footprint];
+      try reflexivity.
+    + rewrite (IH ph ak am fp1). reflexivity.
+    + rewrite find_field_invalidate_conflict_ref.
+      destruct (find_field fid1 fpl) as [[[base fofs] ffp]|] eqn:FIND;
+        cbn; try reflexivity.
+      rewrite (IH ph ak am ffp). reflexivity.
+    + destruct (ident_eq fid1 fid2); cbn; try reflexivity.
+      rewrite (IH ph ak am fp1). reflexivity.
+Qed.
+
+Lemma get_owner_footprint_map_invalidate_eq: forall ph ak am ps fpm,
+    get_owner_footprint_map ps (invalidate_conflict_ref_fpm ph ak am fpm) =
+    match get_owner_footprint_map ps fpm with
+    | OK fp => OK (invalidate_conflict_ref ph ak am fp)
+    | Error e => Error e
+    end.
+Proof using Type.
+  intros ph ak am [id phl] fpm.
+  unfold get_owner_footprint_map, invalidate_conflict_ref_fpm. simpl.
+  rewrite PTree.gmap1.
+  destruct (fpm ! id) as [entry|]; simpl; auto.
+  destruct entry as [[[b ofs] ty] fp0]; simpl.
+  rewrite get_owner_footprint_invalidate_eq. reflexivity.
+Qed.
+
+
+(** Reverse preservation of mutable_path, reachability, and views
+    adequacy/precision under invalidate_conflict_ref, used to prove
+    fp_ref_loc_wf preservation. *)
+
+Lemma mutable_path_footprint_after_invalidate_ref: forall phl fpm ak am ph fp b,
+    mutable_path_footprint (invalidate_conflict_ref_fpm ph ak am fpm)
+      phl (invalidate_conflict_ref ph ak am fp) = OK b ->
+    mutable_path_footprint fpm phl fp = OK b.
+Proof using Type.
+  induction phl as [|pj phl IH]; simpl; intros fpm ak am ph fp b H.
+  - inv H. reflexivity.
+  - destruct pj as [| fid1 | fid1];
+      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
+      simpl in H; try congruence.
+    + eapply IH; eauto.
+    + destruct (BorrowCheckDomain.conflict_access ak mut && conflict_view ph am vs) eqn:C;
+        simpl in H; try congruence.
+      destruct ph0 as [ph2|]; [| congruence].
+      destruct mut.
+      * destruct (get_owner_footprint_map ph2 (invalidate_conflict_ref_fpm ph ak am fpm))
+          as [fp1|err] eqn:GET; simpl in H; try congruence.
+        exploit get_owner_footprint_map_after_invalidate_ref; eauto.
+        intros (fp2 & GET_ORIGINAL & INVALID).
+        rewrite GET_ORIGINAL. simpl.
+        rewrite <- INVALID in H. eapply IH; eauto.
+      * inv H. reflexivity.
+    + rewrite find_field_invalidate_conflict_ref in H.
+      destruct (find_field fid1 fpl) as [[[base fofs] ffp]|] eqn:FIND;
+        simpl in H; try congruence.
+      eapply IH; eauto.
+    + destruct (ident_eq fid1 fid2); simpl in H; try congruence.
+      eapply IH; eauto.
+Qed.
+
+
+Lemma mutable_path_after_invalidate_ref: forall ph1 ph2 ak am fpm b,
+    mutable_path ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK b ->
+    mutable_path ph1 fpm = OK b.
+Proof using Type.
+  intros [id phl] ph2 ak am fpm b H.
+  unfold mutable_path in *. simpl in *.
+  unfold invalidate_conflict_ref_fpm in H.
+  rewrite PTree.gmap1 in H.
+  destruct (fpm ! id) as [entry|] eqn:FPM; simpl in H; try congruence.
+  destruct entry as [[[b0 ofs] ty] fp0]; simpl in H.
+  eapply mutable_path_footprint_after_invalidate_ref; eauto.
+Qed.
+
+
+Lemma reachable_from_dominators_after_invalidate_ref: forall ph2 ak am fpm ph1 tgt,
+    reachable_from_dominators (invalidate_conflict_ref_fpm ph2 ak am fpm) ph1 tgt ->
+    reachable_from_dominators fpm ph1 tgt.
+Proof using Type.
+  intros ph2 ak am fpm ph1 tgt H.
+  inv H. econstructor; eauto.
+  eapply get_owner_path_map_after_invalidate_ref; eauto.
+Qed.
+
+
+Lemma fp_ref_views_adequate_after_invalidate_ref: forall ph2 ak am fpm ph vs,
+    fp_ref_views_adequate fpm ph vs ->
+    fp_ref_views_adequate (invalidate_conflict_ref_fpm ph2 ak am fpm) ph vs.
+Proof using Type.
+  intros ph2 ak am fpm ph vs ADEQ.
+  unfold fp_ref_views_adequate in *. intros ph1 REACH MUT.
+  eapply ADEQ.
+  - eapply reachable_from_dominators_after_invalidate_ref; eauto.
+  - eapply mutable_path_after_invalidate_ref; eauto.
+Qed.
+
+
+Lemma mutable_path_footprint_invalidate_lockstep: forall phl fpm current aliases fp ph ak am tgt vs b,
+    get_owner_path (invalidate_conflict_ref_fpm ph ak am fpm)
+      current phl (invalidate_conflict_ref ph ak am fp) aliases = OK (tgt, vs) ->
+    mutable_path_footprint fpm phl fp = OK b ->
+    mutable_path_footprint (invalidate_conflict_ref_fpm ph ak am fpm)
+      phl (invalidate_conflict_ref ph ak am fp) = OK b.
+Proof using Type.
+  induction phl as [|pj phl IH]; simpl; intros fpm current aliases fp ph ak am tgt vs b HGET HMUT.
+  - inv HMUT. reflexivity.
+  - destruct pj as [| fid1 | fid1];
+      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs0];
+      simpl in *; try congruence.
+    + eapply IH; eauto.
+    + destruct (BorrowCheckDomain.conflict_access ak mut && conflict_view ph am vs0) eqn:C;
+        simpl in *; try congruence.
+      destruct ph0 as [ph2|]; [| congruence].
+      destruct mut.
+      * destruct (get_owner_footprint_map ph2 (invalidate_conflict_ref_fpm ph ak am fpm))
+          as [fp1|err] eqn:GET1; simpl in HGET; try congruence.
+        destruct (get_owner_footprint_map ph2 fpm) as [fp2|err] eqn:GET2;
+          simpl in HMUT; try congruence.
+        exploit get_owner_footprint_map_after_invalidate_ref; eauto.
+        intros (fp2' & GET_ORIGINAL & INVALID).
+        rewrite GET2 in GET_ORIGINAL. inv GET_ORIGINAL.
+        eapply IH; eauto.
+      * inv HMUT. reflexivity.
+    + rewrite find_field_invalidate_conflict_ref in HGET.
+      destruct (find_field fid1 fpl) as [[[base fofs] ffp]|] eqn:FIND;
+        simpl in *; try congruence.
+      rewrite find_field_invalidate_conflict_ref, FIND. simpl.
+      eapply IH; eauto.
+    + destruct (ident_eq fid1 fid2); simpl in *; try congruence.
+      eapply IH; eauto.
+Qed.
+
+
+Lemma mutable_path_after_invalidate_ref_cond: forall ph1 ph2 ak am fpm tgt vs b,
+    get_owner_path_map ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK (tgt, vs) ->
+    mutable_path ph1 fpm = OK b ->
+    mutable_path ph1 (invalidate_conflict_ref_fpm ph2 ak am fpm) = OK b.
+Proof using Type.
+  intros [id phl] ph2 ak am fpm tgt vs b GET MUT.
+  unfold mutable_path, get_owner_path_map in *. simpl in *.
+  unfold invalidate_conflict_ref_fpm in *.
+  rewrite PTree.gmap1 in *.
+  destruct (fpm ! id) as [entry|] eqn:FPM; simpl in *; try congruence.
+  destruct entry as [[[b0 ofs] ty] fp0]; simpl in *.
+  eapply mutable_path_footprint_invalidate_lockstep; eauto.
+Qed.
+
+
+Lemma fp_ref_views_precise_after_invalidate_ref: forall ph2 ak am fpm ph vs,
+    fp_ref_views_precise fpm ph vs ->
+    fp_ref_views_precise (invalidate_conflict_ref_fpm ph2 ak am fpm) ph vs.
+Proof using Type.
+  intros ph2 ak am fpm ph vs PREC.
+  unfold fp_ref_views_precise in *. intros ph1 tgt1 vs1 IN GET.
+  destruct (PREC ph1 tgt1 vs1 IN) as (EQ1 & MUT1).
+  - eapply get_owner_path_map_after_invalidate_ref; eauto.
+  - split; auto.
+    eapply mutable_path_after_invalidate_ref_cond; eauto.
+Qed.
+
+
+Lemma Forall_fp_ref_loc_wf_field_invalidate: forall ph ak am fpm fpl,
+    (forall fid r ffp, In (fid, (r, ffp)) fpl ->
+       fp_ref_loc_wf fpm ffp ->
+       fp_ref_loc_wf (invalidate_conflict_ref_fpm ph ak am fpm)
+                     (invalidate_conflict_ref ph ak am ffp)) ->
+    Forall (fp_ref_loc_wf_field (fp_ref_loc_wf fpm)) fpl ->
+    Forall (fp_ref_loc_wf_field (fp_ref_loc_wf (invalidate_conflict_ref_fpm ph ak am fpm)))
+      (map (fun '(fid, (r, ffp)) => (fid, (r, invalidate_conflict_ref ph ak am ffp))) fpl).
+Proof using Type.
+  intros ph ak am fpm fpl PRES H.
+  induction H as [| x l WF TAIL IH]; simpl.
+  - constructor.
+  - constructor.
+    + inv WF. econstructor. eapply PRES. left. reflexivity. exact WF_FIELD.
+    + eapply IH. intros fid' r' ffp' IN' HFFP'.
+      eapply PRES. right. exact IN'. exact HFFP'.
+Qed.
+
+
+Lemma invalidate_conflict_ref_fp_ref_loc_wf: forall ph ak am fpm fp,
+    fp_ref_loc_wf fpm fp ->
+    fp_ref_loc_wf (invalidate_conflict_ref_fpm ph ak am fpm)
+                  (invalidate_conflict_ref ph ak am fp).
+Proof using Type.
+  intros ph ak am fpm fp.
+  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+    intros H.
+  - inv H.
+  - inv H. simpl. constructor.
+  - inv H. simpl. constructor.
+  - inv H.
+  - inv H. simpl. constructor.
+    eapply Forall_fp_ref_loc_wf_field_invalidate.
+    * intros fid' r' ffp' IN' HFFP'. destruct r' as [base' fofs'].
+      eapply IHfields; eauto.
+    * exact MATCH.
+  - inv H. simpl. constructor. eapply IHenum; eauto.
+  - inv H; simpl.
+    + destruct (BorrowCheckDomain.conflict_access ak mut && conflict_view ph am vs) eqn:C; simpl.
+      * constructor.
+      * eapply fp_ref_some_wf.
+        -- eapply struct_fp_map_get_owner_loc_footprint_map.
+           ++ eapply invalidate_conflict_ref_struct_fp_map.
+           ++ exact GLOC.
+        -- eapply fp_ref_views_adequate_after_invalidate_ref; eauto.
+        -- eapply fp_ref_views_precise_after_invalidate_ref; eauto.
+    + destruct (BorrowCheckDomain.conflict_access ak mut && conflict_view ph am vs) eqn:C; simpl; constructor.
+Qed.
+
+
+Lemma invalidate_conflict_ref_fpm_env_eq: forall (ph: path) (fpm: fp_map) ak am,
+    (fpm_to_env fpm) = (fpm_to_env (invalidate_conflict_ref_fpm ph ak am fpm)).
+Proof using Type.
+  intros ph fpm ak am.
+  unfold fpm_to_env, invalidate_conflict_ref_fpm.
+  eapply PTree.extensionality. intros key.
+  rewrite ! PTree.gmap_filter1. rewrite PTree.gmap1.
+  destruct (fpm ! key) as [entry|]; simpl; auto.
+  destruct entry as [[[b ofs] ty] fp0]; simpl; reflexivity.
+Qed.
+
+Lemma invalidate_conflict_ref_fpm_tenv_eq: forall (ph: path) (fpm: fp_map) ak am,
+    (fpm_to_tenv fpm) = (fpm_to_tenv (invalidate_conflict_ref_fpm ph ak am fpm)).
+Proof using Type.
+  intros ph fpm ak am.
+  unfold fpm_to_tenv, invalidate_conflict_ref_fpm.
+  eapply PTree.extensionality. intros key.
+  rewrite ! PTree.gmap1.
+  destruct (fpm ! key) as [entry|]; simpl; auto.
+  destruct entry as [[[b ofs] ty] fp0]; simpl; reflexivity.
+Qed.
+
+
+Lemma invalidate_conflict_ref_fpm_coherent_unchanged: forall (ph: path) (fpm: fp_map) ak am mp,
+    coherent_fpm ce fpm mp ->
+    coherent_fpm ce (invalidate_conflict_ref_fpm ph ak am fpm) mp.
+Proof.
+  intros. eapply coherent_fpm_struct_fp_map.
+  - eapply invalidate_conflict_ref_struct_fp_map.
+  - exact H.
+Qed.
+
+Lemma invalidate_conflict_ref_fpm_wt_fpm_unchanged: forall (ph: path) (fpm: fp_map) ak am,
+    wt_fpm ce fpm ->
+    wt_fpm ce (invalidate_conflict_ref_fpm ph ak am fpm).
+Proof.
+  intros ph fpm ak am WTFPM.
+  unfold wt_fpm in *. intros id0 b ofs ty fp' GET'.
+  unfold invalidate_conflict_ref_fpm in GET'.
+  rewrite PTree.gmap1 in GET'.
+  destruct (fpm ! id0) as [entry|] eqn:FPM; simpl in GET'; try congruence.
+  destruct entry as [[[b0 ofs0] ty0] fp0]; simpl in GET'.
+  inv GET'.
+  rewrite <- (invalidate_conflict_ref_fpm_tenv_eq ph fpm ak am).
+  eapply wt_footprint_struct_fp_map.
+  - eapply invalidate_conflict_ref_struct_fp_map.
+  - eapply WTFPM; eauto.
+Qed.
+
+Lemma invalidate_conflict_ref_fpm_fp_ref_wf_unchanged: forall (ph: path) (fpm: fp_map) ak am,
+    fp_ref_loc_wf_fpm fpm ->
+    fp_ref_loc_wf_fpm (invalidate_conflict_ref_fpm ph ak am fpm).
+Proof.
+  intros ph fpm ak am WF_FPM.
+  unfold fp_ref_loc_wf_fpm in *. intros id0 b ofs ty fp' GET'.
+  unfold invalidate_conflict_ref_fpm in GET'.
+  rewrite PTree.gmap1 in GET'.
+  destruct (fpm ! id0) as [entry|] eqn:FPM; simpl in GET'; try congruence.
+  destruct entry as [[[b0 ofs0] ty0] fp0]; simpl in GET'.
+  inv GET'.
+  eapply invalidate_conflict_ref_fp_ref_loc_wf.
+  eapply WF_FPM; eauto.
+Qed.
+
+
+Lemma invalidate_conflict_ref_fpm_wt_footprint_unchanged: forall (ph: path) (fpm: fp_map) ak am ty (fp: footprint),
+    wt_footprint ce (fpm_to_tenv fpm) ty fp ->
+    wt_footprint ce (fpm_to_tenv (invalidate_conflict_ref_fpm ph ak am fpm)) ty fp.
+Proof using Type.
+  intros ph fpm ak am ty fp H.
+  rewrite (invalidate_conflict_ref_fpm_tenv_eq ph fpm ak am) in H.
+  exact H.
+Qed.
+
+
+Lemma invalidate_conflict_ref_fpm_wt_place_unchanged: forall (ph: path) (fpm: fp_map) ak am p,
+    wt_place fpm ce p ->
+    wt_place (invalidate_conflict_ref_fpm ph ak am fpm) ce p.
+Proof using Type.
+  intros ph fpm ak am p H.
+  change (wt_place (fpm_to_env fpm) ce p) in H.
+  change (wt_place (fpm_to_env
+    (invalidate_conflict_ref_fpm ph ak am fpm)) ce p).
+  rewrite <- (invalidate_conflict_ref_fpm_env_eq ph fpm ak am).
+  exact H.
+Qed.
+
+
+Lemma invalidate_conflict_ref_sem_wt_val_eq: forall ph (fp: footprint) v ak am mp,
+    sem_wt_val ce fp v mp ->
+    sem_wt_val ce (invalidate_conflict_ref ph ak am fp) v mp.
+Proof.
+  intros. eapply sem_wt_val_struct_fp_map.
+  - eapply invalidate_conflict_ref_struct_fp_map.
+  - exact H.
+Qed.
+
+Lemma invalidate_conflict_ref_fpm_coherent_eq: forall (ph: path) (fpm: fp_map) ak am mp,
+    coherent_fpm ce fpm mp ->
+    coherent_fpm ce (invalidate_conflict_ref_fpm ph ak am fpm) mp.
+Proof using Type.
+  intros. eapply invalidate_conflict_ref_fpm_coherent_unchanged; eauto.
+Qed.
 
 Lemma invalidate_conflict_ref_fpm_check_path_is_dropped: forall phl id ak am (fpm: fp_map) ph,
     check_path_is_dropped fpm ph = 
     check_path_is_dropped (invalidate_conflict_ref_fpm (id, phl) ak am fpm) ph.
-Admitted.
+Proof using Type.
+  intros phl id ak am fpm [pid phl'].
+  unfold check_path_is_dropped.
+  destruct (get_owner_footprint_map (pid, phl') fpm) as [fp0|err] eqn:GET.
+  - rewrite (get_owner_footprint_map_invalidate_eq (id, phl) ak am (pid, phl') fpm).
+    rewrite GET. simpl.
+    rewrite (struct_fp_map_fp_is_dropped (invalidate_conflict_ref (id, phl) ak am) fp0).
+    + reflexivity.
+    + apply invalidate_conflict_ref_struct_fp_map.
+  - rewrite (get_owner_footprint_map_invalidate_eq (id, phl) ak am (pid, phl') fpm).
+    rewrite GET. reflexivity.
+Qed.
+
+Lemma kill_paths_ref_sem_wt_val: forall v (fp: footprint) vs mp,
+    sem_wt_val ce fp v mp ->
+    sem_wt_val ce (kill_views_ref vs fp) v mp.
+Proof.
+  intros. eapply sem_wt_val_struct_fp_map.
+  - apply kill_views_ref_struct_fp_map.
+  - exact H.
+Qed.
+
+
+Lemma kill_paths_ref_coherent_fpm: forall (fpm: fp_map) vs mp,
+    coherent_fpm ce fpm mp ->
+    coherent_fpm ce (kill_views_ref_fpm vs fpm) mp.
+Proof.
+  intros. eapply coherent_fpm_struct_fp_map.
+  - apply kill_views_ref_struct_fp_map.
+  - exact H.
+Qed.
+
+
+End FRAME.
 
 Hint Resolve 
   invalidate_conflict_ref_fpm_wt_place_unchanged 
@@ -888,29 +1692,17 @@ Hint Resolve
   invalidate_conflict_ref_fpm_check_path_is_dropped
   invalidate_conflict_ref_fpm_fp_ref_wf_unchanged: invalidate_fp_ref.
 
-Lemma kill_paths_ref_sem_wt_val: forall v (fp: footprint) vs mp,
-    sem_wt_val ce fp v mp ->
-    sem_wt_val ce (kill_paths_ref vs fp) v mp.
-Admitted.
-
-
-Lemma kill_paths_ref_coherent_fpm: forall (fpm: fp_map) vs mp,
-    coherent_fpm ce fpm mp ->
-    coherent_fpm ce (kill_paths_ref_fpm vs fpm) mp.
-Admitted.
-
 Hint Resolve 
   kill_paths_ref_sem_wt_val
   kill_paths_ref_coherent_fpm : kill_paths_ref.
 
-
-Lemma eval_expr_match_by_value: forall (e: expr) vfp (fpm1 fpm2: fp_map) m MP1 FMP 
+Lemma eval_expr_match_by_value frame: forall (e: expr) vfp (fpm1 fpm2: fp_map) m MP1 FMP 
     (COH: coherent_fpm ce fpm1 MP1)
     (MPRED: m |= MP1 ** FMP)
     (WTEXPR: wt_expr fpm1 ce e)
     (WTFPM: wt_fpm ce fpm1)
     (REF_WF: fp_ref_loc_wf_fpm fpm1)
-    (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2))
+    (EVAL: eval_expr frame ce fpm1 e = OK (vfp, fpm2))
     (BYVAL: access_by_value (typeof e) = true),
     exists v mp MP2,
       Rustlightown.eval_expr ce fpm1 m tge e v
@@ -923,10 +1715,11 @@ Proof.
   - simpl in EVAL.
     monadInv EVAL. destruct x as (b & ofs).
     inv WTEXPR.
-    set (fpm1' := (invalidate_conflict_ref_fpm p AWrite BorrowCheckDomain.Adeep fpm1)) in *.
+    set (fpm1' := (invalidate_conflict_ref_fpm
+      (enc_path frame p) AWrite BorrowCheckDomain.Adeep fpm1)) in *.
     destr_path_of_place p.
     eapply invalidate_conflict_ref_fpm_coherent_unchanged in COH as COH1.
-    exploit (@get_owner_path_for_owner ame); eauto. 
+    exploit get_owner_path_for_owner; eauto. 
     eapply get_owner_loc_footprint_map_eq; eauto. intros GPH.
     exploit (get_owner_path_map_eval_place); eauto. eapply MPRED.
     1-4: eauto with invalidate_fp_ref. rewrite POP. eapply GPH.    
@@ -935,7 +1728,7 @@ Proof.
     setoid_rewrite A1 in EQ. inv EQ.
     (* Because we need to read the contents in the location of p, we
     use this lemma. *)
-    exploit (@get_owner_loc_footprint_map_sem_wt_split ame); eauto.
+    exploit get_owner_loc_footprint_map_sem_wt_split; eauto.
     intros (mp1 & mp2 & B1 & B2).
     (* exploit (@sem_wt_loc_split ame). 2: eauto. *)
     (* we need to prove that fp is not opaque object, i.e., we cannot
@@ -971,13 +1764,13 @@ Admitted.
 
 (* We only allow moving composite for now and do not allow copying
 them in pure expression *)
-Lemma eval_Emoveplace_by_copy: forall (e: expr) vfp (fpm1 fpm2: fp_map) m MP1 FMP 
+Lemma eval_Emoveplace_by_copy frame: forall (e: expr) vfp (fpm1 fpm2: fp_map) m MP1 FMP 
     (COH: coherent_fpm ce fpm1 MP1)
     (MPRED: m |= MP1 ** FMP)
     (WTEXPR: wt_expr fpm1 ce e)
     (WTFPM: wt_fpm ce fpm1)
     (REF_WF: fp_ref_loc_wf_fpm fpm1)
-    (EVAL: eval_expr ce fpm1 e = OK (vfp, fpm2))
+    (EVAL: eval_expr frame ce fpm1 e = OK (vfp, fpm2))
     (BYCOPY: access_mode (typeof e) = Ctypes.By_copy), 
     exists b ofs mp1 mp2 mp3 mp4,
       Rustlightown.eval_expr ce fpm1 m tge e (Vptr b (Ptrofs.repr ofs))
@@ -1009,7 +1802,7 @@ Ltac unfold_eval_assign :=
   | [H : context G [eval_assign] |- _ ] =>
       unfold eval_assign in H; monadInv H;
       match goal with
-      | [H1 : context G [before_write_place _ _ _ = OK (?a, ?b)] |- _ ] =>
+      | [H1 : context G [before_write_place _ _ _ _ = OK (?a, ?b)] |- _ ] =>
           destruct a as ((?tgt_id & ?tgt_phl) & ?vs)
       end
   end.
@@ -1044,7 +1837,7 @@ Proof.
     destr_path_of_place p.
     (* evaluate expr *)
     exploit eval_expr_match_by_value. eauto. eapply MPRED. 
-    (* wt_expr *) eauto.
+    (* wt_expr *) eapply WT3.
     (* wt_fpm: we should add a new state invariant *) admit.
     eapply BOR_INV.
     eauto.
@@ -1054,34 +1847,35 @@ Proof.
     intros (tv & mp1 & mp2 & TEVAL & WTVAL & COH1 & MPRED1).
     (* evaluate expr preserves borrow check invariant. We should write
     it in a separated lemma *)
-    exploit (@eval_expr_preserve_borchk_inv ame); eauto.
+    exploit eval_expr_preserve_borchk_inv; eauto.
     intros BORCK_INV1.  (* & WTFPM1 & WTFP1). *)    
     (* shallow write preserves borrow check invariant *)
-    exploit (@borrow_check_inv_shallow_write ame); eauto.
+    exploit borrow_check_inv_shallow_write; eauto.
     (* econstructor. eauto. econstructor. *)
     intros BORCK_INV2.  (* & WTFP2 & WTFPM2). *)
     (* set footprint to the assginee preserves the invariant *)
     simpl in BORCK_INV2.
-    exploit (@borrow_check_inv_set_fp ame); eauto.
-    eapply kill_paths_ref_fpm_preserve_is_dropped; eauto.
+    exploit borrow_check_inv_set_fp; eauto.
+    eapply kill_views_ref_fpm_preserve_is_dropped; eauto.
     eapply clear_footprint_map_is_dropped; eauto.
+    (** Broken here: TODO *)
     intros BORCK_INV3. (* & WTFP3 & WTFPM3). *)
     (* derive the memory predicate before setting the footprint into
     fpm *)
     (* erewrite <-invalidate_conflict_ref_fpm_check_path_is_dropped in EQ1; eauto. *)
     (* intros ISDROP1.     *)
     exploit clear_is_dropped_fp_map_coherent. eauto. eapply EQ2.
-    eauto with invalidate_fp_ref.
+    eapply invalidate_conflict_ref_fpm_coherent_eq. eauto.
     intros (mp2' & COH2 & MPIMP1).
     exploit (kill_paths_ref_coherent_fpm x3 vs). eapply COH2. 
     intros COH3.
     (* derive the predicate for the value *)
-    exploit (invalidate_conflict_ref_sem_wt_val_eq phl pid x tv AWrite BorrowCheckDomain.Ashallow); eauto.
+    exploit (invalidate_conflict_ref_sem_wt_val_eq (enc_path fidx (pid, phl)) x tv AWrite BorrowCheckDomain.Ashallow); eauto.
     intros WTVAL1.
     exploit kill_paths_ref_sem_wt_val; eauto. 
     instantiate (1 := vs). intros WTVAL2.
     (* evaluate the address of the assignee *)
-    exploit (get_owner_path_map_eval_place p).
+    exploit (get_owner_path_map_eval_place fidx p).
     eapply COH1. eapply MPRED1. 
     (* wt_fpm ce x0: we should prove a wt_footprint/wt_fpm
     preservation leamm *) admit.
@@ -1090,21 +1884,21 @@ Proof.
     rewrite POP. 
     eapply get_owner_path_map_after_invalidate_ref. eapply EQ0.
     intros (b & ofs & pfp & GPLOC & EVALP).
-    (** TODO: prove that invalidate_fp_ref, kill_paths_ref_fpm and
+    (** TODO: prove that invalidate_fp_ref, kill_views_ref_fpm and
     clear_footprint_map in [ph] does not change the location of [ph] *)
-    assert (GPLOC1: get_owner_loc_footprint_map  (tgt_id, tgt_phl)  (kill_paths_ref_fpm vs x3) = OK (b, ofs, clear_footprint_rec ce pfp)) by admit.
+    assert (GPLOC1: get_owner_loc_footprint_map  (tgt_id, tgt_phl)  (kill_views_ref_fpm vs x3) = OK (b, ofs, clear_footprint_rec ce pfp)) by admit.
     assert (MPRED3: m |= mp2' ** mp1 ** FMP) by admit.
     (** FIXME: consider by_copy access *)
     assert (BYVAL: exists chunk, access_mode (typeof_place p) = Ctypes.By_value chunk) by admit.
     destruct BYVAL as (chunk & BYVAL).    
     (* inv WTFP2. inv H4. *)
     (* assign_loc *)
-    exploit (@get_owner_loc_footprint_map_wt ame); eauto.
+    exploit get_owner_loc_footprint_map_wt; eauto.
     instantiate (1 := ce).
     (* wt_fpm: we should prove a wt_footprint/wt_fpm
     preservation leamm *) admit.
     intros (ty & WTPH1 & WTFP4 & AL).
-    exploit (@assign_loc_by_value_coherent_fpm ame). eapply COH3.
+    exploit assign_loc_by_value_coherent_fpm. eapply COH3.
     eapply WTVAL2. eauto.
     eapply GPLOC1. eauto. eauto. 
     (** lots of work need to be done to prove ty = typeof e = typeof p
@@ -1131,8 +1925,8 @@ Proof.
       replace (Mem.support m) with (Mem.support m1) by admit.
       econstructor; eauto.
     + econstructor; eauto.
-      eapply borrow_check_fpg_vals_inv_empty. eauto.
-      
+      (* eapply borrow_check_fpg_vals_inv_empty. eauto. *)
+      admit.
   - admit.
   - admit.
   (* Sdrop *)
@@ -1143,34 +1937,37 @@ Proof.
     (* preserve borrow check invariant *)
     exploit get_owner_footprint_map_loc; eauto.
     intros (b & ofs & GLOC).
-    exploit (@borrow_check_inv_move ame); eauto.
+    exploit borrow_check_inv_move; eauto.
     instantiate (1 := nil).  admit.
     (* econstructor. instantiate (1 := typeof p). admit. (* wt_place *)
     implies wt_path *)
     intros BOR_INV1. (* & WTFP1 & WTFPM1). *)
-    exploit (@borrow_check_inv_drop ame); eauto.
+    exploit borrow_check_inv_drop; eauto.
     instantiate (1 := O). simpl.
     intros BOR_INV2. (* & WTFP2 & WTFPM2). *)
-    eapply borrow_check_fpg_vals_inv_empty in BOR_INV2.
+    (* eapply borrow_check_fpg_vals_inv_empty in BOR_INV2. *)
     (* Use type information to do case analysis *)
-    assert (WTFPM1: wt_fpm ce (invalidate_conflict_ref_fpm (pid, phl)
+    assert (WTFPM1: wt_fpm ce (invalidate_conflict_ref_fpm (enc_path fidx (pid, phl))
             AWrite BorrowCheckDomain.Adeep fpm1)) by admit.
     assert (DROP_TY: drop_type (typeof_place p) = true) by admit. (* It should be ensured by the syntatic type checking *)
-    exploit (@get_owner_loc_footprint_map_wt ame); eauto.
+    exploit get_owner_loc_footprint_map_wt; eauto.
     intros (pty & WTPH & WTFP & AL).
     replace pty with (typeof_place p) in * by admit. (* wt_path and wt_place properties *)
     (* memory predicate after deep access *)
-    exploit (invalidate_conflict_ref_fpm_coherent_eq phl pid fpm1 AWrite BorrowCheckDomain.Adeep); eauto.
+    exploit (invalidate_conflict_ref_fpm_coherent_eq (enc_path fidx (pid, phl)) fpm1 AWrite BorrowCheckDomain.Adeep); eauto.
     intros COH1.
     (* eval_place *)
     exploit (get_owner_path_map_eval_place); eauto. eapply MPRED.
-    1-4: eauto with invalidate_fp_ref. 
+    change (genv_cenv (globalenv se prog)) with ce in *.
+    eapply invalidate_conflict_ref_fpm_wt_place_unchanged; eauto.
+    eauto with invalidate_fp_ref.
+    1-3: eauto with invalidate_fp_ref. 
     eapply invalidate_conflict_ref_fpm_fp_ref_wf_unchanged. eapply BOR_INV.
     eapply get_owner_path_for_owner.
     eapply get_owner_loc_footprint_map_eq. rewrite POP. eapply GLOC.
     rewrite POP.
     intros (b1 & ofs1 & fp1 & A1 & A2).    
-    rewrite GLOC in A1. inv A1.
+    setoid_rewrite GLOC in A1. inv A1.
     destruct (typeof_place p) eqn: PTY; simpl in DROP_TY; try congruence.
     (* Tbox *)
     + inv WTFP; try congruence.
@@ -1178,7 +1975,7 @@ Proof.
          elaboration *)
       (* specific to drop(Box): evaluate the address of dropped memory
       location *)
-      exploit (@get_owner_loc_footprint_map_sem_wt_split ame); eauto.
+      exploit get_owner_loc_footprint_map_sem_wt_split; eauto.
       intros (mp1 & mp2 & B1 & B2).
       inv B1.
       (* memory predicate after drop: drop is like a move operation *)
@@ -1193,7 +1990,7 @@ Proof.
       assert (FREE: exists m1, extcall_free_sem tge [Vptr b Ptrofs.zero] m E0 Vundef m1).
       { unfold box_pred in *.
         (* range_perm of fp *)
-        exploit (@sem_wt_loc_range_perm ame). eapply WT. eauto.
+        exploit sem_wt_loc_range_perm. eapply WT. eauto.
         intros FP_RANGE. rewrite FP_RANGE in MPRED.
         replace (sizeof_footprint ce fp) with (sizeof ce t) in * by admit.
         (* load the size of the deallocated block *)
@@ -1236,7 +2033,7 @@ Proof.
         replace (Mem.support m) with (Mem.support m1) by admit.
         econstructor; eauto.
       * econstructor; eauto.
-
+        admit.
     (* drop struct *)
     + admit.
     (* drop enum *)
@@ -1254,7 +2051,7 @@ Admitted.
 End BORROW_CHECK_SIM.
 
 
-Notation li_rs_spec := (@li_rs_spec ame).
+Notation li_rs_spec := li_rs_spec.
 
 (** TODO: the interface for the borrow checking *)
 Definition rs_spec : invariant li_rs_spec := inv_bot.
