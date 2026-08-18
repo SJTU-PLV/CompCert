@@ -1102,9 +1102,15 @@ Proof.
       * intros fid' r' ffp' b' ofs' mp' IN' HFFP'. destruct r' as [base' fofs'].
         eapply IHfields; eauto.
       * exact FWT.
+    + reflexivity.
     + exact EQV.
   - inv H. pose proof SM as SM'. destruct SM as (_ & _ & _ & _ & _ & E6 & _ & _).
-    rewrite E6. econstructor; try reflexivity; eauto.
+    rewrite E6. econstructor.
+    + reflexivity.
+    + eapply IHenum. exact SM'. exact FWT.
+    + reflexivity.
+    + reflexivity.
+    + rewrite (struct_fp_map_sizeof f fp1 SM'). exact EQV.
   - inv H. destruct SM as (_ & _ & _ & _ & _ & _ & E7 & E8).
     destruct ph0 as [ph1|].
     + destruct (E7 mut b1 ofs1 ph1 vs) as [[vs' H1]|[vs' H1]]; rewrite H1; econstructor; eauto.
@@ -1906,6 +1912,7 @@ Proof.
     get_owner_path_map p is performed on x0 instead of the fp_map
     after invalidation and kill_paths and clear_footprint. *)
     admit. instantiate (1 := chunk). admit.
+    admit. admit. admit.
     intros (m1 & fpm2 & mp3 & ASSIGN & SET1 & COH4 & MPRED4).
     rewrite ASS in SET1. inv SET1.
     (** All operations on fpm do not change the local env *)
@@ -1990,7 +1997,8 @@ Proof.
       assert (FREE: exists m1, extcall_free_sem tge [Vptr b Ptrofs.zero] m E0 Vundef m1).
       { unfold box_pred in *.
         (* range_perm of fp *)
-        exploit sem_wt_loc_range_perm. eapply WT. eauto.
+        exploit sem_wt_loc_range_perm.
+        admit. admit. eapply WT. admit. eauto.
         intros FP_RANGE. rewrite FP_RANGE in MPRED.
         replace (sizeof_footprint ce fp) with (sizeof ce t) in * by admit.
         (* load the size of the deallocated block *)

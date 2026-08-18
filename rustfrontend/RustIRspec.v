@@ -101,6 +101,18 @@ Definition sizeof_comp ce (id: ident) :=
   | None => 0
   end.
 
+(* The end of the last field (i.e., the size of the field region, excluding
+   the trailing padding needed to reach the aligned object size). *)
+Definition sizeof_struct_comp ce (id: ident) :=
+  match ce ! id with
+  | Some co =>
+      match co_sv co with
+      | Struct => sizeof_struct ce (co_members co)
+      | TaggedUnion => 0
+      end
+  | None => 0
+  end.
+
 
 (* Definition of Adt *)
 
@@ -305,30 +317,7 @@ specify its permission, for which we record it in the footprint. *)
 Definition ffpty : Type := ident * ((Z * Z) * footprint).
 
 
-Section COMP_ENV.
 
-Variable ce: composite_env.
-
-(** Move it to Rusttypes.v  *)
-
-(* We define a new field_offset which returns the starting offset of a
-field that does not consider the alignment. *)
-
-Fixpoint field_noalign_offset_rec (env: composite_env) (id: ident) (ms: members) (pos: Z)
-                          {struct ms} : res (Z * Z) :=
-  match ms with
-  | nil => Error (MSG "Unknown field " :: CTX id :: nil)
-  | m :: ms =>
-      if ident_eq id (name_member m)
-      then do fofs <- layout_field env pos m;
-           OK (pos, fofs)
-      else field_noalign_offset_rec env id ms (next_field env pos m)
-  end.
-
-Definition field_noalign_offset (env: composite_env) (id: ident) (ms: members) : res (Z * Z) :=
-  field_noalign_offset_rec env id ms 0.
-
-End COMP_ENV.
 
 Definition members_to_fields_fp_uninit ce (ms: members) (f: type -> footprint): list ffpty :=
   map (fun '(Member_plain fid fty) =>

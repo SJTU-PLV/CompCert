@@ -1461,6 +1461,89 @@ Fixpoint field_offset_rec (env: composite_env) (id: ident) (ms: members) (pos: Z
 Definition field_offset (env: composite_env) (id: ident) (ms: members) : res Z :=
   field_offset_rec env id ms 0.
 
+(* A variant of [field_offset] that also returns the end of the previous
+   field (in bytes) as the padding base.  This is used by the Rust
+   footprint representation. *)
+
+Fixpoint field_noalign_offset_rec (env: composite_env) (id: ident) (ms: members) (pos: Z)
+                          {struct ms} : res (Z * Z) :=
+  match ms with
+  | nil => Error (MSG "Unknown field " :: CTX id :: nil)
+  | m :: ms =>
+      if ident_eq id (name_member m)
+      then do fofs <- layout_field env pos m;
+           OK (pos / 8, fofs)
+      else field_noalign_offset_rec env id ms (next_field env pos m)
+  end.
+
+Definition field_noalign_offset (env: composite_env) (id: ident) (ms: members) : res (Z * Z) :=
+  field_noalign_offset_rec env id ms 0.
+
+Lemma field_noalign_offset_rec_field_offset_rec:
+  forall ce fid ms pos base fofs,
+    field_noalign_offset_rec ce fid ms pos = OK (base, fofs) ->
+    field_offset_rec ce fid ms pos = OK fofs /\
+    base <= fofs.
+Proof.
+  induction ms as [|m ms IH]; intros; simpl in *.
+  - discriminate.
+  - destruct m as [id ty].
+    change (name_member (Member_plain id ty)) with id in *.
+    destruct (ident_eq fid id) eqn:ID.
+    + destruct (layout_field ce pos (Member_plain id ty)) eqn:L; try discriminate.
+      inv H.
+      split. reflexivity.
+      unfold layout_field in L. inv L.
+      apply Z.div_le_mono; [lia |].
+      apply align_le. unfold bitalignof.
+      generalize (alignof_pos ce ty). lia.
+    + destruct (IH (next_field ce pos (Member_plain id ty)) base fofs H) as (F & LE).
+      split. simpl. exact F.
+      exact LE.
+Qed.
+
+Lemma field_noalign_offset_field_offset:
+  forall ce fid ms base fofs,
+    field_noalign_offset ce fid ms = OK (base, fofs) ->
+    field_offset ce fid ms = OK fofs.
+Proof.
+  unfold field_noalign_offset, field_offset; intros.
+  apply field_noalign_offset_rec_field_offset_rec in H as (F & _). auto.
+Qed.
+
+Lemma field_noalign_offset_rec_In_field_type:
+  forall ce ms pos fid base fofs fty,
+    list_norepet (name_members ms) ->
+    In (Member_plain fid fty) ms ->
+    field_noalign_offset_rec ce fid ms pos = OK (base, fofs) ->
+    field_type fid ms = OK fty.
+Proof.
+  induction ms as [|m ms IH]; intros; simpl in *.
+  - inv H0.
+  - destruct m as [id ty].
+    change (name_member (Member_plain id ty)) with id in *.
+    inversion H as [| ? ? NOREP_HEAD NOREP_TAIL]; subst.
+    destruct (ident_eq fid id) eqn:ID.
+    + subst fid.
+      destruct H0 as [INHEAD | INTAIL].
+      * inv INHEAD. simpl. reflexivity.
+      * exfalso. apply NOREP_HEAD. unfold name_members. rewrite in_map_iff. exists (Member_plain id fty). split; auto.
+    + destruct H0 as [INHEAD | INTAIL].
+      * inv INHEAD. congruence.
+      * simpl in H1.
+        eapply IH; eauto.
+Qed.
+
+Lemma field_noalign_offset_In_field_type:
+  forall ce ms fid base fofs fty,
+    list_norepet (name_members ms) ->
+    In (Member_plain fid fty) ms ->
+    field_noalign_offset ce fid ms = OK (base, fofs) ->
+    field_type fid ms = OK fty.
+Proof.
+  unfold field_noalign_offset. intros. eapply field_noalign_offset_rec_In_field_type; eauto.
+Qed.
+
 
 Lemma align_zero: forall n,
     n > 0 ->
@@ -1658,6 +1741,25 @@ Corollary field_offset_aligned:
 Proof.
   intros. exploit field_offset_aligned_gen; eauto.
 Qed.
+
+Lemma field_noalign_offset_range_aligned:
+  forall ce fid ms base fofs fty,
+    field_noalign_offset ce fid ms = OK (base, fofs) ->
+    field_type fid ms = OK fty ->
+    base <= fofs /\
+    0 <= fofs /\
+    fofs + sizeof ce fty <= sizeof_struct ce ms /\
+    (alignof ce fty | fofs).
+Proof.
+  intros.
+  exploit field_noalign_offset_field_offset; eauto. intro FO.
+  exploit field_offset_in_range; eauto. intros [ZR RANGE].
+  exploit field_offset_aligned; eauto. intro ALIGN.
+  unfold field_noalign_offset in H.
+  apply field_noalign_offset_rec_field_offset_rec in H as (_ & BASELE).
+  repeat split; auto.
+Qed.
+
 
 (** [variant_field_offset env id ms] returns the byte offset (plus 4 bytes) and
     bitfield designator for accessing a member named [id] of a variant
