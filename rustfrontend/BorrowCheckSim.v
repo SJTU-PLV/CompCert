@@ -1826,18 +1826,27 @@ Ltac unfold_before_write_place :=
   end.
 
 
-Lemma step_simulation: forall s1 t s2 s1',
-    RustIRspec.step ge s1 t s2 ->
-    match_states s1 s1' ->
-    borrowck_inv s1 ->
-    wt_state s1 ->
-    exists s2', 
-      plus RustIRsem.step tge s1' t s2' /\ match_states s2 s2' /\ borrowck_inv s2.
+(* ===================================================================
+   Per-step-case simulation lemmas.
+   Each RustIRspec.step constructor is proved in its own lemma; the
+   dispatcher step_simulation below just dispatches to them.
+   =================================================================== *)
+
+Lemma step_assign_simulation:
+  forall f e (p: place) vfp fpm1 fpm2 fpm3 ph k sup fidx (s1': state),
+    eval_assign ge fidx fpm1 p e = OK (ph, vfp, fpm2) ->
+    set_footprint_map ph vfp fpm2 = OK fpm3 ->
+    match_states (RustIRspec.State f (Sassign p e) k fpm1 fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f (Sassign p e) k fpm1 fidx sup) ->
+    wt_state (RustIRspec.State f (Sassign p e) k fpm1 fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f Sskip k fpm3 fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f Sskip k fpm3 fidx sup).
 Proof.
-  intros s1 t s2 s1' STEP MATCH BORINV WTST. 
-  inv STEP; inv MATCH; inv BORINV; inv WTST.
-  (* Sassign *)
-  - inv WT1.
+  intros f e p vfp fpm1 fpm2 fpm3 ph k sup fidx s1' EVAL ASS MATCH BORINV WTST.
+  inv MATCH; inv BORINV; inv WTST.
+  inv WT1.
     unfold_eval_assign. inv EQ2.
     unfold_before_write_place.        
     destr_path_of_place p.
@@ -1934,10 +1943,56 @@ Proof.
     + econstructor; eauto.
       (* eapply borrow_check_fpg_vals_inv_empty. eauto. *)
       admit.
-  - admit.
-  - admit.
-  (* Sdrop *)
-  - inv WT1.
+Admitted.
+
+Lemma step_assign_variant_simulation:
+  forall f e (p: place) k fpm1 fpm2 fpm3 vfp co fid enum_id orgs ph fty fidx sup fofs tag (s1': state),
+    eval_assign ge fidx fpm1 p e = OK (ph, vfp, fpm2) ->
+    typeof_place p = Tvariant orgs enum_id ->
+    ge.(genv_cenv) ! enum_id = Some co ->
+    field_type fid co.(co_members) = OK fty ->
+    field_tag fid co.(co_members) = Some tag ->
+    variant_field_offset ge fid co.(co_members) = OK fofs ->
+    set_footprint_map ph (fp_enum enum_id tag fid fofs vfp) fpm2 = OK fpm3 ->
+    match_states (RustIRspec.State f (Sassign_variant p enum_id fid e) k fpm1 fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f (Sassign_variant p enum_id fid e) k fpm1 fidx sup) ->
+    wt_state (RustIRspec.State f (Sassign_variant p enum_id fid e) k fpm1 fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f Sskip k fpm3 fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f Sskip k fpm3 fidx sup).
+Proof. Admitted.
+
+Lemma step_box_simulation:
+  forall f e (p: place) k ty fpm1 fpm2 fpm3 vfp ph fidx sup (s1': state),
+    eval_assign ge fidx fpm1 p e = OK (ph, vfp, fpm2) ->
+    typeof_place p = Tbox ty ->
+    set_footprint_map ph (fp_box (Mem.fresh_block sup) vfp) fpm2 = OK fpm3 ->
+    match_states (RustIRspec.State f (Sbox p e) k fpm1 fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f (Sbox p e) k fpm1 fidx sup) ->
+    wt_state (RustIRspec.State f (Sbox p e) k fpm1 fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f Sskip k fpm3 fidx (Mem.sup_incr sup)) s2'
+      /\ borrowck_inv (RustIRspec.State f Sskip k fpm3 fidx (Mem.sup_incr sup)).
+Proof. Admitted.
+
+Lemma step_drop_simulation:
+  forall fpm1 fpm2 fpm3 k f (p: place) fidx sup (s1': state),
+    invalidate_conflict_ref_fpm (enc_path fidx p) AWrite BorrowCheckDomain.Adeep fpm1 = fpm2 ->
+    check_path_is_droppable fpm2 (enc_path fidx p) = OK true ->
+    clear_footprint_map ge (enc_path fidx p) fpm2 = OK fpm3 ->
+    match_states (RustIRspec.State f (Sdrop p) k fpm1 fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f (Sdrop p) k fpm1 fidx sup) ->
+    wt_state (RustIRspec.State f (Sdrop p) k fpm1 fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f Sskip k fpm3 fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f Sskip k fpm3 fidx sup).
+Proof.
+  intros fpm1 fpm2 fpm3 k f p fidx sup s1' INVP DEEP_INIT DROP MATCH BORINV WTST.
+  inv MATCH; inv BORINV; inv WTST.
+  inv WT1.
     destr_path_of_place p.
     unfold check_path_is_droppable in DEEP_INIT.
     monadInv DEEP_INIT.
@@ -2047,13 +2102,212 @@ Proof.
     (* drop enum *)
     + admit.
 
-  (* storagelive *)
-  - admit.
-  (* storagedead *)
-  - admit.
-  (* Scall *)
-  - 
 Admitted.
+
+Lemma step_storagelive_simulation:
+  forall f k fidx fpm id sup (s1': state),
+    match_states (RustIRspec.State f (Sstoragelive id) k fpm fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f (Sstoragelive id) k fpm fidx sup) ->
+    wt_state (RustIRspec.State f (Sstoragelive id) k fpm fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f Sskip k fpm fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f Sskip k fpm fidx sup).
+Proof. Admitted.
+
+Lemma step_storagedead_simulation:
+  forall f k fidx fpm1 fpm2 id sup (s1': state),
+    check_path_is_dropped fpm1 (enc_path fidx (id, nil)) = OK true ->
+    clear_footprint_map ge (enc_path fidx (id, nil)) fpm1 = OK fpm2 ->
+    match_states (RustIRspec.State f (Sstoragedead id) k fpm1 fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f (Sstoragedead id) k fpm1 fidx sup) ->
+    wt_state (RustIRspec.State f (Sstoragedead id) k fpm1 fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f Sskip k fpm2 fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f Sskip k fpm2 fidx sup).
+Proof. Admitted.
+
+Lemma step_call_simulation:
+  forall f ty al k tyargs fd cconv tyres p orgs org_rels fun_id fpm1 fpm2 args fidx sup (s1': state),
+    classify_fun ty = fun_case_f tyargs tyres cconv ->
+    ge.(genv_defmap) ! fun_id = Some (Gfun fd) ->
+    type_of_fundef fd = Tfunction orgs org_rels tyargs tyres cconv ->
+    eval_exprlist fidx ge fpm1 al = OK (args, fpm2) ->
+    function_not_drop_glue fd ->
+    match_states (RustIRspec.State f (Scall p (Eglobal fun_id ty) al) k fpm1 fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f (Scall p (Eglobal fun_id ty) al) k fpm1 fidx sup) ->
+    wt_state (RustIRspec.State f (Scall p (Eglobal fun_id ty) al) k fpm1 fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.Callstate fun_id args fpm2 fidx sup (RustIRspec.Kcall p f k)) s2'
+      /\ borrowck_inv (RustIRspec.Callstate fun_id args fpm2 fidx sup (RustIRspec.Kcall p f k)).
+Proof. Admitted.
+
+Lemma step_internal_function_simulation:
+  forall fun_id vargs k fpm1 fpm2 f fidx sup1 sup2 (s1': state),
+    ge.(genv_defmap) ! fun_id = Some (Gfun (Internal f)) ->
+    f.(fn_drop_glue) = None ->
+    RustIRspec.function_entry ge f vargs fpm1 (fidx+1)%positive sup1 = OK (fpm2, sup2) ->
+    match_states (RustIRspec.Callstate fun_id vargs fpm1 fidx sup1 k) s1' ->
+    borrowck_inv (RustIRspec.Callstate fun_id vargs fpm1 fidx sup1 k) ->
+    wt_state (RustIRspec.Callstate fun_id vargs fpm1 fidx sup1 k) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f f.(fn_body) k fpm2 (fidx+1)%positive sup2) s2'
+      /\ borrowck_inv (RustIRspec.State f f.(fn_body) k fpm2 (fidx+1)%positive sup2).
+Proof. Admitted.
+
+Lemma step_return_1_simulation:
+  forall p vfp vfp1 vfp2 fpm1 fpm2 fpm3 fpm4 fpm5 f (k ck: RustIRspec.cont) fidx out_params sup (s1': state),
+    RustIRspec.call_cont k = Some ck ->
+    eval_expr fidx ge fpm1 (Emoveplace p (typeof_place p)) = OK (vfp, fpm2) ->
+    invalidate_conflict_ref_fpm_list (vars_to_paths fidx (f.(fn_vars) ++ f.(fn_params))) AWrite BorrowCheckDomain.Ashallow fpm2 = fpm3 ->
+    kill_views_ref_fpm (vars_to_paths fidx (f.(fn_vars) ++ f.(fn_params))) fpm3 = fpm4 ->
+    pop_stack fpm4 fidx (f.(fn_vars) ++ f.(fn_params)) = fpm5 ->
+    kill_views_ref (vars_to_paths fidx (f.(fn_vars) ++ f.(fn_params))) vfp = vfp1 ->
+    match_states (RustIRspec.State f (Sreturn p) k fpm1 fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f (Sreturn p) k fpm1 fidx sup) ->
+    wt_state (RustIRspec.State f (Sreturn p) k fpm1 fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.Returnstate vfp2 out_params (fidx-1)%positive sup ck) s2'
+      /\ borrowck_inv (RustIRspec.Returnstate vfp2 out_params (fidx-1)%positive sup ck).
+Proof. Admitted.
+
+Lemma step_returnstate_simulation:
+  forall p v v1 fpm1 fpm2 fpm3 f k ph fidx vs sup (s1': state),
+    before_write_place ge fidx fpm1 p = OK (ph, vs, fpm2) ->
+    set_footprint_map ph (kill_views_ref vs v1) fpm2 = OK fpm3 ->
+    match_states (RustIRspec.Returnstate v fpm1 fidx sup (RustIRspec.Kcall p f k)) s1' ->
+    borrowck_inv (RustIRspec.Returnstate v fpm1 fidx sup (RustIRspec.Kcall p f k)) ->
+    wt_state (RustIRspec.Returnstate v fpm1 fidx sup (RustIRspec.Kcall p f k)) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f Sskip k fpm3 fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f Sskip k fpm3 fidx sup).
+Proof. Admitted.
+
+Lemma step_seq_simulation:
+  forall f s1 s2 k fpm fidx sup (s1': state),
+    match_states (RustIRspec.State f (Ssequence s1 s2) k fpm fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f (Ssequence s1 s2) k fpm fidx sup) ->
+    wt_state (RustIRspec.State f (Ssequence s1 s2) k fpm fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f s1 (RustIRspec.Kseq s2 k) fpm fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f s1 (RustIRspec.Kseq s2 k) fpm fidx sup).
+Proof. Admitted.
+
+Lemma step_skip_seq_simulation:
+  forall f s k fpm fidx sup (s1': state),
+    match_states (RustIRspec.State f Sskip (RustIRspec.Kseq s k) fpm fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f Sskip (RustIRspec.Kseq s k) fpm fidx sup) ->
+    wt_state (RustIRspec.State f Sskip (RustIRspec.Kseq s k) fpm fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f s k fpm fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f s k fpm fidx sup).
+Proof. Admitted.
+
+Lemma step_continue_seq_simulation:
+  forall f s k fpm fidx sup (s1': state),
+    match_states (RustIRspec.State f Scontinue (RustIRspec.Kseq s k) fpm fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f Scontinue (RustIRspec.Kseq s k) fpm fidx sup) ->
+    wt_state (RustIRspec.State f Scontinue (RustIRspec.Kseq s k) fpm fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f Scontinue k fpm fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f Scontinue k fpm fidx sup).
+Proof. Admitted.
+
+Lemma step_break_seq_simulation:
+  forall f s k fpm fidx sup (s1': state),
+    match_states (RustIRspec.State f Sbreak (RustIRspec.Kseq s k) fpm fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f Sbreak (RustIRspec.Kseq s k) fpm fidx sup) ->
+    wt_state (RustIRspec.State f Sbreak (RustIRspec.Kseq s k) fpm fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f Sbreak k fpm fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f Sbreak k fpm fidx sup).
+Proof. Admitted.
+
+Lemma step_ifthenelse_simulation:
+  forall f a s1 s2 k fpm fpm1 v1 b sup fidx (s1': state),
+    eval_pexpr fidx fpm a = OK (fp_scalar Mint8unsigned v1, fpm1) ->
+    bool_val v1 (typeof a) = Some b ->
+    match_states (RustIRspec.State f (Sifthenelse (Epure a) s1 s2) k fpm fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f (Sifthenelse (Epure a) s1 s2) k fpm fidx sup) ->
+    wt_state (RustIRspec.State f (Sifthenelse (Epure a) s1 s2) k fpm fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f (if b then s1 else s2) k fpm1 fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f (if b then s1 else s2) k fpm1 fidx sup).
+Proof. Admitted.
+
+Lemma step_loop_simulation:
+  forall f s k fpm fidx sup (s1': state),
+    match_states (RustIRspec.State f (Sloop s) k fpm fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f (Sloop s) k fpm fidx sup) ->
+    wt_state (RustIRspec.State f (Sloop s) k fpm fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f s (RustIRspec.Kloop s k) fpm fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f s (RustIRspec.Kloop s k) fpm fidx sup).
+Proof. Admitted.
+
+Lemma step_skip_or_continue_loop_simulation:
+  forall f s k fpm fidx sup x (s1': state),
+    x = Sskip \/ x = Scontinue ->
+    match_states (RustIRspec.State f x (RustIRspec.Kloop s k) fpm fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f x (RustIRspec.Kloop s k) fpm fidx sup) ->
+    wt_state (RustIRspec.State f x (RustIRspec.Kloop s k) fpm fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f s (RustIRspec.Kloop s k) fpm fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f s (RustIRspec.Kloop s k) fpm fidx sup).
+Proof. Admitted.
+
+Lemma step_break_loop_simulation:
+  forall f s k fpm fidx sup (s1': state),
+    match_states (RustIRspec.State f Sbreak (RustIRspec.Kloop s k) fpm fidx sup) s1' ->
+    borrowck_inv (RustIRspec.State f Sbreak (RustIRspec.Kloop s k) fpm fidx sup) ->
+    wt_state (RustIRspec.State f Sbreak (RustIRspec.Kloop s k) fpm fidx sup) ->
+    exists s2',
+      plus RustIRsem.step tge s1' E0 s2'
+      /\ match_states (RustIRspec.State f Sskip k fpm fidx sup) s2'
+      /\ borrowck_inv (RustIRspec.State f Sskip k fpm fidx sup).
+Proof. Admitted.
+
+Lemma step_simulation: forall s1 t s2 s1',
+    RustIRspec.step ge s1 t s2 ->
+    match_states s1 s1' ->
+    borrowck_inv s1 ->
+    wt_state s1 ->
+    exists s2', 
+      plus RustIRsem.step tge s1' t s2' /\ match_states s2 s2' /\ borrowck_inv s2.
+Proof.
+  intros s1 t s2 s1' STEP MATCH BORINV WTST. 
+  inv STEP.
+  - eapply step_assign_simulation; eauto.
+  - eapply step_assign_variant_simulation; eauto.
+  - eapply step_box_simulation; eauto.
+  - eapply step_drop_simulation; eauto.
+  - eapply step_storagelive_simulation; eauto.
+  - eapply step_storagedead_simulation; eauto.
+  - eapply step_call_simulation; eauto.
+  - eapply step_internal_function_simulation; eauto.
+  - eapply step_return_1_simulation; eauto.
+  - eapply step_returnstate_simulation; eauto.
+  - eapply step_seq_simulation; eauto.
+  - eapply step_skip_seq_simulation; eauto.
+  - eapply step_continue_seq_simulation; eauto.
+  - eapply step_break_seq_simulation; eauto.
+  - eapply step_ifthenelse_simulation; eauto.
+  - eapply step_loop_simulation; eauto.
+  - eapply step_skip_or_continue_loop_simulation; eauto.
+  - eapply step_break_loop_simulation; eauto.
+Qed.
 
 
 End BORROW_CHECK_SIM.

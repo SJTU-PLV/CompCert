@@ -141,8 +141,6 @@ Fixpoint range_list (l: list (block * Z * Z)) : massert :=
 
 
 
-Section ADT_ENV.
-
 (* Object support currently disabled.
 I think this environment is a premise for the whole borrow checking
 proof. When we want to use the borrow checking proof, we must provide
@@ -388,6 +386,9 @@ Inductive coherent_fpm (fpm: fp_map) : massert -> Prop :=
 
 End COMP_ENV.
 
+(* Keep the map-to-environment conversion with the semantic definitions. *)
+Coercion fpm_to_env : fp_map >-> env.
+
 (* Morphism for sem_wt_loc/val *)
 
 Global Instance sem_wt_loc_eqv ce b ofs fp : Proper (massert_eqv ==> iff) (sem_wt_loc ce fp b ofs).
@@ -445,6 +446,8 @@ Qed.
 (*         exists mpi mp', P ffp b (ofs + fofs) mpi *)
 (*                    /\ massert_eqv mp (mpi ** mp'). *)
 (* Admitted. *)
+
+(* ** Dependencies shared by the assignment and byte-store proof chains *)
 
 (* The predicates evaluated from sem_wt_loc/fp/val are equivalent *)
 
@@ -1294,32 +1297,99 @@ Proof.
     + exact (IH ms fid base fofs ffp H4 IN).
 Qed.
 
+(* Extract the chunk-alignment fact embedded in [hasvalue] (via
+   [contains]'s [Mem.valid_access] component). *)
+Lemma hasvalue_align: forall m chunk b ofs v,
+    m |= hasvalue chunk b ofs v ->
+    (align_chunk chunk | ofs).
+Proof.
+  intros m chunk b ofs v MPRED.
+  destruct MPRED as (_ & VA & _). exact (proj2 VA).
+Qed.
+
 Lemma sem_wt_loc_align ce: forall fp b ofs mass m ty fpm
-    (WTLOC: sem_wt_loc ce fp b ofs mass)    
+    (WTLOC: sem_wt_loc ce fp b ofs mass)
     (MPRED: m |= mass)
     (WTFP: wt_footprint ce fpm ty fp),
     (* (FPMAT: fp_match_chunk fp chunk), *)
-    (ofs | alignof ce ty).
+    (alignof_footprint ce fp | ofs).
 Proof.
-Admitted.
+  intros.
+  destruct fp; inv WTLOC; simpl.
+  (* fp_emp: ruled out, wt_footprint has no constructor for it *)
+  - inv WTFP.
+  (* fp_uninit: the alignment is carried by the [spure] conjunct *)
+  - rewrite EQV in MPRED. eapply sep_proj2 in MPRED. exact MPRED.
+  (* fp_scalar *)
+  - rewrite EQV in MPRED. eapply hasvalue_align; eauto.
+  (* fp_box: alignment of the stored pointer *)
+  - rewrite EQV in MPRED. eapply sep_proj1 in MPRED.
+    eapply hasvalue_align; eauto.
+  (* fp_struct: [spure (alignof_comp ce id | ofs)] is the last conjunct *)
+  - rewrite EQV in MPRED.
+    eapply sep_proj2 in MPRED. eapply sep_proj2 in MPRED. exact MPRED.
+  (* fp_enum: [spure (alignof_comp ce id | ofs)] is the last conjunct *)
+  - rewrite EQV in MPRED.
+    eapply sep_proj2 in MPRED. eapply sep_proj2 in MPRED.
+    eapply sep_proj2 in MPRED. eapply sep_proj2 in MPRED. exact MPRED.
+  (* fp_ref: alignment of the stored pointer *)
+  - rewrite EQV in MPRED. eapply hasvalue_align; eauto.
+Qed.
 
-(* Use sem_wt_loc_align to prove it? *)
+(* [BYVAL] restricts [fp] to the four by-value shapes: [fp_uninit]
+   supplies the permissions through its [range] conjunct, while
+   [fp_scalar]/[fp_box]/[fp_ref] supply a full [Mem.valid_access _ _ _ _
+   Freeable] through [hasvalue] (= [contains]), which weakens to any
+   permission by [perm_F_any]. [fp_struct]/[fp_enum] are [By_copy] and
+   [fp_emp] has no [wt_footprint] constructor, so all three are
+   discharged. Note this needs neither [sem_wt_loc_range_perm] nor its
+   [composite_env_consistent]/range side conditions. *)
 Lemma sem_wt_loc_valid_access ce: forall fp b ofs mass m p chunk ty fpm
-    (WTLOC: sem_wt_loc ce fp b ofs mass)    
+    (WTLOC: sem_wt_loc ce fp b ofs mass)
     (MPRED: m |= mass)
     (WTFP: wt_footprint ce fpm ty fp)
     (BYVAL: access_mode ty = Ctypes.By_value chunk),
     (* (FPMAT: fp_match_chunk fp chunk), *)
     Mem.valid_access m chunk b ofs p.
 Proof.
-  (* induction fp using strong_footprint_ind; intros; red; inv WTLOC; simpl in FPMAT; try contradiction; rewrite EQV in *. *)
-  (* - destruct FPMAT. subst. split. *)
-  (*   + red. intros. eapply MPRED. simpl. eauto. *)
-  (*   + eapply MPRED. *)
-  (* - admit. *)
-  (* - admit. *)
-  (* - admit.    *)
-Admitted.
+  intros.
+  destruct fp; inv WTLOC.
+  (* fp_emp: no wt_footprint constructor *)
+  - inv WTFP.
+  (* fp_uninit: permissions from [range]; the recorded alignment is
+  [alignof ce ty], which the chunk's alignment divides. *)
+  - inv WTFP. rewrite EQV in MPRED.
+    destruct MPRED as (RNG & ALIGN & _).
+    destruct RNG as (_ & _ & PERM).
+    split.
+    + red. intros ofs0 RANGE0.
+      eapply PERM. erewrite <- (sizeof_by_value ce ty chunk BYVAL). exact RANGE0.
+    + eapply Z.divide_trans.
+      eapply alignof_by_value; eauto. exact ALIGN.
+  (* fp_scalar *)
+  - inv WTFP.
+    assert (CHUNK: chunk0 = chunk) by congruence. subst chunk0.
+    rewrite EQV in MPRED.
+    destruct MPRED as (_ & VA & _).
+    eapply Mem.valid_access_implies. exact VA. constructor.
+  (* fp_box: chunk is Mptr; the pointer cell is the first conjunct.
+  [inv WTFP] must precede [inv BYVAL]: only then is [ty] known to be
+  [Tbox _], which forces [chunk = Mptr]. *)
+  - inv WTFP. simpl in BYVAL. inv BYVAL.
+    rewrite EQV in MPRED.
+    destruct MPRED as (HV & _ & _).
+    destruct HV as (_ & VA & _).
+    eapply Mem.valid_access_implies. exact VA. constructor.
+  (* fp_struct: By_copy, contradiction *)
+  - inv WTFP. simpl in BYVAL. congruence.
+  (* fp_enum: By_copy, contradiction *)
+  - inv WTFP. simpl in BYVAL. congruence.
+  (* fp_ref: chunk is Mptr (both wt_fp_ref_some and wt_fp_ref_none) *)
+  - inv WTFP; simpl in BYVAL; inv BYVAL;
+      rewrite EQV in MPRED;
+      destruct MPRED as (_ & VA & _);
+      eapply Mem.valid_access_implies; [exact VA | constructor | exact VA | constructor].
+Qed.
 
 (* After storing a semantically well-typed value into a location with
    range permissionm, this location becomes a semantically well-typed
@@ -1337,20 +1407,555 @@ Lemma store_sem_wt_val ce: forall fp mass MP chunk v b ofs m1 ty fpm
       /\ m2 |= mass' ** MP. 
 Proof.
   intros.
-  destruct fp; inv WTVAL; inv WTFP.
-  (* - inv MP0.  *)
-  (*   eapply store_range_rule with (spec:= (fun v' : val => v' = Val.load_result chunk v)) (v:= v) in MPRED; auto. *)
-  (*   destruct MPRED as (m2 & STORE & MPRED). (* rewrite <- VEQ in *. *) *)
-  (*   exists m2, (hasvalue chunk b ofs (Val.load_result chunk v)). split; auto. *)
-  (*   split; auto. *)
-  (*   econstructor. reflexivity.  *)
-  (*   rewrite sep_swap in MPRED. eapply sep_proj2 in MPRED.  *)
-  (*   auto.  *)
-  (* - admit. *)
-  (* - admit. *)
-Admitted.
+  destruct fp as [| sz al | chunk0 v0 | pb fp0 | id fpl
+                 | id tagz fid fofs fp0 | mut rb rofs rph rvs];
+    inv WTVAL; inv WTFP.
+  (* fp_scalar: the value spec recorded in the footprint is exactly the
+  loaded result of the stored value. *)
+  - assert (CHUNK: chunk0 = chunk) by congruence. subst chunk0.
+    inv MP0.
+    eapply store_range_rule with (spec:= (fun v' : val => v' = Val.load_result chunk v)) (v:= v) in MPRED; auto.
+    destruct MPRED as (m2 & STORE & MPRED).
+    exists m2, (hasvalue chunk b ofs (Val.load_result chunk v)). split; auto.
+    split.
+    econstructor. reflexivity.
+    rewrite sep_swap in MPRED. eapply sep_proj2 in MPRED.
+    auto.
+  (* fp_box: the pointer is stored in (b, ofs) and the ownership of the
+  pointed-to block is carried over unchanged from sem_wt_fp. *)
+  - simpl in BYVAL. inv BYVAL.
+    inv MP0. rewrite EQV in MPRED.
+    eapply store_range_rule with (spec:= (fun v' : val => v' = Val.load_result Mptr (Vptr pb Ptrofs.zero))) (v:= Vptr pb Ptrofs.zero) in MPRED; auto.
+    destruct MPRED as (m2 & STORE & MPRED).
+    replace (Val.load_result Mptr (Vptr pb Ptrofs.zero)) with (Vptr pb Ptrofs.zero) in * by auto.
+    exists m2, (hasvalue Mptr b ofs (Vptr pb Ptrofs.zero) ** box_pred ce fp0 pb nextmp).
+    split; auto.
+    split.
+    econstructor. eauto. reflexivity.
+    rewrite sep_assoc. auto.
+  (* fp_ref with Some path: storing a reference only records the
+  pointer value; sem_wt_fp of a reference owns nothing. *)
+  - simpl in BYVAL. inv BYVAL.
+    inv MP0.
+    eapply store_range_rule with (spec:= (fun v' : val => v' = Val.load_result Mptr (Vptr rb (Ptrofs.repr rofs)))) (v:= Vptr rb (Ptrofs.repr rofs)) in MPRED; auto.
+    destruct MPRED as (m2 & STORE & MPRED).
+    replace (Val.load_result Mptr (Vptr rb (Ptrofs.repr rofs))) with (Vptr rb (Ptrofs.repr rofs)) in * by auto.
+    exists m2, (hasvalue Mptr b ofs (Vptr rb (Ptrofs.repr rofs))). split; auto.
+    split.
+    econstructor. reflexivity.
+    rewrite sep_swap in MPRED. eapply sep_proj2 in MPRED.
+    auto.
+  (* fp_ref with None: same as the previous case. *)
+  - simpl in BYVAL. inv BYVAL.
+    inv MP0.
+    eapply store_range_rule with (spec:= (fun v' : val => v' = Val.load_result Mptr (Vptr rb (Ptrofs.repr rofs)))) (v:= Vptr rb (Ptrofs.repr rofs)) in MPRED; auto.
+    destruct MPRED as (m2 & STORE & MPRED).
+    replace (Val.load_result Mptr (Vptr rb (Ptrofs.repr rofs))) with (Vptr rb (Ptrofs.repr rofs)) in * by auto.
+    exists m2, (hasvalue Mptr b ofs (Vptr rb (Ptrofs.repr rofs))). split; auto.
+    split.
+    econstructor. reflexivity.
+    rewrite sep_swap in MPRED. eapply sep_proj2 in MPRED.
+    auto.
+Qed.
+
+(* Moved up from later in the file: these are needed by
+   [sem_wt_loc_range_perm] below, which in turn feeds the store
+   chain ([store_sem_wt_loc] -> [store_coherent_var] -> ...). *)
+
+Lemma wt_footprint_align_divides ce:
+  forall ty fp fpm,
+    wt_footprint ce fpm ty fp ->
+    (alignof_footprint ce fp | alignof ce ty).
+Proof.
+  intros ty fp fpm H. inv H; simpl.
+  - apply Z.divide_refl.
+  - apply alignof_by_value; eauto.
+  - unfold alignof_comp. rewrite CO. apply Z.divide_refl.
+  - unfold alignof_comp. rewrite CO. apply Z.divide_refl.
+  - apply Z.divide_refl.
+  - apply Z.divide_refl.
+  - apply Z.divide_refl.
+Qed.
+
+Lemma field_noalign_offset_rec_base_nonneg:
+  forall ce fid ms pos base fofs,
+    field_noalign_offset_rec ce fid ms pos = OK (base, fofs) ->
+    0 <= pos ->
+    0 <= base.
+Proof.
+  induction ms as [| m ms IH]; intros; simpl in *.
+  - discriminate.
+  - destruct m as [id ty].
+    change (name_member (Member_plain id ty)) with id in *.
+    destruct (ident_eq fid id) eqn:ID.
+    + destruct (layout_field ce pos (Member_plain id ty)) eqn:L; try discriminate.
+      inv H. apply Z.div_pos; [exact H0 | lia].
+    + apply (IH (next_field ce pos (Member_plain id ty)) base fofs H).
+      apply Z.le_trans with pos; [exact H0 | apply (next_field_incr ce pos (Member_plain id ty))].
+Qed.
+
+Lemma field_noalign_offset_base_nonneg ce: forall fid ms base fofs,
+    field_noalign_offset ce fid ms = OK (base, fofs) ->
+    0 <= base.
+Proof.
+  unfold field_noalign_offset. intros. eapply field_noalign_offset_rec_base_nonneg; eauto. lia.
+Qed.
+
+
+Lemma Forall2_nth:
+  forall A B (P: A -> B -> Prop) l l' n x,
+    Forall2 P l l' -> nth_error l n = Some x ->
+    exists y, nth_error l' n = Some y /\ P x y.
+Proof.
+  intros A B P l. induction l as [|a l IH]; intros l' n x F NTH; inv F; simpl in *.
+  - destruct n; simpl in NTH; discriminate.
+  - destruct n as [|n']; simpl in NTH.
+    + inv NTH. eexists; split; [simpl; reflexivity | eauto].
+    + destruct (IH _ _ _ H3 NTH) as (y0 & NTHY & PY). eexists; split; [simpl; exact NTHY | exact PY].
+Qed.
+
+
+
+Definition bytes_of_bits_local (n: Z) : Z := (n + 7) / 8.
+
+Definition size_from (ce: composite_env) (pos: Z) (ms: members) : Z :=
+  bytes_of_bits_local (bitsizeof_struct ce pos ms).
+
+
+
+
+Lemma Forall2_nth_r:
+  forall A B (P: A -> B -> Prop) l l' n y,
+    Forall2 P l l' -> nth_error l' n = Some y ->
+    exists x, nth_error l n = Some x /\ P x y.
+Proof.
+  intros A B P l. induction l as [|a l IH]; intros l' n y F NTH; inv F; simpl in *.
+  - destruct n; simpl in NTH; discriminate.
+  - destruct n as [|n']; simpl in NTH.
+    + inv NTH. eexists; split; [simpl; reflexivity | eauto].
+    + destruct (IH _ _ _ H3 NTH) as (x & NTHX & PX). eexists; split; [simpl; exact NTHX | exact PX].
+Qed.
+
+Lemma Forall2_member_fp:
+  forall ce co P fpl fid base fofs fty,
+    Forall2 (fp_match_field ce co P) fpl (co_members co) ->
+    field_noalign_offset ce fid (co_members co) = OK (base, fofs) ->
+    In (Member_plain fid fty) (co_members co) ->
+    exists ffp, In (fid, ((base, fofs), ffp)) fpl /\ P fty ffp.
+Proof.
+  intros ce co P fpl fid base fofs fty MATCH FOFS IN.
+  apply In_nth_error in IN as (n & NTH).
+  destruct (Forall2_nth_r ffpty member (fp_match_field ce co P) fpl (co_members co) n (Member_plain fid fty) MATCH NTH) as (fp & NTHF & MATCH1).
+  inv MATCH1.
+  rewrite FOFS in FOFS0. inv FOFS0.
+  apply nth_error_In in NTHF. eexists; split; eauto.
+Qed.
+
+
+Lemma type_eq_alignof_eq ce:
+  forall ty1 ty2,
+    type_eq_except_origins ty1 ty2 = true ->
+    alignof ce ty1 = alignof ce ty2.
+Proof.
+  intros ty1 ty2 TEQ; induction ty1; destruct ty2; simpl in TEQ; try congruence.
+  all: try eapply proj_sumbool_true in TEQ; inv TEQ.
+  all: try reflexivity.
+Qed.
+
+Lemma next_field_div:
+  forall ce pos m fofs,
+    layout_field ce pos m = OK fofs ->
+    next_field ce pos m / 8 = fofs + sizeof ce (type_member m).
+Proof.
+  intros ce pos m fofs L. destruct m as [id ty].
+  unfold layout_field, next_field in *. inv L.
+  assert (DIVAL: Z.divide 8 (align pos (bitalignof ce ty))).
+  { apply Z.divide_trans with (bitalignof ce ty).
+    - unfold bitalignof. exists (alignof ce ty). rewrite Z.mul_comm. reflexivity.
+    - apply align_divides. unfold bitalignof. generalize (alignof_pos ce ty); lia. }
+  assert (ALIGN_EQ: align pos (bitalignof ce ty) = 8 * (align pos (bitalignof ce ty) / 8)).
+  { apply Z_div_exact_full_2; [lia |].
+    apply Z.mod_divide; [lia | exact DIVAL]. }
+  rewrite ALIGN_EQ.
+  rewrite Z.mul_comm.
+  rewrite (Z_div_plus_full_l (align pos (bitalignof ce ty) / 8) 8 (bitsizeof ce ty)) by lia.
+  rewrite (Z.div_mul (align pos (bitalignof ce ty) / 8) 8) by lia.
+  unfold bitsizeof. rewrite (Z.div_mul (sizeof ce ty) 8) by lia.
+  simpl. lia.
+Qed.
+
+Lemma next_field_div8:
+  forall ce pos m,
+    Z.divide 8 (next_field ce pos m).
+Proof.
+  destruct m as [id ty]. unfold next_field.
+  apply Z.divide_add_r.
+  - apply Z.divide_trans with (bitalignof ce ty).
+    + unfold bitalignof. exists (alignof ce ty). rewrite Z.mul_comm. reflexivity.
+    + apply align_divides. unfold bitalignof. generalize (alignof_pos ce ty); lia.
+  - unfold bitsizeof. exists (sizeof ce ty). lia.
+Qed.
+
+Lemma size_from_0:
+  forall ce ms, size_from ce 0 ms = sizeof_struct ce ms.
+Proof.
+  intros. unfold size_from, sizeof_struct, bytes_of_bits_local. reflexivity.
+Qed.
+
+Lemma field_noalign_offset_rec_cover:
+  forall ce ms pos ofs,
+    list_norepet (name_members ms) ->
+    (8 | pos) ->
+    pos / 8 <= ofs ->
+    ofs < size_from ce pos ms ->
+    exists fid base fofs fty,
+      In (Member_plain fid fty) ms /\
+      field_noalign_offset_rec ce fid ms pos = OK (base, fofs) /\
+      base <= ofs < fofs + sizeof ce fty.
+Proof.
+  induction ms as [|m ms IH]; intros; simpl in *.
+  - exfalso.
+    unfold size_from, bytes_of_bits_local in H2.
+    simpl in H2.
+    assert (SZ: (pos + 7) / 8 = pos / 8).
+    { destruct H0 as [n HN]. subst pos.
+      rewrite (Z_div_plus_full_l n 8 7) by lia.
+      rewrite (Z.div_small 7 8) by lia.
+      rewrite (Z.div_mul n 8) by lia. lia. }
+    rewrite SZ in H2. lia.
+  - destruct m as [id ty].
+    change (name_member (Member_plain id ty)) with id in *.
+    inversion H as [| ? ? NOREP_HEAD NOREP_TAIL]; subst.
+    destruct (layout_field ce pos (Member_plain id ty)) as [z|] eqn:L; try discriminate.
+    assert (HEAD: field_noalign_offset_rec ce id (Member_plain id ty :: ms) pos = OK (pos / 8, z)).
+    { unfold field_noalign_offset_rec.
+      change (name_member (Member_plain id ty)) with id.
+      destruct (ident_eq id id) eqn:E; try congruence.
+      rewrite L. reflexivity. }
+    destruct (Z.lt_ge_cases ofs (z + sizeof ce ty)) as [LT | GE].
+    + exists id, (pos / 8), z, ty.
+      split; [simpl; auto | split; [destruct (ident_eq id id) eqn:E; try congruence; simpl; reflexivity | split; [exact H1 | exact LT]]].
+    + assert (DIVPOS: Z.divide 8 (next_field ce pos (Member_plain id ty))).
+      { apply next_field_div8. }
+      assert (POSLE: next_field ce pos (Member_plain id ty) / 8 <= ofs).
+      { rewrite (next_field_div ce pos (Member_plain id ty) z L).
+        change (type_member (Member_plain id ty)) with ty.
+        lia. }
+      assert (SIZEFROM: size_from ce pos (Member_plain id ty :: ms) =
+                        size_from ce (next_field ce pos (Member_plain id ty)) ms).
+      { reflexivity. }
+      rewrite SIZEFROM in H2.
+      destruct (IH (next_field ce pos (Member_plain id ty)) ofs NOREP_TAIL DIVPOS POSLE H2)
+        as (fid & base & fofs & fty & IN0 & REC0 & COV0).
+      exists fid, base, fofs, fty. split; [right; exact IN0 | split].
+      * simpl. destruct (ident_eq fid id) eqn:E.
+        -- subst fid. exfalso. apply NOREP_HEAD. unfold name_members.
+           rewrite in_map_iff. exists (Member_plain id fty). split; auto.
+        -- exact REC0.
+      * exact COV0.
+Qed.
+
+Lemma members_cover_struct:
+  forall ce ms ofs,
+    list_norepet (name_members ms) ->
+    0 <= ofs < sizeof_struct ce ms ->
+    exists fid base fofs fty,
+      In (Member_plain fid fty) ms /\
+      field_noalign_offset ce fid ms = OK (base, fofs) /\
+      base <= ofs < fofs + sizeof ce fty.
+Proof.
+  intros ce ms ofs NOREP IN.
+  unfold field_noalign_offset.
+  eapply field_noalign_offset_rec_cover; eauto.
+  - apply Z.divide_0_r.
+  - rewrite (Z.div_0_l 8) by lia. lia.
+  - rewrite size_from_0. exact (proj2 IN).
+Qed.
+
+
+Lemma wt_footprint_fields_well_formed ce te:
+  forall ty fp,
+    composite_env_consistent ce ->
+    (forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co))) ->
+    wt_footprint ce te ty fp ->
+    fields_fp_well_formed ce fp.
+Proof.
+  intros ty fp CONS NOREP.
+  revert ty.
+  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+    intros ty WTFP.
+  - inv WTFP.
+  - inv WTFP. econstructor.
+  - inv WTFP. econstructor.
+  - inv WTFP. econstructor; eauto.
+  - inv WTFP. econstructor.
+    + apply Forall_forall. intros x IN. destruct x as [fid [[base fofs] ffp]].
+      apply In_nth_error in IN as (n & NTHF).
+      destruct (Forall2_nth ffpty member (fp_match_field ce co (wt_footprint ce te)) fpl (co_members co) n (fid, ((base, fofs), ffp)) MATCH NTHF) as (m & NTHM & MATCH1).
+      inv MATCH1.
+      apply nth_error_In in NTHM as INM.
+      apply nth_error_In in NTHF as INFP.
+      assert (NOREPM: list_norepet (name_members (co_members co))) by (apply (NOREP id co CO)).
+      assert (FTY: field_type fid (co_members co) = OK fty).
+      { eapply field_noalign_offset_In_field_type.
+        - exact NOREPM.
+        - exact INM.
+        - exact FOFS. }
+      pose proof (field_noalign_offset_range_aligned ce fid (co_members co) base fofs fty FOFS FTY) as RANGE.
+      pose proof (wt_footprint_size_eq ce fty ffp te WTFP) as SIZEEQ.
+      pose proof (wt_footprint_align_divides ce fty ffp te WTFP) as ALIGNDIV.
+      pose proof (IHfields fid base fofs ffp INFP fty WTFP) as WF.
+      destruct RANGE as (BASELE & ZR & RANGESZ & ALIGN).
+      assert (RANGECO: fofs + sizeof_footprint ce ffp <= sizeof_comp ce id).
+      { rewrite <- SIZEEQ.
+        destruct (CONS id co CO) as [COMPL ALG SZ RANK].
+        unfold sizeof_comp. rewrite CO. rewrite SZ.
+        rewrite STRUCT. simpl.
+        apply Z.le_trans with (sizeof_struct ce (co_members co)); [exact RANGESZ |].
+        apply align_le. apply co_alignof_pos. }
+      assert (BASE0 : 0 <= base) by (eapply field_noalign_offset_base_nonneg; eauto).
+      apply fp_field_in_range_aligned_intro; auto.
+      * apply Z.divide_trans with (alignof ce fty); auto.
+    + intros ofs IN.
+      assert (SZSTR: sizeof_struct_comp ce id = sizeof_struct ce (co_members co)).
+      { unfold sizeof_struct_comp. rewrite CO. rewrite STRUCT. reflexivity. }
+      destruct (Z.lt_ge_cases ofs (sizeof_struct_comp ce id)) as [LT | GE].
+      * left.
+        assert (INM: 0 <= ofs < sizeof_struct ce (co_members co)).
+        { destruct IN as [LO HI]. rewrite SZSTR in LT. split; auto. }
+        destruct (members_cover_struct ce (co_members co) ofs (NOREP id co CO) INM) as (fid0 & base0 & fofs0 & fty0 & INM0 & FOFS0 & COV0).
+        destruct (Forall2_member_fp ce co (wt_footprint ce te) fpl fid0 base0 fofs0 fty0 MATCH FOFS0 INM0) as (ffp0 & INFP0 & WTFP0').
+        exists fid0, base0, fofs0, ffp0. split; auto.
+        pose proof (wt_footprint_size_eq ce fty0 ffp0 te WTFP0') as SIZEEQ0.
+        rewrite <- SIZEEQ0. exact COV0.
+      * right. exact GE.
+  - inv WTFP.
+    pose proof (IHenum fty WT) as WFENUM.
+    assert (SZM: size_chunk Mint32 = 4) by reflexivity.
+    destruct (place_field_type_res co fid orgs fty FTY) as (fty' & FTY' & TEQ).
+    pose proof (variant_field_offset_in_range ce (co_members co) fid fofs fty' FOFS FTY') as RANGEV.
+    pose proof (variant_field_offset_aligned ce fid (co_members co) fofs fty' FOFS FTY') as ALIGNV.
+    pose proof (wt_footprint_size_eq ce fty fp1 te WT) as SIZEEQF.
+    pose proof (wt_footprint_align_divides ce fty fp1 te WT) as ALIGNDIVF.
+    pose proof (type_eq_sizeof_eq fty fty' ce TEQ) as SIZEEQTY.
+    pose proof (type_eq_alignof_eq ce fty fty' TEQ) as ALIGNEQTY.
+    econstructor.
+    + apply fp_field_in_range_aligned_intro.
+      * rewrite SZM. lia.
+      * rewrite SZM. destruct RANGEV as [A _]. exact A.
+      * destruct RANGEV as [A _]. lia.
+      * rewrite <- SIZEEQF. rewrite SIZEEQTY.
+        destruct RANGEV as [_ B].
+        destruct (CONS id co CO) as [COMPL ALG SZ RANK].
+        unfold sizeof_comp. rewrite CO. rewrite SZ. rewrite ENUM. simpl.
+        apply Z.le_trans with (sizeof_variant ce (co_members co)); [exact B |].
+        apply align_le. apply co_alignof_pos.
+      * rewrite ALIGNEQTY in ALIGNDIVF.
+        apply Z.divide_trans with (alignof ce fty'); [exact ALIGNDIVF | exact ALIGNV].
+      * exact WFENUM.
+    + rewrite <- SIZEEQF. rewrite SIZEEQTY.
+      destruct RANGEV as [_ B].
+      destruct (CONS id co CO) as [COMPL ALG SZ RANK].
+      unfold sizeof_comp. rewrite CO. rewrite SZ. rewrite ENUM. simpl.
+      apply Z.le_trans with (sizeof_variant ce (co_members co)); [exact B |].
+      apply align_le. apply co_alignof_pos.
+  - inv WTFP; econstructor.
+Qed.
+
+Lemma sem_wt_loc_range_perm ce: forall fp mass b ofs ty fpm
+      (CONS: composite_env_consistent ce)
+      (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
+      (WTFP: wt_footprint ce fpm ty fp)
+      (RANGE: 0 <= ofs /\ ofs + sizeof ce ty <= Ptrofs.max_unsigned)
+      (WTLOC: sem_wt_loc ce fp b ofs mass),
+    massert_imp mass (range b ofs (ofs + sizeof ce ty)).
+Proof.
+  intros fp mass b ofs ty fpm CONS NOREP WTFP RANGE WTLOC.
+  revert mass b ofs ty fpm WTFP RANGE WTLOC.
+  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+    intros mass b ofs ty fpm WTFP RANGE WTLOC; inv WTLOC.
+  - inv WTFP.
+  - rewrite EQV. inv WTFP. eapply massert_imp_proj1.
+  - rewrite EQV. inv WTFP.
+    eapply massert_imp_trans.
+    { eapply contains_range.
+      destruct RANGE as [A B].
+      rewrite <- (sizeof_by_value ce ty chunk MODE) in B.
+      unfold Ptrofs.max_unsigned in B. unfold Ptrofs.modulus in B. unfold Ptrofs.modulus. lia. }
+    { rewrite (sizeof_by_value ce ty chunk MODE). reflexivity. }
+  - rewrite EQV. inv WTFP.
+    eapply massert_imp_trans.
+    { eapply massert_imp_proj1. }
+    { eapply massert_imp_trans.
+      { eapply contains_range.
+        assert (MODE: access_mode (Tbox ty0) = Ctypes.By_value Mptr) by reflexivity.
+        destruct RANGE as [A B].
+        rewrite <- (sizeof_by_value ce (Tbox ty0) Mptr MODE) in B.
+        unfold Ptrofs.max_unsigned in B. unfold Ptrofs.modulus in B. unfold Ptrofs.modulus. lia. }
+      { assert (MODE: access_mode (Tbox ty0) = Ctypes.By_value Mptr) by reflexivity.
+        rewrite (sizeof_by_value ce (Tbox ty0) Mptr MODE). reflexivity. } }
+  - assert (FPWF: fields_fp_well_formed ce (fp_struct id fpl)) by (eapply wt_footprint_fields_well_formed; eauto).
+    inv WTFP. inv FPWF.
+    assert (SIZEEQ_STRUCT: sizeof ce (Tstruct orgs id) = sizeof_comp ce id).
+    { unfold sizeof, sizeof_comp. rewrite CO. reflexivity. }
+    rewrite SIZEEQ_STRUCT in *.
+    set (tail := range b (ofs + sizeof_struct_comp ce id) (ofs + sizeof_comp ce id)) in *.
+    eapply fields_loc_sep_range_perm with (mp1 := tail ** spure (alignof_comp ce id | ofs)) (mp2 := mass0) (mp := mass).
+    { intros fid0 base0 fofs0 ffp0 IN0 mass0' WT0.
+      destruct (fp_match_field_In_wt ce co (wt_footprint ce fpm) fpl (co_members co) fid0 base0 fofs0 ffp0 MATCH IN0) as [fty WTFP0].
+      assert (SIZEEQ_F: sizeof ce fty = sizeof_footprint ce ffp0) by (eapply wt_footprint_size_eq; eauto).
+      eapply Forall_forall in FWF; eauto.
+      inv FWF.
+      assert (RANGEF: 0 <= ofs + fofs0 /\ (ofs + fofs0) + sizeof ce fty <= Ptrofs.max_unsigned).
+      { destruct RANGE as [A B]. split.
+        - lia.
+        - rewrite SIZEEQ_F. lia. }
+      pose proof (IHfields fid0 base0 fofs0 ffp0 IN0 mass0' b (ofs + fofs0) fty fpm WTFP0 RANGEF WT0) as Hfield.
+      rewrite SIZEEQ_F in Hfield. exact Hfield. }
+    exact FWF.
+    { intros ofs1 IN. destruct (COMPLETE ofs1 IN) as [FIELD | TAIL].
+      - left. exact FIELD.
+      - right.
+        eapply massert_imp_trans.
+        eapply massert_imp_proj1.
+        eapply range_impl; unfold tail; lia. }
+    exact RANGE.
+    exact FWT.
+    { subst. unfold tail in *.
+      rewrite EQV.
+      apply sep_comm. }
+  - assert (FPWF: fields_fp_well_formed ce (fp_enum id tagz fid fofs fp1)) by (eapply wt_footprint_fields_well_formed; eauto).
+    inv FPWF. inv FWF. inv WTFP.
+    assert (SIZEEQ_ENUM: sizeof ce (Tvariant orgs id) = sizeof_comp ce id).
+    { unfold sizeof, sizeof_comp. rewrite CO. reflexivity. }
+    rewrite SIZEEQ_ENUM in *.
+    assert (SZM: size_chunk Mint32 = 4) by reflexivity.
+    rewrite SZM in *.
+    assert (SIZEEQ_F: sizeof ce fty = sizeof_footprint ce fp1) by (eapply wt_footprint_size_eq; eauto).
+    assert (RANGEF: 0 <= ofs + fofs /\ (ofs + fofs) + sizeof ce fty <= Ptrofs.max_unsigned).
+    { destruct RANGE as [A B]. split.
+      - lia.
+      - rewrite SIZEEQ_F. lia. }
+    assert (FIELDRANGE: massert_imp mass2 (range b (ofs + fofs) (ofs + fofs + sizeof_footprint ce fp1))).
+    { rewrite <- SIZEEQ_F.
+      eapply IHenum; eauto. }
+    assert (TAGRANGE: massert_imp (hasvalue Mint32 b ofs (Vint (Int.repr tagz))) (range b ofs (ofs + size_chunk Mint32))).
+    { unfold hasvalue. eapply contains_range.
+      destruct RANGE as [A B].
+      assert (LE4: size_chunk Mint32 <= sizeof_comp ce id).
+      { assert (FPOS: 0 <= sizeof_footprint ce fp1).
+        { rewrite <- SIZEEQ_F. apply Z.ge_le. apply (sizeof_pos ce fty). }
+        lia. }
+      unfold Ptrofs.max_unsigned in *. unfold Ptrofs.modulus in *. lia. }
+    assert (JOIN_FIELD: massert_imp
+       (range b (ofs + fofs) (ofs + fofs + sizeof_footprint ce fp1) **
+        range b (ofs + fofs + sizeof_footprint ce fp1) (ofs + sizeof_comp ce id))
+       (range b (ofs + fofs) (ofs + sizeof_comp ce id))).
+    { eapply range_join. }
+    assert (JOIN_PAD: massert_imp
+       (range b (ofs + 4) (ofs + fofs) **
+        range b (ofs + fofs) (ofs + sizeof_comp ce id))
+       (range b (ofs + 4) (ofs + sizeof_comp ce id))).
+    { eapply range_join. }
+    assert (JOIN_TAG: massert_imp
+       (range b ofs (ofs + 4) **
+        range b (ofs + 4) (ofs + sizeof_comp ce id))
+       (range b ofs (ofs + sizeof_comp ce id))).
+    { eapply range_join. }
+    rewrite EQV.
+    eapply massert_imp_trans.
+    { eapply sepconj_morph_1; [eapply TAGRANGE |].
+      eapply sepconj_morph_1; [reflexivity |].
+      eapply sepconj_morph_1; [eapply FIELDRANGE |].
+      eapply massert_imp_proj1. }
+    eapply massert_imp_trans.
+    { eapply sepconj_morph_1; [reflexivity |].
+      eapply sepconj_morph_1; [reflexivity |].
+      eapply JOIN_FIELD. }
+    eapply massert_imp_trans.
+    { eapply sepconj_morph_1; [reflexivity |].
+      eapply JOIN_PAD. }
+    eapply JOIN_TAG.
+  - inv WTFP.
+    { rewrite EQV.
+      eapply massert_imp_trans.
+      { eapply contains_range.
+        assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
+        destruct RANGE as [A B].
+        rewrite <- (sizeof_by_value ce (Treference org mut ty0) Mptr MODE) in B.
+        unfold Ptrofs.max_unsigned in B. unfold Ptrofs.modulus in B. unfold Ptrofs.modulus. lia. }
+      { assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
+        rewrite (sizeof_by_value ce (Treference org mut ty0) Mptr MODE). reflexivity. } }
+    { rewrite EQV.
+      eapply massert_imp_trans.
+      { eapply contains_range.
+        assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
+        destruct RANGE as [A B].
+        rewrite <- (sizeof_by_value ce (Treference org mut ty0) Mptr MODE) in B.
+        unfold Ptrofs.max_unsigned in B. unfold Ptrofs.modulus in B. unfold Ptrofs.modulus. lia. }
+      { assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
+        rewrite (sizeof_by_value ce (Treference org mut ty0) Mptr MODE). reflexivity. } }
+Qed.
+
+Lemma store_sem_wt_loc ce: forall fp vfp b ofs mass1 mass2 v m1 MP chunk ty fpm
+    (CONS: composite_env_consistent ce)
+    (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
+    (WTLOC: sem_wt_loc ce fp b ofs mass1)
+    (WTVAL: sem_wt_val ce vfp v mass2)
+    (AL: (align_chunk chunk | ofs))
+    (MPRED: m1 |= mass1 ** mass2 ** MP)
+    (WTFP1: wt_footprint ce fpm ty fp)
+    (WTFP2: wt_footprint ce fpm ty vfp)
+    (BYVAL: access_mode ty = Ctypes.By_value chunk)
+    (RANGE: 0 <= ofs /\ ofs + sizeof ce ty <= Ptrofs.max_unsigned),
+    exists m2 mass3,
+      Mem.store chunk m1 b ofs v = Some m2
+      /\ sem_wt_loc ce vfp b ofs mass3
+      /\ m2 |= mass3 ** MP.
+Proof.
+  intros. eapply store_sem_wt_val; eauto.
+  eapply sep_imp. eapply MPRED.
+  erewrite sizeof_by_value.
+  eapply (sem_wt_loc_range_perm ce fp mass1 b ofs ty fpm); eauto.
+  all: eauto.
+Qed.
+
+
+(* Along a non-empty path, [set_footprint] rebuilds the same outer
+   constructor, and [sizeof_footprint] of [fp_box]/[fp_struct]/[fp_enum]
+   depends only on the chunk or the composite id -- never on the nested
+   contents. So the total size is preserved with no side condition. This
+   is what keeps the size recorded inside [box_pred] valid after writing
+   through a box. *)
+Lemma set_footprint_sizeof_cons ce: forall pj phl vfp fp fp2,
+    set_footprint (pj :: phl) vfp fp = OK fp2 ->
+    sizeof_footprint ce fp = sizeof_footprint ce fp2.
+Proof.
+  intros pj phl vfp fp fp2 SET. simpl in SET.
+  destruct pj; destruct fp; try congruence.
+  - monadInv SET. reflexivity.
+  - destruct (find_field fid fpl) as [[[base fofs] ffp]|]; try congruence.
+    monadInv SET. reflexivity.
+  - destruct (ident_eq fid fid0); try congruence.
+    monadInv SET. reflexivity.
+Qed.
+
+(* The general version: for the empty path the replacement happens at the
+   root, so there the size hypothesis is actually needed. *)
+Lemma set_footprint_sizeof_eq ce: forall phl vfp fp fp2 pfp b ofs b' ofs',
+    get_owner_loc_footprint phl fp b ofs = OK (b', ofs', pfp) ->
+    set_footprint phl vfp fp = OK fp2 ->
+    sizeof_footprint ce pfp = sizeof_footprint ce vfp ->
+    sizeof_footprint ce fp = sizeof_footprint ce fp2.
+Proof.
+  intros phl. destruct phl as [|pj phl].
+  - simpl. intros. inv H. inv H0. exact H1.
+  - intros. eapply set_footprint_sizeof_cons; eauto.
+Qed.
 
 Lemma store_coherent_var: forall phl m ce mass1 mass2 v vfp fp1 pfp chunk b1 ofs1 b2 ofs2 MP ty fpm
+    (CONS: composite_env_consistent ce)
+    (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
     (WTLOC: sem_wt_loc ce fp1 b1 ofs1 mass1)
     (WTVAL: sem_wt_val ce vfp v mass2)
     (MPRED: m |= mass1 ** mass2 ** MP)
@@ -1364,8 +1969,6 @@ Lemma store_coherent_var: forall phl m ce mass1 mass2 v vfp fp1 pfp chunk b1 ofs
     (WTFP1: wt_footprint ce fpm ty pfp)
     (WTFP2: wt_footprint ce fpm ty vfp)
     (BYVAL: access_mode ty = Ctypes.By_value chunk)
-    (SHALLOW: shallow_init pfp = true)
-    (FPWF: fields_fp_well_formed ce pfp)
     (RANGE: 0 <= ofs2 /\ ofs2 + sizeof ce ty <= Ptrofs.max_unsigned),
     exists m1 fp2 mass3,
       Mem.store chunk m b2 ofs2 v = Some m1
@@ -1373,7 +1976,153 @@ Lemma store_coherent_var: forall phl m ce mass1 mass2 v vfp fp1 pfp chunk b1 ofs
       /\ sem_wt_loc ce fp2 b1 ofs1 mass3
       /\ m1 |= mass3 ** MP.
 Proof.
-Admitted.
+  (* [pfp] and [vfp] are well-typed footprints of the same [ty], hence
+  have the same size. Needed to feed [set_footprint_sizeof_eq] in the
+  box case, where the recursive call may be at the empty path. *)
+  assert (SZEQ: forall ce0 fpm0 ty0 pfp0 vfp0,
+             wt_footprint ce0 fpm0 ty0 pfp0 -> wt_footprint ce0 fpm0 ty0 vfp0 ->
+             sizeof_footprint ce0 pfp0 = sizeof_footprint ce0 vfp0).
+  { intros. erewrite <- (wt_footprint_size_eq ce0 ty0 pfp0); eauto.
+    erewrite <- (wt_footprint_size_eq ce0 ty0 vfp0); eauto. }
+  induction phl as [|pj phl IH]; intros.
+  (* nil: the target location is right here, delegate to the
+  single-location store rule. [alignof_by_value] bridges the [alignof]
+  hypothesis to the [align_chunk] one that rule wants. *)
+  - inv GFP.
+    exploit store_sem_wt_loc; eauto.
+    { eapply Z.divide_trans; [eapply alignof_by_value; eauto | exact AL]. }
+    intros (m2 & mass3 & STORE & WTLOC1 & MPRED1).
+    exists m2, vfp, mass3. split; auto.
+  - simpl in GFP. destruct pj as [| fid | fid]; destruct fp1; try congruence.
+    (* proj_deref / fp_box: the pointer cell [HV] and the size cell [SZ]
+    are untouched by the store, so park them in the frame, recurse into
+    the pointed-to footprint, then restore them. *)
+    + inv WTLOC.
+      unfold box_pred in EQV. rewrite EQV in MPRED.
+      set (HV := hasvalue Mptr b1 ofs1 (Vptr b Ptrofs.zero)) in *.
+      set (SZ := contains_neg Mptr b (- size_chunk Mptr)
+                   (eq (Vptrofs (Ptrofs.repr (sizeof_footprint ce fp1))))) in *.
+      rewrite ! sep_assoc in MPRED.
+      rewrite (sep_swap3 HV SZ nextmp) in MPRED.
+      rewrite (sep_swap23 nextmp SZ HV) in MPRED.
+      rewrite (sep_swap34 nextmp HV SZ mass2) in MPRED.
+      rewrite (sep_swap23 nextmp HV mass2) in MPRED.
+      rewrite <- (sep_assoc HV SZ MP) in MPRED.
+      exploit IH; eauto.
+      intros (m1 & fp2 & mass3 & STORE & SET & WTLOC1 & MPRED1).
+      exists m1, (fp_box b fp2), (HV ** box_pred ce fp2 b mass3).
+      split; auto.
+      split. { simpl. rewrite SET. reflexivity. }
+      split. { econstructor; eauto. }
+      (* the size cell [SZ] still records the right size *)
+      assert (SIZE: sizeof_footprint ce fp1 = sizeof_footprint ce fp2).
+      { eapply set_footprint_sizeof_eq; eauto. }
+      unfold box_pred. rewrite <- SIZE. fold SZ.
+      rewrite ! sep_assoc.
+      rewrite ! sep_assoc in MPRED1.
+      rewrite (sep_swap mass3 HV) in MPRED1.
+      rewrite (sep_swap23 HV mass3 SZ) in MPRED1.
+      exact MPRED1.
+    (* proj_field / fp_struct: split [fields_loc_sep] at [fid] with
+    [fields_loc_sep_find_set], recurse into the field footprint, and
+    rebuild with its [UPDATE] continuation. *)
+    + destruct (find_field fid fpl) as [[[base fofs] ffp]|] eqn:FIND; try congruence.
+      inv WTLOC.
+      exploit fields_loc_sep_find_set; eauto.
+      intros (mp1 & mp2 & mpi & l1 & l2 & SEP1 & SEP2 & FIELD & LIST & SPLIT & UPDATE).
+      set (PAD := range b1 (ofs1 + base) (ofs1 + fofs)) in *.
+      set (TAIL := range b1 (ofs1 + sizeof_struct_comp ce id) (ofs1 + sizeof_comp ce id)) in *.
+      set (ALP := spure (alignof_comp ce id | ofs1)) in *.
+      rewrite EQV, SPLIT in MPRED.
+      assert (PERM: massert_eqv ((mp1 ** (PAD ** mpi) ** mp2) ** TAIL ** ALP)
+                                (mpi ** (mp1 ** PAD ** mp2 ** TAIL ** ALP))).
+      { rewrite ! sep_assoc.
+        rewrite (sep_swap3 mp1 PAD mpi (mp2 ** TAIL ** ALP)).
+        rewrite (sep_swap23 mpi PAD mp1 (mp2 ** TAIL ** ALP)).
+        reflexivity. }
+      rewrite PERM in MPRED.
+      set (FRAME := mp1 ** PAD ** mp2 ** TAIL ** ALP) in *.
+      assert (MPRED': m |= mpi ** mass2 ** (FRAME ** MP)).
+      { fold FRAME in MPRED.
+        rewrite (sep_assoc mpi FRAME (mass2 ** MP)) in MPRED.
+        rewrite (sep_swap FRAME mass2 MP) in MPRED.
+        exact MPRED. }
+      exploit IH. 1-2: eauto. eapply FIELD. eapply WTVAL. eapply MPRED'.
+      eapply GFP. all: eauto.
+      intros (m1 & ffp2 & mpi' & STORE & SET & WTLOC1 & MPRED1).
+      destruct (UPDATE ffp2 mpi' WTLOC1) as (mp' & SEP' & EQV').
+      exists m1, (fp_struct id (set_field_fp fid ffp2 fpl)),
+        (mp' ** TAIL ** ALP).
+      split; auto.
+      split. { simpl. rewrite FIND. rewrite SET. reflexivity. }
+      split. { econstructor; [exact SEP' | reflexivity | reflexivity]. }
+      rewrite EQV'.
+      assert (PERM2: massert_eqv
+        (mpi' ** FRAME ** MP)
+        (((mp1 ** (PAD ** mpi') ** mp2) ** TAIL ** ALP) ** MP)).
+      { unfold FRAME.
+        rewrite ! sep_assoc.
+        rewrite <- (sep_assoc mp1 PAD (mp2 ** TAIL ** ALP ** MP)).
+        rewrite (sep_swap mpi' (mp1 ** PAD) (mp2 ** TAIL ** ALP ** MP)).
+        rewrite (sep_assoc mp1 PAD (mpi' ** mp2 ** TAIL ** ALP ** MP)).
+        reflexivity. }
+      rewrite PERM2 in MPRED1.
+      exact MPRED1.
+    (* proj_downcast / fp_enum *)
+    + destruct (ident_eq fid fid0) eqn:EQFID in GFP; try congruence.
+      subst fid0.
+      inv WTLOC.
+      set (TAG := hasvalue Mint32 b1 ofs1 (Vint (Int.repr tagz))) in *.
+      set (PRE := range b1 (ofs1 + size_chunk Mint32) (ofs1 + fofs)) in *.
+      set (TAIL := range b1 (ofs1 + fofs + sizeof_footprint ce fp1)
+                         (ofs1 + sizeof_comp ce id)) in *.
+      set (ALP := spure (alignof_comp ce id | ofs1)) in *.
+      rewrite EQV in MPRED.
+      set (FRAME := TAG ** PRE ** TAIL ** ALP) in *.
+      assert (PERM: massert_eqv
+        (TAG ** PRE ** mass3 ** TAIL ** ALP)
+        (mass3 ** FRAME)).
+      { unfold FRAME.
+        rewrite (sep_swap3 TAG PRE mass3 (TAIL ** ALP)).
+        rewrite (sep_swap PRE TAG (TAIL ** ALP)).
+        reflexivity. }
+      rewrite PERM in MPRED.
+      assert (MPRED': m |= mass3 ** mass2 ** (FRAME ** MP)).
+      { rewrite (sep_assoc mass3 FRAME (mass2 ** MP)) in MPRED.
+        rewrite (sep_swap FRAME mass2 MP) in MPRED.
+        exact MPRED. }
+      exploit IH. 1-2: eauto. exact FWT. exact WTVAL. exact MPRED'.
+      exact GFP. all: eauto.
+      intros (m1 & fp2 & mass4 & STORE & SET & WTLOC1 & MPRED1).
+      assert (SIZE: sizeof_footprint ce fp1 = sizeof_footprint ce fp2).
+      { eapply set_footprint_sizeof_eq.
+        - exact GFP.
+        - exact SET.
+        - eapply SZEQ; eauto. }
+      exists m1, (fp_enum id tagz fid fofs fp2),
+        (TAG ** PRE ** mass4 ** TAIL ** ALP).
+      split; [exact STORE |].
+      split.
+      { simpl. rewrite EQFID. rewrite SET. reflexivity. }
+      split.
+      { econstructor.
+        - reflexivity.
+        - exact WTLOC1.
+        - reflexivity.
+        - rewrite <- SIZE. reflexivity.
+        - reflexivity. }
+      assert (PERM2: massert_eqv
+        (mass4 ** FRAME ** MP)
+        ((TAG ** PRE ** mass4 ** TAIL ** ALP) ** MP)).
+      { unfold FRAME.
+        rewrite ! sep_assoc.
+        rewrite <- (sep_assoc TAG PRE (TAIL ** ALP ** MP)).
+        rewrite (sep_swap mass4 (TAG ** PRE) (TAIL ** ALP ** MP)).
+        rewrite (sep_assoc TAG PRE (mass4 ** TAIL ** ALP ** MP)).
+        reflexivity. }
+      rewrite PERM2 in MPRED1.
+      exact MPRED1.
+Qed.
 
 (*   induction phl; intros. *)
 (*   - inv GFP.  *)
@@ -1446,7 +2195,7 @@ Admitted.
 Lemma coherent_fpm_split ce: forall id fpm mp fp b ofs ty
       (B: fpm ! id = Some (b, ofs, ty, fp))
       (COH: coherent_fpm ce fpm mp),
-      exists l1 l2 mp1 mp2 mpi, 
+      exists l1 l2 mp1 mp2 mpi,
         Forall_sep (coherent_var ce) l1 mp1
         /\ Forall_sep (coherent_var ce) l2 mp2
         /\ coherent_var ce (id, (b, ofs, ty, fp)) mpi
@@ -1454,9 +2203,9 @@ Lemma coherent_fpm_split ce: forall id fpm mp fp b ofs ty
         /\ massert_eqv mp (mp1 ** mpi ** mp2).
 Proof.
   intros.
-  exploit PTree.elements_remove. eapply B. intros (l1 & l2 & C1 & C2). 
-  inv COH. rewrite C1 in ALLSEP. 
-  erewrite Forall_sep_app in ALLSEP. 
+  exploit PTree.elements_remove. eapply B. intros (l1 & l2 & C1 & C2).
+  inv COH. rewrite C1 in ALLSEP.
+  erewrite Forall_sep_app in ALLSEP.
   destruct ALLSEP as (mass11 & mass12 & D1 & D2 & D3).
   inv D2. inv H1. inv ELTEQ.
   exists l1, l2. exists mass11, mass2, mass1.
@@ -1467,8 +2216,26 @@ Proof.
 Qed.
 
 
+(* Removing the binding being replaced gives the same ordered list before and
+   after [PTree.set].  Both coherence-preservation proofs use this fact. *)
+Lemma PTree_remove_elements_eq {A: Type}: forall id (v: A) m,
+    PTree.elements (PTree.remove id m) =
+    PTree.elements (PTree.remove id (PTree.set id v m)).
+Proof.
+  intros.
+  eapply PTree.elements_extensional.
+  intros. rewrite !PTree.grspec.
+  destruct PTree.elt_eq; subst; auto.
+  rewrite PTree.gso; auto.
+Qed.
+
+
+(* ** Assignment coherence proof chain *)
+
 (* We prove a strong version, i.e., the store operation can always succeed *)
 Lemma store_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs id MP ty
+    (CONS: composite_env_consistent ce)
+    (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
     (COH: coherent_fpm ce fpm mass1)
     (WTVAL: sem_wt_val ce vfp v mass2)
     (MPRED: m |= mass1 ** mass2 ** MP)
@@ -1482,8 +2249,6 @@ Lemma store_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs 
     (WTFP1: wt_footprint ce (fpm_to_tenv fpm) ty pfp)
     (WTFP2: wt_footprint ce (fpm_to_tenv fpm) ty vfp)
     (BYVAL: access_mode ty = Ctypes.By_value chunk)
-    (SHALLOW: shallow_init pfp = true)
-    (FPWF: fields_fp_well_formed ce pfp)
     (RANGE: 0 <= ofs /\ ofs + sizeof ce ty <= Ptrofs.max_unsigned),
     exists m1 fpm1 mass3,
       Mem.store chunk m b ofs v = Some m1
@@ -1491,10 +2256,91 @@ Lemma store_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs 
       /\ coherent_fpm ce fpm1 mass3
       /\ m1 |= mass3 ** MP.
 Proof.
-Admitted.
+  intros.
+  unfold get_owner_loc_footprint_map in GFP.
+  destruct (fpm ! id) as [(((b1, ofs1), ty1), fp1) | ] eqn:B; try discriminate.
+  inv COH.
+  exploit PTree.elements_remove. exact B.
+  intros (l1 & l2 & ELEMS_OLD & ELEMS_REM_OLD).
+  rewrite ELEMS_OLD in ALLSEP.
+  apply Forall_sep_app in ALLSEP as (mp_l & mp_rest & SEP_L & SEP_MID & EQV_L_REST).
+  inversion SEP_MID as [| x0 l0 mhead mtail mwhole HEAD TAIL EQV_MID]; subst.
+  inv HEAD; inv ELTEQ.
+  assert (EQV_MASS1: massert_eqv mass1 (mp_l ** mhead ** mtail)).
+  { etransitivity; [exact EQV_L_REST |].
+    apply sepconj_morph_2; [reflexivity |]. symmetry. exact EQV_MID. }
+  assert (EQV_FRAME: massert_eqv
+    ((mp_l ** mhead ** mtail) ** mass2 ** MP)
+    (mhead ** mass2 ** (mp_l ** mtail ** MP))).
+  { rewrite !sep_assoc.
+    rewrite (sep_swap mp_l mhead (mtail ** mass2 ** MP)).
+    rewrite (sep_swap3 mp_l mtail mass2 MP).
+    rewrite (sep_swap mtail mp_l MP).
+    reflexivity. }
+  assert (MPRED_VAR: m |= mhead ** mass2 ** (mp_l ** mtail ** MP)).
+  { rewrite EQV_MASS1 in MPRED. rewrite EQV_FRAME in MPRED. exact MPRED. }
+  exploit (store_coherent_var phl m ce mhead mass2 v vfp fp pfp chunk b0 ofs0 b ofs
+             (mp_l ** mtail ** MP) ty (fpm_to_tenv fpm)); eauto.
+  intros (m1 & fp2 & mass3 & STORE & SET_FOOT & WTLOC_FP2 & MPRED_M1).
+  remember (PTree.set id0 (b0, ofs0, ty0, fp2) fpm) as fpm1 eqn:FPM1.
+  assert (SET_MAP: set_footprint_map (id0, phl) vfp fpm = OK fpm1).
+  { unfold set_footprint_map. simpl. rewrite B. rewrite SET_FOOT.
+    simpl. rewrite <- FPM1. reflexivity. }
+  assert (FPM1_GET: fpm1 ! id0 = Some (b0, ofs0, ty0, fp2)).
+  { rewrite FPM1. apply PTree.gss. }
+  exploit PTree.elements_remove. exact FPM1_GET.
+  intros (l1' & l2' & ELEMS_NEW & ELEMS_REM_NEW).
+  assert (REM_ELEMS_EQ:
+    PTree.elements (PTree.remove id0 fpm1) =
+    PTree.elements (PTree.remove id0 fpm)).
+  { rewrite FPM1. symmetry. apply PTree_remove_elements_eq. }
+  assert (L_EQ: l1' ++ l2' = l1 ++ l2).
+  { rewrite <- ELEMS_REM_NEW. rewrite REM_ELEMS_EQ. exact ELEMS_REM_OLD. }
+  assert (SEP_OLD:
+    Forall_sep (coherent_var ce) (l1 ++ l2) (mp_l ** mtail)).
+  { eapply Forall_sep_app. exists mp_l, mtail.
+    split; [exact SEP_L |].
+    split; [exact TAIL |].
+    apply massert_eqv_refl. }
+  assert (SEP_NEW_TAIL:
+    Forall_sep (coherent_var ce) (l1' ++ l2') (mp_l ** mtail)).
+  { rewrite L_EQ. exact SEP_OLD. }
+  apply Forall_sep_app in SEP_NEW_TAIL as
+    (mp_l' & mp_r' & SEP_L' & SEP_R' & EQV_LR').
+  assert (COH_NEW_HEAD:
+    coherent_var ce (id0, (b0, ofs0, ty0, fp2)) mass3).
+  { econstructor; [reflexivity | exact WTLOC_FP2]. }
+  assert (SEP_NEW_MID:
+    Forall_sep (coherent_var ce) ((id0, (b0, ofs0, ty0, fp2)) :: l2')
+      (mass3 ** mp_r')).
+  { econstructor; [exact COH_NEW_HEAD | exact SEP_R' | apply massert_eqv_refl]. }
+  assert (EQV_NEW_LIST:
+    massert_eqv (mass3 ** mp_l ** mtail) (mp_l' ** (mass3 ** mp_r'))).
+  { etransitivity; [apply sepconj_morph_2; [reflexivity | exact EQV_LR'] |].
+    apply sep_swap. }
+  assert (SEP_NEW_LIST:
+    Forall_sep (coherent_var ce)
+      (l1' ++ (id0, (b0, ofs0, ty0, fp2)) :: l2')
+      (mass3 ** mp_l ** mtail)).
+  { eapply Forall_sep_app. exists mp_l', (mass3 ** mp_r').
+    split; [exact SEP_L' |].
+    split; [exact SEP_NEW_MID |].
+    exact EQV_NEW_LIST. }
+  assert (COH_FPM1: coherent_fpm ce fpm1 (mass3 ** mp_l ** mtail)).
+  { apply coherent_fpm_intro. rewrite ELEMS_NEW. exact SEP_NEW_LIST. }
+  exists m1, fpm1, (mass3 ** mp_l ** mtail).
+  split; [exact STORE |].
+  split; [exact SET_MAP |].
+  split; [exact COH_FPM1 |].
+  rewrite (sep_assoc mass3 (mp_l ** mtail) MP).
+  rewrite (sep_assoc mp_l mtail MP).
+  exact MPRED_M1.
+Qed.
 
 
 Lemma assign_loc_by_value_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs id MP ty
+    (CONS: composite_env_consistent ce)
+    (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
     (COH: coherent_fpm ce fpm mass1)
     (WTVAL: sem_wt_val ce vfp v mass2)
     (MPRED: m |= mass1 ** mass2 ** MP)
@@ -1508,8 +2354,8 @@ Lemma assign_loc_by_value_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pf
     (WTFP1: wt_footprint ce (fpm_to_tenv fpm) ty pfp)
     (WTFP2: wt_footprint ce (fpm_to_tenv fpm) ty vfp)
     (BYVAL: access_mode ty = Ctypes.By_value chunk)
-    (SHALLOW: shallow_init pfp = true)
-    (FPWF: fields_fp_well_formed ce pfp)
+    (* (SHALLOW: shallow_init pfp = true) *)
+    (* (FPWF: fields_fp_well_formed ce pfp) *)
     (RANGE: 0 <= ofs /\ ofs + sizeof ce ty <= Ptrofs.max_unsigned),
     exists m1 fpm1 mass3,
       assign_loc ce ty m b (Ptrofs.repr ofs) v m1
@@ -1517,8 +2363,25 @@ Lemma assign_loc_by_value_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pf
       /\ coherent_fpm ce fpm1 mass3
       /\ m1 |= mass3 ** MP.
 Proof.
-Admitted.
+  intros.
+  exploit (store_coherent_fpm phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs id MP ty); eauto.
+  intros (m1 & fpm1 & mass3 & STORE & SET & COH1 & MPRED1).
+  exists m1, fpm1, mass3.
+  split.
+  { econstructor.
+    - exact BYVAL.
+    - simpl. rewrite Ptrofs.unsigned_repr.
+      + exact STORE.
+      + destruct RANGE as [LO HI].
+        assert (SIZE: 0 <= sizeof ce ty).
+        { apply Z.ge_le. apply sizeof_pos. }
+        lia. }
+  split; [exact SET |].
+  split; [exact COH1 | exact MPRED1].
+Qed.
 
+
+(* ** Byte-store coherence proof chain *)
 
 (* storebytes rules *)
 
@@ -1696,30 +2559,6 @@ Proof.
       rewrite NMap.gso by auto.
       rewrite NMap.gso by auto.
       reflexivity.
-Qed.
-
-Lemma field_noalign_offset_rec_base_nonneg:
-  forall ce fid ms pos base fofs,
-    field_noalign_offset_rec ce fid ms pos = OK (base, fofs) ->
-    0 <= pos ->
-    0 <= base.
-Proof.
-  induction ms as [| m ms IH]; intros; simpl in *.
-  - discriminate.
-  - destruct m as [id ty].
-    change (name_member (Member_plain id ty)) with id in *.
-    destruct (ident_eq fid id) eqn:ID.
-    + destruct (layout_field ce pos (Member_plain id ty)) eqn:L; try discriminate.
-      inv H. apply Z.div_pos; [exact H0 | lia].
-    + apply (IH (next_field ce pos (Member_plain id ty)) base fofs H).
-      apply Z.le_trans with pos; [exact H0 | apply (next_field_incr ce pos (Member_plain id ty))].
-Qed.
-
-Lemma field_noalign_offset_base_nonneg ce: forall fid ms base fofs,
-    field_noalign_offset ce fid ms = OK (base, fofs) ->
-    0 <= base.
-Proof.
-  unfold field_noalign_offset. intros. eapply field_noalign_offset_rec_base_nonneg; eauto. lia.
 Qed.
 
 
@@ -2219,7 +3058,7 @@ Proof.
     { apply (m_invar massA) with (m := m2h) (m' := m1').
       - exact (sep_proj1 _ _ _ MPREDA).
       - eapply (storebytes_prefix_unchanged m1 m1p m2h m1' tb tofs fofs bytesP bytesH1 LENP STORE_P STOREH STORE_H (m_footprint massA)).
-        intros b0 ofs0 FOOT. intro HCONTR. 
+        intros b0 ofs0 FOOT. intro HCONTR.
         eapply MPREDA. eauto. simpl. left. auto. }
     destruct MPREDA as [_ [_ DISJ_MASSA_FRAME]].
     (* tail recursion setup *)
@@ -2292,276 +3131,6 @@ Proof.
     exists (range tb tofs (tofs + fofs) ** massA ** mass3_tail).
     split; [ apply (fields_loc_sep_cons tb tofs (sem_wt_loc ce) fid 0 fofs ffp l massA mass3_tail (range tb tofs (tofs + fofs)) (range tb tofs (tofs + fofs) ** massA ** mass3_tail) WTLOC_TAIL0 WTLOCA); [rewrite Z.add_0_r; reflexivity | apply massert_eqv_refl]
             | rewrite sep_assoc; rewrite sep_assoc; rewrite (sep_swap (range tb tofs (tofs + fofs)) massA (mass3_tail ** MP)); rewrite <- (sep_swap3 mass3_tail (range tb tofs (tofs + fofs)) massA MP); exact MPRED_TAIL2 ].
-Qed.
-
-Definition bytes_of_bits_local (n: Z) : Z := (n + 7) / 8.
-
-Definition size_from (ce: composite_env) (pos: Z) (ms: members) : Z :=
-  bytes_of_bits_local (bitsizeof_struct ce pos ms).
-
-Lemma wt_footprint_align_divides ce:
-  forall ty fp fpm,
-    wt_footprint ce fpm ty fp ->
-    (alignof_footprint ce fp | alignof ce ty).
-Proof.
-  intros ty fp fpm H. inv H; simpl.
-  - apply Z.divide_refl.
-  - apply alignof_by_value; eauto.
-  - unfold alignof_comp. rewrite CO. apply Z.divide_refl.
-  - unfold alignof_comp. rewrite CO. apply Z.divide_refl.
-  - apply Z.divide_refl.
-  - apply Z.divide_refl.
-  - apply Z.divide_refl.
-Qed.
-
-
-Lemma Forall2_nth:
-  forall A B (P: A -> B -> Prop) l l' n x,
-    Forall2 P l l' -> nth_error l n = Some x ->
-    exists y, nth_error l' n = Some y /\ P x y.
-Proof.
-  intros A B P l. induction l as [|a l IH]; intros l' n x F NTH; inv F; simpl in *.
-  - destruct n; simpl in NTH; discriminate.
-  - destruct n as [|n']; simpl in NTH.
-    + inv NTH. eexists; split; [simpl; reflexivity | eauto].
-    + destruct (IH _ _ _ H3 NTH) as (y0 & NTHY & PY). eexists; split; [simpl; exact NTHY | exact PY].
-Qed.
-
-Lemma Forall2_nth_r:
-  forall A B (P: A -> B -> Prop) l l' n y,
-    Forall2 P l l' -> nth_error l' n = Some y ->
-    exists x, nth_error l n = Some x /\ P x y.
-Proof.
-  intros A B P l. induction l as [|a l IH]; intros l' n y F NTH; inv F; simpl in *.
-  - destruct n; simpl in NTH; discriminate.
-  - destruct n as [|n']; simpl in NTH.
-    + inv NTH. eexists; split; [simpl; reflexivity | eauto].
-    + destruct (IH _ _ _ H3 NTH) as (x & NTHX & PX). eexists; split; [simpl; exact NTHX | exact PX].
-Qed.
-
-Lemma Forall2_member_fp:
-  forall ce co P fpl fid base fofs fty,
-    Forall2 (fp_match_field ce co P) fpl (co_members co) ->
-    field_noalign_offset ce fid (co_members co) = OK (base, fofs) ->
-    In (Member_plain fid fty) (co_members co) ->
-    exists ffp, In (fid, ((base, fofs), ffp)) fpl /\ P fty ffp.
-Proof.
-  intros ce co P fpl fid base fofs fty MATCH FOFS IN.
-  apply In_nth_error in IN as (n & NTH).
-  destruct (Forall2_nth_r ffpty member (fp_match_field ce co P) fpl (co_members co) n (Member_plain fid fty) MATCH NTH) as (fp & NTHF & MATCH1).
-  inv MATCH1.
-  rewrite FOFS in FOFS0. inv FOFS0.
-  apply nth_error_In in NTHF. eexists; split; eauto.
-Qed.
-
-
-Lemma type_eq_alignof_eq ce:
-  forall ty1 ty2,
-    type_eq_except_origins ty1 ty2 = true ->
-    alignof ce ty1 = alignof ce ty2.
-Proof.
-  intros ty1 ty2 TEQ; induction ty1; destruct ty2; simpl in TEQ; try congruence.
-  all: try eapply proj_sumbool_true in TEQ; inv TEQ.
-  all: try reflexivity.
-Qed.
-
-Lemma next_field_div:
-  forall ce pos m fofs,
-    layout_field ce pos m = OK fofs ->
-    next_field ce pos m / 8 = fofs + sizeof ce (type_member m).
-Proof.
-  intros ce pos m fofs L. destruct m as [id ty].
-  unfold layout_field, next_field in *. inv L.
-  assert (DIVAL: Z.divide 8 (align pos (bitalignof ce ty))).
-  { apply Z.divide_trans with (bitalignof ce ty).
-    - unfold bitalignof. exists (alignof ce ty). rewrite Z.mul_comm. reflexivity.
-    - apply align_divides. unfold bitalignof. generalize (alignof_pos ce ty); lia. }
-  assert (ALIGN_EQ: align pos (bitalignof ce ty) = 8 * (align pos (bitalignof ce ty) / 8)).
-  { apply Z_div_exact_full_2; [lia |].
-    apply Z.mod_divide; [lia | exact DIVAL]. }
-  rewrite ALIGN_EQ.
-  rewrite Z.mul_comm.
-  rewrite (Z_div_plus_full_l (align pos (bitalignof ce ty) / 8) 8 (bitsizeof ce ty)) by lia.
-  rewrite (Z.div_mul (align pos (bitalignof ce ty) / 8) 8) by lia.
-  unfold bitsizeof. rewrite (Z.div_mul (sizeof ce ty) 8) by lia.
-  simpl. lia.
-Qed.
-
-Lemma next_field_div8:
-  forall ce pos m,
-    Z.divide 8 (next_field ce pos m).
-Proof.
-  destruct m as [id ty]. unfold next_field.
-  apply Z.divide_add_r.
-  - apply Z.divide_trans with (bitalignof ce ty).
-    + unfold bitalignof. exists (alignof ce ty). rewrite Z.mul_comm. reflexivity.
-    + apply align_divides. unfold bitalignof. generalize (alignof_pos ce ty); lia.
-  - unfold bitsizeof. exists (sizeof ce ty). lia.
-Qed.
-
-Lemma size_from_0:
-  forall ce ms, size_from ce 0 ms = sizeof_struct ce ms.
-Proof.
-  intros. unfold size_from, sizeof_struct, bytes_of_bits_local. reflexivity.
-Qed.
-
-Lemma field_noalign_offset_rec_cover:
-  forall ce ms pos ofs,
-    list_norepet (name_members ms) ->
-    (8 | pos) ->
-    pos / 8 <= ofs ->
-    ofs < size_from ce pos ms ->
-    exists fid base fofs fty,
-      In (Member_plain fid fty) ms /\
-      field_noalign_offset_rec ce fid ms pos = OK (base, fofs) /\
-      base <= ofs < fofs + sizeof ce fty.
-Proof.
-  induction ms as [|m ms IH]; intros; simpl in *.
-  - exfalso.
-    unfold size_from, bytes_of_bits_local in H2.
-    simpl in H2.
-    assert (SZ: (pos + 7) / 8 = pos / 8).
-    { destruct H0 as [n HN]. subst pos.
-      rewrite (Z_div_plus_full_l n 8 7) by lia.
-      rewrite (Z.div_small 7 8) by lia.
-      rewrite (Z.div_mul n 8) by lia. lia. }
-    rewrite SZ in H2. lia.
-  - destruct m as [id ty].
-    change (name_member (Member_plain id ty)) with id in *.
-    inversion H as [| ? ? NOREP_HEAD NOREP_TAIL]; subst.
-    destruct (layout_field ce pos (Member_plain id ty)) as [z|] eqn:L; try discriminate.
-    assert (HEAD: field_noalign_offset_rec ce id (Member_plain id ty :: ms) pos = OK (pos / 8, z)).
-    { unfold field_noalign_offset_rec.
-      change (name_member (Member_plain id ty)) with id.
-      destruct (ident_eq id id) eqn:E; try congruence.
-      rewrite L. reflexivity. }
-    destruct (Z.lt_ge_cases ofs (z + sizeof ce ty)) as [LT | GE].
-    + exists id, (pos / 8), z, ty.
-      split; [simpl; auto | split; [destruct (ident_eq id id) eqn:E; try congruence; simpl; reflexivity | split; [exact H1 | exact LT]]].
-    + assert (DIVPOS: Z.divide 8 (next_field ce pos (Member_plain id ty))).
-      { apply next_field_div8. }
-      assert (POSLE: next_field ce pos (Member_plain id ty) / 8 <= ofs).
-      { rewrite (next_field_div ce pos (Member_plain id ty) z L).
-        change (type_member (Member_plain id ty)) with ty.
-        lia. }
-      assert (SIZEFROM: size_from ce pos (Member_plain id ty :: ms) =
-                        size_from ce (next_field ce pos (Member_plain id ty)) ms).
-      { reflexivity. }
-      rewrite SIZEFROM in H2.
-      destruct (IH (next_field ce pos (Member_plain id ty)) ofs NOREP_TAIL DIVPOS POSLE H2)
-        as (fid & base & fofs & fty & IN0 & REC0 & COV0).
-      exists fid, base, fofs, fty. split; [right; exact IN0 | split].
-      * simpl. destruct (ident_eq fid id) eqn:E.
-        -- subst fid. exfalso. apply NOREP_HEAD. unfold name_members.
-           rewrite in_map_iff. exists (Member_plain id fty). split; auto.
-        -- exact REC0.
-      * exact COV0.
-Qed.
-
-Lemma members_cover_struct:
-  forall ce ms ofs,
-    list_norepet (name_members ms) ->
-    0 <= ofs < sizeof_struct ce ms ->
-    exists fid base fofs fty,
-      In (Member_plain fid fty) ms /\
-      field_noalign_offset ce fid ms = OK (base, fofs) /\
-      base <= ofs < fofs + sizeof ce fty.
-Proof.
-  intros ce ms ofs NOREP IN.
-  unfold field_noalign_offset.
-  eapply field_noalign_offset_rec_cover; eauto.
-  - apply Z.divide_0_r.
-  - rewrite (Z.div_0_l 8) by lia. lia.
-  - rewrite size_from_0. exact (proj2 IN).
-Qed.
-
-Lemma wt_footprint_fields_well_formed ce te:
-  forall ty fp,
-    composite_env_consistent ce ->
-    (forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co))) ->
-    wt_footprint ce te ty fp ->
-    fields_fp_well_formed ce fp.
-Proof.
-  intros ty fp CONS NOREP.
-  revert ty.
-  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
-    intros ty WTFP.
-  - inv WTFP.
-  - inv WTFP. econstructor.
-  - inv WTFP. econstructor.
-  - inv WTFP. econstructor; eauto.
-  - inv WTFP. econstructor.
-    + apply Forall_forall. intros x IN. destruct x as [fid [[base fofs] ffp]].
-      apply In_nth_error in IN as (n & NTHF).
-      destruct (Forall2_nth ffpty member (fp_match_field ce co (wt_footprint ce te)) fpl (co_members co) n (fid, ((base, fofs), ffp)) MATCH NTHF) as (m & NTHM & MATCH1).
-      inv MATCH1.
-      apply nth_error_In in NTHM as INM.
-      apply nth_error_In in NTHF as INFP.
-      assert (NOREPM: list_norepet (name_members (co_members co))) by (apply (NOREP id co CO)).
-      assert (FTY: field_type fid (co_members co) = OK fty).
-      { eapply field_noalign_offset_In_field_type.
-        - exact NOREPM.
-        - exact INM.
-        - exact FOFS. }
-      pose proof (field_noalign_offset_range_aligned ce fid (co_members co) base fofs fty FOFS FTY) as RANGE.
-      pose proof (wt_footprint_size_eq ce fty ffp te WTFP) as SIZEEQ.
-      pose proof (wt_footprint_align_divides ce fty ffp te WTFP) as ALIGNDIV.
-      pose proof (IHfields fid base fofs ffp INFP fty WTFP) as WF.
-      destruct RANGE as (BASELE & ZR & RANGESZ & ALIGN).
-      assert (RANGECO: fofs + sizeof_footprint ce ffp <= sizeof_comp ce id).
-      { rewrite <- SIZEEQ.
-        destruct (CONS id co CO) as [COMPL ALG SZ RANK].
-        unfold sizeof_comp. rewrite CO. rewrite SZ.
-        rewrite STRUCT. simpl.
-        apply Z.le_trans with (sizeof_struct ce (co_members co)); [exact RANGESZ |].
-        apply align_le. apply co_alignof_pos. }
-      assert (BASE0 : 0 <= base) by (eapply field_noalign_offset_base_nonneg; eauto).
-      apply fp_field_in_range_aligned_intro; auto.
-      * apply Z.divide_trans with (alignof ce fty); auto.
-    + intros ofs IN.
-      assert (SZSTR: sizeof_struct_comp ce id = sizeof_struct ce (co_members co)).
-      { unfold sizeof_struct_comp. rewrite CO. rewrite STRUCT. reflexivity. }
-      destruct (Z.lt_ge_cases ofs (sizeof_struct_comp ce id)) as [LT | GE].
-      * left.
-        assert (INM: 0 <= ofs < sizeof_struct ce (co_members co)).
-        { destruct IN as [LO HI]. rewrite SZSTR in LT. split; auto. }
-        destruct (members_cover_struct ce (co_members co) ofs (NOREP id co CO) INM) as (fid0 & base0 & fofs0 & fty0 & INM0 & FOFS0 & COV0).
-        destruct (Forall2_member_fp ce co (wt_footprint ce te) fpl fid0 base0 fofs0 fty0 MATCH FOFS0 INM0) as (ffp0 & INFP0 & WTFP0').
-        exists fid0, base0, fofs0, ffp0. split; auto.
-        pose proof (wt_footprint_size_eq ce fty0 ffp0 te WTFP0') as SIZEEQ0.
-        rewrite <- SIZEEQ0. exact COV0.
-      * right. exact GE.
-  - inv WTFP.
-    pose proof (IHenum fty WT) as WFENUM.
-    assert (SZM: size_chunk Mint32 = 4) by reflexivity.
-    destruct (place_field_type_res co fid orgs fty FTY) as (fty' & FTY' & TEQ).
-    pose proof (variant_field_offset_in_range ce (co_members co) fid fofs fty' FOFS FTY') as RANGEV.
-    pose proof (variant_field_offset_aligned ce fid (co_members co) fofs fty' FOFS FTY') as ALIGNV.
-    pose proof (wt_footprint_size_eq ce fty fp1 te WT) as SIZEEQF.
-    pose proof (wt_footprint_align_divides ce fty fp1 te WT) as ALIGNDIVF.
-    pose proof (type_eq_sizeof_eq fty fty' ce TEQ) as SIZEEQTY.
-    pose proof (type_eq_alignof_eq ce fty fty' TEQ) as ALIGNEQTY.
-    econstructor.
-    + apply fp_field_in_range_aligned_intro.
-      * rewrite SZM. lia.
-      * rewrite SZM. destruct RANGEV as [A _]. exact A.
-      * destruct RANGEV as [A _]. lia.
-      * rewrite <- SIZEEQF. rewrite SIZEEQTY.
-        destruct RANGEV as [_ B].
-        destruct (CONS id co CO) as [COMPL ALG SZ RANK].
-        unfold sizeof_comp. rewrite CO. rewrite SZ. rewrite ENUM. simpl.
-        apply Z.le_trans with (sizeof_variant ce (co_members co)); [exact B |].
-        apply align_le. apply co_alignof_pos.
-      * rewrite ALIGNEQTY in ALIGNDIVF.
-        apply Z.divide_trans with (alignof ce fty'); [exact ALIGNDIVF | exact ALIGNV].
-      * exact WFENUM.
-    + rewrite <- SIZEEQF. rewrite SIZEEQTY.
-      destruct RANGEV as [_ B].
-      destruct (CONS id co CO) as [COMPL ALG SZ RANK].
-      unfold sizeof_comp. rewrite CO. rewrite SZ. rewrite ENUM. simpl.
-      apply Z.le_trans with (sizeof_variant ce (co_members co)); [exact B |].
-      apply align_le. apply co_alignof_pos.
-  - inv WTFP; econstructor.
 Qed.
 
 (* We need to say that sem_wt_loc is readable/storable/freeable *)
@@ -3446,182 +4015,6 @@ Qed.
 
 
 
-Lemma PTree_remove_elements_eq {A: Type}: forall id (v: A) m,
-    PTree.elements (PTree.remove id m) =
-    PTree.elements (PTree.remove id (PTree.set id v m)).
-Proof.
-  intros.
-  eapply PTree.elements_extensional.
-  intros. rewrite !PTree.grspec.
-  destruct PTree.elt_eq; subst; auto.
-  rewrite PTree.gso; auto.
-Qed.
-
-
-End ADT_ENV.
-
-Coercion fpm_to_env : fp_map >-> env.
-
-
-Lemma sem_wt_loc_range_perm ce: forall fp mass b ofs ty fpm
-      (CONS: composite_env_consistent ce)
-      (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
-      (WTFP: wt_footprint ce fpm ty fp)
-      (RANGE: 0 <= ofs /\ ofs + sizeof ce ty <= Ptrofs.max_unsigned)
-      (WTLOC: sem_wt_loc ce fp b ofs mass),
-    massert_imp mass (range b ofs (ofs + sizeof ce ty)).
-Proof.
-  intros fp mass b ofs ty fpm CONS NOREP WTFP RANGE WTLOC.
-  revert mass b ofs ty fpm WTFP RANGE WTLOC.
-  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
-    intros mass b ofs ty fpm WTFP RANGE WTLOC; inv WTLOC.
-  - inv WTFP.
-  - rewrite EQV. inv WTFP. eapply massert_imp_proj1.
-  - rewrite EQV. inv WTFP.
-    eapply massert_imp_trans.
-    { eapply contains_range.
-      destruct RANGE as [A B].
-      rewrite <- (sizeof_by_value ce ty chunk MODE) in B.
-      unfold Ptrofs.max_unsigned in B. unfold Ptrofs.modulus in B. unfold Ptrofs.modulus. lia. }
-    { rewrite (sizeof_by_value ce ty chunk MODE). reflexivity. }
-  - rewrite EQV. inv WTFP.
-    eapply massert_imp_trans.
-    { eapply massert_imp_proj1. }
-    { eapply massert_imp_trans.
-      { eapply contains_range.
-        assert (MODE: access_mode (Tbox ty0) = Ctypes.By_value Mptr) by reflexivity.
-        destruct RANGE as [A B].
-        rewrite <- (sizeof_by_value ce (Tbox ty0) Mptr MODE) in B.
-        unfold Ptrofs.max_unsigned in B. unfold Ptrofs.modulus in B. unfold Ptrofs.modulus. lia. }
-      { assert (MODE: access_mode (Tbox ty0) = Ctypes.By_value Mptr) by reflexivity.
-        rewrite (sizeof_by_value ce (Tbox ty0) Mptr MODE). reflexivity. } }
-  - assert (FPWF: fields_fp_well_formed ce (fp_struct id fpl)) by (eapply wt_footprint_fields_well_formed; eauto).
-    inv WTFP. inv FPWF.
-    assert (SIZEEQ_STRUCT: sizeof ce (Tstruct orgs id) = sizeof_comp ce id).
-    { unfold sizeof, sizeof_comp. rewrite CO. reflexivity. }
-    rewrite SIZEEQ_STRUCT in *.
-    set (tail := range b (ofs + sizeof_struct_comp ce id) (ofs + sizeof_comp ce id)) in *.
-    eapply fields_loc_sep_range_perm with (mp1 := tail ** spure (alignof_comp ce id | ofs)) (mp2 := mass0) (mp := mass).
-    { intros fid0 base0 fofs0 ffp0 IN0 mass0' WT0.
-      destruct (fp_match_field_In_wt ce co (wt_footprint ce fpm) fpl (co_members co) fid0 base0 fofs0 ffp0 MATCH IN0) as [fty WTFP0].
-      assert (SIZEEQ_F: sizeof ce fty = sizeof_footprint ce ffp0) by (eapply wt_footprint_size_eq; eauto).
-      eapply Forall_forall in FWF; eauto.
-      inv FWF.
-      assert (RANGEF: 0 <= ofs + fofs0 /\ (ofs + fofs0) + sizeof ce fty <= Ptrofs.max_unsigned).
-      { destruct RANGE as [A B]. split.
-        - lia.
-        - rewrite SIZEEQ_F. lia. }
-      pose proof (IHfields fid0 base0 fofs0 ffp0 IN0 mass0' b (ofs + fofs0) fty fpm WTFP0 RANGEF WT0) as Hfield.
-      rewrite SIZEEQ_F in Hfield. exact Hfield. }
-    exact FWF.
-    { intros ofs1 IN. destruct (COMPLETE ofs1 IN) as [FIELD | TAIL].
-      - left. exact FIELD.
-      - right.
-        eapply massert_imp_trans.
-        eapply massert_imp_proj1.
-        eapply range_impl; unfold tail; lia. }
-    exact RANGE.
-    exact FWT.
-    { subst. unfold tail in *.
-      rewrite EQV.
-      apply sep_comm. }
-  - assert (FPWF: fields_fp_well_formed ce (fp_enum id tagz fid fofs fp1)) by (eapply wt_footprint_fields_well_formed; eauto).
-    inv FPWF. inv FWF. inv WTFP.
-    assert (SIZEEQ_ENUM: sizeof ce (Tvariant orgs id) = sizeof_comp ce id).
-    { unfold sizeof, sizeof_comp. rewrite CO. reflexivity. }
-    rewrite SIZEEQ_ENUM in *.
-    assert (SZM: size_chunk Mint32 = 4) by reflexivity.
-    rewrite SZM in *.
-    assert (SIZEEQ_F: sizeof ce fty = sizeof_footprint ce fp1) by (eapply wt_footprint_size_eq; eauto).
-    assert (RANGEF: 0 <= ofs + fofs /\ (ofs + fofs) + sizeof ce fty <= Ptrofs.max_unsigned).
-    { destruct RANGE as [A B]. split.
-      - lia.
-      - rewrite SIZEEQ_F. lia. }
-    assert (FIELDRANGE: massert_imp mass2 (range b (ofs + fofs) (ofs + fofs + sizeof_footprint ce fp1))).
-    { rewrite <- SIZEEQ_F.
-      eapply IHenum; eauto. }
-    assert (TAGRANGE: massert_imp (hasvalue Mint32 b ofs (Vint (Int.repr tagz))) (range b ofs (ofs + size_chunk Mint32))).
-    { unfold hasvalue. eapply contains_range.
-      destruct RANGE as [A B].
-      assert (LE4: size_chunk Mint32 <= sizeof_comp ce id).
-      { assert (FPOS: 0 <= sizeof_footprint ce fp1).
-        { rewrite <- SIZEEQ_F. apply Z.ge_le. apply (sizeof_pos ce fty). }
-        lia. }
-      unfold Ptrofs.max_unsigned in *. unfold Ptrofs.modulus in *. lia. }
-    assert (JOIN_FIELD: massert_imp
-       (range b (ofs + fofs) (ofs + fofs + sizeof_footprint ce fp1) **
-        range b (ofs + fofs + sizeof_footprint ce fp1) (ofs + sizeof_comp ce id))
-       (range b (ofs + fofs) (ofs + sizeof_comp ce id))).
-    { eapply range_join. }
-    assert (JOIN_PAD: massert_imp
-       (range b (ofs + 4) (ofs + fofs) **
-        range b (ofs + fofs) (ofs + sizeof_comp ce id))
-       (range b (ofs + 4) (ofs + sizeof_comp ce id))).
-    { eapply range_join. }
-    assert (JOIN_TAG: massert_imp
-       (range b ofs (ofs + 4) **
-        range b (ofs + 4) (ofs + sizeof_comp ce id))
-       (range b ofs (ofs + sizeof_comp ce id))).
-    { eapply range_join. }
-    rewrite EQV.
-    eapply massert_imp_trans.
-    { eapply sepconj_morph_1; [eapply TAGRANGE |].
-      eapply sepconj_morph_1; [reflexivity |].
-      eapply sepconj_morph_1; [eapply FIELDRANGE |].
-      eapply massert_imp_proj1. }
-    eapply massert_imp_trans.
-    { eapply sepconj_morph_1; [reflexivity |].
-      eapply sepconj_morph_1; [reflexivity |].
-      eapply JOIN_FIELD. }
-    eapply massert_imp_trans.
-    { eapply sepconj_morph_1; [reflexivity |].
-      eapply JOIN_PAD. }
-    eapply JOIN_TAG.
-  - inv WTFP.
-    { rewrite EQV.
-      eapply massert_imp_trans.
-      { eapply contains_range.
-        assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
-        destruct RANGE as [A B].
-        rewrite <- (sizeof_by_value ce (Treference org mut ty0) Mptr MODE) in B.
-        unfold Ptrofs.max_unsigned in B. unfold Ptrofs.modulus in B. unfold Ptrofs.modulus. lia. }
-      { assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
-        rewrite (sizeof_by_value ce (Treference org mut ty0) Mptr MODE). reflexivity. } }
-    { rewrite EQV.
-      eapply massert_imp_trans.
-      { eapply contains_range.
-        assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
-        destruct RANGE as [A B].
-        rewrite <- (sizeof_by_value ce (Treference org mut ty0) Mptr MODE) in B.
-        unfold Ptrofs.max_unsigned in B. unfold Ptrofs.modulus in B. unfold Ptrofs.modulus. lia. }
-      { assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
-        rewrite (sizeof_by_value ce (Treference org mut ty0) Mptr MODE). reflexivity. } }
-Qed.
-
-
-Lemma store_sem_wt_loc ce: forall fp vfp b ofs mass1 mass2 v m1 MP chunk ty fpm
-    (CONS: composite_env_consistent ce)
-    (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
-    (WTLOC: sem_wt_loc ce fp b ofs mass1)
-    (WTVAL: sem_wt_val ce vfp v mass2)
-    (AL: (align_chunk chunk | ofs))
-    (MPRED: m1 |= mass1 ** mass2 ** MP)
-    (WTFP1: wt_footprint ce fpm ty fp)
-    (WTFP2: wt_footprint ce fpm ty vfp)
-    (BYVAL: access_mode ty = Ctypes.By_value chunk)
-    (RANGE: 0 <= ofs /\ ofs + sizeof ce ty <= Ptrofs.max_unsigned),
-    exists m2 mass3, 
-      Mem.store chunk m1 b ofs v = Some m2      
-      /\ sem_wt_loc ce vfp b ofs mass3
-      /\ m2 |= mass3 ** MP.
-Proof.
-  intros. eapply store_sem_wt_val; eauto.
-  eapply sep_imp. eapply MPRED.
-  erewrite sizeof_by_value.
-  eapply (sem_wt_loc_range_perm ce fp mass1 b ofs ty fpm); eauto.
-  all: eauto.
-Qed.
-
 Lemma storebytes_coherent_var: forall phl m1 ce mass1 mp1 sfp sb sofs fp1 tfp b1 ofs1 tb tofs MP ty te
     (CONS: composite_env_consistent ce)
     (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
@@ -3822,6 +4215,8 @@ Proof.
   exact MPRED_M2.
 Qed.
 
+
+(* ** General and historical lemmas *)
 
 (* Lemma assign_loc_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs id MP ty *)
 (*     (COH: coherent_fpm ce fpm mass1) *)
