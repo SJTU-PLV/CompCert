@@ -179,7 +179,7 @@ RUSTFRONTEND=Rusttypes.v Rustsyntax.v Rustlight.v RustIR.v\
   BorrowCheckDomain.v ReplaceOrigins.v BorrowCheckPolonius.v\
   BorrowCheckPoloniusInterp.v\
   BorrowCheckPoloniusForward.v RegionLiveness.v\
-  BorrowCheck.v BorrowCheckInv.v BorrowCheckSound.v\
+  MapsMisc.v BorrowCheck.v BorrowCheckInv.v BorrowCheckSound.v\
   RustIRspecMem.v\
   Listmisc.v\
   BorrowCheckSim.v 

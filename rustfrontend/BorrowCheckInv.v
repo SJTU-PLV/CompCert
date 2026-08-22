@@ -11,6 +11,7 @@ Require Import Rusttypes Rustlight.
 Require Import RustOp RustIR Rusttyping.
 Require Import Errors.
 Require Import Listmisc.
+Require Import MapsMisc.
 Require Import BorrowCheckDomain.
 Require Import Rustlightown RustIRspec.
 
@@ -376,14 +377,11 @@ Record borrow_check_inv (fpm: fp_map) : Prop :=
     borrowck_fp_ref_loc_inv: fp_ref_loc_wf_fpm fpm; }.
 
 
-(* Useful in the proof to store the evaluated value in a fresh temp *)
-Definition fresh_PTree_ident {A: Type} (m: PTree.t A) : ident :=
-  let names := map fst (PTree.elements m) in
-  Pos.succ (Mem.find_max_pos names).
+(* Useful in the proof to store the evaluated value in a fresh temp.
+   Concrete max+1 instance and its specification live in MapsMisc. *)
+Definition fresh_PTree_ident {A: Type} (m: PTree.t A) : ident := FreshMax.fresh m.
 
-Definition fresh_PTree_idents {A: Type} (m: PTree.t A) (n: nat) : list ident :=
-  let fresh_id := fresh_PTree_ident m in
-  npos n fresh_id.
+Definition fresh_PTree_idents {A: Type} (m: PTree.t A) (n: nat) : list ident := FreshMax.fresh_idents m n.
 
 (** TODO: there may be no need to generate fresh id for temporary
 value? We can divide this invariant into three parts: invariant of
