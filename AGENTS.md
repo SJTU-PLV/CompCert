@@ -47,6 +47,58 @@ instead of re-running full `make` compiles after each edit:
 - Use `restart=t` only after a dependency `.v` file changes; keep it `nil` otherwise.
 - Reserve full `make`/`coqc` for final verification, not for per-edit iteration.
 
+### Session setup (run once at the start of each proof task)
+
+Use the Emacs/rocqagent session only to *check* goals/errors; **do not edit `.v`
+files through `emacsclient`** (edit them on disk with shell tools, or ask the
+user to edit in Emacs). Before starting, disable `global-auto-revert-mode` (an
+external shell edit would otherwise auto-reload the buffer and deactivate Proof
+General scripting), ensure the target file is open, and activate scripting on
+that buffer if it is not already the active scripting buffer:
+
+```sh
+emacsclient -s SERVER --eval '(progn
+  (unless (boundp (quote codex-rocq-saved-global-auto-revert-mode))
+    (setq codex-rocq-saved-global-auto-revert-mode global-auto-revert-mode))
+  (when global-auto-revert-mode (global-auto-revert-mode -1))
+  (let ((buf (get-file-buffer "/abs/path/File.v")))
+    (unless buf (error "The Rocq file is not open in Emacs"))
+    (unless (my-coq--coq-active-buffer-p buf)
+      (with-current-buffer buf (proof-activate-scripting))))
+  (list :active (my-coq--coq-active-buffer-p (get-file-buffer "/abs/path/File.v"))
+        :global-auto-revert global-auto-revert-mode))'
+```
+
+At the end of the task (including an aborted task) restore the user's setting:
+```sh
+emacsclient -s SERVER --eval '(progn
+  (when (and (boundp (quote codex-rocq-saved-global-auto-revert-mode))
+             codex-rocq-saved-global-auto-revert-mode)
+    (global-auto-revert-mode 1))
+  (makunbound (quote codex-rocq-saved-global-auto-revert-mode)))'
+```
+
+### Edit-check loop (never lose the scripting state)
+
+- The only supported loop is: `save-file` → shell-side patch of the `.v` file →
+  `coqcheck_until FILE LINE COL nil`.
+- **Never call `revert-buffer`, reopen the file, or deactivate/reactivate
+  scripting after a patch.** `coqcheck_until(..., restart=nil)` already reloads
+  the file from disk and retracts only to the first changed Rocq sentence.
+  Calling `revert-buffer` by hand deactivates Proof General scripting and forces
+  a full replay (or fails with "Could not find dune-workspace above ...").
+- After a shell-side edit, the next API step must be `coqcheck_until`, not a
+  later `save-file` to "repair" a stale buffer.
+- Inspect goals/errors via the `:goal`/`:error` fields returned by
+  `coqcheck_until`. Do **not** use `coqquery_at_curpoint "Show."` for goal
+  inspection (it errors outside an open proof); use `coqquery_at_curpoint` only
+  for non-goal queries such as `Search`/`Locate`/`Print`/`Check`/`Compute`/`Eval`.
+- Send at most one RPC to a server at a time; wait for the current request to
+  finish before the next one. If a call hangs, read the status file and `touch`
+  its `:cancel-file` (see the SKILL.md); do not spawn extra `emacsclient` calls.
+- Do not run `git add` during proof development/editing/testing; stage files only
+  when the user explicitly asks to create a commit.
+
 ### Environment notes (macOS)
 
 - `rocqagent-health` reports `socket_exists: false` even for a healthy server,
