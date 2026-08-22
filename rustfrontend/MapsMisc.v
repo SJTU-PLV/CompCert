@@ -13,12 +13,22 @@ Require Import Coqlib.
 Require Import Maps.
 Require Import AST.
 
+(** stdpp-style notation for a single-key update: [<[ x := v ]> m] is
+    [PTree.set x v m].  Lookup binds after the whole update:
+    [<[ x := v ]> m ! k] parses as [(<[ x := v ]> m) ! k].  As a
+    standalone term, a chain is right-nested (innermost first), e.g.
+    [<[ x1 := v1 ]> <[ x2 := v2 ]> m] is [PTree.set x1 v1
+    (PTree.set x2 v2 m)]; to use a chain inside a larger statement,
+    parenthesize it: [(<[ x1 := v1 ]> <[ x2 := v2 ]> m)]. *) 
+Notation "<[ x := v ]> m" := (PTree.set x v m)
+  (at level 1, left associativity, format "<[  x  :=  v  ]>  m").
+
 (** * Single-key lemmas: [set], [remove], [map] commute *)
 
 (** [map1] commutes with [set].  This holds for an arbitrary key [x];
     no freshness hypothesis is needed. *)
 Lemma map1_set: forall {A B} (f: A -> B) (x: positive) (v: A) (m: PTree.t A),
-    PTree.map1 f (PTree.set x v m) = PTree.set x (f v) (PTree.map1 f m).
+    PTree.map1 f (<[ x := v ]> m) = <[ x := f v ]> (PTree.map1 f m).
 Proof.
   intros. apply PTree.extensionality. intro i.
   destruct (peq i x).
@@ -28,7 +38,7 @@ Qed.
 
 (** Key-aware variant of [map1_set], for [PTree.map]. *)
 Lemma map_set: forall {A B} (f: positive -> A -> B) (x: positive) (v: A) (m: PTree.t A),
-    PTree.map f (PTree.set x v m) = PTree.set x (f x v) (PTree.map f m).
+    PTree.map f (<[ x := v ]> m) = <[ x := f x v ]> (PTree.map f m).
 Proof.
   intros. apply PTree.extensionality. intro i.
   destruct (peq i x).
@@ -96,6 +106,14 @@ Fixpoint remove_list {A} (l: list positive) (m: PTree.t A) {struct l} : PTree.t 
   | nil => m
   | x :: l' => PTree.remove x (remove_list l' m)
   end.
+
+(** stdpp-style notation for a list update: [<<[ l := vl ]>> m] is
+    [set_list l vl m].  Like the single-key variant, lookup binds after
+    the whole update ([<<[ l := vl ]>> m ! k] is
+    [(<<[ l := vl ]>> m) ! k]) and chains can be parenthesized to
+    combine multiple updates. *) 
+Notation "<<[ l := vl ]>> m" := (set_list l vl m)
+  (at level 1, left associativity, format "<<[  l  :=  vl  ]>>  m").
 
 (** [map1] commutes with [set_list]; only the lengths need to agree. *)
 Lemma set_list_map1: forall {A B} (f: A -> B) (l: list positive) (vl: list A) (m: PTree.t A),
