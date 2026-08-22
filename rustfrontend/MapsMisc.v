@@ -351,3 +351,254 @@ Module FreshMax <: FRESH.
     - auto.
   Qed.
 End FreshMax.
+
+(** * Fresh-key update notation *)
+
+(** stdpp-style shorthand for updating the fresh (max+1) key:
+    [<[ v ]> m] is [<[ FreshMax.fresh m := v ]> m], i.e. [PTree.set
+    (FreshMax.fresh m) v m].  Lookup binds after the whole update:
+    [<[ v ]> m ! k] parses as [(<[ v ]> m) ! k].  As a standalone term
+    a chain is right-nested (innermost first): [<[ v2 ]> <[ v1 ]> m]
+    stores [v1] at [FreshMax.fresh m] and [v2] at its successor.  To
+    use a chain inside a larger statement, parenthesize it:
+    [(<[ v2 ]> <[ v1 ]> m)].  When the fresh key itself is used as an
+    index, parenthesize the application: [! (FreshMax.fresh m)]. *)
+Notation "<[ v ]> m" := (<[ FreshMax.fresh m := v ]> m)
+  (at level 1, left associativity, format "<[  v  ]>  m").
+
+(** * [max_key] commutation with [set] and [set_list] *)
+
+(** Upper bound for a left fold of maxima. *)
+Lemma fold_max_le_bound: forall {A} (l: list (positive * A)) (acc b: positive),
+    (forall x, In x (map fst l) -> Ple x b) ->
+    Ple acc b ->
+    Ple (List.fold_left (fun a p => Pos.max a (fst p)) l acc) b.
+Proof.
+  induction l; simpl; intros.
+  - exact H0.
+  - apply IHl; auto.
+    apply Pos.max_lub; [ exact H0 | apply H; left; auto ].
+Qed.
+
+(** The accumulator is always below the result of a left fold of
+    maxima (alias of [fold_left_max_acc_le]). *)
+Lemma fold_max_ge_acc: forall {A} (l: list (positive * A)) (acc: positive),
+    Ple acc (List.fold_left (fun a p => Pos.max a (fst p)) l acc).
+Proof.
+  intros. apply fold_left_max_acc_le.
+Qed.
+
+(** [1] is a lower bound on [max_key]. *)
+Lemma max_key_ge_1: forall {A} (m: PTree.t A), Ple 1%positive (max_key m).
+Proof.
+  intros. unfold max_key. rewrite PTree.fold_spec. apply fold_left_max_acc_le.
+Qed.
+
+(** If every key of [m] is below [b], so is [max_key m]. *)
+Lemma max_key_all_le: forall {A} (m: PTree.t A) (b: positive),
+    (forall x, In x (map fst (PTree.elements m)) -> Ple x b) ->
+    Ple (max_key m) b.
+Proof.
+  intros. unfold max_key. rewrite PTree.fold_spec. apply fold_max_le_bound.
+  - exact H.
+  - apply Pos.le_1_l.
+Qed.
+
+(** [max_key] of a [set] is bounded above by the maximum of the key and
+    [max_key] of the original map. *)
+Lemma max_key_set_upper: forall {A} (k: positive) (v: A) (m: PTree.t A),
+    Ple (max_key (PTree.set k v m)) (Pos.max k (max_key m)).
+Proof.
+  intros. apply max_key_all_le.
+  intros x Hx.
+  apply in_map_iff in Hx. destruct Hx as [[i w] [Hi Hw]].
+  simpl in Hi. subst x.
+  apply PTree.elements_complete in Hw.
+  rewrite PTree.gsspec in Hw.
+  destruct (peq i k).
+  - subst. apply Pos.le_max_l.
+  - apply Ple_trans with (max_key m).
+    + apply max_key_spec. apply in_map_iff.
+      eexists (i, w). split. simpl. auto. apply PTree.elements_correct. exact Hw.
+    + apply Pos.le_max_r.
+Qed.
+
+(** [max_key] is monotone under [set]. *)
+Lemma max_key_mono_set: forall {A} (k: positive) (v: A) (m: PTree.t A),
+    Ple (max_key m) (max_key (PTree.set k v m)).
+Proof.
+  intros. apply max_key_all_le.
+  intros x Hx.
+  apply in_map_iff in Hx. destruct Hx as [[i w] [Hi Hw]].
+  simpl in Hi. subst x.
+  apply PTree.elements_complete in Hw.
+  destruct (peq i k).
+  - subst. apply max_key_spec. apply in_map_iff.
+    eexists (k, v). split. simpl. auto. apply PTree.elements_correct. apply PTree.gss.
+  - apply max_key_spec. apply in_map_iff.
+    eexists (i, w). split. simpl. auto. apply PTree.elements_correct. rewrite PTree.gso; auto.
+Qed.
+
+(** [max_key] commutes with [set]. *)
+Lemma max_key_set: forall {A} (k: positive) (v: A) (m: PTree.t A),
+    max_key (PTree.set k v m) = Pos.max k (max_key m).
+Proof.
+  intros. apply Pos.le_antisym.
+  - apply max_key_set_upper.
+  - apply Pos.max_lub.
+    + apply max_key_spec. apply in_map_iff.
+      eexists (k, v). split. simpl. auto. apply PTree.elements_correct. apply PTree.gss.
+    + apply max_key_mono_set.
+Qed.
+
+(** Maximum of a list of keys. *)
+Definition max_key_list (l: list positive) : positive :=
+  List.fold_right Pos.max 1%positive l.
+
+(** [max_key] commutes with [set_list]. *)
+Lemma max_key_set_list: forall {A} (l: list positive) (vl: list A) (m: PTree.t A),
+    length l = length vl ->
+    max_key (set_list l vl m) = Pos.max (max_key_list l) (max_key m).
+Proof.
+  induction l; intros vl m Hlen; destruct vl; simpl in *; try discriminate.
+  - rewrite Pos.max_r by (apply max_key_ge_1). auto.
+  - injection Hlen as Hlen.
+    rewrite max_key_set.
+    rewrite IHl by exact Hlen.
+    rewrite Pos.max_assoc. auto.
+Qed.
+
+(** * Single-key fresh shorthand lemmas *)
+
+(** Setting the fresh key makes [fresh] the successor of its previous
+    value. *)
+Lemma fresh_set_fresh: forall {A} (v: A) (m: PTree.t A),
+    FreshMax.fresh (<[ v ]> m) = Pos.succ (FreshMax.fresh m).
+Proof.
+  intros.
+  change (FreshMax.fresh (PTree.set (FreshMax.fresh m) v m)
+          = Pos.succ (FreshMax.fresh m)).
+  unfold FreshMax.fresh.
+  rewrite max_key_set.
+  apply Pos.succ_inj.
+  rewrite Pos.max_l by (apply Ple_succ).
+  auto.
+Qed.
+
+(** The fresh key maps to the fresh value. *)
+Lemma get_fresh_set: forall {A} (v: A) (m: PTree.t A),
+    (<[ v ]> m) ! (FreshMax.fresh m) = Some v.
+Proof.
+  intros.
+  change (PTree.get (FreshMax.fresh m) (PTree.set (FreshMax.fresh m) v m) = Some v).
+  apply PTree.gss.
+Qed.
+
+(** Removing the fresh key restores the original map. *)
+Lemma remove_fresh_set: forall {A} (v: A) (m: PTree.t A),
+    PTree.remove (FreshMax.fresh m) (<[ v ]> m) = m.
+Proof.
+  intros.
+  change (PTree.remove (FreshMax.fresh m) (PTree.set (FreshMax.fresh m) v m) = m).
+  apply remove_set_fresh.
+  apply FreshMax.fresh_spec.
+Qed.
+
+(** * Batch version: [set_fresh_list] *)
+
+(** Store the list [vl] at the consecutive fresh keys
+    [FreshMax.fresh m .. FreshMax.fresh m + |vl| - 1]. *)
+Definition set_fresh_list {A} (m: PTree.t A) (vl: list A) : PTree.t A :=
+  set_list (FreshMax.fresh_idents m (length vl)) vl m.
+
+(** stdpp-style shorthand for a batch of fresh-key updates: [<<[ vl ]>> m]
+    is [set_fresh_list m vl], storing [vl] at the consecutive fresh keys
+    [FreshMax.fresh m .. FreshMax.fresh m + |vl| - 1].  Like the other
+    update notations, lookup binds after the whole update:
+    [<<[ vl ]>> m ! k] parses as [(<<[ vl ]>> m) ! k]. *)
+Notation "<<[ vl ]>> m" := (set_fresh_list m vl)
+  (at level 1, left associativity, format "<<[  vl  ]>>  m").
+
+(** [fresh] after a batch update is the successor of the maximum of the
+    freshly used keys and the old [max_key]. *)
+Lemma set_fresh_list_fresh: forall {A} (m: PTree.t A) (vl: list A),
+    FreshMax.fresh (<<[ vl ]>> m) =
+    Pos.succ (Pos.max (max_key_list (FreshMax.fresh_idents m (length vl))) (max_key m)).
+Proof.
+  intros. unfold set_fresh_list, FreshMax.fresh.
+  rewrite max_key_set_list by apply FreshMax.fresh_idents_length.
+  auto.
+Qed.
+
+(** Removing all the freshly used keys restores the original map. *)
+Lemma set_fresh_list_remove: forall {A} (m: PTree.t A) (vl: list A),
+    remove_list (FreshMax.fresh_idents m (length vl)) (<<[ vl ]>> m) = m.
+Proof.
+  intros. unfold set_fresh_list.
+  apply remove_list_set_list.
+  - apply FreshMax.fresh_idents_length.
+  - apply FreshMax.fresh_idents_nodup.
+  - intros x Hx. apply FreshMax.fresh_idents_notin with (n := length vl). exact Hx.
+Qed.
+
+(** Lookup of the [i]-th value stored by [set_list], using the [i]-th
+    key. *)
+Lemma set_list_nth: forall {A} (l: list positive) (vl: list A) (m: PTree.t A)
+    (d: positive) (e: A) (i: nat),
+    NoDup l -> length l = length vl -> (i < length l)%nat ->
+    (set_list l vl m) ! (nth i l d) = Some (nth i vl e).
+Proof.
+  induction l; intros vl m d e i Hnodup Hlen Hlt;
+    destruct vl as [| v vl]; simpl in *; try discriminate.
+  - lia.
+  - destruct i as [| i']; simpl in *.
+    + change (PTree.get a (PTree.set a v (set_list l vl m)) = Some v).
+      apply PTree.gss.
+    + injection Hlen as Hlen.
+      destruct (nodup_cons_inv a l Hnodup) as [Hnin Hnodup'].
+      change (PTree.get (nth i' l d) (PTree.set a v (set_list l vl m))
+              = Some (nth i' vl e)).
+      rewrite PTree.gso.
+      * apply IHl; auto. apply lt_S_n. exact Hlt.
+      * intro Ha. subst a. apply Hnin. apply nth_In. apply lt_S_n. exact Hlt.
+Qed.
+
+(** Lookup of the [i]-th value stored by [set_fresh_list]. *)
+Lemma set_fresh_list_get: forall {A} (m: PTree.t A) (vl: list A) (i: nat) (d: A),
+    (i < length vl)%nat ->
+    (<<[ vl ]>> m) ! (nth i (FreshMax.fresh_idents m (length vl)) 1%positive)
+    = Some (nth i vl d).
+Proof.
+  intros. unfold set_fresh_list.
+  apply set_list_nth.
+  - apply FreshMax.fresh_idents_nodup.
+  - apply FreshMax.fresh_idents_length.
+  - rewrite FreshMax.fresh_idents_length. exact H.
+Qed.
+
+(** * Bridging the chain notation and the batch version *)
+
+Lemma pos_succ_neq: forall (p: positive), p <> Pos.succ p.
+Proof.
+  intros p H.
+  assert (Hsucc: Plt p (Pos.succ p)) by apply Plt_succ.
+  apply (Plt_strict p).
+  rewrite <- H in Hsucc.
+  exact Hsucc.
+Qed.
+
+Lemma set_fresh_list_one: forall {A} (m: PTree.t A) (v: A),
+    <<[ v :: nil ]>> m = <[ v ]> m.
+Proof.
+  intros. unfold set_fresh_list. simpl. reflexivity.
+Qed.
+
+Lemma set_fresh_list_two: forall {A} (m: PTree.t A) (v1 v2: A),
+    (<[ v2 ]> <[ v1 ]> m) = <<[ v1 :: v2 :: nil ]>> m.
+Proof.
+  intros.
+  rewrite fresh_set_fresh.
+  unfold set_fresh_list. simpl.
+  apply set_comm.
+  apply pos_succ_neq.
+Qed.
