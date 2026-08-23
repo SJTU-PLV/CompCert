@@ -1138,12 +1138,12 @@ Proof.
 Qed.
 
 
-(* Lemma get_owner_loc_footprint_sem_wt_split ce: forall phl b1 ofs1 b2 ofs2 fp1 fp1' fp2 mp *)
+(* Lemma get_owner_loc_footprint_map_sem_wt_ ce: forall phl b1 ofs1 b2 ofs2 fp1 fp1' fp2 mp *)
 (*       (* Most of the time (b2,ofs2) is the location to be stored *) *)
 (*       (GFP: get_owner_loc_footprint_map phl fp1 b1 ofs1 = Some (b2, ofs2, fp2)) *)
 (*       (CLR: set_footprint phl fp_emp fp1 = Some fp1') *)
 (*       (WTLOC: sem_wt_loc ce fp1 b1 ofs1 mp), *)
-(*     exists mp1 mp2,  *)
+(*     exists mp1 mp2, *)
 (*       sem_wt_loc ce fp1' b1 ofs1 mp1 *)
 (*       /\ sem_wt_fp ce fp2 mp2 *)
 (*       /\ massert_eqv mp (mp1 ** mp2). *)
@@ -1179,18 +1179,12 @@ Proof.
   reflexivity.
 Qed.
 
+(* Lemma set_wt_loc_split ce: forall b ofs mp fp, *)
+(*     sem_wt_loc ce fp b ofs mp -> *)
+(*     exists mp1 mp2, sem_wt_fp ce fp mp1  *)
+(*                /\  *)
 
 (************* End of properties of get/set_footprint_map ******************  *)
-
-(* Lemma wt_footprint_size_eq ce : forall ty fp fpm, *)
-(*     wt_footprint ce fpm ty fp -> *)
-(*     sizeof ce ty = sizeof_footprint ce fp. *)
-(* Admitted. *)
-
-(* Lemma wt_footprint_align_eq ce : forall ty fp fpm, *)
-(*     wt_footprint ce fpm ty fp -> *)
-(*     alignof ce ty = alignof_footprint ce fp. *)
-(* Admitted. *)
 
 
 Definition fp_match_chunk (fp: footprint) chunk : Prop :=
@@ -2274,73 +2268,6 @@ Proof.
       exact MPRED1.
 Qed.
 
-(*   induction phl; intros. *)
-(*   - inv GFP.  *)
-(*     exploit store_sem_wt_loc; eauto. *)
-(*     intros (m2 & mass3 & STORE & WTLOC1 & MPRED1). *)
-(*     exists m2, vfp, mass3. split; try split; auto.  *)
-(*   - simpl in GFP. destruct a; try congruence. *)
-(*     + destr_fp_box fp1 GFP. *)
-(*       inv WTLOC. rewrite EQV in *. rewrite FREE in *. *)
-(*       set (MP1 := hasvalue Mptr b1 ofs1 (Vptr b Ptrofs.zero)) in *. *)
-(*       unfold box_pred in MPRED. rewrite SHALLOW in MPRED. *)
-(*       set (MP2 := contains_neg Mptr b (- size_chunk Mptr) (eq (Vptrofs (Ptrofs.repr sz)))) in *. *)
-(*       (* prove it with commutative lemmas of sepconj *) *)
-(*       assert (MPRED1: m|= nextmp ** mass2 ** (MP ** MP1 ** MP2)) by admit. *)
-(*       exploit IHphl; eauto. intros (m1 & fp2 & mass3 & A1 & A2 & A3 & A4). *)
-(*       exists m1, (fp_box b sz fp2), (MP1 ** MP2 ** mass3). *)
-(*       do 3 (try apply conj); eauto. *)
-(*       * simpl. rewrite A2. reflexivity. *)
-(*       * econstructor; eauto. unfold box_pred.  *)
-(*       (** TODO: use WTVAL to show that vfp is not fp_emp and A2 to show that fp2 is shallow_init  *) admit. *)
-(*       * admit. *)
-(*     + destr_fp_field fp1 GFP. *)
-(*       inv WTLOC. rewrite EQV in *. *)
-(*       (* split fields_sep *) *)
-(*       exploit fields_loc_sep_find_set; eauto. *)
-(*       intros (mp1 & mp2 & mpi & l1 & l2 & A1 & A2 & A3 & A4 & A5 & A6). subst. *)
-(*       eapply mconj_proj1 in MPRED as MPRED1. *)
-(*       (* change only mpi *) *)
-(*       assert (MPREDA: m|= mpi ** mass2 ** mp1 ** mp2 ** MP) by admit.       *)
-(*       exploit IHphl; eauto. *)
-(*       intros (m1 & fp2 & mpi' & C1 & C2 & C3 & C4). *)
-(*       (* adhoc: we know that storing a location does not change its *)
-(*       permission. *) *)
-(*       assert (MPRED2: m |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED. *)
-(*       eapply store_range_unchanged in MPRED2 as MPRED2'; eauto.       *)
-(*       rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.       *)
-(*       exploit frame_mconj. eapply MPRED.  *)
-(*       rewrite <- !sep_assoc in C4. *)
-(*       eapply C4. eauto. intros MPRED3. *)
-(*       rewrite sep_assoc, (sep_swap mpi' mp1 _) in MPRED3. *)
-(*       exists m1, (fp_struct id (set_field_fp fid fp2 (l1 ++ (fid, (z, f)) :: l2))), (mconj (mp1 ** mpi' ** mp2) (range b1 ofs1 (ofs1 + sizeof_comp ce id))).  *)
-(*       split; try split; eauto. *)
-(*       simpl. rewrite FIND. rewrite C2. reflexivity. *)
-(*       split. *)
-(*       econstructor; eauto. *)
-(*       eauto. *)
-(*     + destr_fp_enum fp1 GFP. *)
-(*       inv WTLOC. rewrite EQV in *. clear EQV mass1. *)
-(*       eapply mconj_proj1 in MPRED as MPRED1. *)
-(*       set (mass1 := hasvalue Mint32 b1 ofs1 (Vint (Int.repr tag))) in *. *)
-(*       (* change only mpi *) *)
-(*       assert (MPREDA: m|= mass3 ** mass2 ** mass1 ** MP) by admit. *)
-(*       exploit IHphl; eauto. *)
-(*       intros (m1 & fp2 & mass2' & C1 & C2 & C3 & C4). *)
-(*       assert (MPRED2: m |= range b1 ofs1 (ofs1 + sizeof_comp ce id)) by eapply MPRED. *)
-(*       eapply store_range_unchanged in MPRED2 as MPRED2'; eauto.       *)
-(*       rewrite <- sep_assoc in MPRED. rewrite (mconj_absorb1 _ _ mass2) in MPRED.       *)
-(*       exploit frame_mconj. eapply MPRED.  *)
-(*       rewrite <- !sep_assoc in C4. *)
-(*       eapply C4. eauto. intros MPRED3. *)
-(*       rewrite (sep_comm mass2' mass1) in MPRED3. *)
-(*       exists m1, (fp_enum id tag fid0 ofs fp2), (mconj (mass1 ** mass2') (range b1 ofs1 (ofs1 + sizeof_comp ce id))).  *)
-(*       split; try split; eauto. *)
-(*       simpl. rewrite dec_eq_true. rewrite C2. reflexivity. *)
-(*       split. *)
-(*       econstructor; eauto. *)
-(*       eauto. *)
-(* Admitted. *)
 
 (* Removing the binding being replaced gives the same ordered list before and
    after [PTree.set].  Both coherence-preservation proofs use this fact. *)
@@ -2874,6 +2801,16 @@ Proof.
     | exact EQV ].
 Qed.
 
+Lemma fields_fp_sep_shift: forall P d fpl mass,
+    fields_fp_sep P fpl mass ->
+    fields_fp_sep P (map (shift_ffp d) fpl) mass.
+Proof.
+  intros P d fpl mass F.
+  induction F.
+  - simpl. econstructor. exact EQV.
+  - simpl. econstructor; eauto.
+Qed.
+
 
 (* The per-field absolute alignment predicate is invariant under the
    [shift_ffp d] re-basing, provided the target base is shifted by [d]. *)
@@ -3020,27 +2957,29 @@ Qed.
    invariants.  Finally we re-base the recursive [fields_loc_sep] back
    to [tofs] and reassemble the whole field list with
    [fields_loc_sep_cons]. *)
-Lemma storebytes_fields_loc_sep ce: forall fpl tb tofs sb sofs mass mp2 MP m1_src m1 m2 bytes te sz
+Lemma storebytes_fields_loc_sep ce: forall fpl tb tofs sb sofs mass ownmass mp2 MP m1_src m1 m2 bytes te sz
     (CONS: composite_env_consistent ce)
     (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
     (IH: forall fid base fofs ffp,
         In (fid, ((base, fofs), ffp)) fpl ->
-        forall tb tofs sb sofs mp1 mp2 MP m1_src m1 m2 bytes ty te,
+        forall tb tofs sb sofs mp1 ownmp mp2 MP m1_src m1 m2 bytes ty te,
         sem_wt_loc ce ffp sb sofs mp1 ->
+        sem_wt_fp ce ffp ownmp ->
         massert_imp mp2 (range tb tofs (tofs + sizeof_footprint ce ffp)) ->
         (alignof_footprint ce ffp | tofs) ->
         m1_src |= mp1 ->
-        m1 |= mp2 ** MP ->
+        m1 |= mp2 ** ownmp ** MP ->
         Mem.loadbytes m1_src sb sofs (sizeof_footprint ce ffp) = Some bytes ->
         Mem.storebytes m1 tb tofs bytes = Some m2 ->
         wt_footprint ce te ty ffp ->
         exists mass3, sem_wt_loc ce ffp tb tofs mass3 /\ m2 |= mass3 ** MP)
     (FWT: fields_loc_sep sb sofs (sem_wt_loc ce) fpl mass)
+    (FOWN: fields_fp_sep (sem_wt_fp ce) fpl ownmass)
     (SORTED: fields_sorted ce fpl)
     (RANGE: massert_imp mp2 (range tb tofs (tofs + sz)))
     (SZPOS: 0 <= sz)
     (MPRED_SRC: m1_src |= mass)
-    (MPRED: m1 |= mp2 ** MP)
+    (MPRED: m1 |= mp2 ** ownmass ** MP)
     (LOAD: Mem.loadbytes m1_src sb sofs sz = Some bytes)
     (STORE: Mem.storebytes m1 tb tofs bytes = Some m2)
     (WF: Forall (fp_field_in_range ce sz (fields_fp_well_formed ce)) fpl)
@@ -3049,26 +2988,30 @@ Lemma storebytes_fields_loc_sep ce: forall fpl tb tofs sb sofs mass mp2 MP m1_sr
   exists mass3, fields_loc_sep tb tofs (sem_wt_loc ce) fpl mass3 /\ m2 |= mass3 ** MP.
 Proof.
   intros.
-  cut (forall n fpl, length fpl = n -> forall tb tofs sb sofs mass mp2 MP m1_src m1 m2 bytes te sz,
-      (forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl -> forall tb tofs sb sofs mp1 mp2 MP m1_src m1 m2 bytes ty te, sem_wt_loc ce ffp sb sofs mp1 -> massert_imp mp2 (range tb tofs (tofs + sizeof_footprint ce ffp)) -> (alignof_footprint ce ffp | tofs) -> m1_src |= mp1 -> m1 |= mp2 ** MP -> Mem.loadbytes m1_src sb sofs (sizeof_footprint ce ffp) = Some bytes -> Mem.storebytes m1 tb tofs bytes = Some m2 -> wt_footprint ce te ty ffp -> exists mass3, sem_wt_loc ce ffp tb tofs mass3 /\ m2 |= mass3 ** MP) ->
+  cut (forall n fpl, length fpl = n -> forall tb tofs sb sofs mass ownmass mp2 MP m1_src m1 m2 bytes te sz,
+      (forall fid base fofs ffp, In (fid, ((base, fofs), ffp)) fpl -> forall tb tofs sb sofs mp1 ownmp mp2 MP m1_src m1 m2 bytes ty te, sem_wt_loc ce ffp sb sofs mp1 -> sem_wt_fp ce ffp ownmp -> massert_imp mp2 (range tb tofs (tofs + sizeof_footprint ce ffp)) -> (alignof_footprint ce ffp | tofs) -> m1_src |= mp1 -> m1 |= mp2 ** ownmp ** MP -> Mem.loadbytes m1_src sb sofs (sizeof_footprint ce ffp) = Some bytes -> Mem.storebytes m1 tb tofs bytes = Some m2 -> wt_footprint ce te ty ffp -> exists mass3, sem_wt_loc ce ffp tb tofs mass3 /\ m2 |= mass3 ** MP) ->
       fields_sorted ce fpl ->
       massert_imp mp2 (range tb tofs (tofs + sz)) ->
       0 <= sz ->
       m1_src |= mass ->
-      m1 |= mp2 ** MP ->
+      m1 |= mp2 ** ownmass ** MP ->
       Mem.loadbytes m1_src sb sofs sz = Some bytes ->
       Mem.storebytes m1 tb tofs bytes = Some m2 ->
       Forall (fp_field_in_range ce sz (fields_fp_well_formed ce)) fpl ->
       Forall (fun '(fid, ((base, fofs), ffp)) => exists ty, wt_footprint ce te ty ffp) fpl ->
       Forall (fun '(fid, ((base, fofs), ffp)) => (alignof_footprint ce ffp | (tofs + fofs))) fpl ->
       fields_loc_sep sb sofs (sem_wt_loc ce) fpl mass ->
+      fields_fp_sep (sem_wt_fp ce) fpl ownmass ->
       exists mass3, fields_loc_sep tb tofs (sem_wt_loc ce) fpl mass3 /\ m2 |= mass3 ** MP).
-  { intros H. apply (H (length fpl) fpl eq_refl tb tofs sb sofs mass mp2 MP m1_src m1 m2 bytes te sz IH SORTED RANGE SZPOS MPRED_SRC MPRED LOAD STORE WF WTFPS ABS_ALIGN FWT). }
+  { intros H. apply (H (length fpl) fpl eq_refl tb tofs sb sofs mass ownmass mp2 MP m1_src m1 m2 bytes te sz IH SORTED RANGE SZPOS MPRED_SRC MPRED LOAD STORE WF WTFPS ABS_ALIGN FWT FOWN). }
   clear - CONS NOREP.
   induction n as [n IHn] using (well_founded_induction lt_wf).
-  intros fpl HLEN tb tofs sb sofs mass mp2 MP m1_src m1 m2 bytes te sz IH SORTED RANGE SZPOS MPRED_SRC MPRED LOAD STORE WF WTFPS ABS_ALIGN FWT.
+  intros fpl HLEN tb tofs sb sofs mass ownmass mp2 MP m1_src m1 m2 bytes te sz IH SORTED RANGE SZPOS MPRED_SRC MPRED LOAD STORE WF WTFPS ABS_ALIGN FWT FOWN.
   destruct fpl as [| a l].
   - (* nil case *)
+    inversion FOWN as [ownnil OWN_EQ |]; subst.
+    rewrite OWN_EQ in MPRED.
+    rewrite <- (massert_eqv_STrue_l MP) in MPRED.
     exists STrue.
     split; [econstructor; reflexivity |].
     destruct RANGE as [RANGE_P RANGE_F].
@@ -3093,6 +3036,9 @@ Proof.
   - (* cons case *)
     destruct a as [fid [[base fofs] ffp]].
     inversion FWT as [ | fid0 base0 fofs0 ffp0 l0 mass1 mass2 padmp0 mp0 IND FWT0 ALPERM EQV]; subst.
+    inversion FOWN as [ | fid0 base0 fofs0 ffp0 l0 own1 own2 ownmp0 OWNTAIL OWNHEAD OWNEQV]; subst.
+    rewrite OWNEQV in MPRED.
+    rewrite sep_assoc in MPRED.
     pose (SIZE := sizeof_footprint ce ffp).
     pose (d := fofs + SIZE).
     inversion SORTED as [ | fid0 base0 fofs0 ffp0 l0 HBASE HLE HSIZE HEAD_AFTER]; subst.
@@ -3140,25 +3086,31 @@ Proof.
       apply (massert_imp_proj2 (range sb sofs (sofs + fofs)) (mass1 ** mass2)).
       exact MPRED_SRC. }
     (* target permission for the head field *)
-    assert (MPRED_RANGE0: m1 |= range tb tofs (tofs + sz) ** MP).
+    assert (MPRED_RANGE0: m1 |= range tb tofs (tofs + sz) ** own1 ** own2 ** MP).
     { eapply sep_imp; [exact MPRED | exact RANGE | apply massert_imp_refl]. }
-    assert (MPRED_RANGE1: m1 |= range tb tofs (tofs + fofs) ** range tb (tofs + fofs) (tofs + sz) ** MP).
+    assert (MPRED_RANGE1: m1 |= range tb tofs (tofs + fofs) ** range tb (tofs + fofs) (tofs + sz) ** own1 ** own2 ** MP).
     { eapply range_split; [lia | exact MPRED_RANGE0]. }
-    assert (MPRED_RANGE2: m1 |= range tb tofs (tofs + fofs) ** range tb (tofs + fofs) (tofs + d) ** range tb (tofs + d) (tofs + sz) ** MP).
+    assert (MPRED_RANGE2: m1 |= range tb tofs (tofs + fofs) ** range tb (tofs + fofs) (tofs + d) ** range tb (tofs + d) (tofs + sz) ** own1 ** own2 ** MP).
     { eapply sep_imp; [exact MPRED_RANGE1 | apply massert_imp_refl |].
-      apply (range_split_imp tb (tofs + fofs) (tofs + d) (tofs + sz) MP). unfold d, SIZE in *. lia. }
+      apply (range_split_imp tb (tofs + fofs) (tofs + d) (tofs + sz) (own1 ** own2 ** MP)). unfold d, SIZE in *. lia. }
     assert (MP_DISJ_RANGE: forall i, tofs <= i < tofs + sz -> ~ m_footprint MP tb i).
     { intros i IN. intro HF.
       destruct MPRED as [MP2PRED [MPPRED DISJ]].
       destruct RANGE as [RANGE_P RANGE_F].
       apply (DISJ tb i).
       - apply (RANGE_F tb i). simpl. split; [reflexivity | exact IN].
-      - exact HF. }
-    set (FRAME := range tb (tofs + d) (tofs + sz) ** MP).
-    assert (MPRED_HEAD: m1 |= range tb (tofs + fofs) (tofs + d) ** (range tb tofs (tofs + fofs) ** FRAME)).
+      - simpl. right. right. exact HF. }
+    set (FRAME := range tb (tofs + d) (tofs + sz) ** own2 ** MP).
+    assert (MPRED_HEAD: m1 |= range tb (tofs + fofs) (tofs + d) ** own1 ** (range tb tofs (tofs + fofs) ** FRAME)).
     { unfold FRAME.
-      rewrite <- (sep_swap (range tb tofs (tofs + fofs)) (range tb (tofs + fofs) (tofs + d))
-                       (range tb (tofs + d) (tofs + sz) ** MP)).
+      rewrite (sep_swap (range tb tofs (tofs + fofs)) (range tb (tofs + fofs) (tofs + d))
+                       (range tb (tofs + d) (tofs + sz) ** own1 ** own2 ** MP)) in MPRED_RANGE2.
+      rewrite (sep_swap3 (range tb tofs (tofs + fofs))
+                         (range tb (tofs + d) (tofs + sz)) own1
+                         (own2 ** MP)) in MPRED_RANGE2.
+      rewrite (sep_swap34 (range tb (tofs + fofs) (tofs + d)) own1
+                          (range tb (tofs + d) (tofs + sz))
+                          (range tb tofs (tofs + fofs)) (own2 ** MP)) in MPRED_RANGE2.
       exact MPRED_RANGE2. }
     assert (STORE_H_FROM_M1: exists m2h, Mem.storebytes m1 tb (tofs + fofs) bytesH1 = Some m2h).
     { edestruct (Mem.range_perm_storebytes m1 tb (tofs + fofs) bytesH1) as [m2h STOREH].
@@ -3170,8 +3122,13 @@ Proof.
       - eexists. exact STOREH. }
     destruct STORE_H_FROM_M1 as [m2h STOREH].
     assert (FIELD: exists massA, sem_wt_loc ce ffp tb (tofs + fofs) massA /\                m2h |= massA ** (range tb tofs (tofs + fofs) ** FRAME)).
-    { eapply (IH fid 0 fofs ffp (or_introl eq_refl)).
+    { eapply (IH fid 0 fofs ffp (or_introl eq_refl)
+                 tb (tofs + fofs) sb (sofs + fofs)
+                 mass1 own1 (range tb (tofs + fofs) (tofs + d))
+                 (range tb tofs (tofs + fofs) ** FRAME)
+                 m1_src m1 m2h bytesH1 fty te).
       - exact FWT0.
+      - exact OWNHEAD.
       - apply (range_impl tb (tofs + fofs) (tofs + d) (tofs + fofs) (tofs + fofs + SIZE)); [lia | unfold d, SIZE in *; lia].
       - exact ALHEAD.
       - exact MPRED_SRC_HEAD.
@@ -3190,6 +3147,8 @@ Proof.
     (* tail recursion setup *)
     assert (IND_SHIFT: fields_loc_sep sb (sofs + d) (sem_wt_loc ce) (map (shift_ffp d) l) mass2).
     { apply (fields_loc_sep_shift sb sofs (sem_wt_loc ce) d l mass2). exact IND. }
+    assert (OWN_SHIFT: fields_fp_sep (sem_wt_fp ce) (map (shift_ffp d) l) own2).
+    { apply fields_fp_sep_shift. exact OWNTAIL. }
     assert (HEAD_AFTER_DLE: Forall (fun '(fid', ((base', fofs'), ffp')) => d <= fofs') l).
     { exact (fields_after_d_le ce d l HEAD_AFTER). }
     assert (WF_TAIL: Forall (fp_field_in_range ce (sz - d) (fields_fp_well_formed ce)) (map (shift_ffp d) l)).
@@ -3208,37 +3167,52 @@ Proof.
       apply (massert_imp_proj2 (range sb sofs (sofs + fofs) ** mass1) mass2).
       exact MPRED_SRC. }
     (* target permission for the tail *)
-    assert (MPRED_RANGE_DROP: m1 |= range tb tofs (tofs + fofs) ** range tb (tofs + d) (tofs + sz) ** MP).
-    { eapply sep_imp; [exact MPRED_RANGE2 | apply massert_imp_refl | apply massert_imp_proj2]. }
-    assert (MPRED_RANGE_DROP_M1P: m1p |= range tb tofs (tofs + fofs) ** (range tb (tofs + d) (tofs + sz) ** MP)).
+    assert (MPRED_RANGE_DROP: m1 |= range tb tofs (tofs + fofs) ** range tb (tofs + d) (tofs + sz) ** own2 ** MP).
+    { rewrite (sep_swap23 (range tb tofs (tofs + fofs))
+                          (range tb (tofs + fofs) (tofs + d))
+                          (range tb (tofs + d) (tofs + sz))
+                          (own1 ** own2 ** MP)) in MPRED_RANGE2.
+      eapply sep_imp; [exact MPRED_RANGE2 | apply massert_imp_refl |].
+      apply sepconj_morph_1.
+      - apply massert_imp_refl.
+      - eapply massert_imp_trans; apply massert_imp_proj2. }
+    assert (MPRED_RANGE_DROP_M1P: m1p |= range tb tofs (tofs + fofs) ** (range tb (tofs + d) (tofs + sz) ** own2 ** MP)).
     { eapply sep_preserved. exact MPRED_RANGE_DROP.
       - intros H. eapply storebytes_range_unchanged; eauto.
-      - intros H. eapply (m_invar (range tb (tofs + d) (tofs + sz) ** MP)). exact H.
+      - intros H. eapply (m_invar (range tb (tofs + d) (tofs + sz) ** own2 ** MP)). exact H.
         eapply Mem.storebytes_unchanged_on; eauto.
         intros i INP. intro HF.
         destruct MPRED_RANGE_DROP as [MPRED_PAD [MPRED_TAILMP DISJ]].
         exact (DISJ tb i ltac:(simpl; split; [reflexivity |]; rewrite <- LENP; exact INP) HF). }
-    assert (MPRED_RANGE_DROP_M1': m1' |= range tb tofs (tofs + fofs) ** (range tb (tofs + d) (tofs + sz) ** MP)).
+    assert (MPRED_RANGE_DROP_M1': m1' |= range tb tofs (tofs + fofs) ** (range tb (tofs + d) (tofs + sz) ** own2 ** MP)).
     { eapply sep_preserved. exact MPRED_RANGE_DROP_M1P.
       - intros H. eapply (m_invar (range tb tofs (tofs + fofs))). exact H.
         eapply Mem.storebytes_unchanged_on; eauto.
         intros i INP. intro HF.
         simpl in HF. destruct HF as [HEQ HRANGE]. lia.
-      - intros H. eapply (m_invar (range tb (tofs + d) (tofs + sz) ** MP)). exact H.
+      - intros H. eapply (m_invar (range tb (tofs + d) (tofs + sz) ** own2 ** MP)). exact H.
         eapply Mem.storebytes_unchanged_on; eauto.
         intros i INP. intro HF.
-        destruct HF as [HFT | HFMP].
-        + rewrite LENH in INP. unfold d, SIZE in *. simpl in HFT. destruct HFT as [HEQ HRANGE]. lia.
-        + exact (MP_DISJ_RANGE i ltac:(rewrite LENH in INP; unfold d, SIZE in *; lia) HFMP). }
-    assert (MPRED_MASSA_FRAME: m1' |= massA ** (range tb tofs (tofs + fofs) ** range tb (tofs + d) (tofs + sz) ** MP)).
-    { change (m_pred massA m1' /\ m_pred (range tb tofs (tofs + fofs) ** range tb (tofs + d) (tofs + sz) ** MP) m1' /\ disjoint_footprint massA (range tb tofs (tofs + fofs) ** range tb (tofs + d) (tofs + sz) ** MP)).
+        destruct MPRED_RANGE2 as [_ [MPRED_AFTER_PAD _]].
+        destruct MPRED_AFTER_PAD as [_ [_ DISJ_HEAD_REST]].
+        apply (DISJ_HEAD_REST tb i).
+        + simpl. split; [reflexivity |]. rewrite LENH in INP. unfold d, SIZE in *. lia.
+        + simpl in HF |- *. destruct HF as [HFT | [HFOWN | HFMP]].
+          * left. exact HFT.
+          * right. right. left. exact HFOWN.
+          * right. right. right. exact HFMP. }
+    assert (MPRED_MASSA_FRAME: m1' |= massA ** (range tb tofs (tofs + fofs) ** range tb (tofs + d) (tofs + sz) ** own2 ** MP)).
+    { change (m_pred massA m1' /\ m_pred (range tb tofs (tofs + fofs) ** range tb (tofs + d) (tofs + sz) ** own2 ** MP) m1' /\ disjoint_footprint massA (range tb tofs (tofs + fofs) ** range tb (tofs + d) (tofs + sz) ** own2 ** MP)).
       split.
       - exact MPREDA_M1.
       - split.
         * exact MPRED_RANGE_DROP_M1'.
         * exact DISJ_MASSA_FRAME. }
-    assert (MPRED_TAIL: m1' |= range tb (tofs + d) (tofs + sz) ** (range tb tofs (tofs + fofs) ** massA ** MP)).
-    { rewrite (sep_swap3 massA (range tb tofs (tofs + fofs)) (range tb (tofs + d) (tofs + sz)) MP) in MPRED_MASSA_FRAME.
+    assert (MPRED_TAIL: m1' |= range tb (tofs + d) (tofs + sz) ** own2 ** (range tb tofs (tofs + fofs) ** massA ** MP)).
+    { rewrite (sep_swap3 massA (range tb tofs (tofs + fofs)) (range tb (tofs + d) (tofs + sz)) (own2 ** MP)) in MPRED_MASSA_FRAME.
+      rewrite (sep_swap3 (range tb tofs (tofs + fofs)) massA own2 MP) in MPRED_MASSA_FRAME.
+      rewrite (sep_swap34 (range tb (tofs + d) (tofs + sz)) own2
+                          massA (range tb tofs (tofs + fofs)) MP) in MPRED_MASSA_FRAME.
       exact MPRED_MASSA_FRAME. }
     assert (SZPOS_TAIL: 0 <= sz - d). { unfold d, SIZE in *. lia. }
     pose (IH_l := fun (fid0: ident) (base0 fofs0: Z) (ffp0: footprint)
@@ -3247,7 +3221,7 @@ Proof.
                        (or_intror (in_map_shift_ffp_inv d l fid0 base0 fofs0 ffp0 IN0))).
     assert (TAIL: exists mass3_tail, fields_loc_sep tb (tofs + d) (sem_wt_loc ce) (map (shift_ffp d) l) mass3_tail
                     /\ m2 |= mass3_tail ** (range tb tofs (tofs + fofs) ** massA ** MP)).
-    { apply (IHn (length l) (Nat.lt_succ_diag_r (length l)) (map (shift_ffp d) l) (map_length (shift_ffp d) l) tb (tofs + d) sb (sofs + d) mass2 (range tb (tofs + d) (tofs + sz)) (range tb tofs (tofs + fofs) ** massA ** MP) m1_src m1' m2 bytesT te (sz - d) IH_l SORTED_TAIL (range_impl tb (tofs + d) (tofs + sz) (tofs + d) ((tofs + d) + (sz - d)) ltac:(lia) ltac:(lia)) SZPOS_TAIL MPRED_SRC_TAIL MPRED_TAIL LOAD_T STORE_T WF_TAIL WTFPS_TAIL ABS_ALIGN_TAIL IND_SHIFT). }
+    { apply (IHn (length l) (Nat.lt_succ_diag_r (length l)) (map (shift_ffp d) l) (map_length (shift_ffp d) l) tb (tofs + d) sb (sofs + d) mass2 own2 (range tb (tofs + d) (tofs + sz)) (range tb tofs (tofs + fofs) ** massA ** MP) m1_src m1' m2 bytesT te (sz - d) IH_l SORTED_TAIL (range_impl tb (tofs + d) (tofs + sz) (tofs + d) ((tofs + d) + (sz - d)) ltac:(lia) ltac:(lia)) SZPOS_TAIL MPRED_SRC_TAIL MPRED_TAIL LOAD_T STORE_T WF_TAIL WTFPS_TAIL ABS_ALIGN_TAIL IND_SHIFT OWN_SHIFT). }
     destruct TAIL as [mass3_tail WTLOC_TAIL_MPRED]; destruct WTLOC_TAIL_MPRED as [WTLOC_TAIL MPRED_TAIL2].
     assert (WTLOC_TAIL0: fields_loc_sep tb tofs (sem_wt_loc ce) l mass3_tail).
     { rewrite <- (shift_ffp_involutive d l).
@@ -3522,10 +3496,11 @@ Proof.
 Qed.
 
 
-Lemma storebytes_sem_wt_loc_fp ce: forall sfp tb tofs sb sofs mp1 mp2 MP m1_src m1 m2 bytes ty te
+Lemma storebytes_sem_wt_loc_fp ce: forall sfp tb tofs sb sofs mp1 mp2 ownmp MP m1_src m1 m2 bytes ty te
     (CONS: composite_env_consistent ce)
     (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
     (SRC_LOC: sem_wt_loc ce sfp sb sofs mp1)
+    (OWN: sem_wt_fp ce sfp ownmp)
     (TGT_LOC_PERM: massert_imp mp2 (range tb tofs (tofs + sizeof ce ty)))
     (AL: (alignof_footprint ce sfp | tofs))
     (* Since (sb, sofs) may be overlapped with the footprint of (mp2
@@ -3536,9 +3511,8 @@ Lemma storebytes_sem_wt_loc_fp ce: forall sfp tb tofs sb sofs mp1 mp2 MP m1_src 
     and m1 is where we store them; in practice they are the same
     memory at the top level but differ when we store into a field of
     a struct while loading the bytes from the original source. *)
-    (* (MPRED_IMP: massert_imp (mp2 ** MP) mp1) *)
     (MPRED_SRC: m1_src |= mp1)
-    (MPRED: m1 |= mp2 ** MP)
+    (MPRED: m1 |= mp2 ** ownmp ** MP)
     (LOAD: Mem.loadbytes m1_src sb sofs (sizeof ce ty) = Some bytes)
     (* since (sb, sofs) is sem_wt_loc, the progress of storebytes is
     straightforward *)
@@ -3550,12 +3524,14 @@ Lemma storebytes_sem_wt_loc_fp ce: forall sfp tb tofs sb sofs mp1 mp2 MP m1_src 
   exists (mass3 : massert),
       sem_wt_loc ce sfp tb tofs mass3 /\ m2 |= mass3 ** MP.
 Proof.
-  intros sfp tb tofs sb sofs mp1 mp2 MP m1_src m1 m2 bytes ty te CONS NOREP SRC_LOC TGT_LOC_PERM AL MPRED_SRC MPRED LOAD STORE WTFP.
-  revert tb tofs sb sofs mp1 mp2 MP m1_src m1 m2 bytes ty te SRC_LOC TGT_LOC_PERM AL MPRED_SRC MPRED LOAD STORE WTFP.
+  intros sfp tb tofs sb sofs mp1 mp2 ownmp MP m1_src m1 m2 bytes ty te CONS NOREP SRC_LOC OWN TGT_LOC_PERM AL MPRED_SRC MPRED LOAD STORE WTFP.
+  revert tb tofs sb sofs mp1 mp2 ownmp MP m1_src m1 m2 bytes ty te SRC_LOC OWN TGT_LOC_PERM AL MPRED_SRC MPRED LOAD STORE WTFP.
   induction sfp as [esz eal | sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b2 ofs2 ph vs] using strong_footprint_ind;
-    intros tb tofs sb sofs mp1 mp2 MP m1_src m1 m2 bytes ty te SRC_LOC TGT_LOC_PERM AL MPRED_SRC MPRED LOAD STORE WTFP; inv SRC_LOC.
+    intros tb tofs sb sofs mp1 mp2 ownmp MP m1_src m1 m2 bytes ty te SRC_LOC OWN TGT_LOC_PERM AL MPRED_SRC MPRED LOAD STORE WTFP; inv SRC_LOC; inv OWN.
   - inv WTFP.
   - inv WTFP. simpl in AL.
+    rewrite EQV0 in MPRED.
+    rewrite <- (massert_eqv_STrue_l MP) in MPRED.
     assert (LEN_EQ: Z.of_nat (length bytes) = sizeof ce ty).
     { exploit Mem.loadbytes_length; eauto. intros LEN. rewrite LEN.
       apply Z2Nat.id. apply Z.ge_le. apply sizeof_pos. }
@@ -3584,6 +3560,8 @@ Proof.
     rewrite <- sep_assoc in MPRED_RANGE2.
     exact MPRED_RANGE2.
   - inv WTFP.
+    rewrite EQV0 in MPRED.
+    rewrite <- (massert_eqv_STrue_l MP) in MPRED.
     assert (LEN_EQ: Z.of_nat (length bytes) = sizeof ce ty).
     { exploit Mem.loadbytes_length; eauto. intros LEN. rewrite LEN.
       apply Z2Nat.id. apply Z.ge_le. apply sizeof_pos. }
@@ -3629,57 +3607,53 @@ Proof.
     assert (LEN_EQ: Z.of_nat (length bytes) = sizeof ce (Tbox ty0)).
     { exploit Mem.loadbytes_length; eauto. intros LEN. rewrite LEN.
       apply Z2Nat.id. apply Z.ge_le. apply sizeof_pos. }
-    assert (MPRED_HAS: m1_src |= hasvalue Mptr sb sofs (Vptr b1 Ptrofs.zero) ** box_pred ce fp1 b1 nextmp).
-    { rewrite EQV in MPRED_SRC. exact MPRED_SRC. }
+    change (Z.of_nat (length bytes) = size_chunk Mptr) in LEN_EQ.
     assert (MPRED_PTR: m1_src |= hasvalue Mptr sb sofs (Vptr b1 Ptrofs.zero)).
-    { eapply massert_imp_proj1. exact MPRED_HAS. }
-    assert (MPRED_BOX: m1_src |= box_pred ce fp1 b1 nextmp).
-    { eapply massert_imp_proj2. exact MPRED_HAS. }
+    { rewrite EQV in MPRED_SRC. eapply massert_imp_proj1. exact MPRED_SRC. }
     exploit load_rule. exact MPRED_PTR. intros (vload & LOAD1 & HVEQ).
-    exploit Mem.load_loadbytes; eauto. intros (bytes'' & LB'' & VEQBYTES).
-    rewrite (sizeof_by_value ce (Tbox ty0) Mptr (eq_refl)) in LB''.
-    rewrite LOAD in LB''. inv LB''.
+    exploit Mem.load_loadbytes; eauto. intros (bytes' & LB' & VEQBYTES).
+    rewrite (sizeof_by_value ce (Tbox ty0) Mptr eq_refl) in LB'.
+    rewrite LOAD in LB'. inv LB'.
     assert (ALIGN: (align_chunk Mptr | tofs)).
     { simpl in AL. exact AL. }
-    assert (MPRED_RANGE: m1 |= range tb tofs (tofs + size_chunk Mptr) ** MP).
-    { eapply sep_imp.
-      - exact MPRED.
-      - rewrite (sizeof_by_value ce (Tbox ty0) Mptr (eq_refl)). exact TGT_LOC_PERM.
-      - apply massert_imp_refl. }
-    assert (MPRED_RANGE2: m2 |= range tb tofs (tofs + size_chunk Mptr) ** MP).
+    assert (MPRED_RANGE:
+      m1 |= range tb tofs (tofs + size_chunk Mptr) **
+            box_pred ce fp1 b1 nextmp0 ** MP).
+    { rewrite EQV0 in MPRED.
+      eapply sep_imp; [exact MPRED | | apply massert_imp_refl].
+      rewrite (sizeof_by_value ce (Tbox ty0) Mptr eq_refl).
+      exact TGT_LOC_PERM. }
+    assert (MPRED_RANGE2:
+      m2 |= range tb tofs (tofs + size_chunk Mptr) **
+            box_pred ce fp1 b1 nextmp0 ** MP).
     { eapply sep_preserved. exact MPRED_RANGE.
-      - intros H1. eapply storebytes_range_unchanged; eauto.
-      - intros HMP. eapply (m_invar MP).
-        + exact HMP.
-        + eapply Mem.storebytes_unchanged_on; eauto.
-          intros i IN. intro HF.
-          destruct MPRED as (MP2PRED & MPPRED0 & DISJ).
-          destruct TGT_LOC_PERM as (_ & TGTRANGE_FP).
-          unfold range in TGTRANGE_FP.
-          apply (DISJ tb i).
-          * apply (TGTRANGE_FP tb i). simpl. split; auto.
-            unfold sizeof in LEN_EQ. rewrite <- LEN_EQ. exact IN.
-          * exact HF. }
-    assert (LOAD2: Mem.load Mptr m2 tb tofs = Some (decode_val Mptr bytes'')).
+      - intros HRANGE. eapply storebytes_range_unchanged; eauto.
+      - intros HFRAME.
+        eapply (m_invar (box_pred ce fp1 b1 nextmp0 ** MP)); [exact HFRAME|].
+        eapply Mem.storebytes_unchanged_on; eauto.
+        intros i IN HF.
+        destruct MPRED_RANGE as (_ & _ & DISJ).
+        apply (DISJ tb i).
+        + simpl. split; [reflexivity|].
+          rewrite <- LEN_EQ. exact IN.
+        + exact HF. }
+    assert (LOAD2: Mem.load Mptr m2 tb tofs = Some (decode_val Mptr bytes')).
     { eapply Mem.loadbytes_load.
-      - rewrite (sizeof_by_value ce (Tbox ty0) Mptr (eq_refl)). rewrite <- LEN_EQ.
-        eapply Mem.loadbytes_storebytes_same; eauto.
+      - rewrite <- LEN_EQ. eapply Mem.loadbytes_storebytes_same; eauto.
       - exact ALIGN. }
-    assert (VEQ: Vptr b1 Ptrofs.zero = decode_val Mptr bytes'').
+    assert (VEQ: Vptr b1 Ptrofs.zero = decode_val Mptr bytes').
     { exact VEQBYTES. }
-    assert (MPRED_BOX2: m2 |= box_pred ce fp1 b1 nextmp).
-    { admit. }
-    exists (hasvalue Mptr tb tofs (Vptr b1 Ptrofs.zero) ** box_pred ce fp1 b1 nextmp).
+    exists (hasvalue Mptr tb tofs (Vptr b1 Ptrofs.zero) **
+            box_pred ce fp1 b1 nextmp0).
     split.
-    eapply (sem_wt_box ce tb tofs fp1 b1 nextmp (hasvalue Mptr tb tofs (Vptr b1 Ptrofs.zero) ** box_pred ce fp1 b1 nextmp)).
-    admit.
-    admit.
-    (* exact WTLOC. *)
-    (* reflexivity. *)
-    admit.
+    + econstructor; [exact WTLOC0|reflexivity].
+    + rewrite sep_assoc.
+      eapply range_hasvalue; [exact MPRED_RANGE2|].
+      rewrite <- VEQ in LOAD2. exact LOAD2.
 
   - (* fp_struct *)
     inv WTFP.
+    rewrite EQV0 in MPRED.
     assert (SIZEEQ: sizeof ce (Tstruct orgs id) = sizeof_comp ce id).
     { unfold sizeof, sizeof_comp. rewrite CO. reflexivity. }
     rewrite SIZEEQ in LOAD. rewrite SIZEEQ in TGT_LOC_PERM.
@@ -3717,34 +3691,50 @@ Proof.
     { rewrite <- B_EQ. exact STORE. }
     intros (m1' & STORE_F & STORE_T).
     rewrite LEN_F in STORE_T.
-    assert (MPRED_RANGE0: m1 |= range tb tofs (tofs + sizeof_comp ce id) ** MP).
+    assert (MPRED_RANGE0: m1 |= range tb tofs (tofs + sizeof_comp ce id) ** mp0 ** MP).
     { eapply sep_imp; [exact MPRED | exact TGT_LOC_PERM | apply massert_imp_refl]. }
-    assert (MPRED_RANGE1: m1 |= range tb tofs (tofs + SSTR) ** range tb (tofs + SSTR) (tofs + sizeof_comp ce id) ** MP).
+    assert (MPRED_RANGE1: m1 |= range tb tofs (tofs + SSTR) ** range tb (tofs + SSTR) (tofs + sizeof_comp ce id) ** mp0 ** MP).
     { eapply range_split; [lia | exact MPRED_RANGE0]. }
-    assert (IMP_SP: massert_imp (range tb (tofs + SSTR) (tofs + sizeof_comp ce id) ** MP)
-                                (range tb (tofs + SSTR) (tofs + sizeof_comp ce id) ** spure (alignof_comp ce id | tofs) ** MP)).
+    assert (IMP_SP: massert_imp (range tb (tofs + SSTR) (tofs + sizeof_comp ce id) ** mp0 ** MP)
+                                (range tb (tofs + SSTR) (tofs + sizeof_comp ce id) ** mp0 ** spure (alignof_comp ce id | tofs) ** MP)).
     { eapply sepconj_morph_1; [apply massert_imp_refl |].
+      eapply sepconj_morph_1; [apply massert_imp_refl |].
       apply (proj1 (massert_eqv_prop_l MP (alignof_comp ce id | tofs) AL)). }
-    assert (MPRED_AL: m1 |= range tb tofs (tofs + SSTR) ** (range tb (tofs + SSTR) (tofs + sizeof_comp ce id) ** spure (alignof_comp ce id | tofs) ** MP)).
+    assert (MPRED_AL: m1 |= range tb tofs (tofs + SSTR) **
+                                 range tb (tofs + SSTR) (tofs + sizeof_comp ce id) **
+                                 mp0 ** spure (alignof_comp ce id | tofs) ** MP).
     { eapply sep_imp; [exact MPRED_RANGE1 | apply massert_imp_refl | exact IMP_SP]. }
+    assert (MPRED_FIELDS_IN: m1 |= range tb tofs (tofs + SSTR) ** mp0 **
+                                  (range tb (tofs + SSTR) (tofs + sizeof_comp ce id) **
+                                   spure (alignof_comp ce id | tofs) ** MP)).
+    { rewrite (sep_swap23 (range tb tofs (tofs + SSTR))
+                          (range tb (tofs + SSTR) (tofs + sizeof_comp ce id))
+                          mp0 (spure (alignof_comp ce id | tofs) ** MP)) in MPRED_AL.
+      exact MPRED_AL. }
     assert (IH_FIELDS: forall fid0 base0 fofs0 ffp0, In (fid0, ((base0, fofs0), ffp0)) fpl ->
-        forall tb0 tofs0 sb0 sofs0 mp10 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0,
+        forall tb0 tofs0 sb0 sofs0 mp10 ownmp0 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0,
         sem_wt_loc ce ffp0 sb0 sofs0 mp10 ->
+        sem_wt_fp ce ffp0 ownmp0 ->
         massert_imp mp20 (range tb0 tofs0 (tofs0 + sizeof_footprint ce ffp0)) ->
         (alignof_footprint ce ffp0 | tofs0) ->
         m1_src0 |= mp10 ->
-        m10 |= mp20 ** MP0 ->
+        m10 |= mp20 ** ownmp0 ** MP0 ->
         Mem.loadbytes m1_src0 sb0 sofs0 (sizeof_footprint ce ffp0) = Some bytes0 ->
         Mem.storebytes m10 tb0 tofs0 bytes0 = Some m20 ->
         wt_footprint ce te0 ty0 ffp0 ->
         exists mass3, sem_wt_loc ce ffp0 tb0 tofs0 mass3 /\ m20 |= mass3 ** MP0).
-    { intros fid0 base0 fofs0 ffp0 IN0 tb0 tofs0 sb0 sofs0 mp10 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0 WTLOC0 RANGE0 AL0 MPRED_SRC0 MPRED0 LOAD0 STORE0 WTFP0.
+    { intros fid0 base0 fofs0 ffp0 IN0 tb0 tofs0 sb0 sofs0 mp10 ownmp0 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0 WTLOC0 OWN0 RANGE0 AL0 MPRED_SRC0 MPRED0 LOAD0 STORE0 WTFP0.
       pose proof (wt_footprint_size_eq ce ty0 ffp0 te0 WTFP0) as SIZEEQ0.
       rewrite <- SIZEEQ0 in RANGE0. rewrite <- SIZEEQ0 in LOAD0.
-      eapply (IHfields fid0 base0 fofs0 ffp0 IN0 tb0 tofs0 sb0 sofs0 mp10 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0); eauto. }
+      eapply (IHfields fid0 base0 fofs0 ffp0 IN0 tb0 tofs0 sb0 sofs0
+                       mp10 mp20 ownmp0 MP0 m1_src0 m10 m20 bytes0 ty0 te0); eauto. }
     assert (FIELDS: exists mass3F, (fields_loc_sep tb tofs (sem_wt_loc ce) fpl mass3F /\
                 m1' |= mass3F ** (range tb (tofs + SSTR) (tofs + sizeof_comp ce id) ** spure (alignof_comp ce id | tofs) ** MP))).
-    { eapply (storebytes_fields_loc_sep ce fpl tb tofs sb sofs mass (range tb tofs (tofs + SSTR)) (range tb (tofs + SSTR) (tofs + sizeof_comp ce id) ** spure (alignof_comp ce id | tofs) ** MP) m1_src m1 m1' bytesF te SSTR); eauto. }
+    { eapply (storebytes_fields_loc_sep ce fpl tb tofs sb sofs mass mp0
+                 (range tb tofs (tofs + SSTR))
+                 (range tb (tofs + SSTR) (tofs + sizeof_comp ce id) **
+                  spure (alignof_comp ce id | tofs) ** MP)
+                 m1_src m1 m1' bytesF te SSTR); eauto. }
     destruct FIELDS as [mass3F [FSEP MPRED_FIELDS]].
     (* assert (FSEP_BOUNDED: forall b0 ofs0, m_footprint mass3F b0 ofs0 -> (b0 = tb /\ tofs <= ofs0 < tofs + SSTR) \/ b0 <> tb). *)
     assert (FSEP_BOUNDED: forall b0 ofs0, m_footprint mass3F b0 ofs0 -> ~ (b0 = tb /\ (tofs + SSTR) <= ofs0 <  (tofs + sizeof_comp ce id))).
@@ -3781,7 +3771,7 @@ Proof.
           * unfold spure in HFS. simpl in HFS. contradiction.
           * apply (DISJ tb i).
             -- apply (TGTRANGE_FP tb i). simpl. split; [reflexivity |]. rewrite LEN_T in IN. lia.
-            -- exact HFMP. }
+            -- simpl. right. exact HFMP. }
     exists (mass3F ** range tb (tofs + SSTR) (tofs + sizeof_comp ce id) ** spure (alignof_comp ce id | tofs)).
     split.
     + eapply (sem_wt_struct ce tb tofs fpl id mass3F (mass3F ** range tb (tofs + SSTR) (tofs + sizeof_comp ce id) ** spure (alignof_comp ce id | tofs)) (range tb (tofs + SSTR) (tofs + sizeof_comp ce id))).
@@ -3793,6 +3783,7 @@ Proof.
       exact MPRED_FIELDS_M2.
   - (* fp_enum *)
     inv WTFP.
+    rewrite EQV0 in MPRED.
     assert (SIZEEQ: sizeof ce (Tvariant orgs id) = sizeof_comp ce id).
     { unfold sizeof, sizeof_comp. rewrite CO. reflexivity. }
     rewrite SIZEEQ in LOAD. rewrite SIZEEQ in TGT_LOC_PERM.
@@ -3860,6 +3851,19 @@ Proof.
             - exact ALIGNV. }
           eapply Z.divide_add_r; [exact ALIGN_TOFS | exact ALIGN_FOFS].
         + constructor. }
+    assert (FOWN_ENUM: fields_fp_sep (sem_wt_fp ce) fpl_enum mp0).
+    { unfold fpl_enum, tag_fp.
+      apply (fields_val_sep_cons (sem_wt_fp ce) fid 0 0
+               (fp_scalar Mint32 (Vint (Int.repr tagz)))
+               [(fid, ((size_chunk Mint32, fofs), fp1))]
+               STrue mp0 mp0).
+      - apply (fields_val_sep_cons (sem_wt_fp ce) fid (size_chunk Mint32) fofs
+                 fp1 nil mp0 STrue mp0).
+        + econstructor. reflexivity.
+        + exact FFP.
+        + apply massert_eqv_pure_r.
+      - econstructor. reflexivity.
+      - apply massert_eqv_STrue_l. }
     (* source fields_loc_sep *)
     assert (MPRED_SRC_TAG: m1_src |= (hasvalue Mint32 sb sofs (Vint (Int.repr tagz)))).
     { rewrite EQV in MPRED_SRC.
@@ -3911,38 +3915,59 @@ Proof.
     { rewrite <- B_EQ. exact STORE. }
     intros (m1' & STORE_F & STORE_T).
     rewrite LEN_F in STORE_T.
-    assert (MPRED_RANGE0: m1 |= range tb tofs (tofs + sizeof_comp ce id) ** MP).
+    assert (MPRED_RANGE0: m1 |= range tb tofs (tofs + sizeof_comp ce id) ** mp0 ** MP).
     { eapply sep_imp; [exact MPRED | exact TGT_LOC_PERM | apply massert_imp_refl]. }
-    assert (MPRED_RANGE1: m1 |= range tb tofs (tofs + SZ) ** range tb (tofs + SZ) (tofs + sizeof_comp ce id) ** MP).
+    assert (MPRED_RANGE1: m1 |= range tb tofs (tofs + SZ) ** range tb (tofs + SZ) (tofs + sizeof_comp ce id) ** mp0 ** MP).
     { eapply range_split; [lia | exact MPRED_RANGE0]. }
-    assert (IMP_SP: massert_imp (range tb (tofs + SZ) (tofs + sizeof_comp ce id) ** MP)
-                                (range tb (tofs + SZ) (tofs + sizeof_comp ce id) ** spure (alignof_comp ce id | tofs) ** MP)).
+    assert (IMP_SP: massert_imp (range tb (tofs + SZ) (tofs + sizeof_comp ce id) ** mp0 ** MP)
+                                (range tb (tofs + SZ) (tofs + sizeof_comp ce id) ** mp0 ** spure (alignof_comp ce id | tofs) ** MP)).
     { eapply sepconj_morph_1; [apply massert_imp_refl |].
+      eapply sepconj_morph_1; [apply massert_imp_refl |].
       apply (proj1 (massert_eqv_prop_l MP (alignof_comp ce id | tofs) AL)). }
-    assert (MPRED_AL: m1 |= range tb tofs (tofs + SZ) ** (range tb (tofs + SZ) (tofs + sizeof_comp ce id) ** spure (alignof_comp ce id | tofs) ** MP)).
+    assert (MPRED_AL: m1 |= range tb tofs (tofs + SZ) **
+                                 range tb (tofs + SZ) (tofs + sizeof_comp ce id) **
+                                 mp0 ** spure (alignof_comp ce id | tofs) ** MP).
     { eapply sep_imp; [exact MPRED_RANGE1 | apply massert_imp_refl | exact IMP_SP]. }
+    assert (MPRED_FIELDS_IN: m1 |= range tb tofs (tofs + SZ) ** mp0 **
+                                  (range tb (tofs + SZ) (tofs + sizeof_comp ce id) **
+                                   spure (alignof_comp ce id | tofs) ** MP)).
+    { rewrite (sep_swap23 (range tb tofs (tofs + SZ))
+                          (range tb (tofs + SZ) (tofs + sizeof_comp ce id))
+                          mp0 (spure (alignof_comp ce id | tofs) ** MP)) in MPRED_AL.
+      exact MPRED_AL. }
     assert (IH_ENUM: forall fid0 base0 fofs0 ffp0, In (fid0, ((base0, fofs0), ffp0)) fpl_enum ->
-        forall tb0 tofs0 sb0 sofs0 mp10 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0,
+        forall tb0 tofs0 sb0 sofs0 mp10 ownmp0 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0,
         sem_wt_loc ce ffp0 sb0 sofs0 mp10 ->
+        sem_wt_fp ce ffp0 ownmp0 ->
         massert_imp mp20 (range tb0 tofs0 (tofs0 + sizeof_footprint ce ffp0)) ->
         (alignof_footprint ce ffp0 | tofs0) ->
         m1_src0 |= mp10 ->
-        m10 |= mp20 ** MP0 ->
+        m10 |= mp20 ** ownmp0 ** MP0 ->
         Mem.loadbytes m1_src0 sb0 sofs0 (sizeof_footprint ce ffp0) = Some bytes0 ->
         Mem.storebytes m10 tb0 tofs0 bytes0 = Some m20 ->
         wt_footprint ce te0 ty0 ffp0 ->
         exists mass3, sem_wt_loc ce ffp0 tb0 tofs0 mass3 /\ m20 |= mass3 ** MP0).
     { intros fid0 base0 fofs0 ffp0 IN0. simpl in IN0. destruct IN0 as [EQtag | [EQvariant | Hfalse]].
-      - inv EQtag. intros tb0 tofs0 sb0 sofs0 mp10 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0 WTLOC0 RANGE0 AL0 MPRED_SRC0 MPRED0 LOAD0 STORE0 WTFP0.
+      - inv EQtag. intros tb0 tofs0 sb0 sofs0 mp10 ownmp0 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0 WTLOC0 OWN0 RANGE0 AL0 MPRED_SRC0 MPRED0 LOAD0 STORE0 WTFP0.
+        inv OWN0. rewrite EQV1 in MPRED0.
+        rewrite <- (massert_eqv_STrue_l MP0) in MPRED0.
         eapply storebytes_scalar_sem_wt_loc; eauto.
-      - inv EQvariant. intros tb0 tofs0 sb0 sofs0 mp10 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0 WTLOC0 RANGE0 AL0 MPRED_SRC0 MPRED0 LOAD0 STORE0 WTFP0.
+      - inv EQvariant. intros tb0 tofs0 sb0 sofs0 mp10 ownmp0 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0 WTLOC0 OWN0 RANGE0 AL0 MPRED_SRC0 MPRED0 LOAD0 STORE0 WTFP0.
         pose proof (wt_footprint_size_eq ce ty0 ffp0 te0 WTFP0) as SIZEEQ0.
         rewrite <- SIZEEQ0 in RANGE0. rewrite <- SIZEEQ0 in LOAD0.
-        eapply (IHenum tb0 tofs0 sb0 sofs0 mp10 mp20 MP0 m1_src0 m10 m20 bytes0 ty0 te0); eauto.
+        eapply (IHenum tb0 tofs0 sb0 sofs0 mp10 mp20 ownmp0 MP0
+                       m1_src0 m10 m20 bytes0 ty0 te0); eauto.
       - destruct Hfalse. }
     assert (FIELDS: exists mass3F, (fields_loc_sep tb tofs (sem_wt_loc ce) fpl_enum mass3F /\
                 m1' |= mass3F ** (range tb (tofs + SZ) (tofs + sizeof_comp ce id) ** spure (alignof_comp ce id | tofs) ** MP))).
-    { eapply (storebytes_fields_loc_sep ce fpl_enum tb tofs sb sofs (range sb sofs sofs ** (hasvalue Mint32 sb sofs (Vint (Int.repr tagz))) ** (range sb (sofs + size_chunk Mint32) (sofs + fofs) ** mass2 ** STrue)) (range tb tofs (tofs + SZ)) (range tb (tofs + SZ) (tofs + sizeof_comp ce id) ** spure (alignof_comp ce id | tofs) ** MP) m1_src m1 m1' bytesF te SZ); eauto. }
+    { eapply (storebytes_fields_loc_sep ce fpl_enum tb tofs sb sofs
+                 (range sb sofs sofs **
+                  hasvalue Mint32 sb sofs (Vint (Int.repr tagz)) **
+                  (range sb (sofs + size_chunk Mint32) (sofs + fofs) ** mass2 ** STrue))
+                 mp0 (range tb tofs (tofs + SZ))
+                 (range tb (tofs + SZ) (tofs + sizeof_comp ce id) **
+                  spure (alignof_comp ce id | tofs) ** MP)
+                 m1_src m1 m1' bytesF te SZ); eauto. }
     destruct FIELDS as [mass3F [FSEP MPRED_FIELDS]].
     (* store the tail padding *)
     assert (WF_ENUM_ALIGNED: Forall (fp_field_in_range_aligned ce SZ (alignof_comp ce id) (fields_fp_well_formed ce)) fpl_enum).
@@ -3998,7 +4023,7 @@ Proof.
           * unfold spure in HFS. simpl in HFS. contradiction.
           * apply (DISJ tb i).
             -- apply (TGTRANGE_FP tb i). simpl. split; [reflexivity |]. rewrite LEN_T in IN. lia.
-            -- exact HFMP. }
+            -- simpl. right. exact HFMP. }
     (* invert the target fields_loc_sep *)
     unfold fpl_enum, tag_fp in FSEP.
     inv FSEP.
@@ -4019,7 +4044,7 @@ Proof.
           - apply sem_wt_scalar. reflexivity. }
         assert (EQV_nil: massert_eqv mass4 STrue).
         { inversion IND0; subst. assumption. }
-        rewrite EQV0, EQV1, EQV_tag, EQV_nil.
+        rewrite EQV1, EQV2, EQV_tag, EQV_nil.
         simpl. rewrite Z.add_0_r.
         setoid_rewrite (range_empty_sep_l (hasvalue Mint32 tb tofs (Vint (Int.repr tagz)) ** range tb (tofs + 4) (tofs + fofs) ** mass3 ** STrue) tb tofs (proj1 BOUNDS_T) (proj2 BOUNDS_T)).
         setoid_rewrite <- (massert_eqv_pure_r mass3).
@@ -4028,7 +4053,9 @@ Proof.
       rewrite <- (sep_assoc mass3F (range tb (tofs + SZ) (tofs + sizeof_comp ce id) ** spure (alignof_comp ce id | tofs)) MP) in MPRED_FIELDS_M2.
       exact MPRED_FIELDS_M2.
   - inv WTFP.
-    { assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
+    { rewrite EQV0 in MPRED.
+      rewrite <- (massert_eqv_STrue_l MP) in MPRED.
+      assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
       assert (LEN_EQ: Z.of_nat (length bytes) = sizeof ce (Treference org mut ty0)).
       { exploit Mem.loadbytes_length; eauto. intros LEN. rewrite LEN.
         apply Z2Nat.id. apply Z.ge_le. apply sizeof_pos. }
@@ -4072,7 +4099,9 @@ Proof.
       eapply range_hasvalue.
       exact MPRED_RANGE2.
       rewrite <- VEQ in LOAD2. exact LOAD2. }
-    { assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
+    { rewrite EQV0 in MPRED.
+      rewrite <- (massert_eqv_STrue_l MP) in MPRED.
+      assert (MODE: access_mode (Treference org mut ty0) = Ctypes.By_value Mptr) by reflexivity.
       assert (LEN_EQ: Z.of_nat (length bytes) = sizeof ce (Treference org mut ty0)).
       { exploit Mem.loadbytes_length; eauto. intros LEN. rewrite LEN.
         apply Z2Nat.id. apply Z.ge_le. apply sizeof_pos. }
@@ -4116,18 +4145,19 @@ Proof.
       eapply range_hasvalue.
       exact MPRED_RANGE2.
       rewrite <- VEQ in LOAD2. exact LOAD2. }
-Admitted.
+Qed.
 
 
 
-Lemma storebytes_sem_wt_loc ce: forall sfp tb tofs sb sofs mp1 mp2 MP m1_src m1 m2 bytes ty te
+Lemma storebytes_sem_wt_loc ce: forall sfp tb tofs sb sofs mp1 mp2 ownmp MP m1_src m1 m2 bytes ty te
     (CONS: composite_env_consistent ce)
     (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
     (SRC_LOC: sem_wt_loc ce sfp sb sofs mp1)
+    (OWN: sem_wt_fp ce sfp ownmp)
     (TGT_LOC_PERM: massert_imp mp2 (range tb tofs (tofs + sizeof ce ty)))
     (AL: (alignof ce ty | tofs))
     (MPRED_SRC: m1_src |= mp1)
-    (MPRED: m1 |= mp2 ** MP)
+    (MPRED: m1 |= mp2 ** ownmp ** MP)
     (LOAD: Mem.loadbytes m1_src sb sofs (sizeof ce ty) = Some bytes)
     (STORE: Mem.storebytes m1 tb tofs bytes = Some m2)
     (WTFP: wt_footprint ce te ty sfp),
@@ -4141,14 +4171,15 @@ Qed.
 
 
 
-Lemma storebytes_coherent_var: forall phl m1 ce mass1 mp1 sfp sb sofs fp1 tfp b1 ofs1 tb tofs MP ty te
+Lemma storebytes_coherent_var: forall phl m1 ce mass1 mp1 ownmp sfp sb sofs fp1 tfp b1 ofs1 tb tofs MP ty te
     (CONS: composite_env_consistent ce)
     (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
     (AL: (alignof ce ty | tofs))
     (SRC_LOC: sem_wt_loc ce sfp sb sofs mp1)
+    (OWN: sem_wt_fp ce sfp ownmp)
     (TGT_LOC: sem_wt_loc ce fp1 b1 ofs1 mass1)
-    (MPIMP: massert_imp (mass1 ** MP) mp1)
-    (MPRED: m1 |= mass1 ** MP)
+    (MPIMP: massert_imp (mass1 ** ownmp ** MP) mp1)
+    (MPRED: m1 |= mass1 ** ownmp ** MP)
     (GFP: get_owner_loc_footprint phl fp1 b1 ofs1 = OK (tb, tofs, tfp))
     (WTFP1: wt_footprint ce te ty sfp)
     (WTFP2: wt_footprint ce te ty tfp)
@@ -4182,6 +4213,13 @@ Proof.
   rewrite !sep_assoc in MPRED.
   rewrite !sep_assoc in MPIMP.
 
+  assert (EQ_MPRED: massert_eqv (rest ** tgt_mass ** ownmp ** MP)
+                                 (tgt_mass ** ownmp ** rest ** MP)).
+  { rewrite (sep_swap rest tgt_mass (ownmp ** MP)).
+    apply sep_swap23. }
+  rewrite EQ_MPRED in MPRED.
+  rewrite EQ_MPRED in MPIMP.
+
   assert (MPRED_SRC: m1 |= mp1).
   { eapply MPIMP. exact MPRED. }
 
@@ -4201,9 +4239,7 @@ Proof.
   { rewrite LEN. rewrite SIZEEQ1. apply Z2Nat.id. apply Z.ge_le. apply sizeof_pos. }
 
   assert (MPRED_TGT: m1 |= tgt_mass).
-  { apply (sep_proj1 MP tgt_mass m1).
-    apply (sep_proj2 rest (tgt_mass ** MP) m1).
-    exact MPRED. }
+  { eapply sep_proj1. exact MPRED. }
 
   assert (MPRED_RANGE_TGT: m1 |= range tb tofs (tofs + sizeof ce ty)).
   { eapply TGT_RANGE. exact MPRED_TGT. }
@@ -4217,15 +4253,11 @@ Proof.
     - exists m2. exact STORE0. }
   destruct STORE as (m2 & STORE).
 
-  assert (EQ_MPRED: massert_eqv (rest ** tgt_mass ** MP) (tgt_mass ** rest ** MP)).
-  { eapply sep_swap. }
-  rewrite EQ_MPRED in MPRED.
-  rewrite EQ_MPRED in MPIMP.
-
   assert (LOAD_TY: Mem.loadbytes m1 sb sofs (sizeof ce ty) = Some bytes).
   { rewrite <- SIZEEQ1. exact LOAD. }
 
-  exploit (storebytes_sem_wt_loc ce sfp tb tofs sb sofs mp1 tgt_mass (rest ** MP) m1 m1 m2 bytes ty te); eauto.
+  exploit (storebytes_sem_wt_loc ce sfp tb tofs sb sofs mp1 tgt_mass ownmp
+             (rest ** MP) m1 m1 m2 bytes ty te); eauto.
   intros (mass3 & B1 & B2).
 
   exploit (RE_SET sfp mass3); eauto. intros (mp' & fp2 & SET2 & C1 & C2).
@@ -4251,16 +4283,17 @@ Qed.
 (* The split lemma uses [fp_emp sz al] to retain the target layout while
    removing its location predicate.  In particular, a surrounding box keeps
    owning its allocation metadata. *)
-Lemma storebytes_coherent_fpm: forall phl m1 ce fpm mass1 mp1 sfp tfp sb sofs tb tofs id MP ty
+Lemma storebytes_coherent_fpm: forall phl m1 ce fpm mass1 mp1 ownmp sfp tfp sb sofs tb tofs id MP ty
     (CONS: composite_env_consistent ce)
     (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
     (AL: (alignof ce ty | tofs))
     (RANGE_SRC: 0 <= sofs /\ sofs + sizeof ce ty <= Ptrofs.max_unsigned)
     (RANGE_TGT: 0 <= tofs /\ tofs + sizeof ce ty <= Ptrofs.max_unsigned)
     (SRC_LOC: sem_wt_loc ce sfp sb sofs mp1)
+    (OWN: sem_wt_fp ce sfp ownmp)
     (COH: coherent_fpm ce fpm mass1)
-    (MPIMP: massert_imp (mass1 ** MP) mp1)
-    (MPRED: m1 |= mass1 ** MP)
+    (MPIMP: massert_imp (mass1 ** ownmp ** MP) mp1)
+    (MPRED: m1 |= mass1 ** ownmp ** MP)
     (GFP: get_owner_loc_footprint_map (id, phl) fpm = OK (tb, tofs, tfp))
     (WTFP1: wt_footprint ce (fpm_to_tenv fpm) ty sfp)
     (WTFP2: wt_footprint ce (fpm_to_tenv fpm) ty tfp),
@@ -4283,15 +4316,18 @@ Proof.
   assert (EQV_MASS1: massert_eqv mass1 (mp_l ** mhead ** mtail)).
   { etransitivity; [exact EQV_L_REST |].
     apply sepconj_morph_2; [reflexivity |]. symmetry. exact EQV_MID. }
-  assert (EQV_FRAME: massert_eqv ((mp_l ** mhead ** mtail) ** MP) (mhead ** (mp_l ** mtail ** MP))).
-  { rewrite (sep_assoc mp_l (mhead ** mtail) MP).
-    rewrite (sep_assoc mhead mtail MP).
-    apply sep_swap. }
-  assert (MPIMP_VAR: massert_imp (mhead ** (mp_l ** mtail ** MP)) mp1).
+  assert (EQV_FRAME: massert_eqv ((mp_l ** mhead ** mtail) ** ownmp ** MP)
+                                  (mhead ** ownmp ** mp_l ** mtail ** MP)).
+  { rewrite !sep_assoc.
+    rewrite (sep_swap4 mp_l mhead mtail ownmp MP).
+    rewrite (sep_swap ownmp mhead (mtail ** mp_l ** MP)).
+    apply sep_swap34. }
+  assert (MPIMP_VAR: massert_imp (mhead ** ownmp ** (mp_l ** mtail ** MP)) mp1).
   { rewrite EQV_MASS1 in MPIMP. rewrite EQV_FRAME in MPIMP. exact MPIMP. }
-  assert (MPRED_VAR: m1 |= mhead ** (mp_l ** mtail ** MP)).
+  assert (MPRED_VAR: m1 |= mhead ** ownmp ** (mp_l ** mtail ** MP)).
   { rewrite EQV_MASS1 in MPRED. rewrite EQV_FRAME in MPRED. exact MPRED. }
-  exploit (storebytes_coherent_var phl m1 ce mhead mp1 sfp sb sofs fp tfp b ofs tb tofs (mp_l ** mtail ** MP) ty (fpm_to_tenv fpm)); eauto.
+  exploit (storebytes_coherent_var phl m1 ce mhead mp1 ownmp sfp sb sofs fp tfp
+             b ofs tb tofs (mp_l ** mtail ** MP) ty (fpm_to_tenv fpm)); eauto.
   intros (bytes & m2 & fp2 & mass3 & LOAD & STORE & SET_FOOT & WTLOC_FP2 & MPRED_M2).
   remember (PTree.set id0 (b, ofs, ty0, fp2) fpm) as fpm1 eqn:FPM1.
   assert (SET_MAP: set_footprint_map (id0, phl) sfp fpm = OK fpm1).
@@ -4338,33 +4374,1002 @@ Qed.
 
 (* ** General and historical lemmas *)
 
-(* Lemma assign_loc_coherent_fpm: forall phl m ce fpm mass1 mass2 v vfp pfp chunk b ofs id MP ty *)
-(*     (COH: coherent_fpm ce fpm mass1) *)
-(*     (* (WTVAL: sem_wt_val ce vfp v mass2) *) *)
-(*     (** This premises should be provided by the properties of *)
-(*     eval_expr *) *)
-(*     (MODE: match access_mode ty with *)
-(*            | Ctypes.By_value chunk =>  *)
-(*            | Ctypes.By_copy => *)
-(*                (* ensure by type checking *) *)
-               
-(*     (MPRED: m |= mass1 ** mass2 ** MP) *)
-(*     (* id may denote an external owner? We reduce all store for *)
-(*     reference into store for their referred owner *) *)
-(*     (GFP: get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, pfp)) *)
-(*     (* The following properties should be derived from wt_footprint *) *)
-(*     (AL: (alignof ce ty | ofs)) *)
-(*     (* (MAT1: fp_match_chunk pfp chunk) *) *)
-(*     (* (MAT2: fp_match_chunk vfp chunk),     *) *)
-(*     (WTFP1: wt_footprint ce (fpm_to_tenv fpm) ty pfp) *)
-(*     (WTFP2: wt_footprint ce (fpm_to_tenv fpm) ty vfp) *)
-(*     (* (BYVAL: access_mode ty = Ctypes.By_value chunk) *) *)
-(*     (SHALLOW: shallow_init pfp = true) *)
-(*     (FPWF: fields_fp_well_formed ce pfp) *)
-(*     (RANGE: 0 <= ofs /\ ofs + sizeof ce ty <= Ptrofs.max_unsigned), *)
-(*     exists m1 fpm1 mass3, *)
-(*       assign_loc ce ty m b (Ptrofs.repr ofs) v m1 *)
-(*       /\ set_footprint_map (id, phl) vfp fpm = OK fpm1 *)
-(*       /\ coherent_fpm ce fpm1 mass3 *)
-(*       /\ m1 |= mass3 ** MP. *)
-(* Proof. *)
+Definition loc_disjoint_or_equal (b1 b2: block) (sz1 sz2: Z) (ofs1 ofs2: Z) : Prop :=
+  b1 <> b2 \/ ofs1 = ofs2 \/ ofs2 + sz2 <= ofs1 \/ ofs1 + sz1 <= ofs2.
+
+Inductive owner_projections_disjoint :
+    list projection -> list projection -> Prop :=
+| owner_projections_disjoint_here: forall pj1 pj2 phl1 phl2,
+    pj1 <> pj2 ->
+    owner_projections_disjoint (pj1 :: phl1) (pj2 :: phl2)
+| owner_projections_disjoint_cons: forall pj phl1 phl2,
+    owner_projections_disjoint phl1 phl2 ->
+    owner_projections_disjoint (pj :: phl1) (pj :: phl2).
+
+Lemma owner_projections_four_cases: forall phl1 phl2,
+    phl1 = phl2
+    \/ (exists suffix, suffix <> nil /\ phl2 = phl1 ++ suffix)
+    \/ (exists suffix, suffix <> nil /\ phl1 = phl2 ++ suffix)
+    \/ owner_projections_disjoint phl1 phl2.
+Proof.
+  induction phl1 as [|pj1 phl1 IH]; intros [|pj2 phl2].
+  - left. reflexivity.
+  - right. left. exists (pj2 :: phl2). split; [congruence | reflexivity].
+  - right. right. left. exists (pj1 :: phl1). split; [congruence | reflexivity].
+  - destruct (projection_eq pj1 pj2) as [SAME | DIFF].
+    + subst pj2. destruct (IH phl2) as [SAME | [PREFIX | [PREFIX | DISJ]]].
+      * left. congruence.
+      * right. left. destruct PREFIX as (suffix & NONEMPTY & APP).
+        exists suffix. split; [exact NONEMPTY | simpl; congruence].
+      * right. right. left. destruct PREFIX as (suffix & NONEMPTY & APP).
+        exists suffix. split; [exact NONEMPTY | simpl; congruence].
+      * right. right. right. apply owner_projections_disjoint_cons. exact DISJ.
+    + right. right. right. apply owner_projections_disjoint_here. exact DIFF.
+Qed.
+
+Lemma loc_disjoint_or_equal_sym: forall b1 b2 sz1 sz2 ofs1 ofs2,
+    loc_disjoint_or_equal b1 b2 sz1 sz2 ofs1 ofs2 ->
+    loc_disjoint_or_equal b2 b1 sz2 sz1 ofs2 ofs1.
+Proof.
+  unfold loc_disjoint_or_equal. intros.
+  destruct H as [NEQ | [EQ | [LEFT | RIGHT]]].
+  - left. congruence.
+  - right. left. symmetry. exact EQ.
+  - right. right. right. exact LEFT.
+  - right. right. left. exact RIGHT.
+Qed.
+
+Lemma fields_loc_sep_range_footprint ce:
+    forall fpl b ofs mass,
+    fields_loc_sep b ofs (sem_wt_loc ce) fpl mass ->
+    (forall fid base fofs ffp,
+       In (fid, ((base, fofs), ffp)) fpl ->
+       forall fieldmass,
+       sem_wt_loc ce ffp b (ofs + fofs) fieldmass ->
+       forall i, ofs + fofs <= i <
+                 ofs + fofs + sizeof_footprint ce ffp ->
+         m_footprint fieldmass b i) ->
+    forall fid base fofs ffp,
+    In (fid, ((base, fofs), ffp)) fpl ->
+    forall i, ofs + base <= i <
+              ofs + fofs + sizeof_footprint ce ffp ->
+      m_footprint mass b i.
+Proof.
+  intros fpl b ofs mass FSEP.
+  induction FSEP as
+      [empty EMPTY
+      |fid0 base0 fofs0 ffp0 tail head tailmass pad whole
+         TAIL IH HEAD PAD WHOLE].
+  - intros COVER fid base fofs ffp IN. contradiction.
+  - intros COVER fid base fofs ffp IN i RANGEI.
+    destruct IN as [SAME | INTAIL].
+    + inv SAME. destruct WHOLE as [[_ WHOLEFP] _].
+      apply (WHOLEFP b i). simpl.
+      destruct (Z_lt_ge_dec i (ofs + fofs)) as [INPAD | INFIELD].
+      * left. simpl. split; [reflexivity | lia].
+      * right. left.
+        eapply (COVER fid base fofs ffp (or_introl eq_refl) head HEAD i).
+        lia.
+    + destruct WHOLE as [[_ WHOLEFP] _]. apply (WHOLEFP b i). simpl.
+      right. right.
+      eapply IH.
+      * intros fid1 base1 fofs1 ffp1 IN1.
+        eapply COVER. right. exact IN1.
+      * exact INTAIL.
+      * exact RANGEI.
+Qed.
+
+Lemma fields_loc_sep_two_fields ce:
+    forall fpl b ofs mass fid1 base1 fofs1 fp1 fid2 base2 fofs2 fp2,
+    fields_loc_sep b ofs (sem_wt_loc ce) fpl mass ->
+    In (fid1, ((base1, fofs1), fp1)) fpl ->
+    In (fid2, ((base2, fofs2), fp2)) fpl ->
+    fid1 <> fid2 ->
+    exists mass1 mass2 frame,
+      sem_wt_loc ce fp1 b (ofs + fofs1) mass1
+      /\ sem_wt_loc ce fp2 b (ofs + fofs2) mass2
+      /\ massert_eqv mass (mass1 ** mass2 ** frame).
+Proof.
+  intros fpl b ofs mass fid1 base1 fofs1 fp1 fid2 base2 fofs2 fp2
+    FSEP IN1 IN2 DIFF.
+  induction FSEP as
+      [empty EMPTY
+      |fid base fofs fp tail head tailmass pad whole
+         TAIL IH HEAD PAD WHOLE].
+  - contradiction.
+  - destruct IN1 as [SAME1 | IN1]; destruct IN2 as [SAME2 | IN2].
+    + inv SAME1. inv SAME2. contradiction.
+    + inv SAME1.
+      destruct (fields_loc_sep_split b ofs base2 fofs2 fid2 fp2 tail
+          tailmass (sem_wt_loc ce) TAIL IN2)
+        as (prefix & mass2 & suffix & FIELD2 & SPLIT2).
+      exists head, mass2, (prefix **
+        range b (ofs + base1) (ofs + fofs1) ** suffix).
+      split; [exact HEAD |]. split; [exact FIELD2 |].
+      etransitivity; [exact WHOLE |]. rewrite SPLIT2.
+      rewrite (sep_swap (range b (ofs + base1) (ofs + fofs1))
+        head (prefix ** mass2 ** suffix)).
+      rewrite (sep_swap3 (range b (ofs + base1) (ofs + fofs1))
+        prefix mass2 suffix). reflexivity.
+    + inv SAME2.
+      destruct (fields_loc_sep_split b ofs base1 fofs1 fid1 fp1 tail
+          tailmass (sem_wt_loc ce) TAIL IN1)
+        as (prefix & mass1 & suffix & FIELD1 & SPLIT1).
+      exists mass1, head, (prefix **
+        range b (ofs + base2) (ofs + fofs2) ** suffix).
+      split; [exact FIELD1 |]. split; [exact HEAD |].
+      etransitivity; [exact WHOLE |]. rewrite SPLIT1.
+      rewrite (sep_swap4 (range b (ofs + base2) (ofs + fofs2))
+        head prefix mass1 suffix). reflexivity.
+    + destruct (IH IN1 IN2) as
+          (mass1 & mass2 & frame & FIELD1 & FIELD2 & SPLIT).
+      subst pad.
+      exists mass1, mass2,
+        (range b (ofs + base) (ofs + fofs) ** head ** frame).
+      split; [exact FIELD1 |]. split; [exact FIELD2 |].
+      etransitivity; [exact WHOLE |]. rewrite SPLIT.
+      rewrite (sep_swap3 (range b (ofs + base) (ofs + fofs)) head
+        mass1 (mass2 ** frame)).
+      rewrite (sep_swap3 head (range b (ofs + base) (ofs + fofs))
+        mass2 frame). reflexivity.
+Qed.
+
+Lemma sem_wt_loc_range_footprint ce: forall fp mass b ofs ty te,
+    composite_env_consistent ce ->
+    (forall id co, ce ! id = Some co ->
+       list_norepet (name_members (co_members co))) ->
+    wt_footprint ce te ty fp ->
+    sem_wt_loc ce fp b ofs mass ->
+    forall i, ofs <= i < ofs + sizeof_footprint ce fp ->
+      m_footprint mass b i.
+Proof.
+  intros fp mass b ofs ty te CONS NOREP WTFP WTLOC.
+  revert mass b ofs ty WTFP WTLOC.
+  induction fp as [esz eal | sz al | chunk v | hb inner IHbox
+      | id fpl IHfields | id tagz fid fofs inner IHenum
+      | mut rb rofs ph vs] using strong_footprint_ind;
+    intros mass b ofs ty WTFP WTLOC i RANGEI; inv WTLOC.
+  - inv WTFP.
+  - inv WTFP. destruct EQV as [[_ FP] _]. apply (FP b i).
+    simpl. left. simpl. split; [reflexivity | exact RANGEI].
+  - inv WTFP. destruct EQV as [[_ FP] _]. apply (FP b i).
+    unfold hasvalue, contains. simpl. split; [reflexivity |].
+    exact RANGEI.
+  - inv WTFP. destruct EQV as [[_ FP] _]. apply (FP b i).
+    simpl. left. unfold hasvalue, contains. simpl.
+    split; [reflexivity | exact RANGEI].
+  - assert (FPWF: fields_fp_well_formed ce (fp_struct id fpl)).
+    { eapply wt_footprint_fields_well_formed; eauto. }
+    inv WTFP. inv FPWF.
+    destruct EQV as [[_ FP] _]. apply (FP b i). simpl.
+    assert (REL: 0 <= i - ofs < sizeof_comp ce id) by (simpl in RANGEI; lia).
+    destruct (COMPLETE (i - ofs) REL) as [FIELD | TRAIL].
+    + destruct FIELD as (fid0 & base0 & fofs0 & ffp0 & IN0 & INRANGE).
+      left.
+      eapply (fields_loc_sep_range_footprint ce fpl b ofs mass0 FWT).
+      * intros fid1 base1 fofs1 ffp1 IN1 fieldmass FIELDLOC j JRANGE.
+        destruct (fp_match_field_In_wt ce co (wt_footprint ce te) fpl
+          (co_members co) fid1 base1 fofs1 ffp1 MATCH IN1)
+          as (fty & FIELDWT).
+        eapply (IHfields fid1 base1 fofs1 ffp1 IN1 fieldmass b
+          (ofs + fofs1) fty FIELDWT FIELDLOC j). lia.
+      * exact IN0.
+      * lia.
+    + right. left. simpl. split; [reflexivity |]. lia.
+  - assert (FPWF: fields_fp_well_formed ce
+        (fp_enum id tagz fid fofs inner)).
+    { eapply wt_footprint_fields_well_formed; eauto. }
+    inv WTFP. inv FPWF. inv FWF.
+    destruct EQV as [[_ FP] _]. apply (FP b i). simpl.
+    pose proof (wt_footprint_size_eq ce fty inner te WT) as INNERSIZE.
+    change (size_chunk Mint32) with 4 in *.
+    destruct (Z_lt_ge_dec i (ofs + 4)) as [INTAG | AFTERTAG].
+    + left. unfold hasvalue, contains. simpl.
+      split; [reflexivity | lia].
+    + right. destruct (Z_lt_ge_dec i (ofs + fofs)) as [INPAD | AFTERPAD].
+      * left. simpl. split; [reflexivity | lia].
+      * right. destruct (Z_lt_ge_dec i
+          (ofs + fofs + sizeof_footprint ce inner))
+          as [INFIELD | AFTERFIELD].
+        -- left. eapply (IHenum mass2 b (ofs + fofs) fty WT FWT i). lia.
+        -- right. left. simpl. split; [reflexivity |].
+           simpl in RANGEI. lia.
+  - inv WTFP.
+    all: destruct EQV as [[_ FP] _]; apply (FP b i);
+      unfold hasvalue, contains; simpl; split;
+      [reflexivity | exact RANGEI].
+Qed.
+
+Lemma separated_sem_wt_locs_disjoint_or_equal ce:
+    forall fp1 fp2 mass1 mass2 frame b1 b2 ofs1 ofs2 ty1 ty2 te m,
+    composite_env_consistent ce ->
+    (forall id co, ce ! id = Some co ->
+       list_norepet (name_members (co_members co))) ->
+    wt_footprint ce te ty1 fp1 ->
+    wt_footprint ce te ty2 fp2 ->
+    sem_wt_loc ce fp1 b1 ofs1 mass1 ->
+    sem_wt_loc ce fp2 b2 ofs2 mass2 ->
+    sizeof_footprint ce fp1 = sizeof_footprint ce fp2 ->
+    m |= mass1 ** mass2 ** frame ->
+    loc_disjoint_or_equal b1 b2
+      (sizeof_footprint ce fp1) (sizeof_footprint ce fp2) ofs1 ofs2.
+Proof.
+  intros fp1 fp2 mass1 mass2 frame b1 b2 ofs1 ofs2 ty1 ty2 te m
+    CONS NOREP WTFP1 WTFP2 WTLOC1 WTLOC2 SIZEEQ SEP.
+  unfold loc_disjoint_or_equal.
+  destruct (peq b1 b2) as [SAMEB | DIFFB]; [subst b2 | auto].
+  right. destruct (zeq ofs1 ofs2) as [SAMEOFS | DIFFOFS]; [auto |].
+  right.
+  destruct (Z_le_dec (ofs2 + sizeof_footprint ce fp2) ofs1)
+    as [LEFT | NOTLEFT]; [auto |].
+  right.
+  destruct (Z_le_dec (ofs1 + sizeof_footprint ce fp1) ofs2)
+    as [RIGHT | NOTRIGHT]; [exact RIGHT |].
+  exfalso.
+  pose proof (wt_footprint_size_eq ce ty1 fp1 te WTFP1) as SIZE1.
+  pose proof (wt_footprint_size_eq ce ty2 fp2 te WTFP2) as SIZE2.
+  pose proof (sizeof_pos ce ty1) as POS1.
+  pose proof (sizeof_pos ce ty2) as POS2.
+  destruct SEP as [_ [_ DISJ]].
+  apply (DISJ b1 (Z.max ofs1 ofs2)).
+  - eapply (sem_wt_loc_range_footprint ce fp1 mass1 b1 ofs1 ty1 te
+      CONS NOREP WTFP1 WTLOC1). lia.
+  - simpl. left.
+    eapply (sem_wt_loc_range_footprint ce fp2 mass2 b1 ofs2 ty2 te
+      CONS NOREP WTFP2 WTLOC2). lia.
+Qed.
+
+Lemma Forall_sep_one {A: Type}: forall (P: A -> massert -> Prop) l mass x,
+    Forall_sep P l mass ->
+    In x l ->
+    exists mx frame,
+      P x mx /\ massert_eqv mass (mx ** frame).
+Proof.
+  intros P l mass x SEP IN.
+  induction SEP as
+      [empty EMPTY | y tail head tailmass whole HEAD TAIL IH WHOLE].
+  - contradiction.
+  - destruct IN as [SAME | INTAIL].
+    + subst y. exists head, tailmass. split; [exact HEAD |].
+      symmetry. exact WHOLE.
+    + destruct (IH INTAIL) as (mx & frame & XMASS & TAILSPLIT).
+      exists mx, (head ** frame). split; [exact XMASS |].
+      etransitivity; [symmetry; exact WHOLE |].
+      rewrite TAILSPLIT. apply sep_swap.
+Qed.
+
+Lemma Forall_sep_two {A: Type}:
+    forall (P: A -> massert -> Prop) l mass x y,
+    Forall_sep P l mass ->
+    In x l -> In y l -> x <> y ->
+    exists mx my frame,
+      P x mx /\ P y my /\
+      massert_eqv mass (mx ** my ** frame).
+Proof.
+  intros P l mass x y SEP INX INY DIFF.
+  induction SEP as
+      [empty EMPTY | z tail head tailmass whole HEAD TAIL IH WHOLE].
+  - contradiction.
+  - destruct INX as [XZ | INX]; destruct INY as [YZ | INY].
+    + subst. contradiction.
+    + subst z. destruct (Forall_sep_one P tail tailmass y TAIL INY)
+        as (my & frame & YMASS & TAILSPLIT).
+      exists head, my, frame. split; [exact HEAD |]. split; [exact YMASS |].
+      etransitivity; [symmetry; exact WHOLE |]. rewrite TAILSPLIT. reflexivity.
+    + subst z. destruct (Forall_sep_one P tail tailmass x TAIL INX)
+        as (mx & frame & XMASS & TAILSPLIT).
+      exists mx, head, frame. split; [exact XMASS |]. split; [exact HEAD |].
+      etransitivity; [symmetry; exact WHOLE |].
+      rewrite TAILSPLIT. apply sep_swap.
+    + destruct (IH INX INY) as
+          (mx & my & frame & XMASS & YMASS & TAILSPLIT).
+      exists mx, my, (head ** frame).
+      split; [exact XMASS |]. split; [exact YMASS |].
+      etransitivity; [symmetry; exact WHOLE |]. rewrite TAILSPLIT.
+      rewrite (sep_swap head mx (my ** frame)).
+      rewrite (sep_swap head my frame). reflexivity.
+Qed.
+
+Lemma coherent_fpm_two_vars ce:
+    forall id1 id2 fpm MP b1 b2 ofs1 ofs2 ty1 ty2 root1 root2,
+    id1 <> id2 ->
+    fpm ! id1 = Some (b1, ofs1, ty1, root1) ->
+    fpm ! id2 = Some (b2, ofs2, ty2, root2) ->
+    coherent_fpm ce fpm MP ->
+    exists mass1 mass2 frame,
+      sem_wt_loc ce root1 b1 ofs1 mass1
+      /\ sem_wt_loc ce root2 b2 ofs2 mass2
+      /\ massert_eqv MP (mass1 ** mass2 ** frame).
+Proof.
+  intros id1 id2 fpm MP b1 b2 ofs1 ofs2 ty1 ty2 root1 root2
+    DIFF BIND1 BIND2 COH.
+  inv COH.
+  assert (IN1: In (id1, (b1, ofs1, ty1, root1)) (PTree.elements fpm)).
+  { apply PTree.elements_correct. exact BIND1. }
+  assert (IN2: In (id2, (b2, ofs2, ty2, root2)) (PTree.elements fpm)).
+  { apply PTree.elements_correct. exact BIND2. }
+  destruct (Forall_sep_two (coherent_var ce) (PTree.elements fpm) MP
+      (id1, (b1, ofs1, ty1, root1))
+      (id2, (b2, ofs2, ty2, root2)) ALLSEP IN1 IN2)
+    as (mass1 & mass2 & frame & VAR1 & VAR2 & SPLIT).
+  { congruence. }
+  inv VAR1. inv VAR2. inv ELTEQ. inv ELTEQ0.
+  exists mass1, mass2, frame. auto.
+Qed.
+
+Lemma different_owner_lookups_separated ce:
+    forall phl1 phl2 id1 id2 b1 b2 ofs1 ofs2 fpm fp1 fp2 m MP,
+    id1 <> id2 ->
+    get_owner_loc_footprint_map (id1, phl1) fpm = OK (b1, ofs1, fp1) ->
+    get_owner_loc_footprint_map (id2, phl2) fpm = OK (b2, ofs2, fp2) ->
+    coherent_fpm ce fpm MP ->
+    m |= MP ->
+    exists mass1 mass2 frame,
+      sem_wt_loc ce fp1 b1 ofs1 mass1
+      /\ sem_wt_loc ce fp2 b2 ofs2 mass2
+      /\ m |= mass1 ** mass2 ** frame.
+Proof.
+  intros phl1 phl2 id1 id2 b1 b2 ofs1 ofs2 fpm fp1 fp2 m MP
+    DIFF G1 G2 COH MPRED.
+  unfold get_owner_loc_footprint_map in G1, G2. simpl in G1, G2.
+  destruct (fpm ! id1) as [entry1 |] eqn:BIND1; try congruence.
+  destruct entry1 as [[[rb1 rofs1] rty1] root1].
+  destruct (fpm ! id2) as [entry2 |] eqn:BIND2; try congruence.
+  destruct entry2 as [[[rb2 rofs2] rty2] root2].
+  destruct (coherent_fpm_two_vars ce id1 id2 fpm MP rb1 rb2 rofs1 rofs2
+      rty1 rty2 root1 root2 DIFF BIND1 BIND2 COH)
+    as (rootmass1 & rootmass2 & rootframe & ROOTLOC1 & ROOTLOC2 & ROOTSEP).
+  destruct (get_owner_loc_footprint_sem_wt_split ce phl1 rb1 rofs1 b1
+      ofs1 root1 fp1 rootmass1 G1 ROOTLOC1)
+    as (rest1 & target1 & root1' & SET1 & RESTLOC1 & TARGETLOC1 &
+        SPLIT1 & PLUG1).
+  destruct (get_owner_loc_footprint_sem_wt_split ce phl2 rb2 rofs2 b2
+      ofs2 root2 fp2 rootmass2 G2 ROOTLOC2)
+    as (rest2 & target2 & root2' & SET2 & RESTLOC2 & TARGETLOC2 &
+        SPLIT2 & PLUG2).
+  rewrite ROOTSEP, SPLIT1, SPLIT2 in MPRED.
+  repeat rewrite sep_assoc in MPRED.
+  rewrite (sep_swap rest1 target1 (rest2 ** target2 ** rootframe)) in MPRED.
+  rewrite (sep_swap3 rest1 rest2 target2 rootframe) in MPRED.
+  exists target1, target2, (rest2 ** rest1 ** rootframe).
+  auto.
+Qed.
+
+Lemma get_owner_loc_footprint_sem_wt_extract ce:
+    forall phl root rb rofs b ofs fp rootmass,
+    get_owner_loc_footprint phl root rb rofs = OK (b, ofs, fp) ->
+    sem_wt_loc ce root rb rofs rootmass ->
+    exists targetmass frame,
+      sem_wt_loc ce fp b ofs targetmass
+      /\ massert_eqv rootmass (targetmass ** frame).
+Proof.
+  intros phl root rb rofs b ofs fp rootmass GET ROOTLOC.
+  destruct (get_owner_loc_footprint_sem_wt_split ce phl rb rofs b ofs
+      root fp rootmass GET ROOTLOC)
+    as (frame & targetmass & root' & SET & RESTLOC & TARGETLOC &
+        SPLIT & PLUG).
+  exists targetmass, frame. split; [exact TARGETLOC |].
+  etransitivity; [exact SPLIT |]. apply sep_comm.
+Qed.
+
+Lemma get_owner_loc_footprint_diverging_here ce:
+    forall pj1 pj2 phl1 phl2 root rb rofs b1 b2 ofs1 ofs2 fp1 fp2 rootmass,
+    pj1 <> pj2 ->
+    get_owner_loc_footprint (pj1 :: phl1) root rb rofs =
+      OK (b1, ofs1, fp1) ->
+    get_owner_loc_footprint (pj2 :: phl2) root rb rofs =
+      OK (b2, ofs2, fp2) ->
+    sem_wt_loc ce root rb rofs rootmass ->
+    exists mass1 mass2 frame,
+      sem_wt_loc ce fp1 b1 ofs1 mass1
+      /\ sem_wt_loc ce fp2 b2 ofs2 mass2
+      /\ massert_eqv rootmass (mass1 ** mass2 ** frame).
+Proof.
+  intros pj1 pj2 phl1 phl2 root rb rofs b1 b2 ofs1 ofs2 fp1 fp2
+    rootmass DIFF G1 G2 ROOTLOC.
+  simpl in G1, G2.
+  destruct pj1; destruct pj2; destruct root; try congruence.
+  - destruct (find_field fid fpl) as [[[base1 fofs1] field1] |]
+      eqn:FIND1; try congruence.
+    destruct (find_field fid0 fpl) as [[[base2 fofs2] field2] |]
+      eqn:FIND2; try congruence.
+    inv ROOTLOC.
+    pose proof (find_field_some _ _ _ _ FIND1) as IN1.
+    pose proof (find_field_some _ _ _ _ FIND2) as IN2.
+    assert (FIDIFF: fid <> fid0) by congruence.
+    destruct (fields_loc_sep_two_fields ce fpl rb rofs mass fid base1
+        fofs1 field1 fid0 base2 fofs2 field2 FWT IN1 IN2 FIDIFF)
+      as (fieldmass1 & fieldmass2 & fieldframe & FIELDLOC1 & FIELDLOC2 &
+          FIELDSPLIT).
+    destruct (get_owner_loc_footprint_sem_wt_extract ce phl1 field1 rb
+        (rofs + fofs1) b1 ofs1 fp1 fieldmass1 G1 FIELDLOC1)
+      as (mass1 & rest1 & TARGETLOC1 & SPLIT1).
+    destruct (get_owner_loc_footprint_sem_wt_extract ce phl2 field2 rb
+        (rofs + fofs2) b2 ofs2 fp2 fieldmass2 G2 FIELDLOC2)
+      as (mass2 & rest2 & TARGETLOC2 & SPLIT2).
+    exists mass1, mass2, (rest1 ** rest2 ** fieldframe **
+      range rb (rofs + sizeof_struct_comp ce id)
+        (rofs + sizeof_comp ce id) **
+      spure (alignof_comp ce id | rofs)).
+    split; [exact TARGETLOC1 |]. split; [exact TARGETLOC2 |].
+    etransitivity; [exact EQV |]. rewrite FIELDSPLIT, SPLIT1, SPLIT2.
+    repeat rewrite sep_assoc.
+    rewrite (sep_swap rest1 mass2 (rest2 ** fieldframe **
+      range rb (rofs + sizeof_struct_comp ce id)
+        (rofs + sizeof_comp ce id) **
+      spure (alignof_comp ce id | rofs))). reflexivity.
+  - destruct (ident_eq fid fid1) eqn:SAME1 in G1; try congruence.
+    destruct (ident_eq fid0 fid1) eqn:SAME2 in G2; try congruence.
+Qed.
+
+Lemma get_owner_loc_footprint_diverging_cons ce:
+    forall pj phl1 phl2 root rb rofs b1 b2 ofs1 ofs2 fp1 fp2 rootmass,
+    (forall child cb cofs childmass,
+      get_owner_loc_footprint phl1 child cb cofs = OK (b1, ofs1, fp1) ->
+      get_owner_loc_footprint phl2 child cb cofs = OK (b2, ofs2, fp2) ->
+      sem_wt_loc ce child cb cofs childmass ->
+      exists mass1 mass2 frame,
+        sem_wt_loc ce fp1 b1 ofs1 mass1
+        /\ sem_wt_loc ce fp2 b2 ofs2 mass2
+        /\ massert_eqv childmass (mass1 ** mass2 ** frame)) ->
+    get_owner_loc_footprint (pj :: phl1) root rb rofs =
+      OK (b1, ofs1, fp1) ->
+    get_owner_loc_footprint (pj :: phl2) root rb rofs =
+      OK (b2, ofs2, fp2) ->
+    sem_wt_loc ce root rb rofs rootmass ->
+    exists mass1 mass2 frame,
+      sem_wt_loc ce fp1 b1 ofs1 mass1
+      /\ sem_wt_loc ce fp2 b2 ofs2 mass2
+      /\ massert_eqv rootmass (mass1 ** mass2 ** frame).
+Proof.
+  intros pj phl1 phl2 root rb rofs b1 b2 ofs1 ofs2 fp1 fp2 rootmass
+    REC G1 G2 ROOTLOC.
+  simpl in G1, G2. destruct pj; destruct root; try congruence.
+  - destruct (get_owner_loc_footprint_sem_wt_extract ce [proj_deref]
+        (fp_box b root) rb rofs b 0 root rootmass eq_refl ROOTLOC)
+      as (childmass & outerframe & CHILDLOC & OUTERSPLIT).
+    destruct (REC root b 0 childmass G1 G2 CHILDLOC)
+      as (mass1 & mass2 & innerframe & TARGETLOC1 & TARGETLOC2 &
+          INNERSPLIT).
+    exists mass1, mass2, (innerframe ** outerframe).
+    split; [exact TARGETLOC1 |]. split; [exact TARGETLOC2 |].
+    etransitivity; [exact OUTERSPLIT |]. rewrite INNERSPLIT.
+    repeat rewrite sep_assoc. reflexivity.
+  - destruct (find_field fid fpl) as [[[base fofs] field] |]
+      eqn:FIND; try congruence.
+    destruct (get_owner_loc_footprint_sem_wt_extract ce [proj_field fid]
+        (fp_struct id fpl) rb rofs rb (rofs + fofs) field rootmass)
+      as (childmass & outerframe & CHILDLOC & OUTERSPLIT).
+    { simpl. rewrite FIND. reflexivity. }
+    { exact ROOTLOC. }
+    destruct (REC field rb (rofs + fofs) childmass G1 G2 CHILDLOC)
+      as (mass1 & mass2 & innerframe & TARGETLOC1 & TARGETLOC2 &
+          INNERSPLIT).
+    exists mass1, mass2, (innerframe ** outerframe).
+    split; [exact TARGETLOC1 |]. split; [exact TARGETLOC2 |].
+    etransitivity; [exact OUTERSPLIT |]. rewrite INNERSPLIT.
+    repeat rewrite sep_assoc. reflexivity.
+  - destruct (ident_eq fid fid0) eqn:SAME; try congruence. subst fid0.
+    destruct (get_owner_loc_footprint_sem_wt_extract ce
+        [proj_downcast fid] (fp_enum id tagz fid fofs root) rb rofs rb
+        (rofs + fofs) root rootmass)
+      as (childmass & outerframe & CHILDLOC & OUTERSPLIT).
+    { simpl. rewrite dec_eq_true. reflexivity. }
+    { exact ROOTLOC. }
+    destruct (REC root rb (rofs + fofs) childmass G1 G2 CHILDLOC)
+      as (mass1 & mass2 & innerframe & TARGETLOC1 & TARGETLOC2 &
+          INNERSPLIT).
+    exists mass1, mass2, (innerframe ** outerframe).
+    split; [exact TARGETLOC1 |]. split; [exact TARGETLOC2 |].
+    etransitivity; [exact OUTERSPLIT |]. rewrite INNERSPLIT.
+    repeat rewrite sep_assoc. reflexivity.
+Qed.
+
+Lemma get_owner_loc_footprint_diverging_separated ce:
+    forall phl1 phl2 root rb rofs b1 b2 ofs1 ofs2 fp1 fp2 rootmass,
+    owner_projections_disjoint phl1 phl2 ->
+    get_owner_loc_footprint phl1 root rb rofs = OK (b1, ofs1, fp1) ->
+    get_owner_loc_footprint phl2 root rb rofs = OK (b2, ofs2, fp2) ->
+    sem_wt_loc ce root rb rofs rootmass ->
+    exists mass1 mass2 frame,
+      sem_wt_loc ce fp1 b1 ofs1 mass1
+      /\ sem_wt_loc ce fp2 b2 ofs2 mass2
+      /\ massert_eqv rootmass (mass1 ** mass2 ** frame).
+Proof.
+  intros phl1 phl2 root rb rofs b1 b2 ofs1 ofs2 fp1 fp2 rootmass DISJ.
+  revert root rb rofs b1 b2 ofs1 ofs2 fp1 fp2 rootmass.
+  induction DISJ as
+      [pj1 pj2 phl1 phl2 DIFF
+      |pj phl1 phl2 DISJ IH];
+    intros root rb rofs b1 b2 ofs1 ofs2 fp1 fp2 rootmass G1 G2 ROOTLOC.
+  - eapply get_owner_loc_footprint_diverging_here; eauto.
+  - eapply get_owner_loc_footprint_diverging_cons; eauto.
+Qed.
+
+Lemma diverging_owner_lookups_separated ce:
+    forall phl1 phl2 id b1 b2 ofs1 ofs2 fpm fp1 fp2 m MP,
+    owner_projections_disjoint phl1 phl2 ->
+    get_owner_loc_footprint_map (id, phl1) fpm = OK (b1, ofs1, fp1) ->
+    get_owner_loc_footprint_map (id, phl2) fpm = OK (b2, ofs2, fp2) ->
+    coherent_fpm ce fpm MP ->
+    m |= MP ->
+    exists mass1 mass2 frame,
+      sem_wt_loc ce fp1 b1 ofs1 mass1
+      /\ sem_wt_loc ce fp2 b2 ofs2 mass2
+      /\ m |= mass1 ** mass2 ** frame.
+Proof.
+  intros phl1 phl2 id b1 b2 ofs1 ofs2 fpm fp1 fp2 m MP
+    DISJ G1 G2 COH MPRED.
+  unfold get_owner_loc_footprint_map in G1, G2. simpl in G1, G2.
+  destruct (fpm ! id) as [entry |] eqn:BIND; try congruence.
+  destruct entry as [[[rb rofs] rty] root].
+  destruct (coherent_fpm_split ce id fpm MP root rb rofs rty BIND COH)
+    as (before & after & mbefore & mafter & rootmass & SEPBEFORE &
+        SEPAFTER & ROOTVAR & ELEMENTS & ROOTSPLIT).
+  assert (ROOTLOC: sem_wt_loc ce root rb rofs rootmass).
+  { inv ROOTVAR. inv ELTEQ. exact MASS. }
+  destruct (get_owner_loc_footprint_diverging_separated ce phl1 phl2
+      root rb rofs b1 b2 ofs1 ofs2 fp1 fp2 rootmass DISJ G1 G2 ROOTLOC)
+    as (mass1 & mass2 & innerframe & TARGETLOC1 & TARGETLOC2 & SPLIT).
+  rewrite ROOTSPLIT, SPLIT in MPRED. repeat rewrite sep_assoc in MPRED.
+  rewrite (sep_swap mbefore mass1 (mass2 ** innerframe ** mafter)) in MPRED.
+  rewrite (sep_swap mbefore mass2 (innerframe ** mafter)) in MPRED.
+  exists mass1, mass2, (mbefore ** innerframe ** mafter).
+  auto.
+Qed.
+
+Lemma get_owner_loc_footprint_noderef_range ce:
+    forall phl root rb rofs b ofs fp,
+    ~ In proj_deref phl ->
+    get_owner_loc_footprint phl root rb rofs = OK (b, ofs, fp) ->
+    fields_fp_well_formed ce root ->
+    b = rb /\ rofs <= ofs /\
+      ofs + sizeof_footprint ce fp <=
+        rofs + sizeof_footprint ce root.
+Proof.
+  induction phl as [|pj phl IH]; intros root rb rofs b ofs fp NODEREF GET WF.
+  - inv GET. repeat split; lia.
+  - simpl in GET. assert (NODEREF_TAIL: ~ In proj_deref phl).
+    { intro IN. apply NODEREF. right. exact IN. }
+    destruct pj; [exfalso; apply NODEREF; left; reflexivity | |].
+    + destruct root; try congruence.
+      destruct (find_field fid fpl) as [[[base fofs] field] |]
+        eqn:FIND; try congruence.
+      inv WF.
+      pose proof (find_field_some _ _ _ _ FIND) as IN.
+      apply Forall_forall with (x := (fid, ((base, fofs), field))) in FWF;
+        [|exact IN].
+      inv FWF.
+      destruct (IH field rb (rofs + fofs) b ofs fp NODEREF_TAIL GET R5)
+        as (BLOCK & LO & HI).
+      split; [exact BLOCK |]. split; [lia |]. simpl. lia.
+    + destruct root; try congruence.
+      destruct (ident_eq fid fid0) eqn:SAME; try congruence. subst fid0.
+      inv WF. inv FWF.
+      destruct (IH root rb (rofs + fofs) b ofs fp NODEREF_TAIL GET R5)
+        as (BLOCK & LO & HI).
+      split; [exact BLOCK |]. split; [lia |]. simpl. lia.
+Qed.
+
+Lemma fields_loc_sep_replace_frame ce:
+    forall fpl b ofs mass sfid sbase sfofs sfp selectedmass target childframe,
+    fields_loc_sep b ofs (sem_wt_loc ce) fpl mass ->
+    In (sfid, ((sbase, sfofs), sfp)) fpl ->
+    sem_wt_loc ce sfp b (ofs + sfofs) selectedmass ->
+    massert_eqv selectedmass (target ** childframe) ->
+    (forall i, ofs + sfofs <= i <
+               ofs + sfofs + sizeof_footprint ce sfp ->
+       m_footprint childframe b i) ->
+    (forall fid base fofs fp,
+       In (fid, ((base, fofs), fp)) fpl ->
+       forall fieldmass,
+       sem_wt_loc ce fp b (ofs + fofs) fieldmass ->
+       forall i, ofs + fofs <= i <
+                 ofs + fofs + sizeof_footprint ce fp ->
+         m_footprint fieldmass b i) ->
+    exists frame,
+      massert_eqv mass (target ** frame)
+      /\ (forall fid base fofs fp,
+          In (fid, ((base, fofs), fp)) fpl ->
+          forall i, ofs + base <= i <
+                    ofs + fofs + sizeof_footprint ce fp ->
+            m_footprint frame b i).
+Proof.
+  intros fpl b ofs mass sfid sbase sfofs sfp selectedmass target
+    childframe FSEP INSEL SELLOC SELSPLIT SELCOVER COVER.
+  induction FSEP as
+      [empty EMPTY
+      |fid base fofs fp tail head tailmass pad whole
+         TAIL IH HEAD PAD WHOLE].
+  - contradiction.
+  - destruct INSEL as [SAME | INSEL].
+    + inv SAME.
+      pose proof (sem_wt_loc_unique ce sfp head selectedmass b
+        (ofs + sfofs) HEAD SELLOC) as HEADEQV.
+      exists (range b (ofs + sbase) (ofs + sfofs) **
+        childframe ** tailmass). split.
+      * etransitivity; [exact WHOLE |]. rewrite HEADEQV, SELSPLIT.
+        repeat rewrite sep_assoc.
+        rewrite (sep_swap (range b (ofs + sbase) (ofs + sfofs))
+          target (childframe ** tailmass)). reflexivity.
+      * intros fid0 base0 fofs0 fp0 IN i RANGEI.
+        simpl in IN. destruct IN as [SAME | INTAIL].
+        -- inv SAME. destruct (Z_lt_ge_dec i (ofs + fofs0)).
+           ++ simpl. left. split; [reflexivity | lia].
+           ++ simpl. right. left. apply SELCOVER. lia.
+        -- simpl. right. right.
+           eapply (fields_loc_sep_range_footprint ce tail b ofs tailmass TAIL).
+           ++ intros fid1 base1 fofs1 fp1 IN1.
+              eapply COVER. right. exact IN1.
+           ++ exact INTAIL.
+           ++ exact RANGEI.
+    + destruct (IH INSEL)
+        as (tailframe & TAILSPLIT & TAILCOVER).
+      { intros fid0 base0 fofs0 fp0 IN0.
+        eapply COVER. right. exact IN0. }
+      subst pad.
+      exists (head ** range b (ofs + base) (ofs + fofs) ** tailframe).
+      split.
+      * etransitivity; [exact WHOLE |]. rewrite TAILSPLIT.
+        repeat rewrite sep_assoc.
+        rewrite (sep_swap3 (range b (ofs + base) (ofs + fofs))
+          head target tailframe). reflexivity.
+      * intros fid0 base0 fofs0 fp0 IN i RANGEI.
+        simpl in IN. destruct IN as [SAME | INTAIL].
+        -- inv SAME. destruct (Z_lt_ge_dec i (ofs + fofs0)).
+           ++ simpl. right. left. split; [reflexivity | lia].
+           ++ simpl. left.
+              eapply (COVER fid0 base0 fofs0 fp0
+                (or_introl eq_refl) head HEAD i).
+              lia.
+        -- simpl. right. right.
+           eapply TAILCOVER; eauto.
+Qed.
+
+Lemma get_owner_loc_footprint_deref_frame ce:
+    forall phl root rb rofs b ofs fp rootmass ty te,
+    composite_env_consistent ce ->
+    (forall id co, ce ! id = Some co ->
+       list_norepet (name_members (co_members co))) ->
+    In proj_deref phl ->
+    get_owner_loc_footprint phl root rb rofs = OK (b, ofs, fp) ->
+    wt_footprint ce te ty root ->
+    sem_wt_loc ce root rb rofs rootmass ->
+    exists targetmass frame,
+      sem_wt_loc ce fp b ofs targetmass
+      /\ massert_eqv rootmass (targetmass ** frame)
+      /\ (forall i, rofs <= i <
+                    rofs + sizeof_footprint ce root ->
+            m_footprint frame rb i).
+Proof.
+  induction phl as [|pj phl IH];
+    intros root rb rofs b ofs fp rootmass ty te CONS NOREP HASDEREF GET
+      WTFP ROOTLOC.
+  - contradiction.
+  - simpl in GET. destruct pj.
+    + destruct root as [esz eal | sz al | chunk v | hb inner | sid fpl
+        | eid tag efid efofs einner | mut refb refofs rph rvs];
+        try congruence.
+      inv ROOTLOC. inv WTFP.
+      destruct (get_owner_loc_footprint_sem_wt_extract ce phl inner hb 0
+          b ofs fp nextmp GET WTLOC)
+        as (targetmass & rest & TARGETLOC & SPLIT).
+      set (HV := hasvalue Mptr rb rofs (Vptr hb Ptrofs.zero)).
+      set (SZ := contains_neg Mptr hb (- size_chunk Mptr)
+        (eq (Vptrofs (Ptrofs.repr (sizeof_footprint ce inner))))).
+      exists targetmass, (SZ ** HV ** rest).
+      split; [exact TARGETLOC |]. split.
+      * rewrite EQV. unfold box_pred. fold HV SZ. rewrite SPLIT.
+        repeat rewrite sep_assoc.
+        rewrite (sep_swap3 HV SZ targetmass rest). reflexivity.
+      * intros i RANGEI. simpl. right. left.
+        unfold HV, hasvalue, contains. simpl. split; [reflexivity |].
+        exact RANGEI.
+    + assert (TAIL_DEREF: In proj_deref phl).
+      { destruct HASDEREF as [SAME | TAIL]; [congruence | exact TAIL]. }
+      destruct root as [esz eal | sz al | chunk v | hb inner | sid fpl
+        | eid tag efid efofs einner | mut refb refofs rph rvs];
+        try congruence.
+      destruct (find_field fid fpl) as [[[base fofs] field] |]
+        eqn:FIND; try congruence.
+      assert (ROOTWF: fields_fp_well_formed ce (fp_struct sid fpl)).
+      { eapply wt_footprint_fields_well_formed; eauto. }
+      inv WTFP. inv ROOTWF. inv ROOTLOC.
+      pose proof (find_field_some _ _ _ _ FIND) as IN.
+      destruct (fields_loc_sep_split rb rofs base fofs fid field fpl mass
+          (sem_wt_loc ce) FWT IN)
+        as (prefix & fieldmass & suffix & FIELDLOC & FIELDSSPLIT0).
+      destruct (fp_match_field_In_wt ce co (wt_footprint ce te) fpl
+          (co_members co) fid base fofs field MATCH IN)
+        as (fty & FIELDWT).
+      destruct (IH field rb (rofs + fofs) b ofs fp fieldmass fty te CONS
+          NOREP TAIL_DEREF GET FIELDWT FIELDLOC)
+        as (targetmass & childframe & TARGETLOC & CHILDSPLIT & CHILDCOVER).
+      destruct (fields_loc_sep_replace_frame ce fpl rb rofs mass fid base
+          fofs field fieldmass targetmass childframe FWT IN FIELDLOC
+          CHILDSPLIT CHILDCOVER)
+        as (fieldsframe & FIELDSSPLIT & FIELDSCOVER).
+      { intros fid0 base0 fofs0 fp0 IN0 fieldmass0 FIELDLOC0 i RANGEI.
+        destruct (fp_match_field_In_wt ce co (wt_footprint ce te) fpl
+          (co_members co) fid0 base0 fofs0 fp0 MATCH IN0)
+          as (fty0 & FIELDWT0).
+        eapply (sem_wt_loc_range_footprint ce fp0 fieldmass0 rb
+          (rofs + fofs0) fty0 te CONS NOREP FIELDWT0 FIELDLOC0 i).
+        exact RANGEI. }
+      exists targetmass,
+        (fieldsframe **
+          range rb (rofs + sizeof_struct_comp ce sid)
+            (rofs + sizeof_comp ce sid) **
+          spure (alignof_comp ce sid | rofs)).
+      split; [exact TARGETLOC |]. split.
+      * rewrite EQV, FIELDSSPLIT. repeat rewrite sep_assoc. reflexivity.
+      * intros i RANGEI. simpl.
+        assert (REL: 0 <= i - rofs < sizeof_comp ce sid)
+          by (simpl in RANGEI; lia).
+        destruct (COMPLETE (i - rofs) REL) as [FIELD | TRAIL].
+        -- left. destruct FIELD as
+             (fid0 & base0 & fofs0 & fp0 & IN0 & INRANGE).
+           eapply FIELDSCOVER; [exact IN0 | lia].
+        -- right. left. simpl. split; [reflexivity | lia].
+    + assert (TAIL_DEREF: In proj_deref phl).
+      { destruct HASDEREF as [SAME | TAIL]; [congruence | exact TAIL]. }
+      destruct root as [esz eal | sz al | chunk v | hb inner | sid fpl
+        | eid tag efid efofs einner | mut refb refofs rph rvs];
+        try congruence.
+      destruct (ident_eq fid efid) eqn:SAME; try congruence. subst efid.
+      inv WTFP. inv ROOTLOC.
+      destruct (IH einner rb (rofs + efofs) b ofs fp mass2 fty te CONS
+          NOREP TAIL_DEREF GET WT FWT)
+        as (targetmass & childframe & TARGETLOC & CHILDSPLIT & CHILDCOVER).
+      set (ETAG := hasvalue Mint32 rb rofs (Vint (Int.repr tag))).
+      set (EPRE := range rb (rofs + size_chunk Mint32) (rofs + efofs)).
+      set (ETAIL := range rb
+        (rofs + efofs + sizeof_footprint ce einner)
+        (rofs + sizeof_comp ce eid)).
+      set (EALP := spure (alignof_comp ce eid | rofs)).
+      exists targetmass, (ETAG ** EPRE ** childframe ** ETAIL ** EALP).
+      split; [exact TARGETLOC |]. split.
+      * rewrite EQV. fold ETAG EPRE ETAIL EALP. rewrite CHILDSPLIT.
+        repeat rewrite sep_assoc.
+        rewrite (sep_swap3 ETAG EPRE targetmass
+          (childframe ** ETAIL ** EALP)).
+        rewrite (sep_swap EPRE ETAG (childframe ** ETAIL ** EALP)).
+        reflexivity.
+      * intros i RANGEI. unfold ETAG, EPRE, ETAIL, EALP. simpl.
+        change (size_chunk Mint32) with 4 in *.
+        destruct (Z_lt_ge_dec i (rofs + 4)) as [INTAG | AFTERTAG].
+        -- left. unfold hasvalue, contains. simpl. split; [reflexivity | lia].
+        -- right. destruct (Z_lt_ge_dec i (rofs + efofs))
+             as [INPRE | AFTERPRE].
+           ++ left. simpl. split; [reflexivity | lia].
+           ++ right. destruct (Z_lt_ge_dec i
+                (rofs + efofs + sizeof_footprint ce einner))
+                as [INCHILD | AFTERCHILD].
+              ** left. apply CHILDCOVER. lia.
+              ** right. left. simpl. split; [reflexivity |].
+                 simpl in RANGEI. lia.
+Qed.
+
+Lemma get_owner_loc_footprint_append_inv: forall phl1 phl2 root rb rofs
+    b1 b2 ofs1 ofs2 fp1 fp2,
+    get_owner_loc_footprint phl1 root rb rofs = OK (b1, ofs1, fp1) ->
+    get_owner_loc_footprint (phl1 ++ phl2) root rb rofs =
+      OK (b2, ofs2, fp2) ->
+    get_owner_loc_footprint phl2 fp1 b1 ofs1 = OK (b2, ofs2, fp2).
+Proof.
+  induction phl1 as [|pj phl1 IH]; intros phl2 root rb rofs
+    b1 b2 ofs1 ofs2 fp1 fp2 GET1 GET2.
+  - inv GET1. exact GET2.
+  - simpl in GET1, GET2. destruct pj; destruct root; try congruence.
+    + eapply IH; eauto.
+    + destruct (find_field fid fpl) as [[[base fofs] field] |]
+        eqn:FIND; try congruence. eapply IH; eauto.
+    + destruct (ident_eq fid fid0) eqn:SAME; try congruence.
+      eapply IH; eauto.
+Qed.
+
+Lemma owner_lookup_sem_wt_extract ce:
+    forall phl id fpm b ofs fp m MP,
+    get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, fp) ->
+    coherent_fpm ce fpm MP ->
+    m |= MP ->
+    exists targetmass frame,
+      sem_wt_loc ce fp b ofs targetmass
+      /\ m |= targetmass ** frame.
+Proof.
+  intros phl id fpm b ofs fp m MP GET COH MPRED.
+  unfold get_owner_loc_footprint_map in GET. simpl in GET.
+  destruct (fpm ! id) as [entry |] eqn:BIND; try congruence.
+  destruct entry as [[[rb rofs] rty] root].
+  destruct (coherent_fpm_split ce id fpm MP root rb rofs rty BIND COH)
+    as (before & after & mbefore & mafter & rootmass & SEPBEFORE &
+        SEPAFTER & ROOTVAR & ELEMENTS & ROOTSPLIT).
+  assert (ROOTLOC: sem_wt_loc ce root rb rofs rootmass).
+  { inv ROOTVAR. inv ELTEQ. exact MASS. }
+  destruct (get_owner_loc_footprint_sem_wt_extract ce phl root rb rofs
+      b ofs fp rootmass GET ROOTLOC)
+    as (targetmass & innerframe & TARGETLOC & SPLIT).
+  rewrite ROOTSPLIT, SPLIT in MPRED. repeat rewrite sep_assoc in MPRED.
+  rewrite (sep_swap mbefore targetmass (innerframe ** mafter)) in MPRED.
+  exists targetmass, (mbefore ** innerframe ** mafter). auto.
+Qed.
+
+Lemma covered_ranges_disjoint_or_equal:
+    forall b1 b2 ofs1 ofs2 sz1 sz2 mass1 mass2 frame m,
+    0 <= sz1 -> 0 <= sz2 -> sz1 = sz2 ->
+    (forall i, ofs1 <= i < ofs1 + sz1 -> m_footprint mass1 b1 i) ->
+    (forall i, ofs2 <= i < ofs2 + sz2 -> m_footprint mass2 b2 i) ->
+    m |= mass1 ** mass2 ** frame ->
+    loc_disjoint_or_equal b1 b2 sz1 sz2 ofs1 ofs2.
+Proof.
+  intros b1 b2 ofs1 ofs2 sz1 sz2 mass1 mass2 frame m
+    POS1 POS2 SIZEEQ COVER1 COVER2 SEP.
+  unfold loc_disjoint_or_equal.
+  destruct (peq b1 b2) as [SAMEB | DIFFB]; [subst b2 | auto].
+  right. destruct (zeq ofs1 ofs2) as [SAMEOFS | DIFFOFS]; [auto |].
+  right. destruct (Z_le_dec (ofs2 + sz2) ofs1) as [LEFT | NOTLEFT];
+    [auto |].
+  right. destruct (Z_le_dec (ofs1 + sz1) ofs2) as [RIGHT | NOTRIGHT];
+    [exact RIGHT |].
+  exfalso. destruct SEP as [_ [_ DISJ]].
+  apply (DISJ b1 (Z.max ofs1 ofs2)).
+  - apply COVER1. lia.
+  - simpl. left. apply COVER2. lia.
+Qed.
+
+Lemma prefix_owner_lookups_disjoint_or_equal ce:
+    forall phl suffix id b1 b2 ofs1 ofs2 fpm fp1 fp2 m MP,
+    suffix <> nil ->
+    composite_env_consistent ce ->
+    (forall id0 co, ce ! id0 = Some co ->
+       list_norepet (name_members (co_members co))) ->
+    get_owner_loc_footprint_map (id, phl) fpm = OK (b1, ofs1, fp1) ->
+    get_owner_loc_footprint_map (id, phl ++ suffix) fpm =
+      OK (b2, ofs2, fp2) ->
+    coherent_fpm ce fpm MP ->
+    m |= MP ->
+    wt_fpm ce fpm ->
+    sizeof_footprint ce fp1 = sizeof_footprint ce fp2 ->
+    loc_disjoint_or_equal b1 b2
+      (sizeof_footprint ce fp1) (sizeof_footprint ce fp2) ofs1 ofs2.
+Proof.
+  intros phl suffix id b1 b2 ofs1 ofs2 fpm fp1 fp2 m MP NONEMPTY CONS
+    NOREP G1 G2 COH MPRED WTFPM SIZEEQ.
+  assert (GETSUFFIX:
+    get_owner_loc_footprint suffix fp1 b1 ofs1 = OK (b2, ofs2, fp2)).
+  { unfold get_owner_loc_footprint_map in G1, G2. simpl in G1, G2.
+    destruct (fpm ! id) as [entry |] eqn:BIND; try congruence.
+    destruct entry as [[[rb rofs] rty] root].
+    eapply get_owner_loc_footprint_append_inv; eauto. }
+  destruct (get_owner_loc_footprint_map_wt ce phl id fpm b1 ofs1 fp1
+      G1 WTFPM) as (ty1 & WTPATH1 & WTFP1 & ALIGN1).
+  destruct (get_owner_loc_footprint_map_wt ce (phl ++ suffix) id fpm
+      b2 ofs2 fp2 G2 WTFPM) as (ty2 & WTPATH2 & WTFP2 & ALIGN2).
+  assert (FPWF1: fields_fp_well_formed ce fp1).
+  { eapply wt_footprint_fields_well_formed; eauto. }
+  destruct (in_dec projection_eq proj_deref suffix) as [HASDEREF | NODEREF].
+  - destruct (owner_lookup_sem_wt_extract ce phl id fpm b1 ofs1 fp1 m MP
+        G1 COH MPRED)
+      as (rootmass & outerframe & ROOTLOC & ROOTSEP).
+    destruct (get_owner_loc_footprint_deref_frame ce suffix fp1 b1 ofs1
+        b2 ofs2 fp2 rootmass ty1 (fpm_to_tenv fpm) CONS NOREP HASDEREF
+        GETSUFFIX WTFP1 ROOTLOC)
+      as (targetmass & innerframe & TARGETLOC & SPLIT & ROOTCOVER).
+    rewrite SPLIT in ROOTSEP. repeat rewrite sep_assoc in ROOTSEP.
+    rewrite (sep_swap targetmass innerframe outerframe) in ROOTSEP.
+    pose proof (wt_footprint_size_eq ce ty1 fp1 (fpm_to_tenv fpm) WTFP1)
+      as WTSIZE1.
+    pose proof (wt_footprint_size_eq ce ty2 fp2 (fpm_to_tenv fpm) WTFP2)
+      as WTSIZE2.
+    eapply (covered_ranges_disjoint_or_equal b1 b2 ofs1 ofs2
+      (sizeof_footprint ce fp1) (sizeof_footprint ce fp2)
+      innerframe targetmass outerframe m).
+    + pose proof (sizeof_pos ce ty1). lia.
+    + pose proof (sizeof_pos ce ty2). lia.
+    + exact SIZEEQ.
+    + exact ROOTCOVER.
+    + intros i RANGEI.
+      eapply (sem_wt_loc_range_footprint ce fp2 targetmass b2 ofs2 ty2
+        (fpm_to_tenv fpm) CONS NOREP WTFP2 TARGETLOC i).
+      exact RANGEI.
+    + exact ROOTSEP.
+  - destruct (get_owner_loc_footprint_noderef_range ce suffix fp1 b1 ofs1
+        b2 ofs2 fp2 NODEREF GETSUFFIX FPWF1)
+      as (BLOCK & LO & HI).
+    rewrite BLOCK. unfold loc_disjoint_or_equal. right. left. lia.
+Qed.
+
+Lemma get_owner_loc_disjoint_or_equal ce: forall phl1 phl2 id1 id2 b1 b2 ofs1 ofs2 fpm fp1 fp2 m MP
+    (CONS: composite_env_consistent ce)
+    (NOREP: forall id co, ce ! id = Some co ->
+       list_norepet (name_members (co_members co)))
+    (G1: get_owner_loc_footprint_map (id1, phl1) fpm = OK (b1, ofs1, fp1))
+    (G2: get_owner_loc_footprint_map (id2, phl2) fpm = OK (b2, ofs2, fp2))
+    (* To use this to derive that wt_footprint fp1/fp2, you should use
+    get_owner_loc_footprint_map_wt. *)
+    (COH: coherent_fpm ce fpm MP)
+    (MPRED: m |= MP)
+    (WTFPM: wt_fpm ce fpm)
+    (SIZEEQ: sizeof_footprint ce fp1 = sizeof_footprint ce fp2),
+    loc_disjoint_or_equal b1 b2 (sizeof_footprint ce fp1) (sizeof_footprint ce fp2) ofs1 ofs2.
+Proof.
+  intros.
+  destruct (ident_eq id1 id2) as [SAMEID | DIFFID].
+  - subst id2.
+    destruct (owner_projections_four_cases phl1 phl2)
+      as [SAMEPHL | [PREFIX | [PREFIX | DISJ]]].
+    + subst phl2. rewrite G1 in G2. inv G2.
+      unfold loc_disjoint_or_equal. auto.
+    + destruct PREFIX as (suffix & NONEMPTY & APP). subst phl2.
+      exact (prefix_owner_lookups_disjoint_or_equal ce phl1 suffix id1
+        b1 b2 ofs1 ofs2 fpm fp1 fp2 m MP NONEMPTY CONS NOREP G1 G2 COH
+        MPRED WTFPM SIZEEQ).
+    + destruct PREFIX as (suffix & NONEMPTY & APP). subst phl1.
+      apply loc_disjoint_or_equal_sym.
+      eapply (prefix_owner_lookups_disjoint_or_equal ce phl2 suffix id1
+        b2 b1 ofs2 ofs1 fpm fp2 fp1 m MP NONEMPTY CONS NOREP G2 G1 COH
+        MPRED WTFPM).
+      symmetry. exact SIZEEQ.
+    + destruct (diverging_owner_lookups_separated ce phl1 phl2 id1
+          b1 b2 ofs1 ofs2 fpm fp1 fp2 m MP DISJ G1 G2 COH MPRED)
+        as (mass1 & mass2 & frame & WTLOC1 & WTLOC2 & SEP).
+      destruct (get_owner_loc_footprint_map_wt ce phl1 id1 fpm b1 ofs1 fp1
+          G1 WTFPM) as (ty1 & WTPATH1 & WTFP1 & ALIGN1).
+      destruct (get_owner_loc_footprint_map_wt ce phl2 id1 fpm b2 ofs2 fp2
+          G2 WTFPM) as (ty2 & WTPATH2 & WTFP2 & ALIGN2).
+      eapply (separated_sem_wt_locs_disjoint_or_equal ce fp1 fp2 mass1
+        mass2 frame b1 b2 ofs1 ofs2 ty1 ty2 (fpm_to_tenv fpm) m); eauto.
+  - destruct (different_owner_lookups_separated ce phl1 phl2 id1 id2
+        b1 b2 ofs1 ofs2 fpm fp1 fp2 m MP DIFFID G1 G2 COH MPRED)
+      as (mass1 & mass2 & frame & WTLOC1 & WTLOC2 & SEP).
+    destruct (get_owner_loc_footprint_map_wt ce phl1 id1 fpm b1 ofs1 fp1
+        G1 WTFPM) as (ty1 & WTPATH1 & WTFP1 & ALIGN1).
+    destruct (get_owner_loc_footprint_map_wt ce phl2 id2 fpm b2 ofs2 fp2
+        G2 WTFPM) as (ty2 & WTPATH2 & WTFP2 & ALIGN2).
+    eapply (separated_sem_wt_locs_disjoint_or_equal ce fp1 fp2 mass1
+      mass2 frame b1 b2 ofs1 ofs2 ty1 ty2 (fpm_to_tenv fpm) m); eauto.
+Qed.
+
+
+Lemma assign_loc_coherent_fpm: forall phl m ce fpm mass1 mp v vfp pfp b ofs id MP ty
+    (CONS: composite_env_consistent ce)
+    (NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)))
+    (COH: coherent_fpm ce fpm mass1)
+    (* (WTVAL: sem_wt_val ce vfp v mass2) *)
+    (** This premises should be provided by the properties of *)
+(*     eval_expr *)
+    (MODE: match access_mode ty with
+           | Ctypes.By_value chunk =>
+               sem_wt_val ce vfp v mp
+           | Ctypes.By_copy =>
+               (* ensure by type checking *)
+               exists sb sofs mp1, 
+               v = Vptr sb (Ptrofs.repr sofs)
+               /\ sem_wt_fp ce vfp mp
+               /\ sem_wt_loc ce vfp sb sofs mp1
+               /\ massert_imp (mass1 ** mp) mp1
+               (* eval_expr should provide us that the path of (sb,
+               sofs) so we can compare it with (id, phl) (i.e., the
+               target path). *) 
+               /\ loc_disjoint_or_equal sb b (sizeof ce ty) (sizeof ce ty) sofs ofs 
+               (* ensured by type checking *)
+               /\ complete_type ce ty = true
+           (* ensured by type checking *)
+           | _ => False
+           end)
+    (MPRED: m |= mass1 ** mp ** MP)
+    (* id may denote an external owner? We reduce all store for *)
+(*     reference into store for their referred owner *)
+    (GFP: get_owner_loc_footprint_map (id, phl) fpm = OK (b, ofs, pfp))
+    (* The following properties should be derived from wt_footprint *)
+    (AL: (alignof ce ty | ofs))
+    (WTFP1: wt_footprint ce (fpm_to_tenv fpm) ty pfp)
+    (WTFP2: wt_footprint ce (fpm_to_tenv fpm) ty vfp)
+    (RANGE: 0 <= ofs /\ ofs + sizeof ce ty <= Ptrofs.max_unsigned),
+    exists m1 fpm1 mass3,
+      assign_loc ce ty m b (Ptrofs.repr ofs) v m1
+      /\ set_footprint_map (id, phl) vfp fpm = OK fpm1
+      /\ coherent_fpm ce fpm1 mass3
+      /\ m1 |= mass3 ** MP.
+Proof.
+Admitted.
