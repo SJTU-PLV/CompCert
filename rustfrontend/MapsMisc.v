@@ -20,8 +20,12 @@ Require Import AST.
     [<[ x1 := v1 ]> <[ x2 := v2 ]> m] is [PTree.set x1 v1
     (PTree.set x2 v2 m)]; to use a chain inside a larger statement,
     parenthesize it: [(<[ x1 := v1 ]> <[ x2 := v2 ]> m)]. *) 
+Declare Scope map_fresh_scope.
+
 Notation "<[ x := v ]> m" := (PTree.set x v m)
-  (at level 1, left associativity, format "<[  x  :=  v  ]>  m").
+  (at level 1, left associativity, format "<[  x  :=  v  ]>  m") : map_fresh_scope.
+
+Local Open Scope map_fresh_scope.
 
 (** * Single-key lemmas: [set], [remove], [map] commute *)
 
@@ -113,7 +117,7 @@ Fixpoint remove_list {A} (l: list positive) (m: PTree.t A) {struct l} : PTree.t 
     [(<<[ l := vl ]>> m) ! k]) and chains can be parenthesized to
     combine multiple updates. *) 
 Notation "<<[ l := vl ]>> m" := (set_list l vl m)
-  (at level 1, left associativity, format "<<[  l  :=  vl  ]>>  m").
+  (at level 1, left associativity, format "<<[  l  :=  vl  ]>>  m") : map_fresh_scope.
 
 (** [map1] commutes with [set_list]; only the lengths need to agree. *)
 Lemma set_list_map1: forall {A B} (f: A -> B) (l: list positive) (vl: list A) (m: PTree.t A),
@@ -364,7 +368,7 @@ End FreshMax.
     [(<[ v2 ]> <[ v1 ]> m)].  When the fresh key itself is used as an
     index, parenthesize the application: [! (FreshMax.fresh m)]. *)
 Notation "<[ v ]> m" := (<[ FreshMax.fresh m := v ]> m)
-  (at level 1, left associativity, format "<[  v  ]>  m").
+  (at level 1, left associativity, format "<[  v  ]>  m") : map_fresh_scope.
 
 (** * [max_key] commutation with [set] and [set_list] *)
 
@@ -517,7 +521,7 @@ Definition set_fresh_list {A} (m: PTree.t A) (vl: list A) : PTree.t A :=
     update notations, lookup binds after the whole update:
     [<<[ vl ]>> m ! k] parses as [(<<[ vl ]>> m) ! k]. *)
 Notation "<<[ vl ]>> m" := (set_fresh_list m vl)
-  (at level 1, left associativity, format "<<[  vl  ]>>  m").
+  (at level 1, left associativity, format "<<[  vl  ]>>  m") : map_fresh_scope.
 
 (** [fresh] after a batch update is the successor of the maximum of the
     freshly used keys and the old [max_key]. *)

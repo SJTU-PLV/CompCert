@@ -23,7 +23,7 @@ Local Open Scope error_monad_scope.
 Ltac destr_path_of_place p :=
   destruct (path_of_place p) as (?pid & ?phl) eqn: ?POP.
 
-Section ADT_ENV.
+(* Section ADT_ENV. *)
 
 (* Object support currently disabled.
 Context {ame: adt_mem_env}.
@@ -1380,7 +1380,7 @@ RustIRown *)
 
 End BORROWCK_INV.
 
-End ADT_ENV.
+(* End ADT_ENV. *)
 
 Global Hint Resolve get_owner_loc_footprint_map_wt
   get_owner_loc_footprint_map_fp_ref_wf

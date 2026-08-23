@@ -1031,7 +1031,7 @@ Admitted.
 
 Fixpoint fp_not_contain_ref (fp: footprint) : bool :=
   match fp with
-  | fp_emp => true
+  | fp_emp _ _ => true
   | fp_uninit _ _ => true
   | fp_scalar _ _ => true
   | fp_struct fid fpl =>
@@ -1347,7 +1347,7 @@ Proof using Type.
       exists nil, old. repeat split; auto.
     + right; right. exists (qp :: query). split; auto. congruence.
   - destruct up as [|update_fid|update_fid].
-    + destruct old as [|sz al|chunk value|box old_child|sid fields|
+    + destruct old as [esz eal|sz al|chunk value|box old_child|sid fields|
                          eid tag active ofs old_child|
                          mut block ofs target views];
         simpl in SET; try congruence.
@@ -1368,7 +1368,7 @@ Proof using Type.
         -- right; right.
            destruct INTERNAL as (suffix & EQ & NONEMPTY).
            exists suffix. split; simpl; auto. f_equal; auto.
-    + destruct old as [|sz al|chunk value|box old_child|sid fields|
+    + destruct old as [esz eal|sz al|chunk value|box old_child|sid fields|
                          eid tag active ofs old_child|
                          mut block ofs target views];
         simpl in SET; try congruence.
@@ -1400,7 +1400,7 @@ Proof using Type.
         -- unfold set_field_fp in GET.
            rewrite find_field_set_field_other in GET by auto.
            left. simpl. exact GET.
-    + destruct old as [|sz al|chunk value|box old_child|sid fields|
+    + destruct old as [esz eal|sz al|chunk value|box old_child|sid fields|
                          eid tag active ofs old_child|
                          mut block ofs target views];
         simpl in SET; try congruence.
@@ -1500,7 +1500,7 @@ Proof using Type.
       current_fp fp NO_INTERNAL SET CURRENT NEW.
   - simpl in NEW. inv NEW. left. auto.
   - destruct pj as [|fid|fid].
-    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+    + destruct current_fp as [esz eal|sz al|chunk value|box child|sid fields|
                                eid tag active ofs child|
                                mut block ofs target views];
         simpl in NEW; try congruence.
@@ -1565,7 +1565,7 @@ Proof using Type.
            subst target.
            rewrite is_prefix_strict_path_append_projs in NOT_INTERNAL by auto.
            congruence.
-    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+    + destruct current_fp as [esz eal|sz al|chunk value|box child|sid fields|
                                eid tag active ofs child|
                                mut block ofs target views];
         simpl in NEW; try congruence.
@@ -1589,7 +1589,7 @@ Proof using Type.
           to_ph1, outer_fp, new_fp. repeat split; simpl; auto.
         -- f_equal; auto.
         -- rewrite FIND. exact PATH.
-    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+    + destruct current_fp as [esz eal|sz al|chunk value|box child|sid fields|
                                eid tag active ofs child|
                                mut block ofs target views];
         simpl in NEW; try congruence.
@@ -1727,7 +1727,7 @@ Proof using Type.
       current_fp final final_aliases NO_INTERNAL SET CURRENT NEW.
   - left. exact NEW.
   - destruct pj as [|fid|fid].
-    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+    + destruct current_fp as [esz eal|sz al|chunk value|box child|sid fields|
                                eid tag active ofs child|
                                mut block ofs target views];
         simpl in NEW; try congruence.
@@ -1795,7 +1795,7 @@ Proof using Type.
            subst target.
            rewrite is_prefix_strict_path_append_projs in NOT_INTERNAL by auto.
            congruence.
-    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+    + destruct current_fp as [esz eal|sz al|chunk value|box child|sid fields|
                                eid tag active ofs child|
                                mut block ofs target views];
         simpl in NEW; try congruence.
@@ -1821,7 +1821,7 @@ Proof using Type.
         -- split.
            ++ simpl. rewrite FIND. exact PATH.
            ++ repeat split; auto.
-    + destruct current_fp as [|sz al|chunk value|box child|sid fields|
+    + destruct current_fp as [esz eal|sz al|chunk value|box child|sid fields|
                                eid tag active ofs child|
                                mut block ofs target views];
         simpl in NEW; try congruence.

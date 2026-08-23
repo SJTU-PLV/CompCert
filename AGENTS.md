@@ -23,6 +23,10 @@ Keep validation targeted. For parser or frontend changes, rebuild with `make rus
 
 ## Commit & Pull Request Guidelines
 
+Ask the user for approval before staging files or creating a commit; never commit
+without explicit confirmation. When asking, summarize what will be staged and the
+proposed commit message, and wait for the user's go-ahead.
+
 Recent commit messages are short, imperative, and scoped to the user-visible change, for example: `Rename Rust compiler binary to rust_comp` and `Improve Rust place diagnostics and linked-list tests`. Follow that pattern. Keep commits focused, exclude generated files and unrelated worktree noise, and mention verification steps in the PR description. If a change affects dumps or diagnostics, include one representative command and output snippet.
 
 ## Proof Guidelines
@@ -389,6 +393,7 @@ Use the live Emacs + Proof General session through `~/rocq-emacs-for-cli-agents/
 - Ask for and use the user-specified Emacs server name. Do not assume `server`, `mem1`, or any other name. Check it with `rocqagent-health NAME`; a dead server reports `no_status_dead_socket`.
 - `rocqagent-health` may report `socket_exists: false` even when the server is usable because it checks a Linux socket path. Trust `rpc_state` / `rpc_ok` and the actual macOS socket under `$TMPDIR/emacs501/NAME`.
 - The helper may need permission to inspect local processes (it invokes `ps`). If the sandbox denies `ps`, the call fails before contacting Emacs; retry the same helper with the environment's approved elevated/local-process permission.
+- If `emacsclient --eval` returns `End of file during parsing`, treat it as a malformed Lisp payload, not a dead Emacs server. Re-run the command with a simpler quoted form before changing session state.
 - Before a shell-side edit to a file open in Emacs, call `save-file` first. After editing the file on disk, do not call `save-file` again before checking, because that can overwrite the edit with a stale buffer. Run `coqcheck_until FILE LINE COL nil` so Proof General replays from the first changed sentence.
 - The target `.v` file must be open with Proof General scripting active for the reuse path. If scripting is inactive, activate it in that buffer; `restart=t` is not a general fallback in this Makefile-based repository because there is no `dune-workspace`.
 - Older Emacs versions may lack `while-let`, causing `coqcheck_until` to fail with `Symbol’s function definition is void: while-let`. Load `subr-x` and define the documented compatibility shim in the Emacs server, then retry.

@@ -17,10 +17,12 @@ Require Import InitDomain.
 Require Import Memory.
 Require Import BorrowCheckDomain BorrowCheckPolonius.
 Require Import Separation.
+Require Import MapsMisc.
 
 Import ListNotations.
 
 Local Open Scope error_monad_scope.
+Local Open Scope map_fresh_scope.
 
 Definition enc_path (frame: positive) (ph: path) : path :=
   let (id, pjl) := ph in
@@ -169,11 +171,11 @@ Definition views := list path.
 (* A tree structured footprint (maybe similar to some separation logic
 algebra). *)
 Inductive footprint : Type :=
-| fp_emp  (* empty footprint. It is required because we want moved out
-  the whole location and then set fp_emp to the original location *)
+| fp_emp (sz al: Z) (* empty footprint: it owns no memory, but retains
+  the size and alignment of the location whose ownership was removed *)
 | fp_uninit (sz al: Z) (*  Uninitialized footprint. We need to record its size and align *)
 | fp_scalar (chunk: memory_chunk) (v: val)  (* scalar type. *)
-| fp_box (b: block) (* (sz: Z) *) (fp: footprint) (* A heap block storing values that occupy footprint fp. We do not record size here because if fp is fp_emp the size is meaningless and wt_footprint cannot be defined for Box(Adt) *)
+| fp_box (b: block) (* (sz: Z) *) (fp: footprint) (* A heap block storing values that occupy footprint fp. Its allocation size is derived from the contained footprint, including fp_emp's retained size. *)
 (* (field ident, field type, field offset,field footprint) *)
 | fp_struct (id: ident) (fpl: list (ident * ((Z * Z) * footprint)))
 (* orgs are not used for now but it is used to relate to the type *)
@@ -195,7 +197,7 @@ Inductive footprint : Type :=
 Section FP_IND.
 
 Variable (P: footprint -> Prop)
-  (HPemp: P fp_emp)
+  (HPemp: forall sz al, P (fp_emp sz al))
   (HPuninit: forall sz al, P (fp_uninit sz al))
   (HPscalar: forall chunk v, P (fp_scalar chunk v))
   (HPbox: forall (b : block) (fp : footprint), P fp -> P (fp_box b fp))
@@ -253,7 +255,7 @@ the move checking *)
 
 Fixpoint shallow_init (fp: footprint) : bool :=
   match fp with
-  | fp_emp
+  | fp_emp _ _
   (* Here is the difference *)
   | fp_uninit _ _ => false
   | fp_struct _ fpl =>
@@ -269,7 +271,7 @@ Fixpoint shallow_init (fp: footprint) : bool :=
 (* All level footprint are not fp_emp *)
 Fixpoint deep_init (fp: footprint) : bool :=
   match fp with
-  | fp_emp
+  | fp_emp _ _
   (* Here is the difference *)
   | fp_uninit _ _ => false
   | fp_struct _ fpl =>
@@ -285,7 +287,7 @@ Fixpoint deep_init (fp: footprint) : bool :=
 
 Definition sizeof_footprint ce (fp: footprint) : Z :=
   match fp with
-  | fp_emp => 0
+  | fp_emp sz _ => sz
   | fp_uninit sz _ => sz
   | fp_scalar chunk _ => size_chunk chunk
   | fp_box _ _ => size_chunk Mptr
@@ -297,7 +299,7 @@ Definition sizeof_footprint ce (fp: footprint) : Z :=
 
 Definition alignof_footprint ce (fp: footprint) : Z :=
   match fp with
-  | fp_emp => 0
+  | fp_emp _ al => al
   | fp_uninit _ al => al
   | fp_scalar chunk _ => align_chunk chunk
   | fp_box _ _ => align_chunk Mptr
@@ -501,6 +503,7 @@ value of this type produce, the original location of this type becomes
 [own ⊥]. *)
 Fixpoint clear_footprint_rec (ce: composite_env) (fp: footprint) : footprint :=
   match fp with
+  | fp_emp sz al => fp_emp sz al
   | fp_struct id fpl =>
       fp_struct id (map (fun '(fid, (r, ffp)) => (fid, (r, clear_footprint_rec ce ffp))) fpl)
   | _ => fp_uninit (sizeof_footprint ce fp) (alignof_footprint ce fp)
@@ -1438,7 +1441,6 @@ Fixpoint eval_exprlist ce (fpm: fp_map) (al: list expr) (* (tyl: typelist) *) : 
   (* | _ => Error nil *)
   end.
 
-
 (* ph is the accessed path *)
 Definition conflict_PathSet (ph: path) (am : access_mode_bor) (ak: access_kind) (s: PathSet.t) : bool :=
   PathSet.exists_ (fun '(ph1, mut) => conflict_access ak mut && relevant_path ph am ph1) s.
@@ -2054,4 +2056,3 @@ Qed.
 
     
 End TYPE_PRESERVATION.
-

@@ -67,7 +67,7 @@ Hypothesis CONSISTENT: composite_env_consistent ce.
 
 Hypothesis COMP_RANGE: forall id co, ce ! id = Some co -> co_sizeof co <= Ptrofs.max_unsigned.
 Hypothesis COMP_LEN: forall id co, ce ! id = Some co -> list_length_z (co_members co) <= Int.max_unsigned.
-(* Hypothesis COMP_NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)). *)
+Hypothesis COMP_NOREP: forall id co, ce ! id = Some co -> list_norepet (name_members (co_members co)).
 (* Hypothesis FUN_CHECK:  forall id fd, *)
 (*     In (id, Gfun fd) prog.(prog_defs) -> *)
 (*     move_check_fundef_spec ce fd. *)
@@ -672,7 +672,7 @@ Proof using Type.
   induction phl as [|pj phl IH]; simpl; intros.
   - inv H. exists b, ofs. reflexivity.
   - destruct pj as [| fid1 | fid1];
-      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph vs];
+      destruct fp as [esz eal | sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph vs];
       simpl in H; try congruence.
     + destruct (IH fp1 b1 0 fp' H) as (b' & ofs' & H1). exists b', ofs'. exact H1.
     + destruct (find_field fid1 fpl) as [[[base fofs] fp1]|] eqn:FIND;
@@ -871,7 +871,7 @@ Admitted.
     all. *)
 
 Definition struct_fp_map (f: footprint -> footprint) : Prop :=
-  f fp_emp = fp_emp
+  (forall sz al, f (fp_emp sz al) = fp_emp sz al)
   /\ (forall sz al, f (fp_uninit sz al) = fp_uninit sz al)
   /\ (forall chunk v, f (fp_scalar chunk v) = fp_scalar chunk v)
   /\ (forall b fp1, f (fp_box b fp1) = fp_box b (f fp1))
@@ -928,7 +928,7 @@ Proof using Type.
   induction phl as [|pj phl IH]; simpl; intros.
   - inv H0. reflexivity.
   - destruct pj as [| fid1 | fid1];
-      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
+      destruct fp as [esz eal | sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
       simpl in H0; try congruence.
     + pose proof H as SM'. destruct H as (_ & _ & _ & E4 & _ & _ & _ & _).
       rewrite E4. simpl. eapply IH; eauto.
@@ -952,7 +952,7 @@ Proof using Type.
   induction phl as [|pj phl IH]; simpl; intros.
   - inv H0. reflexivity.
   - destruct pj as [| fid1 | fid1];
-      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
+      destruct fp as [esz eal | sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
       simpl in H0; try congruence.
     + pose proof H as SM'. destruct H as (_ & _ & _ & E4 & _ & _ & _ & _).
       rewrite E4. simpl. eapply IH; eauto.
@@ -1003,7 +1003,7 @@ Lemma struct_fp_map_sizeof: forall f fp,
     sizeof_footprint ce (f fp) = sizeof_footprint ce fp.
 Proof.
   intros f fp SM.
-  induction fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid fofs fp1 | mut b1 ofs1 ph0 vs] using strong_footprint_ind.
+  induction fp as [esz eal | sz al | chunk v | b1 fp1 | id fpl | id tagz fid fofs fp1 | mut b1 ofs1 ph0 vs] using strong_footprint_ind.
   - destruct SM as (E1 & _ & _ & _ & _ & _ & _ & _). rewrite E1. reflexivity.
   - destruct SM as (_ & E2 & _ & _ & _ & _ & _ & _). rewrite E2. reflexivity.
   - destruct SM as (_ & _ & E3 & _ & _ & _ & _ & _). rewrite E3. reflexivity.
@@ -1038,7 +1038,7 @@ Lemma struct_fp_map_fp_is_dropped: forall f fp,
     fp_is_dropped (f fp) = fp_is_dropped fp.
 Proof using Type.
   intros f fp SM.
-  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind.
+  induction fp as [esz eal | sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind.
   - destruct SM as (E1 & _ & _ & _ & _ & _ & _ & _). rewrite E1. reflexivity.
   - destruct SM as (_ & E2 & _ & _ & _ & _ & _ & _). rewrite E2. reflexivity.
   - destruct SM as (_ & _ & E3 & _ & _ & _ & _ & _). rewrite E3. reflexivity.
@@ -1085,7 +1085,7 @@ Lemma sem_wt_loc_struct_fp_map: forall f fp b ofs mp,
     sem_wt_loc ce (f fp) b ofs mp.
 Proof.
   intros f fp b ofs mp. revert b ofs mp.
-  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+  induction fp as [esz eal | sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
     intros b ofs mp SM H.
   - inv H. destruct SM as (E1 & _ & _ & _ & _ & _ & _ & _). rewrite E1. econstructor; eauto.
   - inv H. destruct SM as (_ & E2 & _ & _ & _ & _ & _ & _). rewrite E2. econstructor; eauto.
@@ -1142,7 +1142,7 @@ Lemma sem_wt_fp_struct_fp_map: forall f fp mp,
     sem_wt_fp ce (f fp) mp.
 Proof.
   intros f fp mp. revert mp.
-  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+  induction fp as [esz eal | sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
     intros mp SM H.
   - inv H. destruct SM as (E1 & _ & _ & _ & _ & _ & _ & _). rewrite E1. econstructor; eauto.
   - inv H. destruct SM as (_ & E2 & _ & _ & _ & _ & _ & _). rewrite E2. econstructor; eauto.
@@ -1175,7 +1175,7 @@ Lemma sem_wt_val_struct_fp_map: forall f fp v mp,
     sem_wt_val ce (f fp) v mp.
 Proof.
   intros f fp v mp. revert v mp.
-  induction fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid fofs fp1 | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+  induction fp as [esz eal | sz al | chunk v | b1 fp1 | id fpl | id tagz fid fofs fp1 | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
     intros v0 mp SM H1; inv H1.
   - pose proof SM as SM'. destruct SM as (_ & _ & E3 & _ & _ & _ & _ & _).
     rewrite E3. econstructor; eauto.
@@ -1227,7 +1227,7 @@ Lemma wt_footprint_struct_fp_map: forall f te ty fp,
     wt_footprint ce te ty (f fp).
 Proof.
   intros f te ty fp SM. revert ty.
-  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+  induction fp as [esz eal | sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
     intros ty H.
   - inv H.
   - inv H. destruct SM as (_ & E2 & _ & _ & _ & _ & _ & _). rewrite E2. econstructor; eauto.
@@ -1331,7 +1331,7 @@ Proof using Type.
   induction phl as [|pj phl IH]; simpl; intros.
   - reflexivity.
   - destruct pj as [| fid1 | fid1];
-      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
+      destruct fp as [esz eal | sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
       cbn [invalidate_conflict_ref get_owner_footprint];
       try reflexivity.
     + rewrite (IH ph ak am fp1). reflexivity.
@@ -1371,7 +1371,7 @@ Proof using Type.
   induction phl as [|pj phl IH]; simpl; intros fpm ak am ph fp b H.
   - inv H. reflexivity.
   - destruct pj as [| fid1 | fid1];
-      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
+      destruct fp as [esz eal | sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs];
       simpl in H; try congruence.
     + eapply IH; eauto.
     + destruct (BorrowCheckDomain.conflict_access ak mut && conflict_view ph am vs) eqn:C;
@@ -1440,7 +1440,7 @@ Proof using Type.
   induction phl as [|pj phl IH]; simpl; intros fpm current aliases fp ph ak am tgt vs b HGET HMUT.
   - inv HMUT. reflexivity.
   - destruct pj as [| fid1 | fid1];
-      destruct fp as [| sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs0];
+      destruct fp as [esz eal | sz al | chunk v | b1 fp1 | id fpl | id tagz fid2 fofs fp1 | mut b2 ofs1 ph0 vs0];
       simpl in *; try congruence.
     + eapply IH; eauto.
     + destruct (BorrowCheckDomain.conflict_access ak mut && conflict_view ph am vs0) eqn:C;
@@ -1519,7 +1519,7 @@ Lemma invalidate_conflict_ref_fp_ref_loc_wf: forall ph ak am fpm fp,
                   (invalidate_conflict_ref ph ak am fp).
 Proof using Type.
   intros ph ak am fpm fp.
-  induction fp as [| sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
+  induction fp as [esz eal | sz al | chunk v | b1 fp1 IHbox | id fpl IHfields | id tagz fid fofs fp1 IHenum | mut b1 ofs1 ph0 vs] using strong_footprint_ind;
     intros H.
   - inv H.
   - inv H. simpl. constructor.
@@ -1913,7 +1913,7 @@ Proof.
     (* wt_fpm: we should prove a wt_footprint/wt_fpm
     preservation leamm *) admit.
     intros (ty & WTPH1 & WTFP4 & AL).
-    exploit assign_loc_by_value_coherent_fpm. eapply COH3.
+    exploit assign_loc_by_value_coherent_fpm. eauto. eauto. eapply COH3.
     eapply WTVAL2. eauto.
     eapply GPLOC1. eauto. eauto. 
     (** lots of work need to be done to prove ty = typeof e = typeof p
@@ -1921,7 +1921,7 @@ Proof.
     get_owner_path_map p is performed on x0 instead of the fp_map
     after invalidation and kill_paths and clear_footprint. *)
     admit. instantiate (1 := chunk). admit.
-    admit. admit. admit.
+    admit. 
     intros (m1 & fpm2 & mp3 & ASSIGN & SET1 & COH4 & MPRED4).
     rewrite ASS in SET1. inv SET1.
     (** All operations on fpm do not change the local env *)
