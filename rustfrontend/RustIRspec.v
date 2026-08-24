@@ -1721,7 +1721,8 @@ keeps the drop statement for the place that is init. *)
     (INVP: invalidate_conflict_ref_fpm (enc_path fidx p) AWrite Adeep fpm1 = fpm2)
     (* Properties ensured by Drop elaboration, which we encode into
     the semantics *)
-    (DEEP_INIT: check_path_is_droppable fpm2 (enc_path fidx p) = OK true)
+    (** FIXME: I don't remember why do we need this *)
+    (* (DEEP_INIT: check_path_is_droppable fpm2 (enc_path fidx p) = OK true) *)
     (DROP: clear_footprint_map ge (enc_path fidx p) fpm2 = OK fpm3),
     step (State f (Sdrop p) k fpm1 fidx sup) E0 (State f Sskip k fpm3 fidx sup)
 | step_storagelive: forall f k fidx fpm id sup,

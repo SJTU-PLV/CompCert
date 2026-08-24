@@ -153,9 +153,6 @@ Treat the returned plist as the authoritative state of the incremental check:
   the known disk patch; never use a post-patch `save-file` blindly, since it can
   overwrite the external edit.
 
-
-Additional pitfalls observed while completing `set_wt_loc_split_value_and_wt_fp` in `rustfrontend/RustIRspecMem.v`:
-
 - **`coqcheck_until` targets the *start* of the sentence at `LINE`, not its end.**
   `:locked-end < :target` is normal and means that sentence was not yet executed.
   After fixing a proof, do not hunt line-by-line: check once to the whole lemma's

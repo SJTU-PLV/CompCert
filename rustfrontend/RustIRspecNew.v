@@ -27,6 +27,180 @@ Local Open Scope error_monad_scope.
 (** A variant of [RustIRspec] in which evaluated values cross statement and
     function boundaries through fresh temporary entries in the local store. *)
 
+(** ** Program states *)
+
+Inductive state: Type :=
+| State
+    (f: function)
+    (s: statement)
+    (k: cont)
+    (fpm: fp_map)
+    (fidx: frame_idx)
+    (sup: Mem.sup) : state
+| Callstate
+    (fun_id: ident)
+    (args: list ident)
+    (fpm: fp_map)
+    (fidx: frame_idx)
+    (sup: Mem.sup)
+    (k: cont) : state
+| Returnstate
+    (retv: ident)
+    (fpm: fp_map)
+    (fidx: frame_idx)
+    (sup: Mem.sup)
+    (k: cont) : state.
+
+(** ** Evaluation of expressions *)
+
+(* Used in Emoveplace and Sdrop; we do not require that p must be a
+move path *)
+Definition move_out_place (ce: composite_env) (fidx: frame_idx)
+    (fpm: fp_map) (p: place) : res (footprint * fp_map) :=
+  let ps := enc_path fidx p in
+  let fpm1 := invalidate_conflict_ref_fpm ps AWrite Adeep fpm in
+  do (ph, _) <- get_owner_path_map ps fpm1;
+  do fp <- get_owner_footprint_map ph fpm1;
+  do fpm2 <- clear_footprint_map ce ph fpm1;
+  OK (fp, fpm2).
+  (* do droppable <- check_path_is_droppable fpm1 ps; *)
+  (* if droppable then clear_footprint_map ce ps fpm1 *)
+  (* else Error (msg "drop target is not droppable"). *)
+
+Section EXPR.
+  
+Variable frame: positive.
+
+Definition access_mode_chunk (ty: type) : res memory_chunk :=
+  match access_mode ty with
+  | By_value chunk => OK chunk
+  | _ => Error nil
+  end.
+
+(* We also do dynamic borrow checking *)
+Fixpoint eval_pexpr (fpm: fp_map) (pe: pexpr) : res (footprint * fp_map) :=
+  match pe with
+  | Eunit => OK (fp_scalar Mint32 (Vint Int.zero), fpm)               
+  | Econst_int i ty => 
+      do chunk <- access_mode_chunk ty;
+      OK (fp_scalar chunk (Vint i), fpm)
+  | Econst_float f ty => 
+      do chunk <- access_mode_chunk ty;
+      OK (fp_scalar chunk (Vfloat f), fpm)
+  | Econst_single f ty => 
+      do chunk <- access_mode_chunk ty;
+      OK (fp_scalar chunk (Vsingle f), fpm)
+  | Econst_long i ty => 
+      do chunk <- access_mode_chunk ty;
+      OK (fp_scalar chunk (Vlong i), fpm)
+  | Eunop op a t =>
+      do (v1, fpm1) <- eval_pexpr fpm a;
+      match v1 with
+      | fp_scalar _ v2 =>
+          match sem_unary_operation op v2 t with
+          | Some v3 =>
+              do chunk <- access_mode_chunk t;
+              OK (fp_scalar chunk v3, fpm1)
+          | None =>
+              Error nil
+          end
+      | _ => Error nil
+      end
+  | Ebinop op a1 a2 t =>
+      do (v1, fpm1) <- eval_pexpr fpm a1;
+      do (v2, fpm2) <- eval_pexpr fpm1 a2;
+      match v1, v2 with
+      | fp_scalar _ v1', fp_scalar _ v2' =>
+          match sem_binary_operation_rust op v1' (typeof_pexpr a1) v2' (typeof_pexpr a2) with
+          | Some v =>
+              do chunk <- access_mode_chunk t;
+              OK (fp_scalar chunk v, fpm2)
+          | None =>
+              Error nil
+          end
+      | _, _ => Error nil
+      end
+  | Eplace p ty =>
+      let p := (enc_path frame p) in
+      (* We first do invalidation and then get the footprint because
+      we do not want to do invalidate on the footprint we get. *)
+      let fpm1 := invalidate_conflict_ref_fpm p ARead Adeep fpm in
+      do (ph, _) <- get_owner_path_map p fpm1;
+      do (_, fp) <- get_owner_loc_footprint_map ph fpm1;
+      OK (fp, fpm1)
+  | Ecktag p fid =>
+      let p := (enc_path frame p) in
+      let fpm1 := invalidate_conflict_ref_fpm p ARead Ashallow fpm in
+      do (ph, _) <- get_owner_path_map p fpm1;
+      do (_, fp) <- get_owner_loc_footprint_map ph fpm1;
+      match fp with
+      | fp_enum _ _ fid1 _ _ =>
+          (* refer to how rustc handles Discriminant operation
+          (rustc_borrowck/src/lib.rs#L1550) *)
+          OK (fp_scalar Mint8unsigned (Val.of_bool (ident_eq fid fid1)), fpm1)
+      | _ => Error nil
+      end
+  | Eref _ mut p _ =>
+      let p := (enc_path frame p) in
+      let ak := mut_to_access_kind mut in
+      let fpm1 := invalidate_conflict_ref_fpm p ak Adeep fpm in
+      do (ph, vs) <- get_owner_path_map p fpm1;
+      do (bofs, _) <- get_owner_loc_footprint_map ph fpm1;
+      let (b, ofs) := bofs in
+      OK (fp_ref mut b ofs (Some ph) vs, fpm1)
+  | _ => Error nil
+  end.
+
+
+Definition eval_expr (ce: composite_env) (fpm: fp_map) (e: expr) : res (footprint * fp_map) :=
+  match e with
+  | Emoveplace p _ =>
+      (* The main reason we first do invalidation and then get the
+      location is because we do not want to do invalidation on the
+      footprint we get from the owner. The invalidation is used to
+      simulate the deep access like creating a reference of this path.
+      But the difficulty may be the proof of no invalid fp_ref in
+      [fp]? Maybe in the static borrow checking, we can show that all
+      reachable path of [p] is live so we cannot invalidate their
+      fp_ref? No matter whether the fp_ref is reachable from [p]? *)
+      (* let p := (enc_path frame p) in *)
+      (* let fpm1 := invalidate_conflict_ref_fpm p AWrite Adeep fpm in *)
+      (* do (_, fp) <- get_owner_loc_footprint_map p fpm1; *)
+      (* do fpm2 <- clear_footprint_map ce p fpm1; *)
+      (* OK (fp, fpm2) *)
+      move_out_place ce frame fpm p
+  | Epure pe =>
+      eval_pexpr fpm pe
+  end.
+
+
+(* Fixpoint eval_exprlist (svm: sv_map) (al: list expr) (tyl: typelist) : res (list sval * sv_map) := *)
+(*   match al, tyl with *)
+(*   | nil, Tnil => OK (nil, svm) *)
+(*   | a :: al1, Tcons ty tyl1 => *)
+(*       do v1 <- eval_expr svm a; *)
+(*       do svm1 <- move_place_option svm (moved_place a); *)
+(*       do v1' <- sem_cast v1 (typeof a) ty; *)
+(*       do (vl, svm2) <- eval_exprlist svm1 al1 tyl1; *)
+(*       OK (v1' :: vl, svm2) *)
+(*   | _, _ => Error nil *)
+(*   end. *)
+
+Fixpoint eval_exprlist ce (fpm: fp_map) (al: list expr) (* (tyl: typelist) *) : res (list footprint * fp_map) :=
+  match al with
+  | nil => OK (nil, fpm)
+  | a :: al1 =>
+      do (fp1, fpm1) <- eval_expr ce fpm a;
+      (** We do not support sem_cast for now to simplify the proof, may
+      be we need to do some restricted type checking *)
+      (* do v1' <- sem_cast v1 (typeof a) ty; *)
+      do (fpl, fpm2) <- eval_exprlist ce fpm1 al1;
+      OK (fp1 :: fpl, fpm2)
+  (* | _ => Error nil *)
+  end.
+
+End EXPR.
+
 (** ** Centralized local-store operations *)
 
 (** Temporary entries have no concrete location. *)
@@ -91,19 +265,13 @@ Definition shallow_clear_place (ce: composite_env) (fidx: frame_idx)
   let ps := enc_path fidx p in
   let fpm1 := invalidate_conflict_ref_fpm ps AWrite Ashallow fpm in
   do (ph, vs) <- get_owner_path_map ps fpm1;
+  (* used to make sure we do not have reference that points to leak
+  memory *)
   do dropped <- check_path_is_dropped fpm1 ph;
   if dropped then
     do fpm2 <- clear_footprint_map ce ph fpm1;
     OK (ph, kill_views_ref_fpm vs fpm2)
   else Error (msg "assignment target is not dropped").
-
-Definition drop_place (ce: composite_env) (fidx: frame_idx)
-    (fpm: fp_map) (p: place) : res fp_map :=
-  let ps := enc_path fidx p in
-  let fpm1 := invalidate_conflict_ref_fpm ps AWrite Adeep fpm in
-  do droppable <- check_path_is_droppable fpm1 ps;
-  if droppable then clear_footprint_map ce ps fpm1
-  else Error (msg "drop target is not droppable").
 
 Definition write_remove_temp (fpm: fp_map)
     (tmp: ident) (ph: path) : res fp_map :=
@@ -133,29 +301,6 @@ Definition function_exit_to_temporary (f: function) (tmp: ident)
   let fpm2 := kill_views_ref_fpm paths fpm1 in
   OK (pop_stack fpm2 fidx (f.(fn_vars) ++ f.(fn_params))).
 
-(** ** Program states *)
-
-Inductive state: Type :=
-| State
-    (f: function)
-    (s: statement)
-    (k: cont)
-    (fpm: fp_map)
-    (fidx: frame_idx)
-    (sup: Mem.sup) : state
-| Callstate
-    (fun_id: ident)
-    (args: list ident)
-    (fpm: fp_map)
-    (fidx: frame_idx)
-    (sup: Mem.sup)
-    (k: cont) : state
-| Returnstate
-    (retv: ident)
-    (fpm: fp_map)
-    (fidx: frame_idx)
-    (sup: Mem.sup)
-    (k: cont) : state.
 
 Section SMALLSTEP.
 
@@ -189,8 +334,9 @@ Inductive step : state -> trace -> state -> Prop :=
     (WRITE: write_remove_temp fpm3 tmp ph = OK fpm4),
     step (State f (Sbox p e) k fpm1 fidx sup) E0
          (State f Sskip k fpm4 fidx (Mem.sup_incr sup))
-| step_drop: forall fpm1 fpm2 k f (p: place) fidx sup
-    (DROP: drop_place ge fidx fpm1 p = OK fpm2),
+| step_drop: forall fpm1 fpm2 k f (p: place) fidx sup fp
+    (* fp is the footprint we want to drop *)
+    (DROP: move_out_place ge fidx fpm1 p = OK (fp, fpm2)),
     step (State f (Sdrop p) k fpm1 fidx sup) E0
          (State f Sskip k fpm2 fidx sup)
 | step_storagelive: forall f k fidx fpm id sup,
