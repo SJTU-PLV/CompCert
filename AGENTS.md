@@ -103,6 +103,94 @@ emacsclient -s SERVER --eval '(progn
 - Do not run `git add` during proof development/editing/testing; stage files only
   when the user explicitly asks to create a commit.
 
+### Interpreting `coqcheck_until` results
+
+Treat the returned plist as the authoritative state of the incremental check:
+
+- `(:ok t ...)` means every sentence through the requested target was accepted.
+  A `:goal` field is normal when the target is inside an open proof; no `:goal`
+  is expected after a checked `Qed.`. Compare `:locked-end` with `:target` when
+  confirming that the requested boundary was actually reached.
+- `(:ok nil :error ... :goal ...)` means checking stopped at the first rejected
+  sentence. Read the fresh `:goal` together with the complete local context
+  before changing the proof; the headline alone is often too generic.
+- `Cannot find witness` usually means an automation tactic such as `lia`,
+  `eauto`, or an existential refinement could not instantiate all metavariables.
+  Inspect the exact goal, make important lemma arguments explicit, split the
+  existential/conjunction manually, and check that the arithmetic assumptions
+  really imply the requested bounds. Do not guess a witness without first
+  checking feasibility.
+- `This subproof is complete, but there are some unfocused goals` is a
+  goal-focus problem, not evidence that the mathematical branch failed. Check
+  the nesting and kind of the next bullet/brace. If strict focus repeatedly
+  blocks a large recursive proof, factor each branch into a standalone named
+  lemma (for example, a first-divergence leaf and a shared-prefix lifting leaf),
+  check those lemmas separately, and make the recursive wrapper only dispatch
+  to them. A temporary `admit` may be used to validate the wrapper structure,
+  but remove it and recheck every helper and the final `Qed.`.
+- `No such goal` or a returned goal state saying `No more subgoals` means a
+  preceding tactic already closed more goals than expected. This commonly
+  follows `eauto`, `congruence`, `inv`, or a tactic applied with `;`. Remove the
+  redundant tactic or bullet; do not add a dummy goal merely to preserve the
+  original script shape.
+- `No such hypothesis`, `The reference ... was not found`, or an unexpected
+  variable name often follows `inv`, `subst`, or dependent destruction, which
+  may remove or rename variables. Use the context returned in `:goal` and refer
+  to the surviving names, or preserve the needed fact in an `assert` before the
+  destructive tactic.
+- `Found no subterm matching ...` generally indicates the wrong rewrite
+  direction, association, or instantiated arguments. First normalize the
+  expression deliberately (for separation assertions, often with
+  `sep_assoc`), then invoke the rewrite with explicit arguments.
+- Unification errors should be read from both sides of the reported mismatch.
+  They often expose an association/order mismatch in `sepconj`, a reversed
+  equality, or an implicit argument inferred from the wrong hypothesis.
+- `Unknown message`, `print-nonl`, or fragmented pretty-printer output can be
+  secondary noise from Proof General. Use the first real `:error` and the fresh
+  `:goal`; rerun a nearby boundary check if the displayed context was truncated.
+- If the API refuses because the Emacs buffer has unsaved edits, stop before
+  issuing more RPCs. Preserve the Emacs-side edits first and then replay only
+  the known disk patch; never use a post-patch `save-file` blindly, since it can
+  overwrite the external edit.
+
+
+Additional pitfalls observed while completing `set_wt_loc_split_value_and_wt_fp` in `rustfrontend/RustIRspecMem.v`:
+
+- **`coqcheck_until` targets the *start* of the sentence at `LINE`, not its end.**
+  `:locked-end < :target` is normal and means that sentence was not yet executed.
+  After fixing a proof, do not hunt line-by-line: check once to the whole lemma's
+  `Qed.` (or one line past it), read `:locked-end`, and map it to a line number to
+  find the first genuinely broken sentence.
+- **`:error` accumulates old messages for the whole Emacs/Proof General session.**
+  After fixing a reported error you may keep seeing the old text in `:error` even
+  though the check passed. Trust only `:ok`, `:locked-end`, `:target`, and the
+  *fresh* `:goal` (the last one in the output). If a check keeps reporting an
+  already-fixed error, re-check from an earlier stable boundary (e.g., the lemma
+  statement or the previous helper's `Qed.`) to force a clean replay; the
+  incremental state machine converges.
+- **`:locked-end`/`:target` are byte offsets in the file, not line numbers.**
+  Map them back to lines by accumulating lengths over `split(b'\n')` (a short
+  Python loop) instead of guessing.
+- Checks targeting **comment or blank lines** can spuriously return
+  `(:ok nil :error "< >")`; ignore these and target real sentences.
+- `inv`/`inversion` + `subst` can **substitute away constructor-argument names**
+  that are defined by equality fields (e.g., `padmp`/`PAD` in `sem_wt_struct`;
+  `mass1`/`padmp`/`tailpad`/`TAG`/`ALPERM`/`TAIL` in `sem_wt_enum`): the values
+  appear inline inside `EQV`, so write the proof against the inlined expressions
+  and use the names that actually survive in the fresh `:goal` context (often
+  `mass0`/`FWT0`/`EQV0` rather than `mass3`/`FWT3`/`EQV3`).
+- When inspecting buffer content via `emacsclient --eval`, **`line-beginning-position N`
+  is relative to point**, not absolute line `N`. Use `goto-char (point-min)` +
+  `forward-line`, or `re-search-forward` on a distinctive string.
+- When parsing the returned plist in a script, **do not use a non-greedy regex for
+  `:error`/`:goal`** (they contain escaped quotes `\"` and newlines); slice the text
+  between `:error "` and the next `:locked-end` instead.
+
+After any error, recompute line numbers if the file changed and retry the
+smallest useful boundary with `restart=nil`. For a large proof, check helper
+`Qed.` boundaries bottom-up, then check the wrapper theorem. Finally search the
+new diff for leftover `admit`/`Admitted` before reporting completion.
+
 ### Environment notes (macOS)
 
 - `rocqagent-health` reports `socket_exists: false` even for a healthy server,
