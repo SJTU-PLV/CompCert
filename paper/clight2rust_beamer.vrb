@@ -1,0 +1,50 @@
+\frametitle{Why Purely Static Reasoning Fails on Dynamic Offsets}
+
+  % 上半部分：左右分栏对比
+  \begin{columns}[T, totalwidth=\textwidth]
+    \begin{column}{0.48\textwidth}
+      {\small\textbf{\color{keywordblue}Original C Code:}}
+      \begin{lstlisting}[language=C, basicstyle=\ttfamily\tiny]
+void demo(int *arr, int k) {
+    int *p1 = arr + 0;
+    int *p2 = arr + 5;
+    *p1 = 10;
+    *p2 = 20;
+    int *p3 = p1 + k;
+    *p3 = *p1 + *p2;
+}
+      \end{lstlisting}
+    \end{column}
+
+    \begin{column}{0.48\textwidth}
+      \begin{block}{The Fundamental Difficulty}
+        \begin{itemize}\setlength{\itemsep}{1pt}\tiny
+          \item \textbf{Static:} \texttt{p1}/\texttt{p2} locations are compile-time known.
+          \item \textbf{Dynamic:} \texttt{p3} destination depends on runtime \texttt{k}.
+          \item \textbf{Overlap:} Compiler cannot statically check aliasing.
+        \end{itemize}
+      \end{block}
+
+      \begin{alertblock}{Implication}
+        \tiny Static splitting alone is insufficient. Runtime safety is necessary.
+      \end{alertblock}
+    \end{column}
+  \end{columns}
+
+  \vspace{0.4em}
+  % 使用 Beamer 兼容性最好的画线方式
+  \textcolor{lightgray}{\hrulefill}
+  \vspace{0.4em}
+
+  % 下半部分：横跨全局的 Rust 翻译结果
+  \begin{exampleblock}{Translation Result (Rust)}
+    \begin{lstlisting}[language=Rust, basicstyle=\ttfamily\tiny]
+let mut p1: Ptr<i32> = arr.clone().offset(0);
+let mut p2: Ptr<i32> = arr.clone().offset(5);
+p1.store(0, 10);
+p2.store(0, 20);
+let mut p3: Ptr<i32> = p1.clone().offset(k as isize);
+p3.store(0, p1.load(0) + p2.load(0));
+    \end{lstlisting}
+  \end{exampleblock}
+

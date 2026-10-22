@@ -1,0 +1,393 @@
+--------------------
+Slide 1: Title
+Suggested time: 30 seconds
+--------------------
+
+Good afternoon, everyone. Thinks for attending my presentation. I am Yao Dongwen, from shanghai jiaotong university. 
+
+The main goal of this work is to translate the Clight subset used in CompCert into safer Rust. And this is a joint work with wujinghua and wangyuting.
+
+
+--------------------
+Slide 2: Main Thesis
+Suggested time: 1.5 minutes
+--------------------
+
+The main problem is how to translate C pointer semantics into a form that can still be expressed and preserved in safe Rust.
+
+The core idea of the paper is to introduce a uniform abstraction called Ptr<T>. Then, pointer behavior that is implicit in C is rewritten as explicit API calls in Rust.
+
+Empirically, the framework reaches a 100 percent translation success rate on the CompCert benchmark suite, with an average runtime overhead of about 1.70x. So this is not only a conceptual idea; it is already a working translation path.
+
+
+--------------------
+Slide 3: A Counterintuitive Example
+Suggested time: 2 minutes
+--------------------
+
+The C program on the top is very normal. Pointer p points to a heap object. Pointer q is an alias of p. If q writes to the memory, then p should observe the same update. This is a very standard C behavior.
+
+Now, on the slide I show two Rust-looking rewrites, and both are wrong.
+
+In the first attempt, we assign p directly to q. In Rust, that becomes an ownership move. q receives the object, but p is moved away, so later access to p fails at compile time.
+
+In the second attempt, we clone it. But for Box, clone performs a deep copy. Then q modifies its own copy, not the original shared memory. So the code compiles, but the semantics are already wrong.
+
+This example illustrates a key point. It is not enough to make the code look like Rust. It is not enough to do superficial syntax replacement. The real question is: who is going to preserve the hidden semantic behavior of C, such as sharing, offset movement, and lifetime extension?
+
+So the entry point of this paper is very clear: before asking whether something can be written as Rust syntax, we must ask whether the original pointer semantics of C can still be preserved.
+
+
+--------------------
+Slide 4: Limitations of Existing Directions
+Suggested time: 1.5 minutes
+--------------------
+
+Existing approaches can roughly be grouped into three directions.
+
+The first direction is syntactic transpilation, represented by systems such as C2Rust. Their strength is broad coverage: many programs can be translated. But the problem is that they rely heavily on unsafe. In other words, they preserve behavior, but they do not preserve the main value that motivates migration to Rust, namely memory safety.
+
+The second direction is purely static approaches, such as Laertes or Split Tree-style work. These methods are closer to truly safe Rust, because they try to prove aliasing, borrowing, and slicing relationships at compile time. However, once we encounter complex aliasing, dynamic offsets, or re-entrant pointer logic, these approaches become conservative and may reject valid C programs.
+
+The third direction is LLM-based translation. These systems often generate Rust code that looks more idiomatic, but in high-assurance settings their main weakness is the lack of strong semantic guarantees. Correctness often has to be recovered through testing, repair loops, or human debugging.
+
+So this paper is positioned between those extremes. It does not want to fall back to a large amount of unsafe engineering code, and it does not want to rely entirely on heavyweight static analysis. Instead, it aims for a middle ground that is automated and still relatively credible.
+
+
+--------------------
+Slide 5: How the Rest of the Talk Supports the Main Thesis
+Suggested time: 30 seconds
+--------------------
+
+I will conduct this presentation according to the following content.
+
+
+--------------------
+Slide 6: The Central Technical Problem
+Suggested time: 1.5 minutes
+--------------------
+
+Here we can restate the problem in a more technical form.
+
+First, a C pointer is both an ownership handle and a movable cursor. It refers to some object, but it can also move freely within that object.
+
+Second, Rust does not provide a single safe primitive that simultaneously expresses both aspects. A Box is closer to an owning object, while references and slices are closer to constrained access views, but none of them is directly equivalent to a C pointer.
+
+Third, if we force C code into native Rust borrowing, many programs will simply fail the borrow checker. If instead we fall back to raw pointers, then the safety objective is immediately lost.
+
+The technical response of the paper is to avoid identifying a C pointer with any single existing Rust primitive. Instead, it introduces an intermediate abstraction, Ptr<T>, and translates pointer actions into explicit operations such as clone, offset, load, and store.
+
+The importance of this step is that it turns hidden semantics into explicit interfaces. From that point on, correctness and safety can be organized around those interfaces.
+
+
+--------------------
+Slide 7: Ptr as a Semantic Wrapper for C Pointers
+Suggested time: 2 minutes
+--------------------
+
+This slide introduces the abstract shape of Ptr.
+
+From the CompCert point of view, a Clight pointer can be written as a pair b plus delta, that is, a block identifier plus an offset. The block identifier tells us which object the pointer belongs to, and the offset tells us where inside that object the pointer currently points.
+
+The design of Ptr makes those dimensions, together with boundary information, explicit.
+
+The first component is owner, which tells us who owns the underlying storage or object.
+The second component is offset, which tells us which logical element is currently addressed.
+The third component is len, which provides range or boundary metadata.
+
+
+the core value of Ptr is not that it resembles an ordinary pointer,
+but that it explicitly separates three concerns that are entangled together inside C pointer semantics.
+
+
+--------------------
+Slide 8: How Ptr Is Implemented
+Suggested time: 2.5 minutes
+--------------------
+
+This slide gives the compact runtime structure of Ptr.
+
+At the top, we define an Owner type with three cases.
+Heap means the pointer refers to heap-managed storage.
+Borrowed means it refers to an external region, such as stack memory or a buffer that is managed elsewhere.
+Null is the explicit representation of the null pointer case.
+
+Then the Ptr structure itself has only three fields: owner, offset, and len.
+owner records the storage identity.
+offset records the current logical position of the pointer inside that storage.
+len records the accessible range that is still considered valid.
+
+This decomposition is the central design decision.
+In C, all of this information is implicit inside pointer behavior.
+Here, we make it explicit and separate.
+
+At the implementation level, the heap case is backed by a shared runtime owner, typically realized with reference counting and interior mutability.
+
+
+--------------------
+Slide 9: Core Operations of Ptr
+Suggested time: 2 minutes
+--------------------
+
+This slide explains the operational meaning of Ptr through four core actions.
+
+First, alloc(n).
+This corresponds to malloc in C.
+It creates a fresh shared storage object, sets offset to zero, and sets len to n.
+So after allocation, the pointer already knows both where the object is and how large the valid region is.
+
+Second, clone(p).
+This is how the translation models q = p in C.
+The important point is that clone does not duplicate the array contents.
+It shares the same owner and keeps the same logical view.
+So two Ptr values can observe the same memory, exactly as C aliases should.
+
+Third, offset(p, k).
+This models pointer arithmetic.
+It does not touch the storage itself.
+It only returns a new pointer view whose offset is shifted by k.
+This is why the framework can support pointer movement without losing the identity of the original allocation.
+
+Fourth, load and store.
+These are the controlled entry points for dereference.
+Before accessing memory, the runtime checks that the pointer is not null and that the target position is still within bounds.
+So access that would have become silent undefined behavior in C is turned into explicit checked behavior in Rust.
+
+
+--------------------
+Slide 10: How C Pointer Operations Become Rust Operations
+Suggested time: 2.5 minutes
+--------------------
+
+The main message of this slide is that C-to-Rust translation is the rewriting of implicit pointer behavior into explicit method calls.
+
+p = malloc(n) becomes Ptr::alloc(n).
+This creates a Ptr whose owner has already been initialized.
+
+q = p becomes q = p.clone().
+Here clone means alias creation, not deep copy.
+
+p + i becomes p.offset(i).
+The important point is that only the offset changes; the owner does not.
+
+Reading *p becomes p.load(0).
+Writing *p = v becomes p.store(0, v).
+So what looks like an ordinary dereference in C is lifted into an explicit controlled API call in Rust.
+
+p == NULL corresponds to p.is_null().
+
+
+--------------------
+Slide 11: Why This Abstraction Matters
+Suggested time: 1.5 minutes
+--------------------
+
+This slide is a compact summary.
+
+Ptr preserves at least three of the hardest capabilities of C pointers:
+first, aliasing, meaning that multiple pointers can observe one mutable object;
+second, pointer arithmetic, meaning that movement does not lose the original allocation;
+third, lifetime extension, meaning that heap objects can naturally outlive inner scopes.
+
+At the same time, it satisfies three Rust-side requirements:
+first, the generated program logic remains safe Rust;
+second, dangerous behavior is isolated inside the runtime;
+third, invalid access becomes an explicit panic rather than silent undefined behavior.
+
+So the claim here can be stated very clearly:
+the key contribution of this work is not the invention of a new pointer type for its own sake,
+but the discovery of a semantic bridge that is small, clear, and practical.
+
+
+--------------------
+Slide 12: Example 1: Mutable Aliasing
+Suggested time: 1.5 minutes
+--------------------
+
+We now return to the first key example from the paper: mutable aliasing.
+
+In C, p and q point to the same heap memory, so if q updates the memory, then p should observe the same update. This is natural in C.
+
+But if we use Box or ordinary cloning in Rust, we either get a move error or a deep-copy semantics error.
+
+The Ptr-based solution is: p = Ptr::alloc(2), q = p.clone(), then modify through q.store and read through p.load.
+
+To summarize,
+clone here does not duplicate data; it increments a shared reference to the same owner.
+The sharing semantics are preserved jointly by Rc and RefCell.
+
+
+--------------------
+Slide 13: Example 2: Pointer Arithmetic Must Be Separated from Ownership
+Suggested time: 1.5 minutes
+--------------------
+
+The second example illustrates why pointer arithmetic must be separated from ownership.
+
+In C, p = p + 1 is extremely common. The issue is that the current position of the pointer may change, but the information about which allocation this pointer originated from must not be lost.
+
+If we only keep a slice or a borrowed subview, then what often remains is only a local window into the memory, while the identity of the original allocation becomes unclear. This makes deallocation and ownership semantics fragile.
+
+With Ptr, the solution is simple: owner stays unchanged, while offset changes by one. Then p.store(0, 42) actually accesses the location at owner plus offset.
+
+So,
+separating offset from owner is one of the most important design steps in the entire framework, because it prevents cursor movement from destroying object identity.
+
+
+--------------------
+Slide 14: Why Purely Static Reasoning Fails on Dynamic Offsets
+Suggested time: 2 minutes
+--------------------
+
+In the example, the positions of p1 and p2 are known statically. So if we use a Split Tree style idea or a split_at_mut style reasoning, it is possible to statically separate those regions.
+
+However, p3 = p1 + k depends on the runtime value k. That means the compiler does not know whether p3 will end up in the region associated with p1 or p2, and it also does not know whether it overlaps with an existing alias.
+
+This reveals a fundamental limitation: not all pointer relationships in valid C programs can be proved statically at compile time. As soon as we have dynamic offsets, complicated control flow, or re-entrant aliasing, a runtime-backed mechanism is still needed.
+
+So this slide should not be framed as a rejection of static approaches. Instead, it identifies their boundary.
+Ptr matters because when static reasoning reaches its limit, the system still has a safe operational fallback.
+
+
+--------------------
+Slide 15: Pipeline Architecture
+Suggested time: 1.5 minutes
+--------------------
+
+The full pipeline is the following.
+C source code first enters the CompCert frontend and is transformed into Clight IR.
+Then Clight2Rustlight.v performs the core translation and produces Rustlight IR.
+Next, PrintRustlight.ml prints that intermediate form as Rust source code.
+Finally, the generated Rust code is compiled together with the runtime using rustc.
+
+The two most important implementation files are exactly the ones shown on the slide:
+Clight2Rustlight.v is responsible for how semantics are translated;
+PrintRustlight.ml is responsible for how the result is printed as actual Rust code.
+
+It is a semantic translation pipeline rooted in a verified compiler infrastructure.
+
+
+////////--------------------
+////////Slide 16: The Meaning of the Translation Rules
+////////Suggested time: 1.5 minutes
+////////--------------------
+////////
+////////The translation rules are as follows.
+////////
+////////We translate binary operation (Oadd, p, i) to p.offset(i);
+////////dereference (p) to p.load(0);
+////////*p = v to p.store(0, v);
+////////and (*p).f is translated by first loading and then accessing the field.
+////////
+////////These rules may look like simple rewrites, but their deeper importance is that they make formerly implicit memory actions explicit.
+////////
+////////Once they are explicit, the system knows:
+////////where borrow checking is enforced,
+////////where bounds checking is enforced,
+////////where the trusted boundary lies,
+////////and where semantic responsibility is located.
+////////
+////////So,
+////////this work does not merely reprint C in a Rust-like syntax;
+////////it reconstructs C's implicit memory actions as auditable and controlled Rust operations.
+
+
+--------------------
+Slide 17: What Do the Experimental Results Show?
+Suggested time: 1.5 minutes
+--------------------
+The experiments use the CompCert test/c benchmark suite, with Clang or GCC compiled C programs as the reference baseline.
+The validation criterion is very direct: whether the Rust code compiles successfully, and whether its runtime output matches the reference C output.
+
+The final result is that all 24 benchmarks are translated and executed successfully, with matching output, for a 100 percent success rate.
+
+This tells us:
+First, the Ptr abstraction is not merely a theoretical idea; it is strong enough to carry a fairly rich range of pointer behavior within the CompCert/Clight subset.
+Second, this route does not sacrifice usability for safety to such an extent that it becomes impractical. On the contrary, it shows strong empirical viability.
+
+
+--------------------
+Slide 18: How Should We Interpret the 1.70x Overhead?
+Suggested time: 1 minute
+--------------------
+
+Here the goal is simply to explain the cost.
+
+The average overhead of 1.70x mainly comes from three sources:
+first, all accesses go through the uniform load/store interface;
+second, dynamic bounds checks are inserted;
+third, Rc and RefCell introduce reference tracking and runtime borrow checking.
+
+But the important point is that this result shows the viability of a lightweight runtime-backed route. The cost is noticeable, but it is not prohibitive. In other words, this is a realistic trade-off for memory safety.
+
+
+//--------------------
+//Slide 19: Limitations and the Role of Split Tree
+/////////////Suggested time: 1 minute
+/////////////--------------------
+/////////////
+/////////////This slide is mainly about the current boundary and the future direction.
+/////////////
+/////////////The current input language is Clight rather than arbitrary industrial C.
+/////////////Safety depends on a small trusted runtime.
+/////////////And a full semantic preservation proof from Clight to Rustlight is not yet complete.
+/////////////
+/////////////This is also the best place to explain Split Tree.
+/////////////You can say that Split Tree represents an important family of static ideas. Its value is not denied here; rather, it is better understood as a future direction that may gradually lift some of today’s runtime checks back into static proof.
+/////////////
+/////////////So the trajectory is very clear:
+/////////////today, the paper answers how to generate safe Rust at all;
+/////////////tomorrow, the next question is how to recover more static checking and reduce runtime cost.
+
+
+--------------------
+Slide 20: Conclusion
+Suggested time: 1 minute
+--------------------
+
+In conclusion.
+
+The contribution of this work is not merely to build another C-to-Rust translator.
+Its more important contribution is to raise the problem from syntax rewriting to memory-semantic migration.
+
+Its core innovation is the Ptr abstraction, which uses a small trusted runtime to carry the hardest part of C pointer semantics, while the generated program logic remains in safe Rust and the whole design is grounded in the high-assurance setting of CompCert.
+
+Its broader significance is that it shows that verified compiler infrastructure and Rust’s safety discipline can indeed be connected by a credible semantic bridge.
+
+
+/////////////////////the most important contribution of Clight2Rust is not that it translates C into Rust, but that it identifies a workable path by which C pointer semantics can enter the world of safe Rust.
+
+Thinks for your listening.
+
+====================
+3. Extra Oral Emphasis for the Ptr Slides
+====================
+
+If you feel that the audience has not fully grasped Ptr during Slides 8 to 10, you can insert one or two of the following sentences:
+
+1. “Please note that Ptr is not intended to replace native Rust references; it is a semantic adaptation layer.”
+2. “owner captures object identity, offset captures cursor movement, and len captures access validity. These three concerns are entangled inside C pointers, but separated explicitly here.”
+3. “Rc preserves shared ownership, while RefCell preserves runtime borrowing discipline. Together they support the hardest part of mutable aliasing.”
+4. “From the translation point of view, the key step is that implicit C behavior becomes explicit API calls, so the system finally has precise places to enforce checks.”
+5. “Ptr does not force C pointers to pretend they are Rust references; it gives them a safe and controlled landing place inside Rust.”
+
+
+====================
+4. Short Templates for Q&A
+====================
+
+1. If asked: why not use purely static analysis?
+Suggested answer:
+Because in many valid C programs, aliasing and offset relationships are only fully determined at runtime. Purely static methods therefore become conservative and may reject valid programs. Our approach first guarantees a workable translation path, and then leaves room for future static recovery.
+
+2. If asked: is Ptr merely hiding unsafe?
+Suggested answer:
+The key distinction is that unsafe is compressed into a very small, auditable runtime boundary, rather than being scattered throughout the generated program logic. The main generated code remains in safe Rust.
+
+3. If asked: why does Ptr introduce runtime overhead?
+Suggested answer:
+Because reads and writes that are unchecked in C are turned into explicit accesses with borrow checking and bounds checking. The overhead is the price paid for safety.
+
+4. If asked: what is the relation between Split Tree and Ptr?
+Suggested answer:
+Split Tree can be seen as a stronger static direction, while Ptr is the core runtime bridge that makes it possible to translate complex C pointer behavior into safe Rust today.

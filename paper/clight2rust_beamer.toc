@@ -1,0 +1,7 @@
+\beamer@sectionintoc {1}{Main Thesis}{2}{0}{1}
+\beamer@sectionintoc {2}{Why The Problem Is Hard}{3}{0}{2}
+\beamer@sectionintoc {3}{Core Mechanism}{7}{0}{3}
+\beamer@sectionintoc {4}{Representative Examples}{13}{0}{4}
+\beamer@sectionintoc {5}{System Realization}{16}{0}{5}
+\beamer@sectionintoc {6}{Evaluation and Significance}{17}{0}{6}
+\beamer@sectionintoc {7}{Limitations and Outlook}{19}{0}{7}

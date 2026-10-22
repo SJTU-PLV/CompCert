@@ -1,0 +1,422 @@
+Clight2Rust 演讲稿（约 25 分钟）
+对应文件：paper/clight2rust_beamer.pdf
+讲稿语言：中文
+使用方式：按当前 PDF 页顺序讲述；英文 slide 上展示概念，中文讲稿负责展开解释。
+
+====================
+一、整体时间分配建议
+====================
+
+1. 标题页：0.5 分钟
+2. Main Thesis：1.5 分钟
+3. A Counterintuitive Example：2 分钟
+4. Limitations of Existing Directions：1.5 分钟
+5. How the Rest of the Talk Supports the Main Thesis：0.5 分钟
+6. The Central Technical Problem：1.5 分钟
+7. Ptr as a Semantic Wrapper for C Pointers：2 分钟
+8. How Ptr Is Implemented：2.5 分钟
+9. Why Ptr Works in Practice：2 分钟
+10. How C Pointer Operations Become Rust Operations：2.5 分钟
+11. Why This Abstraction Matters：1.5 分钟
+12. Example 1: Mutable Aliasing：1.5 分钟
+13. Example 2: Pointer Arithmetic Must Be Separated from Ownership：1.5 分钟
+14. Why Purely Static Reasoning Fails on Dynamic Offsets：2 分钟
+15. Pipeline Architecture：1.5 分钟
+16. The Meaning of the Translation Rules：1.5 分钟
+17. What Do the Experimental Results Show?：1.5 分钟
+18. How Should We Interpret the 1.70x Overhead?：1 分钟
+19. Limitations and the Role of Split Tree：1 分钟
+20. Conclusion：1 分钟
+
+总计约 25 分钟。
+
+
+====================
+二、逐页讲稿
+====================
+
+--------------------
+第 1 页：标题页
+建议时长：30 秒
+--------------------
+
+大家好，今天我汇报的题目是 Clight2Rust。它的核心目标，是把 CompCert 里的 Clight 子集自动翻译成 safer Rust，也就是主体逻辑尽量保持在 safe Rust 中，而不是简单地产生一堆带 unsafe 的代码。
+
+这项工作的意义在于，它不只是一个工程上的 source-to-source translator，更重要的是，它试图回答一个更基础的问题：C 的指针语义，能不能被系统地迁移到 Rust 的安全语义框架里。
+
+
+--------------------
+第 2 页：Main Thesis
+建议时长：1.5 分钟
+--------------------
+
+我先讲结论，这样大家后面更容易抓住主线。
+
+这篇工作的中心问题，不是把 C 的语法改写成 Rust 的语法，而是把 C 指针的语义，翻译成 safe Rust 仍然能够表达和承载的语义。
+
+这件事之所以难，是因为在 C 里面，指针同时承担两类角色：一类是所有权句柄，也就是它背后关联着一块对象或者一块内存；另一类是可移动的游标，也就是它可以做偏移、取地址、数组退化、别名共享等等行为。Rust 把这些能力拆散在所有权、借用、切片、生命周期等不同机制里，所以没有一个现成的原语，能够一比一接住 C 指针。
+
+这篇论文给出的核心办法，是设计了一个统一抽象 Ptr<T>。这个抽象把最关键的三个方面显式记录下来：owner、offset 和 len。然后把 C 中那些隐式发生的指针行为，全部改写成 Rust 中显式的 API 调用。
+
+从结果上看，这套方案在 CompCert benchmark 上翻译成功率是 100%，平均开销大约 1.70 倍。也就是说，这条路线不只是概念上成立，而且已经能跑通。
+
+
+--------------------
+第 3 页：A Counterintuitive Example
+建议时长：2 分钟
+--------------------
+
+这页我想用一个很直观的例子说明：C 到 Rust 迁移最难的地方根本不是语法。
+
+左边这段 C 代码非常正常。p 指向一块堆内存，q 是 p 的别名，q 修改之后，p 再读出来应该得到同样的值。这是一个非常典型的 C 语义。
+
+右边我给出两个“看起来合理”的 Rust 直译思路，但它们都不对。
+
+第一种是把 p 直接赋给 q。这在 Rust 里会变成 ownership move，也就是所有权移动。这样 q 得到了那块数据，但是 p 被 move 掉了，后面再访问 p 就直接编译不过。
+
+第二种是我们说，那我 clone 一下不就行了吗？但是对于 Box 来说，clone 是深拷贝，q 改的是它自己的副本，不再是原来那块共享内存。所以虽然它编译通过了，但语义已经错了。
+
+这个例子说明一个非常关键的事实：如果我们只是追求“看起来像 Rust”，或者只是做表面上的语法替换，是不够的。真正的问题是：原来 C 中共享、偏移、生命周期这些隐含语义，到底由谁来承接。
+
+所以这篇工作的切入点非常明确：先不要问“能不能写成 Rust 语法”，而要先问“能不能保住 C 的指针语义”。
+
+
+--------------------
+第 4 页：Limitations of Existing Directions
+建议时长：1.5 分钟
+--------------------
+
+在已有工作里，大致可以分成三类路线。
+
+第一类是语法转译，比如 C2Rust。它的优点是覆盖面比较广，很多代码都能翻出来。但是问题在于，它往往依赖大量 unsafe。也就是说，它保住了行为，却没有真正保住 Rust 最核心的价值，也就是内存安全。
+
+第二类是纯静态方法，比如 Laertes 或者 Split Tree 这一类工作。它们更接近真正的 safe Rust，因为它们试图在编译期证明借用关系、别名关系和切片关系。但问题是，一旦代码里出现复杂别名、动态偏移、重入式指针逻辑，这类方法就会变得非常保守，甚至直接拒绝合法 C 程序。
+
+第三类是 LLM 驱动的路线。它们往往能生成更像 Rust 的代码，但在高保证场景下，最大问题是语义正确性难以给出强保证，通常要靠测试、修复回路或者人工调试兜底。
+
+所以这篇论文的定位很清楚：既不想退化成大量 unsafe 的工程转译，也不想完全依赖重型静态分析，而是要找到一个折中的、可自动化的、又相对可信的方案。
+
+
+--------------------
+第 5 页：How the Rest of the Talk Supports the Main Thesis
+建议时长：30 秒
+--------------------
+
+所以接下来的汇报逻辑也很简单。
+
+我先解释为什么 Ptr 能承接 C 指针最核心的三种行为；然后解释这套抽象具体是怎么实现的，以及 C 中的操作是怎样一步一步映射到 Rust 的；最后再用例子和实验说明，这条路线在实践里确实是可行的。
+
+
+--------------------
+第 6 页：The Central Technical Problem
+建议时长：1.5 分钟
+--------------------
+
+这里可以把问题再形式化一点。
+
+第一，C 指针同时是 ownership handle 和 movable cursor。也就是说，它既指向某个对象，又可以在对象内部自由移动。
+
+第二，Rust 没有一个单一的 safe primitive 可以同时表达这两件事。Box 更像所有权对象，引用和切片更像受约束的访问视图，但都不能直接等价于 C 指针。
+
+第三，如果我们硬把 C 翻成 Rust 原生借用，很多程序会因为 borrow checker 过不去而编译失败；如果我们直接退回 raw pointer，那么安全目标就彻底丢掉了。
+
+所以这篇工作的技术回答是：不要直接把 C 指针等同于 Rust 某个已有原语，而是显式引入一个中间抽象 Ptr<T>。然后把 C 指针上的操作，翻译成 clone、offset、load、store 这些显式 API。
+
+这一步的意义在于，它把“隐式语义”变成了“显式接口”，后续所有正确性和安全性都围绕这些接口展开。
+
+
+--------------------
+第 7 页：Ptr as a Semantic Wrapper for C Pointers
+建议时长：2 分钟
+--------------------
+
+这页先讲 Ptr 的抽象外形。
+
+如果我们从 CompCert 的视角看，Clight 里的一个指针本质上可以写成 b 加 delta，也就是 block identifier 加 offset。这里的 block identifier 代表它来自哪一块对象，delta 代表它在这块对象里的偏移。
+
+Ptr 的设计，就是把这两个维度再加上边界信息显式拆出来：
+
+第一是 owner，表示底层存储或者底层对象是谁。
+第二是 offset，表示当前逻辑上指向的是哪一个元素。
+第三是 len，表示这块访问范围或者边界元数据。
+
+这样设计的直觉是：owner 解决“这是谁的内存”，offset 解决“我当前站在哪个位置”，len 解决“我是不是还在合法范围内”。
+
+这页我建议你讲的时候一定要强调一句：Ptr 的核心价值，不在于它长得像一个普通指针，而在于它把 C 里原本揉在一起的三件事，显式拆开了。
+
+
+--------------------
+第 8 页：How Ptr Is Implemented
+建议时长：2.5 分钟
+--------------------
+
+这页是整个报告里最值得讲细的一页，因为观众通常会在这里真正理解：Ptr 到底靠什么工作。
+
+先说 owner。
+owner 不是简单的一个地址，而是一个带语义的存储描述。对于堆上的数组，它背后通常是 Rc 加 RefCell 再加 Box slice 这样的结构；对于栈数组、外部缓冲区或者某些只读全局对象，它也可以是 borrowed view；如果是空指针，就用 Null。
+
+这里最关键的是 Rc 和 RefCell。
+
+Rc 负责共享所有权。为什么需要它？因为 C 允许多个指针别名指向同一块对象。如果没有共享所有权，q = p 这种语义很难保住。Rc 的作用就是让多个 Ptr 可以共享同一个 owner，而不是复制出不同对象。
+
+RefCell 负责动态 borrow checking。为什么需要它？因为 safe Rust 静态上不允许随意的可变别名，但 C 又确实允许很多复杂别名关系。这里的做法是：把一部分原本静态 borrow checker 做不到的检查，推迟到运行时由 RefCell 来做。也就是说，如果在执行时真的出现冲突借用，它不会 silently 变成 undefined behavior，而是以 panic 的方式显式失败。
+
+然后是 offset。offset 被单独拿出来保存，而不是揉进 owner 里面。这样做的作用非常大：指针算术只改 offset，不动 owner，所以 pointer movement 不会破坏 allocation identity。
+
+最后是 len。len 保存边界信息，用来做 bounds check。这样 load 和 store 的时候可以判断访问是否合法。
+
+因此，Ptr 的实现方式其实非常清楚：共享所有权交给 Rc，动态借用规则交给 RefCell，指针算术交给 offset，边界合法性交给 len。所有 raw dereference 和 cast 都被收进 runtime 内部，生成的 Rust 代码只看到一组安全 API。
+
+
+--------------------
+第 9 页：Why Ptr Works in Practice
+建议时长：2 分钟
+--------------------
+
+这页讲运行时视角。
+
+Ptr::alloc(n) 对应 C 里的 malloc，创建一块 heap-backed storage。
+clone 对应别名复制，但复制的不是数据，而是共享同一个 owner。
+offset(i) 只移动逻辑游标，不访问内存。
+load 和 store 负责真正的内存读写，并且在这里统一执行空指针检查、借用检查、边界检查。
+
+所以它为什么有效？因为它恰好把 C 里最关键的几类行为逐个承接住了：
+
+第一，aliasing 被共享所有权保住了。
+第二，pointer arithmetic 被逻辑 offset 保住了。
+第三，invalid access 不再变成静默的 undefined behavior，而是变成显式 panic。
+第四，对外接口仍然是 safe Rust，所以生成代码的主体仍然可以维持在安全子集里面。
+
+这页最后我建议用一句很强的总结：Ptr 并不是假装 C 指针其实就是 Rust 引用，它恰恰是在承认两者不同的前提下，重新构造了 C 指针所需要的行为。
+
+
+--------------------
+第 10 页：How C Pointer Operations Become Rust Operations
+建议时长：2.5 分钟
+--------------------
+
+这页是观众最容易“瞬间懂”的一页，因为它把翻译规则写成了对照表。
+
+你可以逐行讲：
+
+p = malloc(n)，翻译成 Ptr::alloc(n)。
+这一步创建的是一个 owner 已经初始化好的 Ptr。
+
+q = p，翻译成 q = p.clone()。
+这里 clone 表示 alias，不是 deep copy。
+
+p + i，翻译成 p.offset(i)。
+这里强调：只改 offset，不改 owner。
+
+*p 的读，翻译成 p.load(0)。
+*p = v 的写，翻译成 p.store(0, v)。
+也就是说，原来在 C 里一个看起来很普通的解引用动作，在 Rust 这边被显式提升成一次受控 API 调用。
+
+p == NULL，对应 p.is_null()。
+
+这页最想让观众带走的一句话是：从 C 到 Rust 的翻译，本质上是把隐式的指针行为，重写成显式的方法调用。这样系统就知道该在什么地方做检查、该在什么地方维持语义。
+
+
+--------------------
+第 11 页：Why This Abstraction Matters
+建议时长：1.5 分钟
+--------------------
+
+这页是一个归纳总结。
+
+Ptr 至少保住了三种 C 指针最难的能力：
+一是 aliasing，多指针观察同一可变对象；
+二是 pointer arithmetic，指针移动但不丢掉原始 allocation；
+三是 lifetime extension，堆对象能够自然跨越内层作用域。
+
+同时，它又满足 Rust 这一侧的三条要求：
+第一，生成代码的主体仍然是 safe Rust；
+第二，危险行为被隔离到 runtime；
+第三，不合法访问会变成显式 panic，而不是静默 UB。
+
+所以这里可以把主张说得很明确：这篇工作的关键不是 invent 一个新指针类型，而是找到了一个足够小、足够清晰、足够实用的语义桥梁。
+
+
+--------------------
+第 12 页：Example 1: Mutable Aliasing
+建议时长：1.5 分钟
+--------------------
+
+这里回到论文中的第一个关键例子：mutable aliasing。
+
+在 C 里，p 和 q 指向同一块堆内存，q 改完之后 p 读出来也应该变。这在 C 中非常自然。
+
+但是如果直接拿 Rust 的 Box 或者普通 clone 去模拟，要么 move 失败，要么 deep copy 导致语义错误。
+
+Ptr 的方案是：p = Ptr::alloc(2)，q = p.clone()，然后通过 q.store 修改，通过 p.load 读取。
+
+核心解释就是一句话：clone 在这里不是复制数据，而是增加共享 owner 的引用；真正的共享语义由 Rc 和 RefCell 共同保证。
+
+
+--------------------
+第 13 页：Example 2: Pointer Arithmetic Must Be Separated from Ownership
+建议时长：1.5 分钟
+--------------------
+
+第二个例子讲 pointer arithmetic 和 ownership 分离。
+
+在 C 中，p = p + 1 很常见。问题是，p 当前所指的位置可以变，但是“这块堆内存到底是谁申请的、谁负责释放”这个信息不能丢。
+
+如果直接用 slice 或者借用去表示偏移后的视图，很容易最后只留下一个局部窗口，而丢掉原始 allocation identity。这会让释放逻辑和所有权语义变得非常不稳。
+
+Ptr 的做法就是：owner 不变，offset 改 1。这样 p.store(0, 42) 实际上访问的是 owner 中 offset 之后的位置。
+
+所以这里最好强调：offset 和 owner 的分离，是整个设计里非常关键的一步。它保证“游标移动”不会破坏“对象归属”。
+
+
+--------------------
+第 14 页：Why Purely Static Reasoning Fails on Dynamic Offsets
+建议时长：2 分钟
+--------------------
+
+这页说明为什么单靠纯静态方案不够。
+
+例子里 p1 和 p2 的位置是编译期可知的，所以如果用 Split Tree 或者 split_at_mut 一类思想，确实可能把它们静态拆成不相交的区域。
+
+但 p3 = p1 + k 这个地方，k 是运行时决定的。也就是说，编译器不知道 p3 最后会落在 p1 那一边还是 p2 那一边，也不知道它会不会和某个已有别名重叠。
+
+这就暴露了一个非常本质的问题：不是所有 C 指针关系都能在编译期被静态证明。只要存在这种动态偏移、复杂控制流或者重入别名，就必须有一套运行时机制来托底。
+
+所以你可以把这一页讲成：这并不是在否定静态方法，而是在说明静态方法的边界。Ptr 的意义在于，当静态推理做不到时，系统仍然有一条安全的落地路径。
+
+
+--------------------
+第 15 页：Pipeline Architecture
+建议时长：1.5 分钟
+--------------------
+
+这页回到整体系统。
+
+整个流程是：C Source 先进入 CompCert 前端，被整理成 Clight IR。然后由 Clight2Rustlight.v 完成核心翻译，生成 Rustlight IR。再由 PrintRustlight.ml 打印成 Rust 源码，最后连同 runtime 一起交给 rustc 编译执行。
+
+这个流程里最关键的两个实现文件就是 slide 上标出来的那两个：
+Clight2Rustlight.v 负责“语义怎么翻”；
+PrintRustlight.ml 负责“最后怎么打印成真正的 Rust 代码”。
+
+你这里可以提醒听众：这不是一个单纯的 pretty-printer，而是一条从 verified compiler 中间语言出发的语义翻译链。
+
+
+--------------------
+第 16 页：The Meaning of the Translation Rules
+建议时长：1.5 分钟
+--------------------
+
+这一页要讲的是“翻译规则为什么有意义”。
+
+比如 Ebinop(Oadd, p, i) 变成 p.offset(i)；
+Ederef(p) 变成 p.load(0)；
+*p = v 变成 p.store(0, v)；
+(*p).f 先 load，再做 field access。
+
+这些规则看起来像是简单改写，但它们的真正意义在于：C 里隐式发生的 memory action，现在都被显式化了。
+
+一旦显式化，系统就知道：
+在哪里做 borrow check；
+在哪里做 bound check；
+哪里是 trusted boundary；
+哪里需要承担语义责任。
+
+所以你可以把这页总结成一句话：这项工作不是把 C 代码换一种语法打印出来，而是把 C 的隐式内存动作重构成 Rust 中可审计、可控制的动作。
+
+
+--------------------
+第 17 页：What Do the Experimental Results Show?
+建议时长：1.5 分钟
+--------------------
+
+这页主要讲结果，不要讲太细。
+
+实验使用的是 CompCert 的 test/c benchmark suite，以 Clang 或 GCC 编译的 C 程序作为参考基线。验证标准很直接：Rust 是否能编译通过，运行输出是否与参考 C 一致。
+
+最终结果是 24 个 benchmark 全部成功翻译并执行，输出一致，成功率 100%。
+
+这个结果说明了两件事。
+第一，Ptr 这套抽象不是纸上谈兵，它确实足以承载 CompCert/Clight 子集里相当多样的 C 指针行为。
+第二，这条路线并没有为了追求安全而完全丢失可用性，反而在 benchmark 上表现出了很强的落地能力。
+
+
+--------------------
+第 18 页：How Should We Interpret the 1.70x Overhead?
+建议时长：1 分钟
+--------------------
+
+这里简单解释性能代价。
+
+平均 1.70 倍的开销，主要来自三方面：
+第一，所有读写都经过统一的 load/store 接口；
+第二，存在动态边界检查；
+第三，Rc 和 RefCell 会带来借用计数和运行时检查成本。
+
+但这件事的意义在于：它证明轻量运行时托底的路线是可行的，而且成本虽然明显，但并没有高到不可接受。换句话说，这是一种现实的 trade-off。
+
+
+--------------------
+第 19 页：Limitations and the Role of Split Tree
+建议时长：1 分钟
+--------------------
+
+这页主要讲边界和后续方向。
+
+当前工作的输入语言是 Clight，而不是任意工业 C；安全性依赖一个小型 trusted runtime；而完整的 Clight 到 Rustlight 语义保持证明还没有完全做完。
+
+同时，这也是你讲 Split Tree 最合适的位置。你可以说：
+Split Tree 代表了一类非常重要的静态分析思想，它的价值并不是被否定，而是更适合作为未来方向，用来把今天的部分运行时检查重新提升回静态证明。
+
+所以未来路线很清楚：今天先回答“怎么把 safe Rust 生成出来”，明天再回答“怎么把这些动态检查尽量静态化并降低开销”。
+
+
+--------------------
+第 20 页：Conclusion
+建议时长：1 分钟
+--------------------
+
+最后总结。
+
+这篇工作的价值不只是做了一个 C 到 Rust 的翻译器，而是把问题从“语法改写”提升到了“内存语义迁移”。
+
+它的创新点，在于提出了 Ptr 这套统一抽象，用一个小型 trusted runtime 承接 C 指针最难表达的那部分语义，然后在 CompCert 的高保证基础上，把主体逻辑翻译成 safe Rust。
+
+它的意义在于，证明了 verified compiler infrastructure 和 Rust 的安全语义之间，确实可以建立一条可信的桥梁。
+
+如果用一句话收尾，我建议你这样讲：
+Clight2Rust 最重要的贡献，不是把 C 翻成了 Rust，而是找到了 C 指针语义进入 safe Rust 世界的一条可行路径。
+
+
+====================
+三、Ptr 部分的额外口头强调句
+====================
+
+如果现场感觉观众对 Ptr 还没完全抓住，你可以在第 8 到第 10 页额外插入下面几句：
+
+1. “请大家注意，Ptr 不是 Rust 原生引用的替代品，而是一个语义适配层。”
+2. “owner 解决的是对象身份，offset 解决的是游标移动，len 解决的是访问合法性，这三件事在 C 里原本是揉在一起的。”
+3. “Rc 保住共享所有权，RefCell 保住运行时借用规则，这两个东西合起来，正好承接 C 里最棘手的 mutable aliasing。”
+4. “从翻译角度看，最关键的变化是：原来在 C 里隐式发生的行为，现在都变成了显式 API，所以系统终于有地方做检查。”
+5. “Ptr 的目标不是让 C 指针看起来像 Rust 引用，而是让 C 指针在 Rust 里有一个安全而可控的落点。”
+
+
+====================
+四、回答提问时的简短模板
+====================
+
+1. 如果被问：为什么不用纯静态分析？
+可以回答：
+因为很多合法 C 程序的别名和偏移关系只有运行时才真正确定。纯静态分析会非常保守，甚至拒绝程序。我们的方案是先保证翻译可行，再把更多动态检查逐步静态化。
+
+2. 如果被问：Ptr 为什么不算只是把 unsafe 藏起来？
+可以回答：
+关键区别在于，unsafe 被压缩到一个很小、可审计、可集中验证的 runtime 边界里，而不是散落在生成代码的业务逻辑中。主体生成代码仍然保持 safe Rust。
+
+3. 如果被问：Ptr 的性能为什么会有开销？
+可以回答：
+因为它把原本 C 中不受检查的读写，变成了带 borrow check 和 bounds check 的显式访问。这是安全性换取的一部分运行时成本。
+
+4. 如果被问：Split Tree 和 Ptr 的关系是什么？
+可以回答：
+可以把 Split Tree 看成更强静态化的方向，而 Ptr 是当前实现中确保复杂 C 指针仍能落到 safe Rust 的核心运行时桥梁。
+
