@@ -136,6 +136,9 @@ def benchmark_single_file(c_file_path, ccomp_bin, runtime_path, temp_dir,
         return f"exit {stage['returncode']}: " + stage['stderr'][:4096].decode('utf-8', 'replace')
 
     try:
+        for runtime_file in ('ptr.rs', 'callback.rs', 'stdio.rs'):
+            shutil.copyfile(Path(runtime_path).resolve() / runtime_file,
+                            work / runtime_file)
         for item in inputs:
             path = relative_path(item)
             for directory in (cdir, rdir):

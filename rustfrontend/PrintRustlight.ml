@@ -408,6 +408,12 @@ and print_place out (p: place) =
   | Ppair (p1, p2) -> (* 添加这个 case *)
     fprintf out "(%a, %a)" print_place p1 print_place p2
 
+and print_array_place_ptr out place =
+  if is_string_literal_place place then
+    fprintf out "Ptr::from_ref_const(&%a[..])" print_place place
+  else
+    fprintf out "Ptr::from_ref(&mut %a[..])" print_place place
+
 and print_pointer_operand out pe =
   match pe with
   | Ederef (Ebinop (Oadd, base, index, _), _) ->
@@ -436,7 +442,7 @@ and print_pointer_operand out pe =
       else
         pexpr out (0, pe)
   | Eplace (place, ty) when is_array_type ty ->
-      fprintf out "Ptr::from_ref(&mut %a[..])" print_place place
+      print_array_place_ptr out place
   | _ ->
       pexpr out (0, pe)
 
@@ -731,7 +737,10 @@ and pexpr p (prec, e) =
               let prefix = string_of_mut mut in
               (match place_ty with
                | Rusttypes.Tarray(_, _, _) ->
-                   fprintf p "Ptr::from_ref(&%s%a)" prefix print_place v
+                   if is_string_literal_place v then
+                     print_array_place_ptr p v
+                   else
+                     fprintf p "Ptr::from_ref(&%s%a)" prefix print_place v
                | _ ->
                    fprintf p "Ptr::from_mut(&%s%a)" prefix print_place v)
           | _ ->
@@ -832,7 +841,7 @@ and pexpr p (prec, e) =
         in
         (match array_ref with
          | Some place ->
-             fprintf p "Ptr::from_ref(&mut %a[..])" print_place place
+             print_array_place_ptr p place
          | None ->
              if not is_already_ref then
                (* Need to add &mut or & for the cast *)
@@ -849,7 +858,7 @@ and pexpr p (prec, e) =
       else if ty_is_pointer then
         (match array_ref with
          | Some place ->
-             fprintf p "Ptr::from_ref(&mut %a[..])" print_place place
+             print_array_place_ptr p place
          | None ->
             (match pe with
               | Eref(_, mut, place, _) ->
@@ -868,7 +877,10 @@ and pexpr p (prec, e) =
                     let prefix = string_of_mut mut in
                     (match place_ty with
                      | Rusttypes.Tarray(_, _, _) ->
-                         fprintf p "Ptr::from_ref(&%s%a)" prefix print_place place
+                         if is_string_literal_place place then
+                           print_array_place_ptr p place
+                         else
+                           fprintf p "Ptr::from_ref(&%s%a)" prefix print_place place
                      | _ ->
                          fprintf p "Ptr::from_mut(&%s%a)" prefix print_place place)
                   end
@@ -946,13 +958,16 @@ let print_ptr_argument p _ arg =
       let prefix = string_of_mut mut in
       (match place_ty with
        | Rusttypes.Tarray(_, _, _) ->
-           fprintf p "Ptr::from_ref(&%s%a)" prefix print_place place
+           if is_string_literal_place place then
+             print_array_place_ptr p place
+           else
+             fprintf p "Ptr::from_ref(&%s%a)" prefix print_place place
        | _ ->
            fprintf p "Ptr::from_mut(&%s%a)" prefix print_place place)
   | Epure (Eplace(place, ty)) ->
       (match ty with
        | Rusttypes.Tarray(_, _, _) ->
-           fprintf p "Ptr::from_ref(&mut %a)" print_place place
+           print_array_place_ptr p place
        | _ ->
            expr p (2, arg))
   | _ ->
@@ -992,7 +1007,7 @@ let print_pointer_assignment_value place_ty p (expr: expr) =
   | _ ->
       (match array_place_from_expr expr with
        | Some place ->
-           fprintf p "Ptr::from_ref(&mut %a[..])" print_place place
+           print_array_place_ptr p place
         | None ->
             let expr_ty = type_of_expr expr in
            let dest_ty_name = name_rust_type place_ty in
@@ -2635,9 +2650,11 @@ let print_program p (prog: Rustlight.program) =
   (* Don't print forward declarations - Rust doesn't support them *)
   (* List.iter (PrintRustsyntax.declare_composite p) prog.Rusttypes.prog_types; *)
   (* Add placeholder for commonly undefined system types *)
-  fprintf p "#[path = \"/Users/yaodongdong/WorkPlace/project/Compcert/runtime/ptr.rs\"]@ mod ptr;@ use ptr::*;@ ";
-  fprintf p "#[path = \"/Users/yaodongdong/WorkPlace/project/Compcert/runtime/callback.rs\"]@ mod callback;@ ";
-  fprintf p "#[path = \"/Users/yaodongdong/WorkPlace/project/Compcert/runtime/stdio.rs\"]@ mod stdio;@ use stdio::*;@ ";
+  (* Runtime modules are copied next to the generated Rust source by the
+     benchmark/packaging layer.  Relative paths keep generated code portable. *)
+  fprintf p "#[path = \"ptr.rs\"]@ mod ptr;@ use ptr::*;@ ";
+  fprintf p "#[path = \"callback.rs\"]@ mod callback;@ ";
+  fprintf p "#[path = \"stdio.rs\"]@ mod stdio;@ use stdio::*;@ ";
   fprintf p "pub struct __sFILEX;@ ";
   List.iter (PrintRustsyntax.define_composite p) prog.Rusttypes.prog_types;
   List.iter (print_globdecl p) prog.Rusttypes.prog_defs;

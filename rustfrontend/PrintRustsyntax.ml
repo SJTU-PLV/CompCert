@@ -522,8 +522,12 @@ let print_rust_init p typ init =
       (match init with
        | Init_addrof(id, _ofs) ->
            let nm = extern_atom id in
-           fprintf p "(Ptr::from_ref(&mut %s[..])).cast::<%s>()"
-             nm (name_rust_type elem_ty)
+           if Str.string_match re_string_literal nm 0 then
+             fprintf p "(Ptr::from_ref_const(&%s[..])).cast::<%s>()"
+               nm (name_rust_type elem_ty)
+           else
+             fprintf p "(Ptr::from_ref(&mut %s[..])).cast::<%s>()"
+               nm (name_rust_type elem_ty)
        | _ ->
            print_init p init)
   | Rusttypes.Tint(Ctypes.I8, Ctypes.Unsigned) -> 

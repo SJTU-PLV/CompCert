@@ -43,9 +43,13 @@ The generated binary executable compiler is named `ccomp` in the main directory.
 ```
 Here `test.c` is the source file of `C` language and augment of `drustlight` tell compiler to generate test.rs file. Then, you can run:
 ```
+cp runtime/{ptr,callback,stdio}.rs /path/to/generated/source/directory/
 rustc test.rs -o test
 ./test
 ```
+
+Generated Rust uses relative module paths. The benchmark copies these three
+runtime modules into each isolated case directory automatically.
 
 ### Test the compiler
 

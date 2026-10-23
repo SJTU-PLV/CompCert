@@ -27,8 +27,11 @@ let tool_name = "C verified compiler"
 (* Optional sdump suffix *)
 let sdump_suffix = ref ".json"
 
+(* Unlike -dall, an explicit -drustlight request is an export-only mode. *)
+let option_rustlight_only = ref false
+
 let nolink () =
-  !option_c || !option_S || !option_E || !option_interp
+  !option_c || !option_S || !option_E || !option_interp || !option_rustlight_only
 
 let object_filename sourcename =
   if nolink () then
@@ -73,10 +76,25 @@ let compile_c_file sourcename ifile ofile =
   PrintAsm.print_program oc asm;
   close_out oc
 
+(* Export C as Rust without running the unrelated Rust-to-Asm backend. *)
+let export_rustlight_file sourcename ifile =
+  PrintRustlight.destination :=
+    Some (output_filename sourcename ~suffix:".rs");
+  let csyntax = parse_c_file sourcename ifile in
+  match Compiler.apply_partial
+          (SimplExpr.transl_program csyntax)
+          Clight2Rustlight.transl_program with
+  | Errors.OK rustlight -> PrintRustlight.print_if rustlight
+  | Errors.Error msg ->
+      fatal_error (file_loc sourcename) "%a" print_error msg
+
 (* From C source to asm *)
 
 let compile_i_file sourcename preproname =
-  if !option_interp then begin
+  if !option_rustlight_only then begin
+    export_rustlight_file sourcename preproname;
+    ""
+  end else if !option_interp then begin
     Machine.config := Machine.compcert_interpreter !Machine.config;
     (* let csyntax = parse_c_file sourcename preproname in
      Interp.execute csyntax; *)
@@ -332,7 +350,9 @@ let cmdline_actions =
   Exact "-dc", Set option_dcmedium;
   Exact "-dclight", Set option_dclight;
   Exact "-dclight0", Set option_dclight0;
-  Exact "-drustlight", Set option_drustlight;
+  Exact "-drustlight", Self (fun _ ->
+    option_drustlight := true;
+    option_rustlight_only := true);
   Exact "-dcminor", Set option_dcminor;
   Exact "-drtl", Set option_drtl;
   Exact "-dltl", Set option_dltl;

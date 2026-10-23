@@ -90,3 +90,5 @@ test/rust/
 .rust
 .c0
 .vscode/
+**/__pycache__/
+docs/

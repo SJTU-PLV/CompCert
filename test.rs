@@ -1,7 +1,7 @@
-#[path = "/Users/yaodongdong/WorkPlace/project/Compcert/runtime/ptr.rs"]
+#[path = "runtime/ptr.rs"]
 mod ptr;
 use ptr::*;
-#[path = "/Users/yaodongdong/WorkPlace/project/Compcert/runtime/callback.rs"]
+#[path = "runtime/callback.rs"]
 mod callback;
 pub struct __sFILEX;
 static mut __stringlit_1 : [i8;4] = [    b'%' as i8,
