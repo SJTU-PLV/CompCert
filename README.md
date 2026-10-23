@@ -113,7 +113,9 @@ The calling conventions adapted in the Rust interface: [RA.v](./driver/RA.v) and
 **Theorem of compiler correctness:**
 [transf_rustlight_program_correct](./driver/Compiler.v#L1105) in [driver/Compiler.v](./driver/Compiler.v)
 
-To see the statistics of the LOC of our development, use the following command:
+To run the C-to-Rust correctness benchmarks in `test/c/`, use the following command:
 ```
 python benchmark.py
 ```
+
+Benchmark status rules, JSON/CSV records, isolated artifacts, and framework tests are documented in [P0-1 benchmark notes](docs/benchmark-p0-1.md).
